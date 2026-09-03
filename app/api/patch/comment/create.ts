@@ -16,6 +16,7 @@ import { getResourceVisibilityWhere } from '~/app/api/utils/contentVisibility'
 import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { invalidatePatchCommentCache } from './cache'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
+import { invalidateUnread } from '~/app/api/message/unread/cache'
 import type { PatchComment } from '~/types/api/patch'
 
 export const createPatchComment = async (
@@ -127,7 +128,8 @@ export const createPatchComment = async (
     return created
   })
 
-  // 拦截时通知由 apply.ts 在审核通过后补发 (文案须与该处逐字一致以保去重命中)
+  // 拦截时通知由 apply.ts 在审核通过后补发 (文案须与该处逐字一致以保去重命中);
+  // 通知在事务外自动提交, 紧随其后失效收件人未读缓存即为提交后失效 (L-01)
   if (!moderation.intercept) {
     if (parentComment && parentComment.user_id !== uid) {
       await createDedupMessage({
@@ -137,6 +139,7 @@ export const createPatchComment = async (
         recipient_id: parentComment.user_id,
         link: buildCommentLink(data.patch.unique_id, data.id, resourceId)
       })
+      await invalidateUnread(parentComment.user_id).catch(() => undefined)
     }
 
     // 资源的一级评论通知资源上传者 (自评自己上传的资源不通知);
@@ -154,6 +157,7 @@ export const createPatchComment = async (
         recipient_id: resourceUploaderUid,
         link: buildCommentLink(data.patch.unique_id, data.id, resourceId)
       })
+      await invalidateUnread(resourceUploaderUid).catch(() => undefined)
     }
 
     await createMentionMessage(

@@ -13,6 +13,7 @@ import { invalidateResourceListCache } from '~/app/api/resource/cache'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
+import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
 import {
   MODERATION_SKIP,
@@ -251,6 +252,8 @@ export const createPatchResource = async (
       recipient_id: uid,
       link: `/${currentPatch.unique_id}?tab=resources&resourceSection=${resource.section}&resourceId=${resource.id}`
     })
+    // 通知在事务外自动提交, 紧随其后失效上传者未读缓存即为提交后失效 (L-01)
+    await invalidateUnread(uid).catch(() => undefined)
   }
 
   return resource

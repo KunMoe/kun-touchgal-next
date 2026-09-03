@@ -15,7 +15,8 @@ const {
   executeRawMock,
   transactionMock,
   createDedupMessageMock,
-  invalidateUserSessionMock
+  invalidateUserSessionMock,
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   parsePutBodyMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
@@ -30,7 +31,8 @@ const {
   executeRawMock: vi.fn(),
   transactionMock: vi.fn(),
   createDedupMessageMock: vi.fn(),
-  invalidateUserSessionMock: vi.fn()
+  invalidateUserSessionMock: vi.fn(),
+  invalidateUnreadMock: vi.fn()
 }))
 
 const transactionClient = {
@@ -74,6 +76,10 @@ vi.mock('~/app/api/user/session/cache', () => ({
   invalidateUserSession: invalidateUserSessionMock
 }))
 
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
+}))
+
 vi.mock('~/prisma/index', () => ({
   prisma: {
     patch_rating: { findUnique: ratingFindUniqueMock },
@@ -108,6 +114,7 @@ beforeEach(() => {
   userUpdateMock.mockResolvedValue({})
   createDedupMessageMock.mockResolvedValue(undefined)
   invalidateUserSessionMock.mockResolvedValue(undefined)
+  invalidateUnreadMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
       callback(transactionClient)
@@ -159,6 +166,11 @@ describe('PUT /api/patch/rating/like', () => {
       },
       transactionClient
     )
+    // 通知随事务落库后才失效作者未读缓存 (L-01): 事务内失效会被并发读回填旧值
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(1)
+    expect(userUpdateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUnreadMock.mock.invocationCallOrder[0]
+    )
   })
 
   it('unlikes via the deleteMany count without issuing a create', async () => {
@@ -181,6 +193,8 @@ describe('PUT /api/patch/rating/like', () => {
       where: { id: 1 },
       data: { moemoepoint: { increment: -1 } }
     })
+    // 取消点赞删除通知同样改变作者未读状态, 亦须失效
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(1)
   })
 
   it('returns a business message when the rating vanishes concurrently (P2003)', async () => {
@@ -194,6 +208,7 @@ describe('PUT /api/patch/rating/like', () => {
     const res = await PUT(mockRequest)
     await expect(res.json()).resolves.toBe('评价不存在')
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('rethrows non-P2003 transaction failures', async () => {

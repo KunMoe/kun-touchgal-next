@@ -17,7 +17,8 @@ const {
   transactionMock,
   createDedupMessageMock,
   invalidateFavoriteCacheMock,
-  invalidateContentCacheMock
+  invalidateContentCacheMock,
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   parsePutBodyMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
@@ -34,8 +35,11 @@ const {
   transactionMock: vi.fn(),
   createDedupMessageMock: vi.fn(),
   invalidateFavoriteCacheMock: vi.fn(),
-  invalidateContentCacheMock: vi.fn()
+  invalidateContentCacheMock: vi.fn(),
+  invalidateUnreadMock: vi.fn()
 }))
+
+const events: string[] = []
 
 const transactionClient = {
   $executeRaw: executeRawMock,
@@ -77,6 +81,10 @@ vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCache: invalidateContentCacheMock
 }))
 
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
+}))
+
 vi.mock('~/prisma/index', () => ({
   prisma: {
     patch: { findUnique: patchFindUniqueMock },
@@ -96,6 +104,7 @@ const mockRequest = new Request('http://localhost') as unknown as Parameters<
 
 beforeEach(() => {
   vi.clearAllMocks()
+  events.length = 0
   parsePutBodyMock.mockResolvedValue({ patchId: 7, folderId: 3 })
   verifyHeaderCookieMock.mockResolvedValue({ uid: 99 })
   patchFindUniqueMock.mockResolvedValue({
@@ -112,9 +121,16 @@ beforeEach(() => {
   createDedupMessageMock.mockResolvedValue(undefined)
   invalidateFavoriteCacheMock.mockResolvedValue(undefined)
   invalidateContentCacheMock.mockResolvedValue(undefined)
+  invalidateUnreadMock.mockImplementation(async (uid: number) => {
+    events.push(`invalidate-unread:${uid}`)
+  })
   transactionMock.mockImplementation(
-    async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
-      callback(transactionClient)
+    async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
+      events.push('transaction-start')
+      const result = await callback(transactionClient)
+      events.push('transaction-commit')
+      return result
+    }
   )
 })
 
@@ -135,6 +151,12 @@ describe('PUT /api/patch/favorite', () => {
       data: { folder_id: 3, patch_id: 7 },
       skipDuplicates: true
     })
+    // 补丁作者未读缓存须在提交后失效 (L-01): 事务内失效会被并发读回填旧值
+    expect(events).toEqual([
+      'transaction-start',
+      'transaction-commit',
+      'invalidate-unread:1'
+    ])
   })
 
   it('takes a (namespace, folderId) advisory lock before any relation access', async () => {
@@ -192,6 +214,21 @@ describe('PUT /api/patch/favorite', () => {
         link: '/kun123?folderId=3'
       }
     })
+    // 删通知同样改变作者未读态, 取消收藏也要失效
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(1)
+  })
+
+  it('does not notify or invalidate the author when favoriting your own patch', async () => {
+    patchFindUniqueMock.mockResolvedValue({
+      user_id: 99,
+      name: 'Test Galgame',
+      unique_id: 'kun123'
+    })
+
+    const res = await PUT(mockRequest)
+    await expect(res.json()).resolves.toEqual({ added: true, isFavorite: true })
+    expect(createDedupMessageMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('threads the transaction client into createDedupMessage', async () => {
@@ -220,5 +257,6 @@ describe('PUT /api/patch/favorite', () => {
     const res = await PUT(mockRequest)
     await expect(res.json()).resolves.toBe('收藏失败, 请重试')
     expect(invalidateFavoriteCacheMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 })

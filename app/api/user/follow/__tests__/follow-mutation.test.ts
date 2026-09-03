@@ -6,15 +6,19 @@ const {
   transactionMock,
   relationCreateManyMock,
   relationDeleteManyMock,
-  createDedupMessageMock
+  createDedupMessageMock,
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   parsePostMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
   transactionMock: vi.fn(),
   relationCreateManyMock: vi.fn(),
   relationDeleteManyMock: vi.fn(),
-  createDedupMessageMock: vi.fn()
+  createDedupMessageMock: vi.fn(),
+  invalidateUnreadMock: vi.fn()
 }))
+
+const events: string[] = []
 
 vi.mock('next/server', () => ({
   NextResponse: {
@@ -35,6 +39,10 @@ vi.mock('~/middleware/_verifyHeaderCookie', () => ({
 
 vi.mock('~/app/api/utils/message', () => ({
   createDedupMessage: createDedupMessageMock
+}))
+
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
 }))
 
 vi.mock('~/prisma/index', () => ({
@@ -59,12 +67,21 @@ const txClient = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  events.length = 0
   parsePostMock.mockResolvedValue({ uid: 7 })
   verifyHeaderCookieMock.mockResolvedValue({ uid: 99 })
-  transactionMock.mockImplementation(async (fn) => fn(txClient))
+  transactionMock.mockImplementation(async (fn) => {
+    events.push('transaction-start')
+    const result = await fn(txClient)
+    events.push('transaction-commit')
+    return result
+  })
   relationCreateManyMock.mockResolvedValue({ count: 1 })
   relationDeleteManyMock.mockResolvedValue({ count: 1 })
   createDedupMessageMock.mockResolvedValue(undefined)
+  invalidateUnreadMock.mockImplementation(async (uid: number) => {
+    events.push(`invalidate-unread:${uid}`)
+  })
 })
 
 describe('POST /api/user/follow/follow', () => {
@@ -80,6 +97,12 @@ describe('POST /api/user/follow/follow', () => {
       expect.objectContaining({ type: 'follow', recipient_id: 7 }),
       txClient
     )
+    // 被关注者未读缓存须在提交后失效 (L-01): 事务内失效会被并发读回填旧值
+    expect(events).toEqual([
+      'transaction-start',
+      'transaction-commit',
+      'invalidate-unread:7'
+    ])
   })
 
   it('重复关注 (count 0) 幂等返回成功且不发通知', async () => {
@@ -88,6 +111,17 @@ describe('POST /api/user/follow/follow', () => {
     const res = await followRoute(mockRequest)
     await expect(res.json()).resolves.toEqual({})
     expect(createDedupMessageMock).not.toHaveBeenCalled()
+    // 失效无条件跟在事务后, 多一次 DEL 无害
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(7)
+  })
+
+  it('关注自己直接拒绝, 不开事务也不失效缓存', async () => {
+    parsePostMock.mockResolvedValue({ uid: 99 })
+
+    const res = await followRoute(mockRequest)
+    await expect(res.json()).resolves.toBe('您不能关注自己')
+    expect(transactionMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 })
 

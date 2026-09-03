@@ -11,7 +11,8 @@ const {
   findResourceMock,
   updateResourceMock,
   updateUserMock,
-  recomputeOneMock
+  recomputeOneMock,
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   transactionMock: vi.fn(),
   executeRawMock: vi.fn(),
@@ -22,7 +23,8 @@ const {
   findResourceMock: vi.fn(),
   updateResourceMock: vi.fn(),
   updateUserMock: vi.fn(),
-  recomputeOneMock: vi.fn()
+  recomputeOneMock: vi.fn(),
+  invalidateUnreadMock: vi.fn()
 }))
 
 const transactionClient = {
@@ -73,6 +75,10 @@ vi.mock('~/app/api/patch/comment/cache', () => ({
 
 vi.mock('~/app/api/user/session/cache', () => ({
   invalidateUserSession: vi.fn()
+}))
+
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
 }))
 
 // resource 拒绝路径的这次失效没有 .catch, 不 mock 会真连 Redis 并抛出
@@ -159,6 +165,9 @@ beforeEach(() => {
   vi.mocked(invalidatePatchContentCacheByPatchId).mockResolvedValue(undefined)
   vi.mocked(deleteFileFromS3).mockResolvedValue(undefined)
   vi.mocked(purgeCloudflareCache).mockResolvedValue({ status: 200 })
+  invalidateUnreadMock.mockImplementation(async (uid: number) => {
+    events.push(`invalidate-unread:${uid}`)
+  })
   recomputeOneMock.mockImplementation(
     async (_patchId: number, tx: typeof transactionClient) => {
       expect(tx).toBe(transactionClient)
@@ -204,11 +213,29 @@ describe('applyModerationVerdict', () => {
       data: { status: 0 }
     })
     expect(recomputeOneMock).toHaveBeenCalledWith(10, transactionClient)
+    // 通过不发驳回通知, 不失效作者未读缓存
     expect(events).toEqual([
       'transaction-start',
       'recompute',
       'transaction-commit'
     ])
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when the claim loses to a concurrent verdict', async () => {
+    claimMock.mockResolvedValue({ count: 0 })
+
+    await expect(
+      applyModerationVerdict({
+        task: ratingTask(),
+        approved: false,
+        rejectCode: 'ATK'
+      })
+    ).resolves.toBe(false)
+
+    expect(findRatingMock).not.toHaveBeenCalled()
+    expect(createMessage).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('locks the user once with FOR UPDATE for profile verdicts', async () => {
@@ -251,6 +278,7 @@ describe('applyModerationVerdict', () => {
     expect(executeRawMock).not.toHaveBeenCalled()
     expect(claimMock).toHaveBeenCalledTimes(1)
     expect(findRatingMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('skips the content lock when the verdict defers to manual review', async () => {
@@ -265,6 +293,9 @@ describe('applyModerationVerdict', () => {
     expect(executeRawMock).not.toHaveBeenCalled()
     expect(claimMock).toHaveBeenCalledTimes(1)
     expect(findRatingMock).not.toHaveBeenCalled()
+    // 转人工不写驳回通知, 不失效
+    expect(createMessage).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('still deletes pending avatar objects when the CDN purge rejects', async () => {
@@ -346,6 +377,13 @@ describe('applyModerationVerdict', () => {
     // 被拒评论不进公开基线: 既不补发创建时被拦下的通知, 也不失效评论缓存
     expect(createDedupMessage).not.toHaveBeenCalled()
     expect(invalidatePatchCommentCache).not.toHaveBeenCalled()
+    // 驳回通知写入后, 作者未读缓存在提交后失效 (L-01)
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(100)
+    expect(events).toEqual([
+      'transaction-start',
+      'transaction-commit',
+      'invalidate-unread:100'
+    ])
   })
 
   it('falls back to the reject code label when the verdict carries no reason', async () => {
@@ -384,6 +422,12 @@ describe('applyModerationVerdict', () => {
     // 被隐藏的评分要退出统计, 拒绝同样得重算并失效详情缓存
     expect(recomputeOneMock).toHaveBeenCalledWith(10, transactionClient)
     expect(invalidatePatchContentCacheByPatchId).toHaveBeenCalledWith(10)
+    expect(events).toEqual([
+      'transaction-start',
+      'recompute',
+      'transaction-commit',
+      'invalidate-unread:100'
+    ])
     expect(createMessage).toHaveBeenCalledWith(
       {
         type: 'system',

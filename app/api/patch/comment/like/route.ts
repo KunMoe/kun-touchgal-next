@@ -7,6 +7,7 @@ import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
+import { invalidateUnread } from '~/app/api/message/unread/cache'
 
 const commentIdSchema = z.object({
   commentId: z.coerce
@@ -114,6 +115,8 @@ const toggleCommentLike = async (
   }
 
   await invalidateUserSession(comment.user_id)
+  // 点赞创建通知、取消点赞删除通知, 两支都改评论作者的未读状态, 提交后失效 (L-01)
+  await invalidateUnread(comment.user_id).catch(() => undefined)
   return response
 }
 

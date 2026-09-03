@@ -6,6 +6,7 @@ import { Prisma } from '~/prisma/generated/prisma/client'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { togglePatchFavoriteSchema } from '~/validations/patch'
 import { createDedupMessage } from '~/app/api/utils/message'
+import { invalidateUnread } from '~/app/api/message/unread/cache'
 import {
   invalidatePatchFavoriteCache,
   invalidatePatchContentCache
@@ -115,6 +116,12 @@ const togglePatchFavorite = async (
     ])
   } catch {
     // 缓存失效失败不影响收藏结果
+  }
+
+  // 提交后失效补丁作者未读缓存 (L-01): 收藏发通知 / 取消收藏删通知都改变其未读态,
+  // 事务内失效会被并发读回填旧值; 自收藏不产生通知
+  if (patch.user_id !== uid) {
+    await invalidateUnread(patch.user_id).catch(() => undefined)
   }
 
   return response

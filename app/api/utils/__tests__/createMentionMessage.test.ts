@@ -1,14 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { findManyMock, createManyMock } = vi.hoisted(() => ({
-  findManyMock: vi.fn(),
-  createManyMock: vi.fn()
-}))
+const { findManyMock, createManyMock, invalidateUnreadMock } = vi.hoisted(
+  () => ({
+    findManyMock: vi.fn(),
+    createManyMock: vi.fn(),
+    invalidateUnreadMock: vi.fn()
+  })
+)
 
 vi.mock('~/prisma/index', () => ({
   prisma: {
     user_message: { findMany: findManyMock, createMany: createManyMock }
   }
+}))
+
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
 }))
 
 import {
@@ -52,6 +59,7 @@ describe('createMentionMessage', () => {
     vi.resetAllMocks()
     findManyMock.mockResolvedValue([])
     createManyMock.mockResolvedValue({ count: 0 })
+    invalidateUnreadMock.mockResolvedValue(undefined)
   })
 
   it('同一评论重复提及同一用户只发一条通知', async () => {
@@ -68,6 +76,12 @@ describe('createMentionMessage', () => {
         }
       ]
     })
+    // 写入后失效被提及者未读缓存, 且只失效一次
+    expect(invalidateUnreadMock).toHaveBeenCalledTimes(1)
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(5)
+    expect(createManyMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUnreadMock.mock.invocationCallOrder[0]
+    )
   })
 
   it('过滤自提及, 全部过滤后不发起查询与写入', async () => {
@@ -75,6 +89,7 @@ describe('createMentionMessage', () => {
 
     expect(findManyMock).not.toHaveBeenCalled()
     expect(createManyMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('去重键 (type, sender, recipient, link): 已通知的跳过, 新提及正常创建', async () => {
@@ -94,6 +109,8 @@ describe('createMentionMessage', () => {
     expect(createManyMock).toHaveBeenCalledWith({
       data: [expect.objectContaining({ recipient_id: 5 })]
     })
+    // 只失效本批新写入的收件人, 已通知者不动
+    expect(invalidateUnreadMock.mock.calls.map((call) => call[0])).toEqual([5])
   })
 
   it('全部提及均已通知时不再写入', async () => {
@@ -102,5 +119,6 @@ describe('createMentionMessage', () => {
     await callWith('[@a](/user/3/comment)')
 
     expect(createManyMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 })

@@ -17,7 +17,8 @@ const {
   createDedupMessageMock,
   invalidateUserSessionMock,
   invalidateResourceStatsListCacheMock,
-  invalidatePatchResourceDetailCacheMock
+  invalidatePatchResourceDetailCacheMock,
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   parsePutBodyMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
@@ -34,7 +35,8 @@ const {
   createDedupMessageMock: vi.fn(),
   invalidateUserSessionMock: vi.fn(),
   invalidateResourceStatsListCacheMock: vi.fn(),
-  invalidatePatchResourceDetailCacheMock: vi.fn()
+  invalidatePatchResourceDetailCacheMock: vi.fn(),
+  invalidateUnreadMock: vi.fn()
 }))
 
 const transactionClient = {
@@ -76,6 +78,10 @@ vi.mock('~/app/api/utils/message', () => ({
 
 vi.mock('~/app/api/user/session/cache', () => ({
   invalidateUserSession: invalidateUserSessionMock
+}))
+
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
 }))
 
 vi.mock('~/app/api/resource/cache', () => ({
@@ -121,6 +127,7 @@ beforeEach(() => {
   userUpdateMock.mockResolvedValue({})
   createDedupMessageMock.mockResolvedValue(undefined)
   invalidateUserSessionMock.mockResolvedValue(undefined)
+  invalidateUnreadMock.mockResolvedValue(undefined)
   invalidateResourceStatsListCacheMock.mockResolvedValue(undefined)
   invalidatePatchResourceDetailCacheMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
@@ -175,6 +182,11 @@ describe('PUT /api/patch/resource/like', () => {
     )
     // 详情缓存内嵌 likeCount 且按 patch 分片失效, 不再靠全站 stats 版本覆盖
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledWith(10)
+    // 通知随事务落库后才失效作者未读缓存 (L-01): 事务内失效会被并发读回填旧值
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(1)
+    expect(userUpdateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUnreadMock.mock.invocationCallOrder[0]
+    )
   })
 
   it('unlikes via the deleteMany count without issuing a create', async () => {
@@ -197,6 +209,8 @@ describe('PUT /api/patch/resource/like', () => {
       where: { id: 1 },
       data: { moemoepoint: { increment: -1 } }
     })
+    // 取消点赞删除通知同样改变作者未读状态, 亦须失效
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(1)
   })
 
   it('returns a business message when the resource vanishes concurrently (P2003)', async () => {
@@ -210,6 +224,7 @@ describe('PUT /api/patch/resource/like', () => {
     const res = await PUT(mockRequest)
     await expect(res.json()).resolves.toBe('未找到资源')
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
     expect(invalidateResourceStatsListCacheMock).not.toHaveBeenCalled()
     expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
   })

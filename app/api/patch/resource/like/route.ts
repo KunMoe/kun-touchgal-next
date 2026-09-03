@@ -8,6 +8,7 @@ import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateResourceStatsListCache } from '~/app/api/resource/cache'
 import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
+import { invalidateUnread } from '~/app/api/message/unread/cache'
 
 const resourceIdSchema = z.object({
   resourceId: z.coerce
@@ -110,6 +111,8 @@ const toggleResourceLike = async (
   }
 
   await invalidateUserSession(resource.user_id)
+  // 点赞创建通知、取消点赞删除通知, 两支都改资源作者的未读状态, 提交后失效 (L-01)
+  await invalidateUnread(resource.user_id).catch(() => undefined)
   await invalidateResourceStatsListCache()
   // 详情缓存内嵌 likeCount 且版本键按 patch 分片, 全站 stats 版本不再覆盖它
   await invalidatePatchResourceDetailCache(resource.patch_id)

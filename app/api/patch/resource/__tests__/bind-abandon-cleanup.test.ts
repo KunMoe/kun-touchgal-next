@@ -103,6 +103,10 @@ vi.mock('~/app/api/user/session/cache', () => ({
   invalidateUserSession: invalidateUserSessionMock
 }))
 
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: vi.fn()
+}))
+
 vi.mock('~/app/api/utils/pendingResourceCache', () => ({
   invalidateUserPendingResourceCache: invalidateUserPendingResourceCacheMock
 }))

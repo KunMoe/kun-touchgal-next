@@ -18,6 +18,7 @@ import {
 } from '~/app/api/patch/cache'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
+import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
 import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
@@ -98,6 +99,8 @@ export const sendDeferredCommentNotifications = async (commentId: number) => {
         comment.resource_id
       )
     })
+    // 自动提交后失效收件人未读缓存 (L-01); 去重命中时多一次 DEL 无害
+    await invalidateUnread(comment.parent.user_id).catch(() => undefined)
   }
   // 资源的一级评论通知资源上传者 (自评自己上传的资源不通知);
   // link 维度去重: 评论编辑重审通过后 content 会变, 不能进去重键
@@ -118,6 +121,7 @@ export const sendDeferredCommentNotifications = async (commentId: number) => {
         comment.resource_id
       )
     })
+    await invalidateUnread(comment.resource.user_id).catch(() => undefined)
   }
   await createMentionMessage(
     comment.patch.unique_id,
@@ -364,6 +368,10 @@ export const applyModerationVerdict = async (
   }
 
   // post-commit side effects
+  // 驳回通知在事务内写入, 提交后失效收件人未读缓存 (L-01): 事务内失效会被并发读回填旧值
+  if (!approved) {
+    await invalidateUnread(task.user_id).catch(() => undefined)
+  }
   if (commentApproved) {
     await sendDeferredCommentNotifications(task.content_id ?? 0)
     if (commentPatchId !== null) {

@@ -14,6 +14,8 @@ const {
   preScreenTextMock,
   hasPendingModerationMock,
   createModerationTaskMock,
+  createMessageMock,
+  invalidateUnreadMock,
   moderationSkip
 } = vi.hoisted(() => ({
   patchFindUniqueMock: vi.fn(),
@@ -29,6 +31,8 @@ const {
   preScreenTextMock: vi.fn(),
   hasPendingModerationMock: vi.fn(),
   createModerationTaskMock: vi.fn(),
+  createMessageMock: vi.fn(),
+  invalidateUnreadMock: vi.fn(),
   moderationSkip: { intercept: false, queue: false, dryRun: false }
 }))
 
@@ -93,7 +97,11 @@ vi.mock('~/server/moderation/submit', () => ({
 }))
 
 vi.mock('~/app/api/utils/message', () => ({
-  createMessage: vi.fn()
+  createMessage: createMessageMock
+}))
+
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
 }))
 
 vi.mock('~/app/api/utils/render/markdownToHtml', () => ({
@@ -165,6 +173,8 @@ beforeEach(() => {
     name: 'Game'
   })
   resourceCountMock.mockResolvedValue(1)
+  createMessageMock.mockResolvedValue({})
+  invalidateUnreadMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (client: typeof transactionClient) => unknown) =>
       callback(transactionClient)
@@ -237,5 +247,30 @@ describe('资源审核预筛选: 标题与介绍均为空时直接放行', () =>
     expect(preScreenTextMock).toHaveBeenCalledWith('标题: Patch v2\n介绍: ', 2)
     expect(createModerationTaskMock).toHaveBeenCalled()
     expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
+  })
+})
+
+describe('首个资源人工审批通知', () => {
+  it('首个资源提交后通知上传者并在写入后失效其未读缓存', async () => {
+    resourceCountMock.mockResolvedValue(0)
+
+    await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 2)
+
+    // 首个资源走人工审批流, 不送 AI 审核
+    expect(preScreenTextMock).not.toHaveBeenCalled()
+    expect(createMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'system', recipient_id: 7 })
+    )
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(7)
+    expect(createMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUnreadMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('非首个资源不发通知也不失效未读缓存', async () => {
+    await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 2)
+
+    expect(createMessageMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 })

@@ -10,6 +10,7 @@ const {
   createLinkDedupMessageMock,
   createMentionMessageMock,
   invalidateContentMock,
+  invalidateUnreadMock,
   parentFindFirstMock,
   resourceFindFirstMock
 } = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ const {
   createLinkDedupMessageMock: vi.fn(),
   createMentionMessageMock: vi.fn(),
   invalidateContentMock: vi.fn(async () => undefined),
+  invalidateUnreadMock: vi.fn(async () => undefined),
   parentFindFirstMock: vi.fn(),
   resourceFindFirstMock: vi.fn()
 }))
@@ -61,6 +63,10 @@ vi.mock('~/server/moderation/submit', () => ({
 
 vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCache: invalidateContentMock
+}))
+
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
 }))
 
 import { createPatchComment } from '~/app/api/patch/comment/create'
@@ -167,6 +173,60 @@ describe('createPatchComment', () => {
 
     expect(preScreenTextMock).toHaveBeenCalledWith('comment', 3)
   })
+
+  it('回复通知写入后失效父评论作者的未读缓存', async () => {
+    parentFindFirstMock.mockResolvedValue({
+      user_id: 9,
+      content: 'parent',
+      status: 0,
+      resource_id: null
+    })
+
+    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+
+    expect(createDedupMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({ recipient_id: 9 })
+    )
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(9)
+    expect(createDedupMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUnreadMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('回复自己的评论不发通知也不失效未读缓存', async () => {
+    parentFindFirstMock.mockResolvedValue({
+      user_id: 7,
+      content: 'parent',
+      status: 0,
+      resource_id: null
+    })
+
+    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+
+    expect(createDedupMessageMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+  })
+
+  it('被审核拦截时不发通知也不失效未读缓存', async () => {
+    parentFindFirstMock.mockResolvedValue({
+      user_id: 9,
+      content: 'parent',
+      status: 0,
+      resource_id: null
+    })
+    preScreenTextMock.mockResolvedValue({
+      queue: true,
+      intercept: true,
+      dryRun: false
+    })
+
+    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+
+    // 拦截时通知由 apply.ts 在审核通过后补发, 此处不写消息、不失效
+    expect(createDedupMessageMock).not.toHaveBeenCalled()
+    expect(createMentionMessageMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('createPatchComment 资源评论', () => {
@@ -208,6 +268,11 @@ describe('createPatchComment 资源评论', () => {
       'comment',
       5
     )
+    // 上传者通知写入后失效其未读缓存
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(3)
+    expect(createLinkDedupMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUnreadMock.mock.invocationCallOrder[0]
+    )
   })
 
   it('评论者是上传者本人时不发通知', async () => {
@@ -217,6 +282,7 @@ describe('createPatchComment 资源评论', () => {
 
     expect(createLinkDedupMessageMock).not.toHaveBeenCalled()
     expect(createDedupMessageMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('资源不可见或不属于该 patch 时返回错误字符串', async () => {

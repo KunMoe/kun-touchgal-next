@@ -1,6 +1,7 @@
 import { prisma } from '~/prisma/index'
 import { markdownToText } from '~/utils/markdownToText'
 import { buildCommentLink } from '~/utils/patch/buildCommentLink'
+import { invalidateUnread } from '~/app/api/message/unread/cache'
 import type { CreateMessageType } from '~/types/api/message'
 
 export const extractMentionUserIds = (text: string) => {
@@ -42,10 +43,16 @@ export const createMentionMessage = async (
     notifiedMessages.map((message) => message.recipient_id)
   )
 
+  const pendingUserIds = mentionedUserIds.filter(
+    (mentionUid) => !notifiedUserIds.has(mentionUid)
+  )
+  if (!pendingUserIds.length) {
+    return
+  }
+
   const content = `${senderUsername} 在「${patchName}」的评论区提到了您\n${markdownToText(text).slice(0, 50)}`
-  const mentionMessageData: CreateMessageType[] = mentionedUserIds
-    .filter((mentionUid) => !notifiedUserIds.has(mentionUid))
-    .map((mentionUid) => {
+  const mentionMessageData: CreateMessageType[] = pendingUserIds.map(
+    (mentionUid) => {
       return {
         type: 'mention',
         content,
@@ -53,10 +60,15 @@ export const createMentionMessage = async (
         recipient_id: mentionUid,
         link
       }
-    })
-  if (mentionMessageData.length) {
-    await prisma.user_message.createMany({
-      data: mentionMessageData
-    })
-  }
+    }
+  )
+  await prisma.user_message.createMany({
+    data: mentionMessageData
+  })
+  // createMany 自动提交, 紧随其后失效被提及者未读缓存即为提交后失效 (L-01)
+  await Promise.all(
+    pendingUserIds.map((mentionUid) =>
+      invalidateUnread(mentionUid).catch(() => undefined)
+    )
+  )
 }

@@ -4,12 +4,14 @@ const {
   findUniqueMock,
   createDedupMessageMock,
   createLinkDedupMessageMock,
-  createMentionMessageMock
+  createMentionMessageMock,
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   findUniqueMock: vi.fn(),
   createDedupMessageMock: vi.fn(),
   createLinkDedupMessageMock: vi.fn(),
-  createMentionMessageMock: vi.fn()
+  createMentionMessageMock: vi.fn(),
+  invalidateUnreadMock: vi.fn()
 }))
 
 vi.mock('~/prisma/index', () => ({
@@ -26,6 +28,10 @@ vi.mock('~/app/api/utils/message', () => ({
 
 vi.mock('~/app/api/utils/createMentionMessage', () => ({
   createMentionMessage: createMentionMessageMock
+}))
+
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
 }))
 
 vi.mock('~/app/api/patch/rating/stat', () => ({
@@ -74,6 +80,7 @@ const baseComment = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  invalidateUnreadMock.mockResolvedValue(undefined)
 })
 
 describe('sendDeferredCommentNotifications', () => {
@@ -104,6 +111,12 @@ describe('sendDeferredCommentNotifications', () => {
       'comment',
       5
     )
+    // 通知写入后失效上传者未读缓存 (L-01), 顺序在写入之后
+    expect(invalidateUnreadMock).toHaveBeenCalledTimes(1)
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(3)
+    expect(createLinkDedupMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUnreadMock.mock.invocationCallOrder[0]
+    )
   })
 
   it('自评自己上传的资源不补发通知', async () => {
@@ -117,6 +130,18 @@ describe('sendDeferredCommentNotifications', () => {
 
     expect(createLinkDedupMessageMock).not.toHaveBeenCalled()
     expect(createDedupMessageMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+  })
+
+  it('评论不存在时不发通知也不失效缓存', async () => {
+    findUniqueMock.mockResolvedValue(null)
+
+    await sendDeferredCommentNotifications(11)
+
+    expect(createLinkDedupMessageMock).not.toHaveBeenCalled()
+    expect(createDedupMessageMock).not.toHaveBeenCalled()
+    expect(createMentionMessageMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('资源评论的回复补发通知深链到资源页', async () => {
@@ -136,6 +161,12 @@ describe('sendDeferredCommentNotifications', () => {
         recipient_id: 9,
         link: '/patch-10/resource/42?commentId=11'
       })
+    )
+    // 回复只通知父评论作者, 上传者 (3) 不通知也不失效
+    expect(invalidateUnreadMock).toHaveBeenCalledTimes(1)
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(9)
+    expect(createDedupMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUnreadMock.mock.invocationCallOrder[0]
     )
   })
 

@@ -6,6 +6,7 @@ import { Prisma } from '~/prisma/generated/prisma/client'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
+import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { PatchRefSelectField } from '~/constants/api/select'
 
 const ratingIdSchema = z.object({
@@ -110,6 +111,8 @@ const toggleRatingLike = async (
   }
 
   await invalidateUserSession(rating.user_id)
+  // 点赞创建通知、取消点赞删除通知, 两支都改评价作者的未读状态, 提交后失效 (L-01)
+  await invalidateUnread(rating.user_id).catch(() => undefined)
   return response
 }
 
