@@ -16,7 +16,8 @@ const {
   invalidateCommentCacheMock,
   invalidateContentCacheMock,
   deletePendingModerationTasksMock,
-  deletePendingAppealsMock
+  deletePendingAppealsMock,
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   kunParsePostBodyMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
@@ -33,7 +34,8 @@ const {
   invalidateCommentCacheMock: vi.fn(),
   invalidateContentCacheMock: vi.fn(),
   deletePendingModerationTasksMock: vi.fn(),
-  deletePendingAppealsMock: vi.fn()
+  deletePendingAppealsMock: vi.fn(),
+  invalidateUnreadMock: vi.fn()
 }))
 
 const events: string[] = []
@@ -95,6 +97,10 @@ vi.mock('~/server/moderation/appeal', () => ({
   deletePendingAppeals: deletePendingAppealsMock
 }))
 
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
+}))
+
 import { POST } from '~/app/api/admin/report/handle/route'
 
 const request = new Request('http://localhost/api/admin/report/handle', {
@@ -139,6 +145,9 @@ beforeEach(() => {
   invalidateContentCacheMock.mockResolvedValue(undefined)
   deletePendingModerationTasksMock.mockResolvedValue({ count: 0 })
   deletePendingAppealsMock.mockResolvedValue({ count: 0 })
+  invalidateUnreadMock.mockImplementation(async (uid: number) => {
+    events.push(`invalidate-unread:${uid}`)
+  })
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
       events.push('transaction-start')
@@ -187,10 +196,12 @@ describe('POST /api/admin/report/handle', () => {
       deleteReportsMock.mock.invocationCallOrder[0]
     )
     expect(eventsBeforeRecompute).toEqual(['transaction-start'])
+    // 举报人未读缓存须在提交后失效 (L-01): 事务内失效会被并发读回填旧值
     expect(events).toEqual([
       'transaction-start',
       'recompute',
-      'transaction-commit'
+      'transaction-commit',
+      'invalidate-unread:7'
     ])
   })
 
@@ -255,8 +266,45 @@ describe('POST /api/admin/report/handle', () => {
     expect(
       messageRows.map((row: { recipient_id: number }) => row.recipient_id)
     ).toEqual([7, 8])
+    expect(invalidateUnreadMock.mock.calls.map((call) => call[0])).toEqual([
+      7, 8
+    ])
     expect(recomputeOneMock).not.toHaveBeenCalled()
     expect(invalidateCommentCacheMock).toHaveBeenCalledWith(10)
+  })
+
+  it('skips notifications and unread invalidation when the report is already handled', async () => {
+    findReportMock.mockResolvedValue({
+      id: 1,
+      status: 2,
+      target_type: 'rating',
+      reason: 'spam',
+      comment_id: null,
+      rating_id: 5,
+      patch_id: 10
+    })
+
+    const response = await POST(request)
+
+    await expect(response.json()).resolves.toBe('该举报已被处理')
+    expect(transactionMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+  })
+
+  it('does not notify or invalidate anyone when no pending report remains', async () => {
+    kunParsePostBodyMock.mockResolvedValue({
+      reportId: 1,
+      action: 'reject',
+      content: ''
+    })
+    // 读取与事务之间被另一管理员抢先处理: 收集为空, 无收件人
+    findRelatedReportsMock.mockResolvedValue([])
+
+    const response = await POST(request)
+
+    await expect(response.json()).resolves.toEqual({})
+    expect(createMessagesMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('does not collect a comment subtree when rejecting a comment report', async () => {

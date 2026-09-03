@@ -9,6 +9,7 @@ import { collectCommentSubtreeIds } from '~/app/api/patch/comment/subtree'
 import { recomputePatchRatingStat } from '~/app/api/patch/rating/stat'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
+import { invalidateUnread } from '~/app/api/message/unread/cache'
 
 export const handleReport = async (
   input: z.infer<typeof adminHandleReportSchema>,
@@ -62,7 +63,7 @@ export const handleReport = async (
       ? report.patch_id
       : undefined
 
-  await prisma.$transaction(async (tx) => {
+  const notifiedUids = await prisma.$transaction(async (tx) => {
     // Collect related reports BEFORE deleting the target. Deleting the target
     // triggers ON DELETE SET NULL on patch_report.comment_id / rating_id, which
     // would cause the subsequent lookup by comment_id / rating_id to miss
@@ -139,7 +140,14 @@ export const handleReport = async (
     if (ratingPatchId !== undefined && ratingPatchId !== null) {
       await recomputePatchRatingStat(ratingPatchId, tx)
     }
+
+    return recipientIds
   })
+
+  // 提交后失效收件人未读缓存 (L-01): 事务内失效会被并发读回填旧值
+  await Promise.all(
+    notifiedUids.map((uid) => invalidateUnread(uid).catch(() => undefined))
+  )
 
   if (input.action === 'delete' && targetType === 'comment' && targetId) {
     await invalidatePatchCommentCache(report.patch_id)
