@@ -14,11 +14,15 @@ const handleFeedback = async (
   const message = await prisma.user_message.findUnique({
     where: { id: input.messageId }
   })
-  if (message?.status) {
-    return '该反馈已被处理'
+  // 与 admin 反馈列表的 where 对齐: 只接受用户提交的反馈行,
+  // 排除其他类型消息与本路由自发的 sender_id 为空的「反馈已处理」通知
+  if (!message || message.type !== 'feedback' || message.sender_id === null) {
+    return '未找到该反馈'
   }
+  // 提成 const: 属性收窄不会带进事务回调闭包
+  const senderId = message.sender_id
 
-  const SLICED_CONTENT = sliceUntilDelimiterFromEnd(message?.content).slice(
+  const SLICED_CONTENT = sliceUntilDelimiterFromEnd(message.content).slice(
     0,
     200
   )
@@ -26,17 +30,22 @@ const handleFeedback = async (
   const feedbackContent = `您的反馈已处理\n\n反馈内容：${SLICED_CONTENT}\n处理回复：${handleResult}`
 
   const result = await prisma.$transaction(async (prisma) => {
-    await prisma.user_message.update({
-      where: { id: input.messageId },
+    // 幂等闸门: 仅未处理 (0) 的反馈可命中, 防止并发双击重复通知;
+    // 命中 0 行时事务内尚无任何写入, 提前返回提交空事务无害
+    const handled = await prisma.user_message.updateMany({
+      where: { id: input.messageId, status: 0 },
       // status: 0 - unread, 1 - read, 2 - approve, 3 - decline
       data: { status: { set: 1 } }
     })
+    if (!handled.count) {
+      return '该反馈已被处理'
+    }
 
     await createMessage(
       {
         type: 'feedback',
         content: feedbackContent,
-        recipient_id: message?.sender_id ?? undefined,
+        recipient_id: senderId,
         link: '/'
       },
       prisma
@@ -44,9 +53,10 @@ const handleFeedback = async (
 
     return {}
   })
-  if (message?.sender_id) {
-    await invalidateUnread(message.sender_id).catch(() => undefined)
+  if (typeof result === 'string') {
+    return result
   }
+  await invalidateUnread(senderId).catch(() => undefined)
   return result
 }
 
