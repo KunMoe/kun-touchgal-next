@@ -26,7 +26,12 @@ export const getGalgame = async (
       take: limit,
       skip: offset,
       orderBy: { created: 'desc' },
-      include: {
+      select: {
+        id: true,
+        unique_id: true,
+        name: true,
+        banner: true,
+        created: true,
         user: {
           select: {
             id: true,
