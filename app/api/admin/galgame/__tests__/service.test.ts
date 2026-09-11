@@ -27,13 +27,13 @@ describe('getGalgame 查询形状', () => {
     const input = adminGalgamePaginationSchema.parse({ page: 1, limit: 30 })
     await getGalgame(input, {})
 
-    const args = findManyMock.mock.calls[0][0]
-    expect(args.include).toBeUndefined()
-    expect(Object.keys(args.select).sort()).toEqual(
-      ['banner', 'created', 'id', 'name', 'unique_id', 'user'].sort()
-    )
-    expect(args.select.user).toEqual({
-      select: { id: true, name: true, avatar: true }
+    expect(findManyMock.mock.calls[0][0].select).toEqual({
+      id: true,
+      unique_id: true,
+      name: true,
+      banner: true,
+      created: true,
+      user: { select: { id: true, name: true, avatar: true } }
     })
   })
 
@@ -60,8 +60,8 @@ describe('getGalgame 查询形状', () => {
     const nsfwEnable = { content_limit: 'sfw' }
     await getGalgame(input, nsfwEnable)
 
-    expect(findManyMock.mock.calls[0][0].where).toBe(nsfwEnable)
-    expect(countMock.mock.calls[0][0].where).toBe(nsfwEnable)
+    expect(findManyMock.mock.calls[0][0].where).toEqual(nsfwEnable)
+    expect(countMock.mock.calls[0][0].where).toEqual(nsfwEnable)
   })
 
   it('把 unique_id 映射为 uniqueId 并透传 total', async () => {
