@@ -211,6 +211,62 @@ describe('updateGalgame', () => {
     )
   })
 
+  it('存在性检查与四条外部 ID 预检并行发出, 不逐条 await', async () => {
+    let releasePatch: (value: { unique_id: string }) => void = () => {}
+    const releaseFindFirst: Array<(value: null) => void> = []
+    patchFindUniqueMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releasePatch = resolve
+        })
+    )
+    patchFindFirstMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseFindFirst.push(resolve)
+        })
+    )
+
+    const pending = updateGalgame(
+      {
+        ...makeInput(),
+        vndbId: 'V19658',
+        dlsiteCode: 'RJ123456',
+        bangumiId: '123456',
+        steamId: '654321'
+      },
+      1
+    )
+
+    // async 函数在首个 await 前同步求值整个 Promise.all 数组, 五条查询此时都已发出;
+    // 串行形态在 findUnique 挂起期间一条 findFirst 都不会发
+    expect(patchFindUniqueMock).toHaveBeenCalledTimes(1)
+    expect(patchFindFirstMock).toHaveBeenCalledTimes(4)
+
+    releasePatch({ unique_id: 'abcd1234' })
+    releaseFindFirst.forEach((release) => release(null))
+    expect(await pending).toEqual({})
+    expect(committed).toBe(true)
+  })
+
+  it('多个外部 ID 同时撞车时按 vndb → dlsite → bangumi → steam 顺序只报第一条', async () => {
+    patchFindFirstMock.mockResolvedValue({ id: 99, unique_id: 'deadbeef' })
+
+    const res = await updateGalgame(
+      {
+        ...makeInput(),
+        vndbId: 'V19658',
+        dlsiteCode: 'RJ123456',
+        bangumiId: '123456',
+        steamId: '654321'
+      },
+      1
+    )
+
+    expect(res).toBe('Galgame VNDB ID 与游戏 ID 为 deadbeef 的游戏重复')
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+
   it('预检与 update 之间的并发窗口撞唯一索引时翻成字符串而非 500', async () => {
     patchUpdateMock.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError('unique constraint', {
