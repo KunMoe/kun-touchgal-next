@@ -78,8 +78,12 @@ const EMPTY_DATA = {
   dlsiteCircleLink: ''
 }
 
+let errorSpy: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
   vi.clearAllMocks()
+  // rejected 任务会真打日志, 静音以免注入失败的用例刷屏, 断言对 errorSpy 做 (expect(console.x) 会触 no-console)
+  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   handleBatchPatchTagsMock.mockResolvedValue({
     success: true,
     changed: false
@@ -99,8 +103,10 @@ beforeEach(() => {
 
 describe('processSubmittedExternalData cache invalidation', () => {
   it('keeps valid caches when both tasks fail before their first write', async () => {
-    tagFindManyMock.mockRejectedValueOnce(new Error('tag read failed'))
-    companyFindManyMock.mockRejectedValueOnce(new Error('company read failed'))
+    const tagError = new Error('tag read failed')
+    const companyError = new Error('company read failed')
+    tagFindManyMock.mockRejectedValueOnce(tagError)
+    companyFindManyMock.mockRejectedValueOnce(companyError)
 
     await processSubmittedExternalData(
       1,
@@ -117,6 +123,15 @@ describe('processSubmittedExternalData cache invalidation', () => {
     expect(companyCreateManyMock).not.toHaveBeenCalled()
     expect(invalidateTagCacheMock).not.toHaveBeenCalled()
     expect(invalidateCompanyCacheMock).not.toHaveBeenCalled()
+    expect(errorSpy).toHaveBeenCalledTimes(2)
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Failed to process external tag data for patch 1:',
+      tagError
+    )
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Failed to process external company data for patch 1:',
+      companyError
+    )
   })
 
   it('invalidates tags when a later step fails after tag creation', async () => {
@@ -272,5 +287,62 @@ describe('processSubmittedExternalData tag length guard', () => {
 
     expect(tagFindManyMock).not.toHaveBeenCalled()
     expect(tagCreateManyMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('processSubmittedExternalData rejected task logging', () => {
+  it('logs the failed task under its own label and keeps the other tasks running', async () => {
+    const error = new Error('company read failed')
+    companyFindManyMock.mockRejectedValueOnce(error)
+
+    await processSubmittedExternalData(
+      1,
+      {
+        ...EMPTY_DATA,
+        vndbTags: ['ADV'],
+        vndbDevelopers: ['Key'],
+        steamAliases: ['Alias']
+      },
+      [],
+      7
+    )
+
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Failed to process external company data for patch 1:',
+      error
+    )
+    expect(tagCreateManyMock).toHaveBeenCalledTimes(1)
+    expect(aliasCreateManyMock).toHaveBeenCalledTimes(1)
+    expect(invalidateTagCacheMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('logs alias failures under the alias label', async () => {
+    const error = new Error('alias read failed')
+    aliasFindManyMock.mockRejectedValueOnce(error)
+
+    await processSubmittedExternalData(
+      1,
+      { ...EMPTY_DATA, steamAliases: ['Alias'] },
+      [],
+      7
+    )
+
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Failed to process external alias data for patch 1:',
+      error
+    )
+  })
+
+  it('stays silent when every task settles, including skipped ones', async () => {
+    await processSubmittedExternalData(
+      1,
+      { ...EMPTY_DATA, vndbTags: ['ADV'] },
+      [],
+      7
+    )
+
+    expect(errorSpy).not.toHaveBeenCalled()
   })
 })

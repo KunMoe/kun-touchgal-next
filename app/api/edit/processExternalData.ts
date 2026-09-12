@@ -220,11 +220,27 @@ export const processSubmittedExternalData = async (
       )
     : null
 
-  const aliasTasks = [
-    data.steamAliases.length && ensureAliases(patchId, data.steamAliases)
-  ].filter(Boolean)
+  const aliasTask = data.steamAliases.length
+    ? ensureAliases(patchId, data.steamAliases)
+    : null
 
-  await Promise.allSettled([tagTask, companyTask, ...aliasTasks])
+  // best-effort: patch 主事务已提交, 上抛只会让用户重试撞 P2002; 但 rejected 必须留痕,
+  // 否则外部标签/会社/别名静默缺失、排障无迹 (82aab687 曾为消 lint 告警删掉此日志)
+  const tasks = [
+    ['tag', tagTask],
+    ['company', companyTask],
+    ['alias', aliasTask]
+  ] as const
+  const results = await Promise.allSettled(tasks.map(([, task]) => task))
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      // eslint-disable-next-line no-console
+      console.error(
+        `Failed to process external ${tasks[index][0]} data for patch ${patchId}:`,
+        result.reason
+      )
+    }
+  })
 
   await Promise.all([
     mutationState.tagChanged ? invalidateTagListCache() : Promise.resolve(),
