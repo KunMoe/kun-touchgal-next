@@ -22,22 +22,15 @@ const unique = <T>(arr: T[]) => Array.from(new Set(arr))
 const ensurePatchCompanyFromDlsite = async (
   patchId: number,
   dlsiteCode: string | null | undefined,
-  uid: number,
-  prefetchedCircleName?: string | null,
-  prefetchedCircleLink?: string | null
+  uid: number
 ) => {
   const code = dlsiteCode?.trim()
   if (!code) return
 
   try {
-    let circleName = prefetchedCircleName?.trim() || ''
-    let circleLink = prefetchedCircleLink?.trim() || ''
-
-    if (!circleName) {
-      const data = await fetchDlsiteData(code)
-      circleName = data.circle_name?.trim() ?? ''
-      circleLink = data.circle_link?.trim() ?? ''
-    }
+    const data = await fetchDlsiteData(code)
+    const circleName = data.circle_name?.trim() ?? ''
+    const circleLink = data.circle_link?.trim() ?? ''
 
     if (!circleName) return
     let changed = false

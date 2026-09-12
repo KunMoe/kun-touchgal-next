@@ -9,11 +9,6 @@ const { verifyHeaderCookieMock, fetchMock } = vi.hoisted(() => ({
 vi.mock('~/middleware/_verifyHeaderCookie', () => ({
   verifyHeaderCookie: verifyHeaderCookieMock
 }))
-// dlsite 路由经 ../dlsite 间接拉起 prisma 与 redis, 测试中掐断副作用导入
-vi.mock('~/prisma/index', () => ({ prisma: {} }))
-vi.mock('~/app/api/company/cache', () => ({
-  invalidateCompanyListCache: vi.fn()
-}))
 
 import { POST as steamPost } from '../steam/route'
 import { POST as dlsitePost } from '../dlsite/route'

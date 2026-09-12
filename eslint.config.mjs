@@ -47,7 +47,8 @@ export default defineConfig([
       // ESLint 10 recommended 新增; 存量代码为「let 初始值 + 分支覆盖」风格, 维持升级前基线
       'no-useless-assignment': 'off',
       'sort-imports': 'off',
-      // 338347dc 抽 service 后 route 层残留死导入至今无门禁 (8-20 #43); 存量 26 条为本地 schema 只喂 z.infer 与组件未用 state, 清完后升 error
+      // 338347dc 抽 service 后 route 层残留死导入至今无门禁 (8-20 #43)
+      // 存量 26 条为本地 schema 只喂 z.infer 与组件未用 state, 清完后升 error
       '@typescript-eslint/no-unused-vars': [
         'warn',
         {
