@@ -92,7 +92,7 @@ describe('POST /api/auth/send-register-code with register disabled', () => {
 })
 
 describe('POST /api/auth/send-register-code remote ip gate', () => {
-  it.each([['CF-Connecting-IP'], ['x-real-ip']])(
+  it.each(['CF-Connecting-IP', 'x-real-ip'])(
     'accepts a request that only carries %s',
     async (header) => {
       const response = await POST(createRequest({ [header]: '203.0.113.8' }))
@@ -123,7 +123,7 @@ describe('POST /api/auth/send-register-code email dedup', () => {
 
     await expect(response.json()).resolves.toEqual({})
     expect(findFirstMock).toHaveBeenNthCalledWith(2, {
-      where: { email: { equals: 'tester@example.com', mode: 'insensitive' } }
+      where: { email: { equals: 'Tester@Example.com', mode: 'insensitive' } }
     })
     expect(sendVerificationCodeEmailMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -132,7 +132,29 @@ describe('POST /api/auth/send-register-code email dedup', () => {
     )
   })
 
-  it('refuses to send a code when a case variant of the email is registered', async () => {
+  it('escapes LIKE wildcards so an underscore cannot match other names or addresses', async () => {
+    kunParsePostBodyMock.mockResolvedValue({
+      name: 'k_n',
+      email: 'kun_chan@qq.com',
+      captcha: 'captcha-token'
+    })
+
+    await POST(createRequest())
+
+    expect(findFirstMock).toHaveBeenNthCalledWith(1, {
+      where: { name: { equals: 'k\\_n', mode: 'insensitive' } }
+    })
+    expect(findFirstMock).toHaveBeenNthCalledWith(2, {
+      where: { email: { equals: 'kun\\_chan@qq.com', mode: 'insensitive' } }
+    })
+    expect(sendVerificationCodeEmailMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'kun_chan@qq.com',
+      'register'
+    )
+  })
+
+  it('refuses to send a code when the email is already registered', async () => {
     findFirstMock
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: 1, email: 'tester@example.com' })

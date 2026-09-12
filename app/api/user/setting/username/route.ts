@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { prisma } from '~/prisma/index'
+import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { usernameServerSchema } from '~/validations/reserved-username.server'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
@@ -9,9 +10,8 @@ import { invalidateUserSession } from '~/app/api/user/session/cache'
 // verifyHeaderCookie 已在 verifyAndLoadUser 里拦掉不存在/封禁的用户, 故此处不再
 // 重复查一次用户; 用户不存在时 updateMany 自然 count=0, 不会扣分也不会改名
 const updateUsername = async (username: string, uid: number) => {
-  const normalizedName = username.toLowerCase()
   const sameUsernameUser = await prisma.user.findFirst({
-    where: { name: { equals: normalizedName, mode: 'insensitive' } }
+    where: { name: insensitiveEquals(username) }
   })
   if (sameUsernameUser) {
     return '您的用户名已经有人注册了, 请修改'

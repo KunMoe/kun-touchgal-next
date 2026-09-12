@@ -5,6 +5,7 @@ import { sendVerificationCodeEmail } from '~/app/api/utils/sendVerificationCodeE
 import { sendRegisterEmailVerificationCodeServerSchema } from '~/validations/reserved-username.server'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
+import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
 import { checkDisableRegister } from '~/app/api/utils/checkDisableRegister'
 import { prisma } from '~/prisma/index'
 
@@ -22,17 +23,15 @@ const sendRegisterCode = async (
     return '人机验证无效, 请完成人机验证'
   }
 
-  const normalizedName = input.name.toLowerCase()
   const sameUsernameUser = await prisma.user.findFirst({
-    where: { name: { equals: normalizedName, mode: 'insensitive' } }
+    where: { name: insensitiveEquals(input.name) }
   })
   if (sameUsernameUser) {
     return '您的用户名已经有人注册了, 请修改'
   }
 
-  const normalizedEmail = input.email.toLowerCase()
   const sameEmailUser = await prisma.user.findFirst({
-    where: { email: { equals: normalizedEmail, mode: 'insensitive' } }
+    where: { email: insensitiveEquals(input.email) }
   })
   if (sameEmailUser) {
     return '您的邮箱已经有人注册了, 请修改'

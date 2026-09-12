@@ -5,6 +5,7 @@ import { forgotPasswordRequestSchema } from '~/validations/forgot'
 import { prisma } from '~/prisma/index'
 import { sendResetPasswordLinkEmail } from '~/app/api/utils/sendResetPasswordLinkEmail'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
+import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
 import { getKv, setKv } from '~/lib/redis'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 
@@ -23,9 +24,8 @@ const requestReset = async (
     return '您发送邮件的频率太快了, 请 60 秒后重试'
   }
 
-  const normalizedEmail = input.email.toLowerCase()
   const user = await prisma.user.findFirst({
-    where: { email: { equals: normalizedEmail, mode: 'insensitive' } }
+    where: { email: insensitiveEquals(input.email) }
   })
 
   if (!user) {

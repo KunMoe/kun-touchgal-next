@@ -20,6 +20,7 @@ import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { getRedirectConfig } from '~/app/api/admin/setting/redirect/getRedirectConfig'
 import { updateUserLastLoginTime } from '~/app/api/user/status/service'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
+import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
 import {
   createTwoFactorChallenge,
   TWO_FACTOR_CHALLENGE_TTL_SECONDS
@@ -51,12 +52,11 @@ const login = async (
     return '人机验证无效, 请完成人机验证'
   }
 
-  const normalizedName = name.toLowerCase()
   const user = await prisma.user.findFirst({
     where: {
       OR: [
-        { email: { equals: normalizedName, mode: 'insensitive' } },
-        { name: { equals: normalizedName, mode: 'insensitive' } }
+        { email: insensitiveEquals(name) },
+        { name: insensitiveEquals(name) }
       ]
     }
   })

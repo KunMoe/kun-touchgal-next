@@ -5,6 +5,7 @@ import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { hashPassword } from '~/app/api/utils/algorithm'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
+import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
 import { generateKunToken } from '~/app/api/utils/jwt'
 import { kunCookieOptions } from '~/app/api/utils/cookieOptions'
 import { registerServerSchema } from '~/validations/reserved-username.server'
@@ -32,17 +33,15 @@ const register = async (
     return '您的验证码无效, 请重新输入'
   }
 
-  const normalizedName = name.toLowerCase()
   const sameUsernameUser = await prisma.user.findFirst({
-    where: { name: { equals: normalizedName, mode: 'insensitive' } }
+    where: { name: insensitiveEquals(name) }
   })
   if (sameUsernameUser) {
     return '您的用户名已经有人注册了, 请修改'
   }
 
-  const normalizedEmail = email.toLowerCase()
   const sameEmailUser = await prisma.user.findFirst({
-    where: { email: { equals: normalizedEmail, mode: 'insensitive' } }
+    where: { email: insensitiveEquals(email) }
   })
   if (sameEmailUser) {
     return '您的邮箱已经有人注册了, 请修改'
