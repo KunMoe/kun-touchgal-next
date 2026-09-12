@@ -22,14 +22,6 @@ export const updateRating = async (
       where: { id: input.ratingId },
       data: {
         short_summary: input.shortSummary
-      },
-      include: {
-        user: true,
-        like: {
-          include: {
-            user: true
-          }
-        }
       }
     })
 
