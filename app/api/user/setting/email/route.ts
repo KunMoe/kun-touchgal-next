@@ -7,6 +7,7 @@ import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { resetEmailSchema } from '~/validations/user'
 import { verifyPassword } from '~/app/api/utils/algorithm'
+import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { delKv, setKv } from '~/lib/redis'
 import {
   createEmailChangeRevertKey,
@@ -170,7 +171,7 @@ const updateEmail = async (req: NextRequest) => {
   if (!payload) {
     return '用户未登录'
   }
-  if (!req.headers || !req.headers.get('x-forwarded-for')) {
+  if (!getRemoteIp(req.headers)) {
     return '读取请求头失败'
   }
 

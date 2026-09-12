@@ -44,10 +44,6 @@ vi.mock('~/app/api/utils/verifyVerificationCode', () => ({
   verifyVerificationCode: verifyVerificationCodeMock
 }))
 
-vi.mock('~/app/api/utils/getRemoteIp', () => ({
-  getRemoteIp: () => '203.0.113.8'
-}))
-
 vi.mock('~/app/api/utils/jwt', () => ({
   generateKunToken: vi.fn(async () => 'kun-token')
 }))
@@ -74,10 +70,12 @@ vi.mock('~/app/api/admin/setting/redirect/getRedirectConfig', () => ({
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { POST } from '~/app/api/auth/register/route'
 
-const createRequest = () =>
+const createRequest = (
+  headers: Record<string, string> = { 'x-forwarded-for': '203.0.113.8' }
+) =>
   new Request('http://localhost/api/auth/register', {
     method: 'POST',
-    headers: { 'user-agent': 'vitest', 'x-forwarded-for': '203.0.113.8' }
+    headers: { 'user-agent': 'vitest', ...headers }
   }) as unknown as Parameters<typeof POST>[0]
 
 beforeEach(() => {
@@ -192,5 +190,23 @@ describe('POST /api/auth/register unique constraint fallback', () => {
 
     await expect(POST(createRequest())).rejects.toThrow('connection lost')
     expect(cookieSetMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /api/auth/register remote ip gate', () => {
+  it('accepts a request that only carries CF-Connecting-IP', async () => {
+    const response = await POST(
+      createRequest({ 'CF-Connecting-IP': '203.0.113.8' })
+    )
+
+    await expect(response.json()).resolves.toMatchObject({ uid: 7 })
+  })
+
+  it('rejects a request without any client ip header before touching the store', async () => {
+    const response = await POST(createRequest({}))
+
+    await expect(response.json()).resolves.toBe('读取请求头失败')
+    expect(verifyVerificationCodeMock).not.toHaveBeenCalled()
+    expect(userCreateMock).not.toHaveBeenCalled()
   })
 })

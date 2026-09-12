@@ -4,6 +4,7 @@ import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { sendVerificationCodeEmail } from '~/app/api/utils/sendVerificationCodeEmail'
 import { sendResetEmailVerificationCodeSchema } from '~/validations/user'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
+import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 
 const sendCode = async (req: NextRequest) => {
   const input = await kunParsePostBody(
@@ -17,7 +18,7 @@ const sendCode = async (req: NextRequest) => {
   if (!payload) {
     return '用户未登录'
   }
-  if (!req.headers || !req.headers.get('x-forwarded-for')) {
+  if (!getRemoteIp(req.headers)) {
     return '读取请求头失败'
   }
 

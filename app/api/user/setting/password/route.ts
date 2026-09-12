@@ -5,6 +5,7 @@ import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { hashPassword, verifyPassword } from '~/app/api/utils/algorithm'
 import { deleteKunToken } from '~/app/api/utils/jwt'
+import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { passwordSchema } from '~/validations/user'
 
 const updatePassword = async (req: NextRequest) => {
@@ -16,7 +17,7 @@ const updatePassword = async (req: NextRequest) => {
   if (!payload) {
     return '用户未登录'
   }
-  if (!req.headers || !req.headers.get('x-forwarded-for')) {
+  if (!getRemoteIp(req.headers)) {
     return '读取请求头失败'
   }
 
