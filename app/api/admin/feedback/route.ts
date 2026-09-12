@@ -1,11 +1,9 @@
-import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
-import { prisma } from '~/prisma/index'
 import { adminFeedbackPaginationSchema } from '~/validations/admin'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import type { Message } from '~/types/api/message'
 import { getFeedback } from './service'
+
 export const GET = async (req: NextRequest) => {
   const input = kunParseGetQuery(req, adminFeedbackPaginationSchema)
   if (typeof input === 'string') {

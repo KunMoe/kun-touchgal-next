@@ -1,12 +1,10 @@
-import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
-import { prisma } from '~/prisma/index'
 import { getUserInfoSchema } from '~/validations/user'
 import { getPatchVisibilityWhere } from '~/app/api/utils/getPatchVisibilityWhere'
 import { createAuthLoader } from '~/middleware/_verifyHeaderCookie'
-import type { UserResource } from '~/types/api/user'
 import { getUserPatchResource } from './service'
+
 export async function GET(req: NextRequest) {
   const input = kunParseGetQuery(req, getUserInfoSchema)
   if (typeof input === 'string') {

@@ -1,18 +1,11 @@
-import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseGetQuery, kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { prisma } from '~/prisma/index'
 import {
   getConversationsSchema,
   createConversationSchema
 } from '~/validations/conversation'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import type { Conversation } from '~/types/api/conversation'
-import {
-  getConversations,
-  checkConversation,
-  getOrCreateConversation
-} from './service'
+import { getConversations, getOrCreateConversation } from './service'
 
 export const GET = async (req: NextRequest) => {
   const input = kunParseGetQuery(req, getConversationsSchema)

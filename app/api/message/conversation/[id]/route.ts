@@ -1,7 +1,5 @@
-import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseGetQuery, kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { prisma } from '~/prisma/index'
 import {
   getConversationMessagesSchema,
   sendPrivateMessageSchema,
@@ -9,7 +7,6 @@ import {
   deletePrivateMessageSchema
 } from '~/validations/conversation'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import type { PrivateMessage } from '~/types/api/conversation'
 import {
   getConversationMessages,
   sendMessage,

@@ -1,10 +1,6 @@
 import { z } from 'zod'
 import { prisma } from '~/prisma'
-import {
-  createCompanySchema,
-  getCompanyByIdSchema,
-  updateCompanySchema
-} from '~/validations/company'
+import { getCompanyByIdSchema } from '~/validations/company'
 
 export const getCompanyById = async (
   input: z.infer<typeof getCompanyByIdSchema>

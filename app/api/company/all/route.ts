@@ -1,9 +1,8 @@
-import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '~/prisma/index'
 import { getCompanySchema } from '~/validations/company'
 import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
 import { getCompany } from './service'
+
 export const GET = async (req: NextRequest) => {
   const input = kunParseGetQuery(req, getCompanySchema)
   if (typeof input === 'string') {

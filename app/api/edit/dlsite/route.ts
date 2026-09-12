@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import { fetchDlsiteData } from '../dlsite'
+import { fetchDlsiteData } from '~/lib/arnebiae/dlsite'
 
 const dlsiteSchema = z.object({
   code: z.string().regex(/^(RJ|VJ)\d+$/i, 'DLSite Code 格式不正确')

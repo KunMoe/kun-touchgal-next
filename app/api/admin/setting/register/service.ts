@@ -1,4 +1,4 @@
-import { delKv, getKv, setKv } from '~/lib/redis'
+import { getKv } from '~/lib/redis'
 import { KUN_PATCH_DISABLE_REGISTER_KEY } from '~/config/redis'
 
 export const getDisableRegisterStatus = async () => {
