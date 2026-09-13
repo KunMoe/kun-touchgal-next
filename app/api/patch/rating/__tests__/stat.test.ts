@@ -80,6 +80,9 @@ describe('patch rating statistics', () => {
     }
     expect(upsertSql).toContain('ON CONFLICT (patch_id) DO UPDATE')
     expect(upsertSql.match(/statement_timestamp\(\)/g)).toHaveLength(2)
+    expect(
+      upsertSql.match(/statement_timestamp\(\) AT TIME ZONE 'UTC'/g)
+    ).toHaveLength(2)
     expect(upsertSql).not.toContain('NOW()')
   })
 

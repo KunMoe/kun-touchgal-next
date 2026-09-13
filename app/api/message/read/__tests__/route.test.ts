@@ -75,4 +75,13 @@ describe('message/read PUT', () => {
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
     expect(getUnreadMessageStatusMock).not.toHaveBeenCalled()
   })
+  it('writes the read timestamp as a utc wall clock', async () => {
+    await PUT({} as never)
+
+    const sql = (queryRawMock.mock.calls[0][0] as TemplateStringsArray)
+      .join('?')
+      .replace(/\s+/g, ' ')
+    expect(sql).toContain("updated = now() AT TIME ZONE 'UTC'")
+    expect(sql).not.toMatch(/now\(\)(?!\s+AT TIME ZONE)/i)
+  })
 })

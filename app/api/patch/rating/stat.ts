@@ -61,8 +61,8 @@ const recomputePatchRatingStatsLocked = async (
       COUNT(r.id) FILTER (WHERE r.overall = 8)::int AS o8,
       COUNT(r.id) FILTER (WHERE r.overall = 9)::int AS o9,
       COUNT(r.id) FILTER (WHERE r.overall = 10)::int AS o10,
-      statement_timestamp(),
-      statement_timestamp()
+      statement_timestamp() AT TIME ZONE 'UTC',
+      statement_timestamp() AT TIME ZONE 'UTC'
     FROM patch AS p
     LEFT JOIN patch_rating AS r
       ON r.patch_id = p.id AND r.status = 0

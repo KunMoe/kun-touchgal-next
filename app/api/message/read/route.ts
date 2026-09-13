@@ -61,7 +61,7 @@ const readMessage = async (uid: number) => {
       updated AS (
         UPDATE user_message AS um
         SET status = 1,
-            updated = NOW()
+            updated = now() AT TIME ZONE 'UTC'
         FROM target
         WHERE um.id = target.id
         RETURNING 1
