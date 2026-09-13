@@ -29,7 +29,7 @@ export const getMessage = async (
           }
         }
       },
-      orderBy: { created: 'desc' },
+      orderBy: [{ created: 'desc' }, { id: 'desc' }],
       skip: offset,
       take: limit
     }),

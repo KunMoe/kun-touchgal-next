@@ -14,7 +14,7 @@ export const getAdminCreator = async (
       where: { type: 'apply', sender_id: { not: null } },
       take: limit,
       skip: offset,
-      orderBy: { created: 'desc' },
+      orderBy: [{ created: 'desc' }, { id: 'desc' }],
       include: {
         sender: {
           include: {
