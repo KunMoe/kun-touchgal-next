@@ -9,6 +9,7 @@ import toast from 'react-hot-toast'
 import { kunFetchPut } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { patchUpdateSchema } from '~/validations/edit'
+import { useRouter } from '@bprogress/next'
 import { GameNameInput } from './GameNameInput'
 import { AliasManager } from './AliasManager'
 import { ContentLimit } from './ContentLimit'
@@ -23,6 +24,7 @@ import { DLSiteInput } from '../create/DLSiteInput'
 import type { RewritePatchData } from '~/store/rewriteStore'
 
 export const RewritePatch = () => {
+  const router = useRouter()
   const { data, setData } = useRewritePatchStore(
     useShallow((state) => ({ data: state.data, setData: state.setData }))
   )
@@ -64,7 +66,7 @@ export const RewritePatch = () => {
       const res = await kunFetchPut<KunResponse<{}>>('/edit', { ...data })
       kunErrorHandler(res, () => {
         toast.success('重新编辑成功')
-        window.location.assign(`/${data.uniqueId}`)
+        router.push(`/${data.uniqueId}`)
       })
     } catch (error) {
       errorReporter(error)

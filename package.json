@@ -62,7 +62,7 @@
     "@mdx-js/loader": "^3.1.1",
     "@mdx-js/react": "^3.1.1",
     "@milkdown/plugin-automd": "^7.21.3",
-    "@next/mdx": "^16.2.12",
+    "@next/mdx": "^16.3.5",
     "@noble/hashes": "^2.2.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
@@ -90,7 +90,7 @@
     "lucide-react": "^1.28.0",
     "meilisearch": "^0.60.0",
     "micromark-util-decode-numeric-character-reference": "^2.0.2",
-    "next": "16.2.12",
+    "next": "16.3.5",
     "next-mdx-remote": "^6.0.0",
     "next-themes": "^0.4.6",
     "node-cron": "^4.6.0",
@@ -113,7 +113,7 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "remark-rehype": "^11.1.2",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "sugar-high": "^1.2.1",
     "tailwind-merge": "^3.6.0",
     "time2fa": "^1.4.2",
@@ -168,7 +168,7 @@
     "autoprefixer": "^10.5.4",
     "dotenv": "^17.4.2",
     "eslint": "^10.8.0",
-    "eslint-config-next": "^16.2.12",
+    "eslint-config-next": "^16.3.5",
     "eslint-config-prettier": "^10.1.8",
     "eslint-import-resolver-typescript": "^4.4.5",
     "eslint-plugin-import": "^2.32.0",
@@ -191,7 +191,7 @@
     "stylelint-order": "^8.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "packageManager": "pnpm@11.9.0+sha512.bd682d5d03fe525ef7c9fd6780c6884d1e756ac4c9c9fe00c538782824310dcf90e3ddc4f53835f06dfaebd5085e41855e0bcbb3b60de2ac5bbab89e5036f03b"
 }
