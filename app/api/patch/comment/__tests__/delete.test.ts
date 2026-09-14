@@ -4,9 +4,8 @@ const {
   findUniqueMock,
   transactionMock,
   queryRawMock,
-  subtreeFindManyMock,
   deleteMock,
-  messageDeleteManyMock,
+  cleanupNotificationsMock,
   deletePendingModerationTasksMock,
   deletePendingAppealsMock,
   deleteOrphanReportsMock,
@@ -16,9 +15,8 @@ const {
   findUniqueMock: vi.fn(),
   transactionMock: vi.fn(),
   queryRawMock: vi.fn(),
-  subtreeFindManyMock: vi.fn(),
   deleteMock: vi.fn(),
-  messageDeleteManyMock: vi.fn(),
+  cleanupNotificationsMock: vi.fn(),
   deletePendingModerationTasksMock: vi.fn(),
   deletePendingAppealsMock: vi.fn(),
   deleteOrphanReportsMock: vi.fn(),
@@ -28,8 +26,7 @@ const {
 
 const transactionClient = {
   $queryRaw: queryRawMock,
-  patch_comment: { findMany: subtreeFindManyMock, delete: deleteMock },
-  user_message: { deleteMany: messageDeleteManyMock }
+  patch_comment: { delete: deleteMock }
 }
 
 vi.mock('~/prisma/index', () => ({
@@ -37,6 +34,10 @@ vi.mock('~/prisma/index', () => ({
     patch_comment: { findUnique: findUniqueMock },
     $transaction: transactionMock
   }
+}))
+
+vi.mock('~/app/api/patch/comment/notifications', () => ({
+  cleanupCommentNotifications: cleanupNotificationsMock
 }))
 
 vi.mock('~/server/moderation/submit', () => ({
@@ -70,20 +71,11 @@ const baseComment = {
   patch: { unique_id: 'patch-10' }
 }
 
-const rootRow = {
-  id: 11,
-  parent_id: null,
-  resource_id: null,
-  parent: null,
-  resource: null
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   queryRawMock.mockResolvedValue([{ id: 11 }])
-  subtreeFindManyMock.mockResolvedValue([rootRow])
   deleteMock.mockResolvedValue({})
-  messageDeleteManyMock.mockResolvedValue({ count: 1 })
+  cleanupNotificationsMock.mockResolvedValue(undefined)
   deleteOrphanReportsMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
@@ -91,143 +83,45 @@ beforeEach(() => {
   )
 })
 
-describe('deleteComment 通知批量清理', () => {
-  it('资源评论子树按资源页深链批量清理, recipient 为上传者+父作者', async () => {
-    findUniqueMock.mockResolvedValue({ ...baseComment, resource_id: 5 })
+describe('deleteComment 通知清理', () => {
+  it('整棵子树的通知在行删除前一次清理', async () => {
+    findUniqueMock.mockResolvedValue(baseComment)
     queryRawMock.mockResolvedValue([{ id: 11 }, { id: 12 }])
-    subtreeFindManyMock.mockResolvedValue([
-      { ...rootRow, resource_id: 5, resource: { user_id: 3 } },
-      {
-        id: 12,
-        parent_id: 11,
-        resource_id: 5,
-        parent: { user_id: 7 },
-        resource: { user_id: 3 }
-      }
-    ])
 
     const result = await deleteComment({ commentId: 11 }, 7, 1)
 
     expect(result).toEqual({})
-    expect(messageDeleteManyMock).toHaveBeenCalledTimes(1)
-    expect(messageDeleteManyMock).toHaveBeenCalledWith({
-      where: {
-        type: 'comment',
-        recipient_id: { in: [3, 7] },
-        link: {
-          in: [
-            '/patch-10/resource/5?commentId=11',
-            '/patch-10/resource/5?commentId=12'
-          ]
-        }
-      }
-    })
+    expect(cleanupNotificationsMock).toHaveBeenCalledTimes(1)
+    expect(cleanupNotificationsMock).toHaveBeenCalledWith(
+      transactionClient,
+      [11, 12]
+    )
+    // 行删除后深链无从重建, 清理必须在 delete 之前
+    expect(cleanupNotificationsMock.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteMock.mock.invocationCallOrder[0]
+    )
   })
 
-  it('普通评论子树按游戏页深链批量清理 (回归)', async () => {
-    findUniqueMock.mockResolvedValue(baseComment)
-    queryRawMock.mockResolvedValue([{ id: 11 }, { id: 12 }])
-    subtreeFindManyMock.mockResolvedValue([
-      rootRow,
-      {
-        id: 12,
-        parent_id: 11,
-        resource_id: null,
-        parent: { user_id: 9 },
-        resource: null
-      }
-    ])
-
-    await deleteComment({ commentId: 11 }, 7, 1)
-
-    expect(messageDeleteManyMock).toHaveBeenCalledWith({
-      where: {
-        type: 'comment',
-        recipient_id: { in: [9] },
-        link: {
-          in: [
-            '/patch-10?tab=comments&commentId=11',
-            '/patch-10?tab=comments&commentId=12'
-          ]
-        }
-      }
-    })
-  })
-
-  it('混合 resource_id 存量子树按行构造 link, 非根资源行不加上传者', async () => {
-    findUniqueMock.mockResolvedValue(baseComment)
-    queryRawMock.mockResolvedValue([{ id: 11 }, { id: 12 }])
-    subtreeFindManyMock.mockResolvedValue([
-      rootRow,
-      {
-        id: 12,
-        parent_id: 11,
-        resource_id: 42,
-        parent: { user_id: 9 },
-        resource: { user_id: 3 }
-      }
-    ])
-
-    await deleteComment({ commentId: 11 }, 7, 1)
-
-    expect(messageDeleteManyMock).toHaveBeenCalledWith({
-      where: {
-        type: 'comment',
-        recipient_id: { in: [9] },
-        link: {
-          in: [
-            '/patch-10?tab=comments&commentId=11',
-            '/patch-10/resource/42?commentId=12'
-          ]
-        }
-      }
-    })
-  })
-
-  it('无回复的顶层普通评论不做通知清理', async () => {
+  it('无回复的顶层评论同样清理 (点赞/提及通知挂在根评论上)', async () => {
     findUniqueMock.mockResolvedValue(baseComment)
 
     await deleteComment({ commentId: 11 }, 7, 1)
 
-    expect(messageDeleteManyMock).not.toHaveBeenCalled()
+    expect(cleanupNotificationsMock).toHaveBeenCalledWith(
+      transactionClient,
+      [11]
+    )
   })
 })
 
 describe('deleteComment 级联删除', () => {
-  it('只对根执行一次 delete, 子树行按收集到的 id 一次取回', async () => {
+  it('只对根执行一次 delete, 子树 id 一次收集后复用', async () => {
     findUniqueMock.mockResolvedValue(baseComment)
     queryRawMock.mockResolvedValue([{ id: 11 }, { id: 12 }, { id: 13 }])
-    subtreeFindManyMock.mockResolvedValue([
-      rootRow,
-      {
-        id: 12,
-        parent_id: 11,
-        resource_id: null,
-        parent: { user_id: 7 },
-        resource: null
-      },
-      {
-        id: 13,
-        parent_id: 12,
-        resource_id: null,
-        parent: { user_id: 9 },
-        resource: null
-      }
-    ])
 
     await deleteComment({ commentId: 11 }, 7, 1)
 
-    expect(subtreeFindManyMock).toHaveBeenCalledTimes(1)
-    expect(subtreeFindManyMock).toHaveBeenCalledWith({
-      where: { id: { in: [11, 12, 13] } },
-      select: {
-        id: true,
-        parent_id: true,
-        resource_id: true,
-        parent: { select: { user_id: true } },
-        resource: { select: { user_id: true } }
-      }
-    })
+    expect(queryRawMock).toHaveBeenCalledTimes(1)
     expect(deleteMock).toHaveBeenCalledTimes(1)
     expect(deleteMock).toHaveBeenCalledWith({ where: { id: 11 } })
     expect(deletePendingModerationTasksMock).toHaveBeenCalledWith(

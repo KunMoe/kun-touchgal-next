@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminDeleteCommentSchema } from '~/validations/admin'
 import { collectCommentSubtreeIds } from '~/app/api/patch/comment/subtree'
+import { cleanupCommentNotifications } from '~/app/api/patch/comment/notifications'
 import { deletePendingModerationTasks } from '~/server/moderation/submit'
 import { deletePendingAppeals } from '~/server/moderation/appeal'
 import { deleteOrphanReports } from '~/server/report/pending'
@@ -77,6 +78,9 @@ export const deleteComment = async (
     // 级联删除会带走整棵回复子树, 删除前先收集全部后代 id
     // 以清理它们尚未有最终裁决的审核任务
     deletedIds = await collectCommentSubtreeIds(targetIds, prisma)
+
+    // 行删除后深链即成死链, 通知须在删除前按 link 清理 (三类口径见 notifications.ts)
+    await cleanupCommentNotifications(prisma, deletedIds)
 
     await prisma.patch_comment.deleteMany({
       where: {
