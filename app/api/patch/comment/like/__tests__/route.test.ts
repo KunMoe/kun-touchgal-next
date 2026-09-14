@@ -16,7 +16,8 @@ const {
   transactionMock,
   createDedupMessageMock,
   invalidateUserSessionMock,
-  invalidateUnreadMock
+  invalidateUnreadMock,
+  invalidateCommentCacheMock
 } = vi.hoisted(() => ({
   parsePutBodyMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
@@ -32,7 +33,8 @@ const {
   transactionMock: vi.fn(),
   createDedupMessageMock: vi.fn(),
   invalidateUserSessionMock: vi.fn(),
-  invalidateUnreadMock: vi.fn()
+  invalidateUnreadMock: vi.fn(),
+  invalidateCommentCacheMock: vi.fn()
 }))
 
 const transactionClient = {
@@ -80,6 +82,10 @@ vi.mock('~/app/api/message/unread/cache', () => ({
   invalidateUnread: invalidateUnreadMock
 }))
 
+vi.mock('~/app/api/patch/comment/cache', () => ({
+  invalidatePatchCommentCache: invalidateCommentCacheMock
+}))
+
 vi.mock('~/prisma/index', () => ({
   prisma: {
     patch_comment: { findUnique: commentFindUniqueMock },
@@ -106,6 +112,7 @@ beforeEach(() => {
     status: 0,
     content: '说得好',
     resource_id: null,
+    patch_id: 7,
     patch: { unique_id: 'kun123' }
   })
   executeRawMock.mockResolvedValue(1)
@@ -116,6 +123,7 @@ beforeEach(() => {
   createDedupMessageMock.mockResolvedValue(undefined)
   invalidateUserSessionMock.mockResolvedValue(undefined)
   invalidateUnreadMock.mockResolvedValue(undefined)
+  invalidateCommentCacheMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
       callback(transactionClient)
@@ -171,6 +179,11 @@ describe('PUT /api/patch/comment/like', () => {
     expect(userUpdateMock.mock.invocationCallOrder[0]).toBeLessThan(
       invalidateUnreadMock.mock.invocationCallOrder[0]
     )
+    // 分页共享缓存内嵌 likeCount, 同样提交后失效, 否则与读路径叠加的 isLike 矛盾
+    expect(invalidateCommentCacheMock).toHaveBeenCalledWith(7)
+    expect(userUpdateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateCommentCacheMock.mock.invocationCallOrder[0]
+    )
   })
 
   it('unlikes via the deleteMany count and still clears the legacy notification link', async () => {
@@ -198,6 +211,8 @@ describe('PUT /api/patch/comment/like', () => {
     })
     // 取消点赞删除通知同样改变作者未读状态, 亦须失效
     expect(invalidateUnreadMock).toHaveBeenCalledWith(1)
+    // 取消点赞同样改变 likeCount
+    expect(invalidateCommentCacheMock).toHaveBeenCalledWith(7)
   })
 
   it('returns a business message when the comment vanishes concurrently (P2003)', async () => {
@@ -212,6 +227,8 @@ describe('PUT /api/patch/comment/like', () => {
     await expect(res.json()).resolves.toBe('未找到评论')
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
+    // 点赞未落库, 不应白白跳变版本号压低命中率
+    expect(invalidateCommentCacheMock).not.toHaveBeenCalled()
   })
 
   it('rethrows non-P2003 transaction failures', async () => {

@@ -8,6 +8,7 @@ import { createDedupMessage } from '~/app/api/utils/message'
 import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 
 const commentIdSchema = z.object({
   commentId: z.coerce
@@ -117,6 +118,12 @@ const toggleCommentLike = async (
   await invalidateUserSession(comment.user_id)
   // 点赞创建通知、取消点赞删除通知, 两支都改评论作者的未读状态, 提交后失效 (L-01)
   await invalidateUnread(comment.user_id).catch(() => undefined)
+  // 评论分页共享缓存内嵌 likeCount 且有 UI 消费方 (CommentLike 直接渲染计数),
+  // 不失效会与读路径按 uid 叠加的 isLike 矛盾 (红心已亮但计数仍是旧值)。点赞是该缓存
+  // 的高频写路径, 此处明知会压低命中率仍选一致性 (取舍同 resource/like, 与 download
+  // 计数的相反裁定之别在于后者无 UI 消费方); 若日后命中率不可接受, 出路是把 likeCount
+  // 移出缓存载荷改由读路径补齐, 而不是退回不失效
+  await invalidatePatchCommentCache(comment.patch_id)
   return response
 }
 
