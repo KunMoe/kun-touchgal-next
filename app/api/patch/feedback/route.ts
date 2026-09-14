@@ -8,22 +8,24 @@ import { prisma } from '~/prisma'
 
 const createFeedback = async (
   input: z.infer<typeof createPatchFeedbackSchema>,
-  uid: number
+  uid: number,
+  username: string
 ) => {
   const patch = await prisma.patch.findUnique({
-    where: { id: input.patchId }
+    where: { id: input.patchId },
+    select: { name: true, unique_id: true }
   })
-  const user = await prisma.user.findUnique({
-    where: { id: uid }
-  })
+  if (!patch) {
+    return '未找到 Galgame'
+  }
 
-  const STATIC_CONTENT = `${user?.name} 对「${patch?.name}」提交了反馈\n\n${input.content}`
+  const STATIC_CONTENT = `${username} 对「${patch.name}」提交了反馈\n\n${input.content}`
 
   await createMessage({
     type: 'feedback',
     content: STATIC_CONTENT,
     sender_id: uid,
-    link: patch?.unique_id ? `/${patch.unique_id}` : ''
+    link: `/${patch.unique_id}`
   })
 
   return {}
@@ -39,6 +41,6 @@ export const POST = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
 
-  const response = await createFeedback(input, payload.uid)
+  const response = await createFeedback(input, payload.uid, payload.name)
   return NextResponse.json(response)
 }
