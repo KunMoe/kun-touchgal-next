@@ -30,10 +30,6 @@ export const ADMIN_LOG_TYPE_MAP: Record<string, string> = {
   update: '更新'
 }
 
-export const ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/wmv', 'video/webm']
-
-export const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.wmv', '.webm']
-
 export const ADMIN_STATS_MAP: Record<keyof OverviewData, string> = {
   newUser: '新注册用户',
   newActiveUser: '新活跃用户',

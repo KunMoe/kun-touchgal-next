@@ -1,4 +1,3 @@
-import { createReadStream } from 'fs'
 import { dirname } from 'path'
 import { S3Client } from '@aws-sdk/client-s3'
 import { readFile, rm } from 'fs/promises'
@@ -32,25 +31,6 @@ export const s3 = new S3Client({
 })
 
 const Bucket = process.env.KUN_VISUAL_NOVEL_S3_STORAGE_BUCKET_NAME!
-
-export const uploadVideoToS3 = async (
-  filePath: string,
-  fileName: string,
-  mimeType: string,
-  uniqueId: string
-) => {
-  const fileStream = createReadStream(filePath)
-
-  const bucketName = `touchgal/galgame/${uniqueId}/video/${fileName}`
-
-  const uploadCommand = new PutObjectCommand({
-    Bucket: process.env.KUN_VISUAL_NOVEL_S3_STORAGE_BUCKET_NAME!,
-    Key: bucketName,
-    Body: fileStream,
-    ContentType: mimeType
-  })
-  await s3.send(uploadCommand)
-}
 
 export const uploadImageToS3 = async (key: string, fileBuffer: Buffer) => {
   const uploadCommand = new PutObjectCommand({
