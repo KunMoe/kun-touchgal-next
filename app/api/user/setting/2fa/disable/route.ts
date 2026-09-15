@@ -2,20 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Totp } from 'time2fa'
 import { prisma } from '~/prisma/index'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { disableUser2FASchema } from '~/validations/user'
 import { disable2FA } from '../disable'
 import { consumeTwoFactorBackupCode } from '~/app/api/utils/twoFactorBackupCode'
-
-const parseDisable2FABody = async (req: NextRequest) => {
-  const body = await req.json().catch(() => null)
-  const result = disableUser2FASchema.safeParse(body)
-
-  if (!result.success) {
-    return result.error.issues.map((issue) => issue.message).join('\n')
-  }
-
-  return result.data
-}
 
 const verifyAndDisable2FA = async (
   uid: number,
@@ -66,7 +56,7 @@ export const POST = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
 
-  const input = await parseDisable2FABody(req)
+  const input = await kunParsePostBody(req, disableUser2FASchema)
   if (typeof input === 'string') {
     return NextResponse.json(input)
   }

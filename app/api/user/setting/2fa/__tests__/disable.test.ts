@@ -54,10 +54,12 @@ vi.mock('~/app/api/user/setting/2fa/disable', () => ({
 
 import { POST } from '~/app/api/user/setting/2fa/disable/route'
 
-const createRequest = () =>
+const createRequest = (
+  body: unknown = { token: '123456', isBackupCode: true }
+) =>
   new Request('http://localhost/api/user/setting/2fa/disable', {
     method: 'POST',
-    body: JSON.stringify({ token: '123456', isBackupCode: true })
+    body: JSON.stringify(body)
   }) as unknown as Parameters<typeof POST>[0]
 
 beforeEach(() => {
@@ -102,5 +104,14 @@ describe('POST /api/user/setting/2fa/disable', () => {
 
     await expect(response.json()).resolves.toBe('验证码无效')
     expect(disable2FAMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid token with the shared parser message', async () => {
+    const response = await POST(
+      createRequest({ token: '12', isBackupCode: false })
+    )
+
+    await expect(response.json()).resolves.toBe('2FA 验证码必须为 6 位数字')
+    expect(findUniqueMock).not.toHaveBeenCalled()
   })
 })
