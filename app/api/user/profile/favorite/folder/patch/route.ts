@@ -36,22 +36,22 @@ const getPatchByFolder = async (
 
   const { page, limit } = input
   const offset = (page - 1) * limit
+  const where = { folder_id: input.folderId }
 
-  const total = await prisma.user_patch_favorite_folder_relation.count({
-    where: { folder_id: input.folderId }
-  })
-
-  const relations = await prisma.user_patch_favorite_folder_relation.findMany({
-    where: { folder_id: input.folderId },
-    include: {
-      patch: {
-        select: GalgameCardSelectField
-      }
-    },
-    skip: offset,
-    take: limit,
-    orderBy: [{ created: 'desc' }, { id: 'asc' }]
-  })
+  const [total, relations] = await Promise.all([
+    prisma.user_patch_favorite_folder_relation.count({ where }),
+    prisma.user_patch_favorite_folder_relation.findMany({
+      where,
+      include: {
+        patch: {
+          select: GalgameCardSelectField
+        }
+      },
+      skip: offset,
+      take: limit,
+      orderBy: [{ created: 'desc' }, { id: 'asc' }]
+    })
+  ])
 
   const patches: GalgameCard[] = relations.map((relation) => ({
     id: relation.patch.id,
