@@ -1,12 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunParsePostBody, kunParsePutBody } from '~/app/api/utils/parseQuery'
 import { prisma } from '~/prisma'
 import { patchCompanyChangeSchema } from '~/validations/patch'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
-import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
+import { enqueueSearchOutbox } from '~/server/search/sync'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
+import { createPatchRelationHandler } from '~/app/api/patch/introduction/_relationRoute'
 
 const handlePatchCompanyAction = (type: 'add' | 'delete') => {
   const isAdd = type === 'add'
@@ -51,72 +49,16 @@ const handlePatchCompanyAction = (type: 'add' | 'delete') => {
   }
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, patchCompanyChangeSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
+export const POST = createPatchRelationHandler({
+  schema: patchCompanyChangeSchema,
+  parseBody: kunParsePostBody,
+  mutate: handlePatchCompanyAction('add'),
+  invalidateListCache: invalidateCompanyListCache
+})
 
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (payload.role < 3) {
-    return NextResponse.json('本页面仅管理员可访问')
-  }
-
-  const patch = await prisma.patch.findUnique({
-    where: { id: input.patchId },
-    select: { unique_id: true }
-  })
-  if (!patch) {
-    return NextResponse.json('未找到 Galgame')
-  }
-
-  const changed = await handlePatchCompanyAction('add')(input)
-  if (changed) {
-    await invalidateCompanyListCache()
-    queueSearchSync(input.patchId)
-    try {
-      await invalidatePatchContentCache(patch.unique_id)
-    } catch {
-      // 缓存失效失败不影响所属会社更新结果
-    }
-  }
-  return NextResponse.json({})
-}
-
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, patchCompanyChangeSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (payload.role < 3) {
-    return NextResponse.json('本页面仅管理员可访问')
-  }
-
-  const patch = await prisma.patch.findUnique({
-    where: { id: input.patchId },
-    select: { unique_id: true }
-  })
-  if (!patch) {
-    return NextResponse.json('未找到 Galgame')
-  }
-
-  const changed = await handlePatchCompanyAction('delete')(input)
-  if (changed) {
-    await invalidateCompanyListCache()
-    queueSearchSync(input.patchId)
-    try {
-      await invalidatePatchContentCache(patch.unique_id)
-    } catch {
-      // 缓存失效失败不影响所属会社更新结果
-    }
-  }
-  return NextResponse.json({})
-}
+export const PUT = createPatchRelationHandler({
+  schema: patchCompanyChangeSchema,
+  parseBody: kunParsePutBody,
+  mutate: handlePatchCompanyAction('delete'),
+  invalidateListCache: invalidateCompanyListCache
+})

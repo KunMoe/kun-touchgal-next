@@ -5,7 +5,7 @@ import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { prisma } from '~/prisma/index'
 import { gatherAndEnsurePatchCompanies } from '../_gatherCompanies'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
+import { invalidatePatchRelationCaches } from '~/app/api/patch/introduction/_relationRoute'
 import { queueSearchSync } from '~/server/search/sync'
 
 const fetchCompanySchema = z.object({
@@ -67,13 +67,12 @@ export const POST = async (req: NextRequest) => {
 
   // 非事务多步写入为尽力而为语义（与旧 vndb 路径一致），崩溃窗口由每日对账兜底
   if (result.changed) {
-    await invalidateCompanyListCache()
+    await invalidatePatchRelationCaches(
+      patch.unique_id,
+      invalidateCompanyListCache
+    )
+    // 此处的抓取写入不在事务内入队, 故必须用会 upsert 的 queueSearchSync
     queueSearchSync(input.patchId)
-    try {
-      await invalidatePatchContentCache(patch.unique_id)
-    } catch {
-      // 缓存失效失败不影响会社关联结果
-    }
   }
 
   const companies = await prisma.patch_company.findMany({
