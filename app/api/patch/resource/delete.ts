@@ -11,6 +11,7 @@ import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
 import { deletePendingModerationTasks } from '~/server/moderation/submit'
+import { deletePendingAppeals } from '~/server/moderation/appeal'
 import { deleteOrphanReports } from '~/server/report/pending'
 import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
 import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
@@ -89,6 +90,7 @@ export const deleteResource = async (
         where: { id: input.resourceId }
       })
       await deletePendingModerationTasks('resource', input.resourceId, prisma)
+      await deletePendingAppeals('resource', input.resourceId, prisma)
       await deleteOrphanReports('comment', prisma)
       affectedUniqueId = await recalcPatchType(patchResource.patch_id, prisma)
       // 事务性入队：与补丁变更原子提交，关闭崩溃丢失窗口

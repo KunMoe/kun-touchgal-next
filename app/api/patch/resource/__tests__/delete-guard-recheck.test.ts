@@ -86,6 +86,10 @@ vi.mock('~/server/moderation/submit', () => ({
   deletePendingModerationTasks: deletePendingModerationTasksMock
 }))
 
+vi.mock('~/server/moderation/appeal', () => ({
+  deletePendingAppeals: vi.fn()
+}))
+
 vi.mock('~/server/report/pending', () => ({
   deleteOrphanReports: deleteOrphanReportsMock
 }))

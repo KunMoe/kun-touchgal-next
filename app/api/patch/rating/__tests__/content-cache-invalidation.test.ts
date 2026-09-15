@@ -9,6 +9,7 @@ const {
   preScreenMock,
   createTaskMock,
   deletePendingMock,
+  deletePendingAppealsMock,
   deleteOrphanReportsMock,
   invalidateContentMock,
   invalidateByIdMock
@@ -21,6 +22,7 @@ const {
   preScreenMock: vi.fn(),
   createTaskMock: vi.fn(async () => undefined),
   deletePendingMock: vi.fn(async () => undefined),
+  deletePendingAppealsMock: vi.fn(async () => undefined),
   deleteOrphanReportsMock: vi.fn(async () => undefined),
   invalidateContentMock: vi.fn(async () => undefined),
   invalidateByIdMock: vi.fn(async () => undefined)
@@ -48,6 +50,10 @@ vi.mock('~/server/moderation/submit', () => ({
 vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCache: invalidateContentMock,
   invalidatePatchContentCacheByPatchId: invalidateByIdMock
+}))
+
+vi.mock('~/server/moderation/appeal', () => ({
+  deletePendingAppeals: deletePendingAppealsMock
 }))
 
 vi.mock('~/server/report/pending', () => ({
@@ -124,5 +130,26 @@ describe('deletePatchRating 缓存失效 (M-05)', () => {
     expect(recomputeMock).toHaveBeenCalledWith(10, tx)
     expect(invalidateByIdMock).toHaveBeenCalledWith(10)
     expect(result).toEqual({})
+  })
+})
+
+// content_id 无外键, 行删除不触发任何级联; 申诉挂的 task 是 rejected 状态,
+// 不在 deletePendingModerationTasks 的删除集里, 故须在删除方显式清理
+describe('deletePatchRating 清理未处理申诉', () => {
+  it('删除评分在同事务内清理该评分的 pending 申诉', async () => {
+    findUniqueMock.mockResolvedValue({
+      id: 1,
+      patch_id: 10,
+      user_id: 7,
+      status: 0
+    })
+
+    await deletePatchRating({ ratingId: 1 }, 7, 1)
+
+    expect(deletePendingMock).toHaveBeenCalledWith('rating', 1, tx)
+    expect(deletePendingAppealsMock).toHaveBeenCalledWith('rating', 1, tx)
+    expect(deleteMock.mock.invocationCallOrder[0]).toBeLessThan(
+      deletePendingAppealsMock.mock.invocationCallOrder[0]
+    )
   })
 })

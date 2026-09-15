@@ -370,3 +370,29 @@ describe('资源删除清理其评论的 pending 举报', () => {
     ).toBeLessThan(deleteOrphanReportsMock.mock.invocationCallOrder[0])
   })
 })
+
+// cleanupResourceCommentDerivatives 只清该资源「评论」的申诉; 资源行自身的申诉
+// content_id 无外键、挂的 task 是 rejected 态, 级联与 deletePendingModerationTasks
+// 都带不走, 须在删除方显式清理
+describe('资源删除清理资源自身的 pending 申诉', () => {
+  it('用户删除: 行删除后清理该资源的 pending 申诉', async () => {
+    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
+    transactionResourceDeleteMock.mockResolvedValue(buildDeleted())
+
+    await deleteResource({ resourceId: 1 }, 7, 2)
+
+    expect(deletePendingModerationTasksMock).toHaveBeenCalledWith(
+      'resource',
+      1,
+      transactionClient
+    )
+    expect(deletePendingAppealsMock).toHaveBeenCalledWith(
+      'resource',
+      1,
+      transactionClient
+    )
+    expect(
+      transactionResourceDeleteMock.mock.invocationCallOrder[0]
+    ).toBeLessThan(deletePendingAppealsMock.mock.invocationCallOrder[0])
+  })
+})
