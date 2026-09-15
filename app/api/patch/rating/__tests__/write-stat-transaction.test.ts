@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Prisma } from '~/prisma/generated/prisma/client'
 
 const {
   findUniqueMock,
@@ -89,6 +90,12 @@ const rating = {
   _count: { like: 0 },
   like: []
 }
+
+const prismaKnownError = (code: string) =>
+  new Prisma.PrismaClientKnownRequestError('constraint failed', {
+    code,
+    clientVersion: 'test'
+  })
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -191,5 +198,33 @@ describe('public patch rating write transactions', () => {
     await createPatchRating(createInput, 7, 3)
 
     expect(preScreenTextMock).toHaveBeenCalledWith('summary', 3)
+  })
+
+  it('并发重复评价撞唯一约束时返回业务错误而非抛出', async () => {
+    findUniqueMock.mockResolvedValueOnce(null)
+    createMock.mockRejectedValueOnce(prismaKnownError('P2002'))
+
+    await expect(createPatchRating(createInput, 7, 2)).resolves.toBe(
+      '您已经评价过该游戏'
+    )
+    expect(events).toEqual(['transaction-start', 'transaction-rollback'])
+  })
+
+  it('补丁外键失效时返回未找到 Galgame', async () => {
+    findUniqueMock.mockResolvedValueOnce(null)
+    createMock.mockRejectedValueOnce(prismaKnownError('P2003'))
+
+    await expect(createPatchRating(createInput, 7, 2)).resolves.toBe(
+      '未找到 Galgame'
+    )
+  })
+
+  it('无关的 prisma 错误继续抛出', async () => {
+    findUniqueMock.mockResolvedValueOnce(null)
+    createMock.mockRejectedValueOnce(new Error('connection lost'))
+
+    await expect(createPatchRating(createInput, 7, 2)).rejects.toThrow(
+      'connection lost'
+    )
   })
 })
