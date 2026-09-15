@@ -57,7 +57,7 @@ const mockRequest = new Request('http://localhost') as unknown as Parameters<
 beforeEach(() => {
   vi.clearAllMocks()
   parsePostMock.mockResolvedValue({ username: 'Kun' })
-  verifyHeaderCookieMock.mockResolvedValue({ uid: 42 })
+  verifyHeaderCookieMock.mockResolvedValue({ uid: 42, name: 'OldName' })
   findFirstMock.mockResolvedValue(null)
   updateManyMock.mockResolvedValue({ count: 1 })
   invalidateUserSessionMock.mockResolvedValue(undefined)
@@ -69,10 +69,11 @@ describe('POST /api/user/setting/username', () => {
     await expect(res.json()).resolves.toEqual({})
 
     // 守卫必须落在 WHERE 里: 退回读余额 + 应用层 if + 无条件 update 就是读后写竞态,
-    // 并发改名会把余额扣成负数
+    // 并发改名会把余额扣成负数. name 守卫同样不能只留在应用层 —— 它兜的是
+    // payload.name 陈旧时的重复扣分
     expect(updateMock).not.toHaveBeenCalled()
     expect(updateManyMock).toHaveBeenCalledWith({
-      where: { id: 42, moemoepoint: { gte: 30 } },
+      where: { id: 42, moemoepoint: { gte: 30 }, name: { not: 'Kun' } },
       data: { name: 'Kun', moemoepoint: { increment: -30 } }
     })
     expect(invalidateUserSessionMock).toHaveBeenCalledWith(42)
@@ -142,6 +143,42 @@ describe('POST /api/user/setting/username', () => {
     const res = await POST(mockRequest)
     await expect(res.json()).resolves.toBe('您的用户名已经有人注册了, 请修改')
 
+    expect(updateManyMock).not.toHaveBeenCalled()
+    expect(invalidateUserSessionMock).not.toHaveBeenCalled()
+  })
+
+  // 预检不排除自身时, ILIKE 命中的是调用者本人那一行, 只改大小写的改名恒被判成
+  // 「已经有人注册」, 永远做不成. 这里按 where 是否带 id 过滤分流, 模拟库里除了
+  // 自己没有别的同名用户
+  it('lets a user change the case of their own name', async () => {
+    parsePostMock.mockResolvedValue({ username: 'KUN' })
+    verifyHeaderCookieMock.mockResolvedValue({ uid: 42, name: 'Kun' })
+    findFirstMock.mockImplementation(
+      (args: { where: { id?: { not: number } } }) =>
+        Promise.resolve(args.where.id?.not === 42 ? null : { id: 42 })
+    )
+
+    const res = await POST(mockRequest)
+    await expect(res.json()).resolves.toEqual({})
+
+    expect(findFirstMock).toHaveBeenCalledWith({
+      where: { name: { equals: 'KUN', mode: 'insensitive' }, id: { not: 42 } },
+      select: { id: true }
+    })
+    expect(updateManyMock).toHaveBeenCalledWith({
+      where: { id: 42, moemoepoint: { gte: 30 }, name: { not: 'KUN' } },
+      data: { name: 'KUN', moemoepoint: { increment: -30 } }
+    })
+  })
+
+  // 排除自身后就没人再挡「名字根本没变」的提交了, 不在扣费前拦住会白扣 30 萌萌点
+  it('rejects an unchanged name before charging', async () => {
+    verifyHeaderCookieMock.mockResolvedValue({ uid: 42, name: 'Kun' })
+
+    const res = await POST(mockRequest)
+    await expect(res.json()).resolves.toBe('新用户名与当前用户名相同')
+
+    expect(findFirstMock).not.toHaveBeenCalled()
     expect(updateManyMock).not.toHaveBeenCalled()
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
   })
