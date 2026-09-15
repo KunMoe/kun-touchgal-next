@@ -1,8 +1,12 @@
 import type { Prisma } from '~/prisma/generated/prisma/client'
 
-// 镜像 cookie 未验签且长度不受服务端约束, 上限同时压住 NOT IN 的宽度
-// 与缓存键的长度; 512 覆盖现网最大值 (328) 并留余量
-export const MAX_BLOCKED_TAG_IDS = 512
+// 每用户屏蔽标签数的唯一上限: 写路径 (addBlockedTag) 与镜像 cookie 解析共用,
+// 两处同值才不会出现「cookie 截断到上限、DB 回落却是全量」的可见性分叉。同时
+// 压住 NOT IN 的宽度与鉴权缓存里 blocked_tag_ids 的体积 (每次鉴权都要反序列化)。
+// 400 的来头是浏览器单 cookie 4096 字节: 镜像 cookie 名占 50 字节, js-cookie 把
+// 逗号编码成 %2C, 400 个 5 位 id 约 3.2KB 仍有余量 —— 超限时浏览器静默拒写、旧值
+// 残留, 新屏蔽将永不生效。400 亦覆盖现网最大值 (328)
+export const MAX_BLOCKED_TAG_IDS = 400
 
 // tag_id 是 int4, 越界值不会被 Prisma 拦下, 到 Postgres 抛 P2020 冒泡成 500
 // (同类先例见 validations/edit.ts 的 bangumi_id / steam_id)
