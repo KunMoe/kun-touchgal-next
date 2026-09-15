@@ -37,12 +37,6 @@
       "link": "https://www.moyu.moe"
     },
     {
-      "name": "Singureo",
-      "avatar": "https://www.singureo.com/favicon.ico",
-      "label": "一个简洁美观人性化的ACG资源站",
-      "link": "https://www.singureo.com/"
-    },
-    {
       "name": "GGS",
       "avatar": "https://gal.saop.cc/img/logo.svg",
       "label": "LINK START!",
@@ -101,6 +95,18 @@
       "avatar": "https://galzy.moe/favicon.ico",
       "label": "Galgame 资源站, 这里收录了大部分电脑端与手机端的汉化 Galgame",
       "link": "https://galzy.moe"
+    },
+    {
+      "name": "次元宅社",
+      "avatar": "https://www.acgnet.xyz/wp-content/uploads/2025/02/20250206124629952-logoacg.png",
+      "label": "无数ACGN资源为您一网打尽！公益性的资源分享平台，致力于构建一个开放而有温度的空间，让下载更自然，让创作更自由，让共鸣真正发生。",
+      "link": "https://www.acgnet.xyz"
+    },
+    {
+      "name": "SakuGAL樱之歌",
+      "avatar": "https://sakugal.com/favicon.ico",
+      "label": "珍藏每一段恋之叙事",
+      "link": "https://sakugal.com"
     }
   ]
 }
