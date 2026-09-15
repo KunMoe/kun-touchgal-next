@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Prisma } from '~/prisma/generated/prisma/client'
 
 const {
   parsePostMock,
@@ -121,6 +122,28 @@ describe('POST /api/user/follow/follow', () => {
     const res = await followRoute(mockRequest)
     await expect(res.json()).resolves.toBe('您不能关注自己')
     expect(transactionMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+  })
+
+  it('目标用户不存在 (P2003) 返回业务错误而非 500', async () => {
+    relationCreateManyMock.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('FK violation', {
+        code: 'P2003',
+        clientVersion: 'test'
+      })
+    )
+
+    const res = await followRoute(mockRequest)
+    await expect(res.json()).resolves.toBe('未找到用户')
+    // 关注未落库, 不该白白 DEL 被关注者未读缓存
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+    expect(events).toEqual(['transaction-start'])
+  })
+
+  it('非 P2003 的事务失败原样抛出', async () => {
+    relationCreateManyMock.mockRejectedValue(new Error('boom'))
+
+    await expect(followRoute(mockRequest)).rejects.toThrow('boom')
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 })
