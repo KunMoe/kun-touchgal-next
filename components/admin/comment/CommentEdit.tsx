@@ -159,7 +159,11 @@ export const CommentEdit = ({
           </Button>
         </DropdownTrigger>
         <DropdownMenu>
-          <DropdownItem key="edit" onPress={handleOpenEdit}>
+          <DropdownItem
+            key="edit"
+            isDisabled={fetchingFull}
+            onPress={handleOpenEdit}
+          >
             编辑
           </DropdownItem>
           <DropdownItem

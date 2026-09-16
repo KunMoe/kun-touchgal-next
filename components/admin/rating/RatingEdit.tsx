@@ -147,7 +147,11 @@ export const RatingEdit = ({ initialRating, onUpdated, onDeleted }: Props) => {
           </Button>
         </DropdownTrigger>
         <DropdownMenu>
-          <DropdownItem key="edit" onPress={handleOpenEdit}>
+          <DropdownItem
+            key="edit"
+            isDisabled={fetchingFull}
+            onPress={handleOpenEdit}
+          >
             编辑
           </DropdownItem>
           <DropdownItem

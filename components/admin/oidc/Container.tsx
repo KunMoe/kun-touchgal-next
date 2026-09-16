@@ -26,12 +26,7 @@ import {
   useDisclosure
 } from '@heroui/react'
 import toast from 'react-hot-toast'
-import {
-  kunFetchDelete,
-  kunFetchGet,
-  kunFetchPost,
-  kunFetchPut
-} from '~/utils/kunFetch'
+import { kunFetchDelete, kunFetchPost, kunFetchPut } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import type {
   AdminOidcClient,
@@ -75,13 +70,6 @@ export const OidcClientContainer = ({ initialClients }: Props) => {
   const formModal = useDisclosure()
   const credModal = useDisclosure()
   const deleteModal = useDisclosure()
-
-  const refresh = async () => {
-    const res = await kunFetchGet<AdminOidcClient[] | string>('/admin/oidc')
-    if (Array.isArray(res)) {
-      setClients(res)
-    }
-  }
 
   const openCreate = () => {
     setEditingId(null)
