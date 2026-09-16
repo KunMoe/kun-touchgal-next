@@ -12,7 +12,6 @@ import { preconnect, prefetchDNS } from 'react-dom'
 import { getServerUserSession } from '~/app/api/user/session/service'
 import type { Metadata, Viewport } from 'next'
 import '~/styles/index.css'
-import './actions'
 
 export const viewport: Viewport = kunViewport
 export const metadata: Metadata = generateKunMetadata()
