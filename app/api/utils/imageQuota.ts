@@ -18,11 +18,13 @@ export const claimDailyImageQuota = async (uid: number): Promise<boolean> => {
 }
 
 // 抢占成功但后续编码 / 上传失败时的补偿: 退还先前占用的 1 个额度, 使 "尝试并失败"
-// 不永久扣费. 与 claimDailyImageQuota 的 +1 对称. 用 updateMany 而非 update: 用户在
-// 补偿窗口内被删也只是 0 行受影响, 不抛错
+// 不永久扣费. 与 claimDailyImageQuota 的 +1 对称. 用 updateMany 而非 update, 且 where
+// 带 gte: 1 下限守卫 —— 抢占与退还之间隔着编码与 S3 上传, 期间用户可能被删, 计数也可能
+// 被 resetDailyTask 清零或被 admin 下调; 三者都只让退还 0 行受影响, 既不抛错也不会把
+// 计数减成负数. 形状对齐姊妹退还 patch/resource/_helper.ts
 export const refundDailyImageQuota = async (uid: number): Promise<void> => {
   await prisma.user.updateMany({
-    where: { id: uid },
+    where: { id: uid, daily_image_count: { gte: 1 } },
     data: { daily_image_count: { decrement: 1 } }
   })
 }

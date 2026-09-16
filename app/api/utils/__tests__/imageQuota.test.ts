@@ -48,14 +48,22 @@ describe('refundDailyImageQuota', () => {
     updateManyMock.mockReset()
   })
 
-  it('对称退还一个额度 (decrement)', async () => {
+  it('对称退还一个额度 (decrement), 且 where 携带下限守卫', async () => {
     updateManyMock.mockResolvedValue({ count: 1 })
 
     await refundDailyImageQuota(7)
 
+    // where 携带 gte: 1 = 下限守卫的证据: 抢占若已被日重置 / 管理员下调吞掉,
+    // 退还必须 0 行受影响, 而非把计数减成负数
     expect(updateManyMock).toHaveBeenCalledWith({
-      where: { id: 7 },
+      where: { id: 7, daily_image_count: { gte: 1 } },
       data: { daily_image_count: { decrement: 1 } }
     })
+  })
+
+  it('抢占已被日重置 / 管理员下调吞掉时 0 行受影响, 静默返回不抛错', async () => {
+    updateManyMock.mockResolvedValue({ count: 0 })
+
+    await expect(refundDailyImageQuota(7)).resolves.toBeUndefined()
   })
 })
