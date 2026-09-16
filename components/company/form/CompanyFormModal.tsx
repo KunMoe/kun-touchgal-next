@@ -57,8 +57,6 @@ export const CompanyFormModal: FC<Props> = ({
   const [brandInput, setBrandInput] = useState('')
   const [isSubmitting, startSubmit] = useTransition()
 
-  const [logoBlob, setLogoBlob] = useState<Blob | null>(null)
-
   const formDefaultValue = useMemo(() => {
     const defaultValue = {
       name: isEdit ? (company?.name ?? '') : '',
@@ -172,13 +170,11 @@ export const CompanyFormModal: FC<Props> = ({
   }
 
   const updateCompany = async (
-    companyId: number,
-    logoLink: string
+    companyId: number
   ): Promise<KunResponse<CompanyDetail>> => {
     const res = await kunFetchPut<KunResponse<CompanyDetail>>('/company', {
       ...watch(),
-      companyId,
-      logoLink
+      companyId
     })
     return res
   }
@@ -191,11 +187,9 @@ export const CompanyFormModal: FC<Props> = ({
   const handleSubmit = () => {
     startSubmit(async () => {
       try {
-        const logoLink = ''
-
         if (isEdit) {
           const companyId = company!.id
-          const res = await updateCompany(companyId, logoLink)
+          const res = await updateCompany(companyId)
           const result = await kunErrorHandlerAsync(res)
 
           toast.success('会社信息更新成功')
@@ -205,18 +199,8 @@ export const CompanyFormModal: FC<Props> = ({
           const res = await createCompany()
           const result = await kunErrorHandlerAsync(res)
 
-          if (!logoBlob) {
-            toast.success('会社创建成功')
-            onSuccess<typeof type>(result)
-            reset()
-            return
-          }
-
-          const updateRes = await updateCompany(result.id, logoLink)
-          const updateResult = await kunErrorHandlerAsync(updateRes)
-
           toast.success('会社创建成功')
-          onSuccess<typeof type>(updateResult)
+          onSuccess<typeof type>(result)
           reset()
         }
       } catch (err) {

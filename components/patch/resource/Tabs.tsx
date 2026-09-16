@@ -198,7 +198,7 @@ export const ResourceTabs = ({
     router.push(`/${resource.uniqueId}/resource/${resource.id}`)
   }
 
-  // 按压缩放动画参考首页 PatchCard (isPressable), 缩放幅度更轻 (0.99);
+  // 按压缩放动画参考首页 GalgameCard (isPressable), 缩放幅度更轻 (0.99);
   // 只在会触发整卡导航的按压上出现, 点卡内交互元素不缩放
   const renderResourceCard = (resource: PatchResource) => (
     <div
