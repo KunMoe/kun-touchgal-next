@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseGetQuery, kunParsePostBody } from '~/app/api/utils/parseQuery'
 import {
+  parseConversationId,
   getConversationMessagesSchema,
   sendPrivateMessageSchema,
   updatePrivateMessageSchema,
@@ -20,9 +21,9 @@ export const GET = async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const conversationId = parseInt(id, 10)
-  if (isNaN(conversationId)) {
-    return NextResponse.json('无效的会话 ID')
+  const conversationId = parseConversationId(id)
+  if (typeof conversationId === 'string') {
+    return NextResponse.json(conversationId)
   }
 
   const input = kunParseGetQuery(req, getConversationMessagesSchema)
@@ -48,9 +49,9 @@ export const POST = async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const conversationId = parseInt(id, 10)
-  if (isNaN(conversationId)) {
-    return NextResponse.json('无效的会话 ID')
+  const conversationId = parseConversationId(id)
+  if (typeof conversationId === 'string') {
+    return NextResponse.json(conversationId)
   }
 
   const input = await kunParsePostBody(req, sendPrivateMessageSchema)
@@ -72,9 +73,9 @@ export const PUT = async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const conversationId = parseInt(id, 10)
-  if (isNaN(conversationId)) {
-    return NextResponse.json('无效的会话 ID')
+  const conversationId = parseConversationId(id)
+  if (typeof conversationId === 'string') {
+    return NextResponse.json(conversationId)
   }
 
   const input = await kunParsePostBody(req, updatePrivateMessageSchema)
@@ -96,9 +97,9 @@ export const DELETE = async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const conversationId = parseInt(id, 10)
-  if (isNaN(conversationId)) {
-    return NextResponse.json('无效的会话 ID')
+  const conversationId = parseConversationId(id)
+  if (typeof conversationId === 'string') {
+    return NextResponse.json(conversationId)
   }
 
   const payload = await verifyHeaderCookie(req)

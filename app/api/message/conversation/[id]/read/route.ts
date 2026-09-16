@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { parseConversationId } from '~/validations/conversation'
 import { getUnreadMessageStatus } from '~/app/api/message/unread/service'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 
@@ -62,9 +63,9 @@ export const PUT = async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const conversationId = parseInt(id, 10)
-  if (isNaN(conversationId)) {
-    return NextResponse.json('无效的会话 ID')
+  const conversationId = parseConversationId(id)
+  if (typeof conversationId === 'string') {
+    return NextResponse.json(conversationId)
   }
 
   const payload = await verifyHeaderCookie(req)

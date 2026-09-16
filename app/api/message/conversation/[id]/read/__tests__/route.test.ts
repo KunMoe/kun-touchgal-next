@@ -130,4 +130,15 @@ describe('conversation/[id]/read PUT', () => {
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
     expect(getUnreadMessageStatusMock).not.toHaveBeenCalled()
   })
+
+  // 越界值裸穿到 Int 主键会让 prisma 抛 P2020, 必须在 handler 就截断
+  it('会话 ID 越过 int4 时拒绝, 不触达 prisma', async () => {
+    const res = await PUT({} as never, {
+      params: Promise.resolve({ id: '99999999999' })
+    })
+
+    expect(await res.json()).toBe('无效的会话 ID')
+    expect(conversationFindUniqueMock).not.toHaveBeenCalled()
+    expect(lockQueryMock).not.toHaveBeenCalled()
+  })
 })
