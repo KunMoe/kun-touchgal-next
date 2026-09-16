@@ -4,6 +4,7 @@ import { Card, CardBody, CardFooter, Divider, Switch } from '@heroui/react'
 import { useState } from 'react'
 import { FlaskConical, ShieldCheck } from 'lucide-react'
 import { kunFetchPut } from '~/utils/kunFetch'
+import { errorReporter } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 
 interface Props {
@@ -14,18 +15,26 @@ interface Props {
 export const ModerationSetting = ({ enabled, dryRun }: Props) => {
   const [isEnabled, setIsEnabled] = useState(enabled)
   const [isDryRun, setIsDryRun] = useState(dryRun)
+  const [isSaving, setIsSaving] = useState(false)
 
   const handleSwitch = async (value: { enabled: boolean; dryRun: boolean }) => {
-    const res = await kunFetchPut<KunResponse<{}>>(
-      '/admin/setting/moderation',
-      value
-    )
-    if (typeof res === 'string') {
-      toast.error(res)
-    } else {
-      setIsEnabled(value.enabled)
-      setIsDryRun(value.dryRun)
-      toast.success('应用设置成功')
+    setIsSaving(true)
+    try {
+      const res = await kunFetchPut<KunResponse<{}>>(
+        '/admin/setting/moderation',
+        value
+      )
+      if (typeof res === 'string') {
+        toast.error(res)
+      } else {
+        setIsEnabled(value.enabled)
+        setIsDryRun(value.dryRun)
+        toast.success('应用设置成功')
+      }
+    } catch (error) {
+      errorReporter(error)
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -46,6 +55,7 @@ export const ModerationSetting = ({ enabled, dryRun }: Props) => {
               onValueChange={(value) =>
                 handleSwitch({ enabled: value, dryRun: isDryRun })
               }
+              isDisabled={isSaving}
               size="lg"
               color="primary"
               startContent={<ShieldCheck className="w-4 h-4" />}
@@ -63,6 +73,7 @@ export const ModerationSetting = ({ enabled, dryRun }: Props) => {
               onValueChange={(value) =>
                 handleSwitch({ enabled: isEnabled, dryRun: value })
               }
+              isDisabled={isSaving}
               size="lg"
               color="warning"
               startContent={<FlaskConical className="w-4 h-4" />}
