@@ -16,6 +16,6 @@ export const kunMetadata: Metadata = {
     description: `这是关注消息页面, 本页面展示了 ${kunMoyuMoe.titleShort} 用户关注的人最新的动态, 最近发布的 Galgame 资源, 发布的 Galgame 等等`
   },
   alternates: {
-    canonical: `${kunMoyuMoe.domain.main}/message/system`
+    canonical: `${kunMoyuMoe.domain.main}/message/follow`
   }
 }
