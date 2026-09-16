@@ -1,26 +1,20 @@
 'use client'
 
 import { Button, Slider } from '@heroui/react'
-import { InspectionPanel, RotateCw } from 'lucide-react'
-import type { KunAspect } from './types'
 
 interface CropControlsProps {
   scale: number
   rotate: number
-  aspect: KunAspect
   onScaleChange: (value: number) => void
   onRotateChange: (value: number) => void
-  onAspectToggle: () => void
   onOpenMosaic: () => void
 }
 
 export const KunCropControls = ({
   scale,
   rotate,
-  aspect,
   onScaleChange,
   onRotateChange,
-  onAspectToggle,
   onOpenMosaic
 }: CropControlsProps) => {
   return (
@@ -59,22 +53,6 @@ export const KunCropControls = ({
           点击使用马赛克工具
         </Button>
       </div>
-
-      <Button
-        color="secondary"
-        variant="flat"
-        isDisabled={!!aspect}
-        startContent={
-          aspect ? (
-            <InspectionPanel className="w-4 h-4" />
-          ) : (
-            <RotateCw className="w-4 h-4" />
-          )
-        }
-        onPress={onAspectToggle}
-      >
-        {aspect ? `比例: ${aspect.x} / ${aspect.y}` : '自由尺寸'}
-      </Button>
     </div>
   )
 }

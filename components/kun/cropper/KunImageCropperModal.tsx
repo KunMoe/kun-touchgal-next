@@ -41,17 +41,11 @@ export const KunImageCropperModal = ({
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>()
   const [scale, setScale] = useState(1)
   const [rotate, setRotate] = useState(0)
-  const [aspect, setAspect] = useState<{ x: number; y: number }>(initialAspect)
+  const aspect = initialAspect
 
   const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    if (aspect) {
-      const { width, height } = e.currentTarget
-      setCrop(centerAspectCrop(width, height, aspect.x / aspect.y))
-    }
-  }
-
-  const handleToggleAspect = () => {
-    setAspect(aspect)
+    const { width, height } = e.currentTarget
+    setCrop(centerAspectCrop(width, height, aspect.x / aspect.y))
   }
 
   const handleCropComplete = async () => {
@@ -99,10 +93,8 @@ export const KunImageCropperModal = ({
             <KunCropControls
               scale={scale}
               rotate={rotate}
-              aspect={aspect}
               onScaleChange={setScale}
               onRotateChange={setRotate}
-              onAspectToggle={handleToggleAspect}
               onOpenMosaic={onOpenMosaic}
             />
           </div>
