@@ -15,8 +15,9 @@ interface Props {
   total: number
 }
 
-export const Log = ({ initialLogs, total }: Props) => {
+export const Log = ({ initialLogs, total: initialTotal }: Props) => {
   const [logs, setLogs] = useState<AdminLog[]>(initialLogs)
+  const [total, setTotal] = useState(initialTotal)
   const [page, setPage] = useState(1)
   const isMounted = useMounted()
 
@@ -44,6 +45,7 @@ export const Log = ({ initialLogs, total }: Props) => {
         return
       }
       setLogs(response.logs)
+      setTotal(response.total)
     } catch (error) {
       if (requestId !== latestFetchRequestIdRef.current) {
         return
