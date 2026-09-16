@@ -27,9 +27,6 @@ export const kunMetadata: Metadata = {
     locale: 'zh_CN',
     type: 'website'
   },
-  verification: {
-    google: 'google-site-verification-code'
-  },
   alternates: {
     canonical: `${kunMoyuMoe.domain.main}/register`,
     languages: {
