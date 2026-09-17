@@ -1,21 +1,9 @@
 'use client'
 
-import { useState } from 'react'
-import dynamic from 'next/dynamic'
-import { Tooltip } from '@heroui/tooltip'
 import { User } from '@heroui/user'
 import { useRouter } from '@bprogress/next'
-import { KunUserCardSkeleton } from './KunUserCardSkeleton'
+import { KunUserCardTooltip, preloadKunUserCard } from './KunUserCardTooltip'
 import type { UserProps } from '@heroui/user'
-
-const KunUserCard = dynamic(() => import('./KunUserCard'), {
-  ssr: false,
-  loading: () => <KunUserCardSkeleton />
-})
-
-const preloadKunUserCard = () => {
-  void import('./KunUserCard')
-}
 
 interface KunUserProps {
   user: KunUser
@@ -24,7 +12,6 @@ interface KunUserProps {
 
 export const KunUser = ({ user, userProps }: KunUserProps) => {
   const router = useRouter()
-  const [isCardRequested, setIsCardRequested] = useState(false)
 
   const { avatarProps, ...restUser } = userProps
   const { alt, name, ...restAvatar } = avatarProps!
@@ -32,20 +19,7 @@ export const KunUser = ({ user, userProps }: KunUserProps) => {
   const altString = alt ? alt : username
 
   return (
-    <Tooltip
-      showArrow
-      delay={500}
-      closeDelay={200}
-      content={isCardRequested ? <KunUserCard uid={user.id} /> : null}
-      onOpenChange={(isOpen) => {
-        if (isOpen) {
-          setIsCardRequested(true)
-        }
-      }}
-      classNames={{
-        content: ['bg-background/70 backdrop-blur-md']
-      }}
-    >
+    <KunUserCardTooltip uid={user.id}>
       <User
         {...restUser}
         onClick={(event) => {
@@ -64,6 +38,6 @@ export const KunUser = ({ user, userProps }: KunUserProps) => {
         }}
         className="cursor-pointer"
       />
-    </Tooltip>
+    </KunUserCardTooltip>
   )
 }

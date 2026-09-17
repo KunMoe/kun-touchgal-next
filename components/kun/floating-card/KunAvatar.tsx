@@ -1,9 +1,8 @@
 'use client'
 
-import { Tooltip } from '@heroui/tooltip'
 import { Avatar } from '@heroui/avatar'
-import { KunUserCard } from './KunUserCard'
 import { useRouter } from '@bprogress/next'
+import { KunUserCardTooltip, preloadKunUserCard } from './KunUserCardTooltip'
 import type { AvatarProps } from '@heroui/avatar'
 
 interface KunAvatarProps extends AvatarProps {
@@ -24,12 +23,7 @@ export const KunAvatar = ({ uid, avatarProps }: Props) => {
   const altString = alt ? alt : username
 
   return (
-    <Tooltip
-      showArrow
-      delay={500}
-      closeDelay={0}
-      content={<KunUserCard uid={uid} />}
-    >
+    <KunUserCardTooltip uid={uid}>
       <Avatar
         name={username}
         alt={altString}
@@ -40,8 +34,10 @@ export const KunAvatar = ({ uid, avatarProps }: Props) => {
 
           router.push(`/user/${uid}/comment`)
         }}
+        onMouseEnter={preloadKunUserCard}
+        onFocus={preloadKunUserCard}
         {...rest}
       />
-    </Tooltip>
+    </KunUserCardTooltip>
   )
 }
