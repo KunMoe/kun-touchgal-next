@@ -276,12 +276,12 @@ describe('decideResource', () => {
     expect(
       decideResource(['chinese', 'mobile', 'pc'], {
         k: 'emulator',
-        t: ['gaishi']
+        t: ['krkr']
       })
     ).toMatchObject({
       update: {
         platform: ['windows', 'emulator'],
-        emulator_type: ['gaishi']
+        emulator_type: ['krkr']
       }
     })
     expect(
@@ -307,9 +307,9 @@ describe('decideResource', () => {
       update: { platform: ['apk'] }
     })
     expect(
-      decideResource(['chinese'], { k: 'emulator', t: ['winlator'] })
+      decideResource(['chinese'], { k: 'emulator', t: ['joiplay'] })
     ).toMatchObject({
-      update: { platform: ['emulator'], emulator_type: ['winlator'] }
+      update: { platform: ['emulator'], emulator_type: ['joiplay'] }
     })
     expect(decideResource(['chinese'], { k: 'uncertain' })).toMatchObject({
       action: 'skip',
@@ -371,8 +371,8 @@ describe('parseAiVerdict', () => {
       k: 'apk'
     })
     expect(
-      parseAiVerdict('p1', '{"k":"emulator","t":["gaishi","gaishi"]}')
-    ).toEqual({ k: 'emulator', t: ['gaishi'] })
+      parseAiVerdict('p1', '{"k":"emulator","t":["krkr","krkr"]}')
+    ).toEqual({ k: 'emulator', t: ['krkr'] })
     expect(parseAiVerdict('p1', '{"k":"both","t":["krkr","ons"]}')).toEqual({
       k: 'both',
       t: ['krkr', 'ons']

@@ -10,9 +10,9 @@ describe('parseEmulatorTypeVerdict', () => {
   })
 
   it('剥离 markdown 围栏', () => {
-    expect(
-      parseEmulatorTypeVerdict('```json\n{"t":["winlator"]}\n```')
-    ).toEqual(['winlator'])
+    expect(parseEmulatorTypeVerdict('```json\n{"t":["joiplay"]}\n```')).toEqual(
+      ['joiplay']
+    )
   })
 
   it('词表外的型号降级为 other', () => {

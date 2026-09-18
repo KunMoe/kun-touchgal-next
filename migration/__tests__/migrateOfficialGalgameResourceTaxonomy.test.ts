@@ -219,9 +219,9 @@ describe('parseAiVerdict', () => {
   it('剥离多余字段并对型号去重', () => {
     expect(
       parseAiVerdict(
-        '{"k":"emulator","t":["gaishi","gaishi"],"reason":"文件名含盖世"}'
+        '{"k":"emulator","t":["krkr","krkr"],"reason":"文件名以 .xp3 结尾"}'
       )
-    ).toEqual({ k: 'emulator', t: ['gaishi'] })
+    ).toEqual({ k: 'emulator', t: ['krkr'] })
   })
 
   it('兼容旧版单型号输出', () => {

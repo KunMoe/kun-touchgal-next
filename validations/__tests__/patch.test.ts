@@ -54,7 +54,7 @@ describe('patchResourceCreateSchema 模拟器类型 / 模型型号联动', () =>
     const result = patchResourceCreateSchema.safeParse({
       ...baseInput,
       platform: ['emulator'],
-      emulatorType: ['winlator']
+      emulatorType: ['joiplay']
     })
     expect(result.success).toBe(true)
   })
@@ -63,7 +63,7 @@ describe('patchResourceCreateSchema 模拟器类型 / 模型型号联动', () =>
     const result = patchResourceCreateSchema.safeParse({
       ...baseInput,
       platform: ['emulator'],
-      emulatorType: ['winlator', 'joiplay']
+      emulatorType: ['krkr', 'joiplay']
     })
     expect(result.success).toBe(true)
   })

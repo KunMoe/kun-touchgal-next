@@ -173,21 +173,17 @@ export const SUPPORTED_PLATFORM_MAP: Record<string, string> = {
 
 // platform 含 emulator 时必选的模拟器类型
 export const SUPPORTED_EMULATOR_TYPE = [
-  'winlator',
   'joiplay',
   'ons',
   'krkr',
   'tyranor_artemis',
-  'gaishi',
   'other'
 ]
 export const SUPPORTED_EMULATOR_TYPE_MAP: Record<string, string> = {
-  winlator: 'Winlator',
   joiplay: 'JoiPlay',
   ons: 'ONS',
   krkr: 'KRKR',
   tyranor_artemis: 'Tyranor/Artemis',
-  gaishi: '盖世',
   other: '其他'
 }
 
