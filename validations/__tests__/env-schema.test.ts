@@ -30,7 +30,9 @@ const validEnv = {
   KUN_VISUAL_NOVEL_IMAGE_BED_URL: 'https://img.moyu.moe',
   KUN_CF_CACHE_ZONE_ID: 'zone',
   KUN_CF_CACHE_PURGE_API_TOKEN: 'token',
-  KUN_VISUAL_NOVEL_INDEX_NOW_KEY: 'key'
+  KUN_VISUAL_NOVEL_INDEX_NOW_KEY: 'key',
+  KUN_NEXTMOE_API_BASE: 'https://api.nextmoe.dev',
+  KUN_NEXTMOE_API_KEY: ''
 }
 
 describe('envSchema: DEV 地址生产可留空、dev 必填', () => {

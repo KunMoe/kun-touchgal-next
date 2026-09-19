@@ -30,12 +30,9 @@ import { KunResourceInfo } from './kun/KunResourceInfo'
 import { KunResourceDownload } from './kun/KunResourceDownload'
 import { KunLoading } from '~/components/kun/Loading'
 import { KunNull } from '~/components/kun/Null'
-import { KUN_PATCH_WEBSITE_GET_PATCH_LIST_ENDPOINT } from '~/config/external-api'
+import { kunFetchGet } from '~/utils/kunFetch'
 import type { PatchResource } from '~/types/api/patch'
-import type {
-  HikariResponse,
-  KunPatchResourceResponse
-} from '~/types/api/kun/moyu-moe'
+import type { KunMoyuPatchResource } from '~/types/api/kun/moyu-moe'
 import Link from 'next/link'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { cn } from '~/utils/cn'
@@ -72,9 +69,7 @@ export const ResourceTabs = ({
     null
   )
 
-  const [kunResources, setKunResources] = useState<KunPatchResourceResponse[]>(
-    []
-  )
+  const [kunResources, setKunResources] = useState<KunMoyuPatchResource[]>([])
   const [kunLoading, setKunLoading] = useState(false)
   const [kunLoaded, setKunLoaded] = useState(false)
   const targetResourceId = useMemo(() => {
@@ -120,16 +115,12 @@ export const ResourceTabs = ({
 
     try {
       setKunLoading(true)
-      const res = await fetch(
-        `${KUN_PATCH_WEBSITE_GET_PATCH_LIST_ENDPOINT}?vndb_id=${vndbId}`
+      const response = await kunFetchGet<KunMoyuPatchResource[] | string>(
+        '/patch/moyu',
+        { vndbId }
       )
-      const response = (await res.json()) as HikariResponse
-      if (response.success && response.data) {
-        setKunResources(response.data.resource)
-      } else {
-        setKunResources([])
-      }
-    } catch (err) {
+      setKunResources(typeof response === 'string' ? [] : response)
+    } catch {
       setKunResources([])
     } finally {
       setKunLoading(false)

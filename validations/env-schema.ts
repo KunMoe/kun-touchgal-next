@@ -49,6 +49,10 @@ const rawEnvSchema = z.object({
 
   KUN_VISUAL_NOVEL_INDEX_NOW_KEY: z.string(),
 
+  // NextMoe 开放平台 (/v2/moyu 补丁面): 密钥仅限服务端, 留空即关闭鲲补丁资源查询
+  KUN_NEXTMOE_API_BASE: kunWebUrlSchema,
+  KUN_NEXTMOE_API_KEY: z.string(),
+
   KUN_ENABLE_CRON: z.enum(['true', 'false']).optional(),
   KUN_VISUAL_NOVEL_TEST_SITE_LABEL: z.string().optional(),
 

@@ -7,24 +7,23 @@ import { ChevronDown, ChevronUp, Download } from 'lucide-react'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { KunResourceDownloadCard } from './KunDownloadCard'
 import Link from 'next/link'
-import type { KunPatchResourceResponse } from '~/types/api/kun/moyu-moe'
+import type { KunMoyuPatchResource } from '~/types/api/kun/moyu-moe'
 
 interface Props {
-  resource: KunPatchResourceResponse
+  resource: KunMoyuPatchResource
 }
 
-const KUN_PATCH_WEBSITE_ENDPOINT = `https://www.moyu.moe`
 const COLLAPSED_HEIGHT_PX = 96
 
 export const KunResourceDownload = ({ resource }: Props) => {
-  const [showLinks, setShowLinks] = useState<Record<number, boolean>>({})
+  const [showLinks, setShowLinks] = useState<Record<string, boolean>>({})
   const [note, setNote] = useState('')
 
   const [isNoteExpanded, setIsNoteExpanded] = useState(false)
   const [isNoteOverflowing, setIsNoteOverflowing] = useState(false)
   const noteContentRef = useRef<HTMLDivElement>(null)
 
-  const toggleLinks = (resourceId: number) => {
+  const toggleLinks = (resourceId: string) => {
     setShowLinks((prev) => ({
       ...prev,
       [resourceId]: !prev[resourceId]
@@ -71,7 +70,7 @@ export const KunResourceDownload = ({ resource }: Props) => {
               {resource.name ? resource.name : '资源备注'}
             </h3>
             <p className="text-sm text-default-500">
-              该补丁资源最后更新于 <KunTimeAgo date={resource.update_time} />
+              该补丁资源最后更新于 <KunTimeAgo date={resource.updated_at} />
             </p>
           </div>
 
@@ -121,17 +120,14 @@ export const KunResourceDownload = ({ resource }: Props) => {
       )}
 
       <div className="flex justify-between">
-        <Link
-          target="_blank"
-          href={`${KUN_PATCH_WEBSITE_ENDPOINT}/user/${resource.user.id}/resource`}
-        >
+        <Link target="_blank" href={resource.publisher.web_url}>
           <User
-            name={resource.user.name}
-            description={resource.user.name}
+            name={resource.publisher.name}
+            description={resource.publisher.name}
             avatarProps={{
               showFallback: true,
-              src: resource.user.avatar,
-              name: resource.user.name.charAt(0).toUpperCase()
+              src: resource.publisher.avatar_url,
+              name: resource.publisher.name.charAt(0).toUpperCase()
             }}
           />
         </Link>

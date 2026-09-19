@@ -1,10 +1,8 @@
 import { Chip } from '@heroui/chip'
-import {
-  SUPPORTED_LANGUAGE_MAP,
-  SUPPORTED_PLATFORM_MAP
-} from '~/constants/resource'
+import { SUPPORTED_LANGUAGE_MAP } from '~/constants/resource'
 import { cn } from '~/utils/cn'
 
+// 词表取自 moyu 站自身 (与 TouchGal 的类型/平台体系不同)
 const SUPPORTED_TYPE_MAP: Record<string, string> = {
   all: '全部类型',
   manual: '人工翻译补丁',
@@ -17,6 +15,16 @@ const SUPPORTED_TYPE_MAP: Record<string, string> = {
   mod: '魔改补丁',
   r18: 'R18 成人内容补丁',
   decensor: '去马赛克补丁',
+  image: '修图补丁',
+  other: '其它'
+}
+
+const SUPPORTED_PLATFORM_MAP: Record<string, string> = {
+  windows: 'Windows',
+  android: 'Android',
+  macos: 'MacOS',
+  ios: 'iOS',
+  linux: 'Linux',
   other: '其它'
 }
 

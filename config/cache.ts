@@ -5,6 +5,8 @@ export const HOME_CACHE_DURATION = 60
 export const GALGAME_LIST_CACHE_DURATION = 60
 export const RESOURCE_LIST_CACHE_DURATION = 60
 export const PATCH_RESOURCE_DETAIL_CACHE_DURATION = 60
+// 鲲补丁资源 (NextMoe /v2/moyu): 上游按应用限流 60 次/分, 与其 s-maxage=1800 对齐
+export const MOYU_PATCH_RESOURCE_CACHE_DURATION = 30 * 60
 // 详情缓存按 patch 分片的版本键 TTL: 生产 Redis 为 volatile-lfu, 无 TTL 键永不被
 // 驱逐, 分片键会随 patch 数无界积累; 带 TTL 即进入可驱逐集合, 过期与驱逐的安全性
 // 均靠读侧 miss 时铸造随机新命名空间 (见 getPatchResourceDetailCacheKey), 不靠

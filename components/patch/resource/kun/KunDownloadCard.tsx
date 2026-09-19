@@ -5,7 +5,7 @@ import { Link } from '@heroui/link'
 import { Cloud, Database, Link as LinkIcon } from 'lucide-react'
 import { SUPPORTED_RESOURCE_LINK_MAP } from '~/constants/resource'
 import type { JSX } from 'react'
-import type { KunPatchResourceResponse } from '~/types/api/kun/moyu-moe'
+import type { KunMoyuPatchResource } from '~/types/api/kun/moyu-moe'
 
 const storageIcons: { [key: string]: JSX.Element } = {
   s3: <Cloud className="size-3" />,
@@ -13,12 +13,10 @@ const storageIcons: { [key: string]: JSX.Element } = {
 }
 
 interface Props {
-  resource: KunPatchResourceResponse
+  resource: KunMoyuPatchResource
 }
 
 export const KunResourceDownloadCard = ({ resource }: Props) => {
-  const resourceLink = `https://www.moyu.moe/patch/${resource.patch_id}/resource#kun_patch_resource_${resource.id}`
-
   return (
     <div className="flex flex-col space-y-2">
       <div className="flex items-center gap-2">
@@ -28,7 +26,7 @@ export const KunResourceDownloadCard = ({ resource }: Props) => {
           size="sm"
           startContent={storageIcons[resource.storage]}
         >
-          {SUPPORTED_RESOURCE_LINK_MAP[resource.storage as 's3' | 'user']}
+          {SUPPORTED_RESOURCE_LINK_MAP[resource.storage]}
         </Chip>
         <Chip
           variant="flat"
@@ -47,9 +45,9 @@ export const KunResourceDownloadCard = ({ resource }: Props) => {
         isExternal
         underline="always"
         className="block break-all"
-        href={resourceLink}
+        href={resource.web_url}
       >
-        {resourceLink}
+        {resource.web_url}
       </Link>
     </div>
   )

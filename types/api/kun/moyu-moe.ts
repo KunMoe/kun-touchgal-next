@@ -1,57 +1,40 @@
-export interface KunUser {
-  id: number
+// NextMoe /v2/moyu 补丁面的响应子集, 契约见 https://developer.nextmoe.dev/specs/moyu-openapi.yaml
+// 资源行按契约不带下载直链、提取码与解压码, 下载一律经 web_url 跳转 moyu.moe
+
+export interface KunMoyuPublisher {
+  id: string
   name: string
-  avatar: string
+  avatar_url: string
+  web_url: string
 }
 
-export interface KunPatchResponse {
-  id: number
+export interface KunMoyuPatchResource {
+  id: string
+  patch_id: string
   name: string
-  // e.g. "vndb_id": "v19658",
-  vndb_id: string
-  banner: string
-  introduction: string
-  // e.g. "released": "2016-11-25",
-  released: string
-  status: number
-  download: number
-  view: number
-  resource_update_time: Date
-  type: string[]
-  language: string[]
-  engine: string[]
-  platform: string[]
-  user_id: number
-  user: KunUser
-  created: Date
-  updated: Date
-  resource: KunPatchResourceResponse[]
-}
-
-export interface KunPatchResourceResponse {
-  id: number
   storage: 's3' | 'user'
-  name: string
-  model_name: string
   size: string
-  code: string
-  password: string
+  model_name: string
+  localization_group_name: string
   note: string
-  hash: string
   type: string[]
   language: string[]
   platform: string[]
-  download: number
-  status: number
-  update_time: Date
-  user_id: number
-  patch_id: number
-  created: Date
-  user: KunUser
+  download_count: number
+  web_url: string
+  created_at: string
+  updated_at: string
+  // 请求恒带 include=publisher, 故必有
+  publisher: KunMoyuPublisher
 }
 
-export interface HikariResponse {
-  success: boolean
-  message: string
-  data: KunPatchResponse | null
+export interface KunMoyuPatch {
+  id: string
+  vndb_id: string
+  resources?: KunMoyuPatchResource[]
+}
+
+export interface KunMoyuPatchList {
+  items: KunMoyuPatch[]
+  missing?: string[]
 }

@@ -228,6 +228,13 @@ export const updatePatchBannerSchema = z.object({
   imageOriginal: nonEmptyFileSchema.optional()
 })
 
+export const getMoyuPatchResourceSchema = z.object({
+  vndbId: z
+    .string()
+    .max(10, { message: 'VNDB ID 最多 10 个字符' })
+    .regex(/^v\d+$/, { message: 'VNDB ID 格式不正确, 例如 v19658' })
+})
+
 export const getPatchHistorySchema = z.object({
   patchId: z.coerce.number({ message: 'ID 必须为数字' }).min(1).max(9999999),
   page: z.coerce.number().min(1).max(9999999),
