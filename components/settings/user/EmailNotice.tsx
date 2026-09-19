@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Card, CardBody, CardFooter, CardHeader } from '@heroui/card'
 import { useUserStore } from '~/store/userStore'
 import { kunFetchPost } from '~/utils/kunFetch'
+import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 import { Switch } from '@heroui/react'
 
@@ -18,13 +19,17 @@ export const EmailNotice = () => {
       return
     }
 
-    const res = await kunFetchPost<KunResponse<{}>>(
-      `/user/setting/email-notice`,
-      { enableEmailNotice: value }
-    )
-    if (typeof res !== 'string') {
-      setUser({ ...user, enableEmailNotice: value })
-      toast.success(value ? '开启邮件通知成功' : '关闭邮件通知成功')
+    try {
+      const res = await kunFetchPost<KunResponse<{}>>(
+        `/user/setting/email-notice`,
+        { enableEmailNotice: value }
+      )
+      kunErrorHandler(res, () => {
+        setUser({ ...user, enableEmailNotice: value })
+        toast.success(value ? '开启邮件通知成功' : '关闭邮件通知成功')
+      })
+    } catch {
+      toast.error('更新邮件通知设置失败, 请稍后重试')
     }
   }
 

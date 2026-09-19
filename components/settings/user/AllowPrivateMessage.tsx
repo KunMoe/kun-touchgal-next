@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Card, CardBody, CardFooter, CardHeader } from '@heroui/card'
 import { useUserStore } from '~/store/userStore'
 import { kunFetchPost } from '~/utils/kunFetch'
+import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 import { Switch } from '@heroui/react'
 
@@ -18,13 +19,17 @@ export const AllowPrivateMessage = () => {
       return
     }
 
-    const res = await kunFetchPost<KunResponse<{}>>(
-      `/user/setting/allow-private-message`,
-      { allowPrivateMessage: value }
-    )
-    if (typeof res !== 'string') {
-      setUser({ ...user, allowPrivateMessage: value })
-      toast.success(value ? '已允许接收私信' : '已关闭接收私信')
+    try {
+      const res = await kunFetchPost<KunResponse<{}>>(
+        `/user/setting/allow-private-message`,
+        { allowPrivateMessage: value }
+      )
+      kunErrorHandler(res, () => {
+        setUser({ ...user, allowPrivateMessage: value })
+        toast.success(value ? '已允许接收私信' : '已关闭接收私信')
+      })
+    } catch {
+      toast.error('更新私信设置失败, 请稍后重试')
     }
   }
 
