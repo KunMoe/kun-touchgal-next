@@ -175,7 +175,7 @@ export const Report = ({ initialReports, total, title, targetType }: Props) => {
       return
     }
     fetchData(page, activeTab)
-  }, [page, limit, activeTab, isMounted, targetType])
+  }, [page, limit, activeTab, targetType])
 
   const selectableReports = reports.filter((report) => report.status === 0)
   const isAllSelected =
