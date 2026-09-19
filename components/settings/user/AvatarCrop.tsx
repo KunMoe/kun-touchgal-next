@@ -34,6 +34,8 @@ export const AvatarCrop = () => {
       })
       reader.readAsDataURL(e.target.files[0])
     }
+    // 清空 value: 同一文件再次选择时浏览器不触发 change (取消裁剪后重选同图会静默失败)
+    e.target.value = ''
   }
 
   const handleUploadKeyDown = (event: KeyboardEvent<HTMLLabelElement>) => {
