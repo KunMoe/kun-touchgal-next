@@ -100,7 +100,8 @@ export const Container = ({ initialTags, initialTotal, uid }: Props) => {
 
   return (
     <div className="flex flex-col w-full my-4 space-y-8">
-      <TagHeader setNewTag={(newTag) => setTags([newTag, ...initialTags])} />
+      {/* 用函数式更新读当前列表: initialTags 是 SSR 首屏第 1 页, 翻页 / 搜索 / 连续创建后已过时 (094d4c21 曾回归) */}
+      <TagHeader setNewTag={(newTag) => setTags((prev) => [newTag, ...prev])} />
 
       {uid ? (
         <>
