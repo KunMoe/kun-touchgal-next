@@ -26,6 +26,12 @@ interface Props {
   onActionSuccess: (folder: UserFavoritePatchFolder) => void
 }
 
+const toFormState = (folder?: UserFavoritePatchFolder) => ({
+  name: folder?.name ?? '',
+  description: folder?.description ?? '',
+  isPublic: !!folder?.is_public
+})
+
 export const EditFolderModal = ({
   action,
   folderId,
@@ -34,11 +40,14 @@ export const EditFolderModal = ({
 }: Props) => {
   const [isPending, startTransition] = useTransition()
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const [newFolder, setNewFolder] = useState({
-    name: folder?.name ?? '',
-    description: folder?.description ?? '',
-    isPublic: !!folder?.is_public
-  })
+  const [newFolder, setNewFolder] = useState(toFormState(folder))
+
+  // 组件在外层收藏夹弹窗存活期间不重挂载, 每次打开都从当前 folder 重置,
+  // 成功 / 取消后的残留状态不得带到下一次打开
+  const handleOpen = () => {
+    setNewFolder(toFormState(folder))
+    onOpen()
+  }
 
   const handleCreateFolder = async () => {
     startTransition(async () => {
@@ -62,7 +71,6 @@ export const EditFolderModal = ({
           toast.success(
             action === 'create' ? '创建收藏文件夹成功' : '编辑收藏文件夹成功'
           )
-          setNewFolder({ name: '', description: '', isPublic: false })
           onClose()
         })
       } catch (error) {
@@ -83,7 +91,7 @@ export const EditFolderModal = ({
         }
         color="primary"
         variant="flat"
-        onPress={onOpen}
+        onPress={handleOpen}
       >
         {action === 'create' ? '创建新收藏夹' : '编辑'}
       </Button>
