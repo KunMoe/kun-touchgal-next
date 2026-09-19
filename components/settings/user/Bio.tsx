@@ -16,7 +16,9 @@ export const Bio = () => {
   const { user, setUser } = useUserStore(
     useShallow((state) => ({ user: state.user, setUser: state.setUser }))
   )
-  const [bio, setBio] = useState('')
+  // draft 为 null 表示尚未编辑, 此时显示 store 里的当前签名 (初值不能取 user.bio, 原因见 Username.tsx)
+  const [draft, setDraft] = useState<string | null>(null)
+  const bio = draft ?? user.bio
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { pending, markPending } = useModerationPending('bioPending')
@@ -27,7 +29,6 @@ export const Bio = () => {
       setError(result.error.issues[0].message)
     } else {
       setError('')
-      setUser({ ...user, bio })
       setLoading(true)
 
       try {
@@ -37,7 +38,9 @@ export const Bio = () => {
         )
         kunErrorHandler(res, (value) => {
           toast.success('更新签名成功')
-          setBio('')
+          // 保存按钮以 bio === user.bio 判未修改: 请求前乐观写 store 会让失败后二者相等, 按钮锁死无法重试
+          setUser({ ...user, bio })
+          setDraft(null)
           markPending(!!value.pending)
         })
       } catch {
@@ -60,9 +63,8 @@ export const Bio = () => {
         <Textarea
           label="签名"
           autoComplete="text"
-          defaultValue={user.bio}
           value={bio}
-          onChange={(e) => setBio(e.target.value)}
+          onChange={(e) => setDraft(e.target.value)}
           isInvalid={!!error}
           errorMessage={error}
         />
@@ -84,7 +86,7 @@ export const Bio = () => {
           className="w-full sm:ml-auto sm:w-auto"
           onPress={handleSave}
           isLoading={loading}
-          disabled={loading}
+          isDisabled={bio.trim() === user.bio}
         >
           保存
         </Button>

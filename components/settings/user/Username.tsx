@@ -23,7 +23,10 @@ export const Username = () => {
   const { user, setUser } = useUserStore(
     useShallow((state) => ({ user: state.user, setUser: state.setUser }))
   )
-  const [username, setUsername] = useState('')
+  // draft 为 null 表示尚未编辑, 此时显示 store 里的当前用户名. 不能用 useState(user.name)
+  // 做初值: user store 在顶栏 effect 里 post-mount 才水合, 硬刷新时首帧 user.name 为 ''
+  const [draft, setDraft] = useState<string | null>(null)
+  const username = draft ?? user.name
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { isOpen, onOpen, onOpenChange } = useDisclosure()
@@ -54,7 +57,7 @@ export const Username = () => {
             name: username,
             moemoepoint: user.moemoepoint - 30
           })
-          setUsername('')
+          setDraft(null)
         })
       } catch {
         toast.error('更新用户名失败, 请稍后重试')
@@ -76,9 +79,8 @@ export const Username = () => {
         <Input
           label="用户名"
           autoComplete="text"
-          defaultValue={user.name}
           value={username}
-          onChange={(e) => setUsername(e.target.value)}
+          onChange={(e) => setDraft(e.target.value)}
           isInvalid={!!error}
           errorMessage={error}
         />
@@ -93,6 +95,7 @@ export const Username = () => {
           color="primary"
           variant="solid"
           className="w-full sm:ml-auto sm:w-auto"
+          isDisabled={username.trim() === user.name}
           onPress={onOpen}
         >
           保存
