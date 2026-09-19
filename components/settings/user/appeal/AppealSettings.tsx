@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Card, CardBody, CardHeader } from '@heroui/card'
 import { kunFetchGet } from '~/utils/kunFetch'
+import { errorReporter } from '~/utils/kunErrorHandler'
 import { KunLoading } from '~/components/kun/Loading'
 import { KunPagination } from '~/components/kun/Pagination'
 import { useMounted } from '~/hooks/useMounted'
@@ -16,19 +17,30 @@ export const AppealSettings = () => {
   const [loading, setLoading] = useState(false)
   const limit = 10
   const isMounted = useMounted()
+  // 陈旧响应守卫: 分页输入框在 loading 期间仍可跳页, 慢响应不得覆盖新页数据
+  const latestFetchRequestIdRef = useRef(0)
 
   const fetchData = async () => {
+    const requestId = latestFetchRequestIdRef.current + 1
+    latestFetchRequestIdRef.current = requestId
     setLoading(true)
     try {
       const response = await kunFetchGet<
         KunResponse<{ appeals: UserAppealItem[]; total: number }>
       >('/user/appeal', { page, limit })
+      if (requestId !== latestFetchRequestIdRef.current) {
+        return
+      }
       if (typeof response !== 'string') {
         setAppeals(response.appeals)
         setTotal(response.total)
       }
+    } catch (error) {
+      errorReporter(error)
     } finally {
-      setLoading(false)
+      if (requestId === latestFetchRequestIdRef.current) {
+        setLoading(false)
+      }
     }
   }
 
