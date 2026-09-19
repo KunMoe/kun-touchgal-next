@@ -175,32 +175,44 @@ export const PatchTagSelector = ({
     if (!state.selectedTags.length && !state.removedTags.length) return
 
     dispatch({ type: 'SET_LOADING', payload: true })
+    try {
+      if (state.removedTags.length) {
+        const res = await kunFetchPut<KunResponse<{}>>(
+          '/patch/introduction/tag',
+          { patchId, tagId: state.removedTags }
+        )
+        if (typeof res === 'string') {
+          toast.error(res)
+          return
+        }
+      }
 
-    if (state.removedTags.length) {
-      await kunFetchPut<{}>('/patch/introduction/tag', {
-        patchId,
-        tagId: state.removedTags
-      })
+      if (state.selectedTags.length) {
+        const res = await kunFetchPost<KunResponse<{}>>(
+          '/patch/introduction/tag',
+          { patchId, tagId: state.selectedTags }
+        )
+        if (typeof res === 'string') {
+          toast.error(res)
+          return
+        }
+      }
+
+      const updatedTags = initialTags
+        .filter((tag) => !state.removedTags.includes(tag.id))
+        .concat(tags.filter((tag) => state.selectedTags.includes(tag.id)))
+      onTagChange(updatedTags)
+      router.refresh()
+      toast.success('更改标签成功')
+
+      dispatch({ type: 'SET_SELECTED_TAGS', payload: [] })
+      dispatch({ type: 'SET_REMOVED_TAGS', payload: [] })
+      onClose()
+    } catch {
+      toast.error('更改标签失败, 请稍后重试')
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false })
     }
-
-    if (state.selectedTags.length) {
-      await kunFetchPost<{}>('/patch/introduction/tag', {
-        patchId,
-        tagId: state.selectedTags
-      })
-    }
-
-    const updatedTags = initialTags
-      .filter((tag) => !state.removedTags.includes(tag.id))
-      .concat(tags.filter((tag) => state.selectedTags.includes(tag.id)))
-    onTagChange(updatedTags)
-    router.refresh()
-    toast.success('更改标签成功')
-
-    dispatch({ type: 'SET_SELECTED_TAGS', payload: [] })
-    dispatch({ type: 'SET_REMOVED_TAGS', payload: [] })
-    onClose()
-    dispatch({ type: 'SET_LOADING', payload: false })
   }
 
   return (

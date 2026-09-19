@@ -182,34 +182,46 @@ export const PatchCompanySelector: FC<Props> = ({
       if (!state.selectedCompanies.length && !state.removedCompanies.length) {
         return
       }
-      if (state.removedCompanies.length) {
-        await kunFetchPut<{}>('/patch/introduction/company', {
-          patchId,
-          companyId: state.removedCompanies
-        })
-      }
-
-      if (state.selectedCompanies.length) {
-        await kunFetchPost<{}>('/patch/introduction/company', {
-          patchId,
-          companyId: state.selectedCompanies
-        })
-      }
-
-      const updatedCompanies = initialCompanies
-        .filter((company) => !state.removedCompanies.includes(company.id))
-        .concat(
-          companies.filter((company) =>
-            state.selectedCompanies.includes(company.id)
+      try {
+        if (state.removedCompanies.length) {
+          const res = await kunFetchPut<KunResponse<{}>>(
+            '/patch/introduction/company',
+            { patchId, companyId: state.removedCompanies }
           )
-        )
-      onCompanyChange(updatedCompanies)
-      router.refresh()
-      toast.success('更改所属会社成功')
+          if (typeof res === 'string') {
+            toast.error(res)
+            return
+          }
+        }
 
-      dispatch({ type: 'SET_SELECTED_COMPANIES', payload: [] })
-      dispatch({ type: 'SET_REMOVED_COMPANIES', payload: [] })
-      onClose()
+        if (state.selectedCompanies.length) {
+          const res = await kunFetchPost<KunResponse<{}>>(
+            '/patch/introduction/company',
+            { patchId, companyId: state.selectedCompanies }
+          )
+          if (typeof res === 'string') {
+            toast.error(res)
+            return
+          }
+        }
+
+        const updatedCompanies = initialCompanies
+          .filter((company) => !state.removedCompanies.includes(company.id))
+          .concat(
+            companies.filter((company) =>
+              state.selectedCompanies.includes(company.id)
+            )
+          )
+        onCompanyChange(updatedCompanies)
+        router.refresh()
+        toast.success('更改所属会社成功')
+
+        dispatch({ type: 'SET_SELECTED_COMPANIES', payload: [] })
+        dispatch({ type: 'SET_REMOVED_COMPANIES', payload: [] })
+        onClose()
+      } catch {
+        toast.error('更改所属会社失败, 请稍后重试')
+      }
     })
   }
 
