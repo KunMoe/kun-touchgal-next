@@ -12,6 +12,7 @@ import { KunNull } from '~/components/kun/Null'
 import { RatingCard } from './RatingCard'
 import { RatingCardSkeleton } from './RatingCardSkeleton'
 import { RatingModal } from './RatingModal'
+import { dropLoadedRatings } from './dropLoadedRatings'
 import { useDisclosure } from '@heroui/react'
 import { useUserStore } from '~/store/userStore'
 import type {
@@ -95,7 +96,10 @@ export const Ratings = ({ id }: Props) => {
           if (reset) {
             setRatings(res.ratings)
           } else {
-            setRatings((prev) => [...prev, ...res.ratings])
+            setRatings((prev) => [
+              ...prev,
+              ...dropLoadedRatings(prev, res.ratings)
+            ])
           }
           setTotal(res.total)
           setHasMore(pageNum * RATINGS_PER_PAGE < res.total)
