@@ -16,19 +16,12 @@ interface Props {
 const COLLAPSED_HEIGHT_PX = 96
 
 export const KunResourceDownload = ({ resource }: Props) => {
-  const [showLinks, setShowLinks] = useState<Record<string, boolean>>({})
+  const [showLinks, setShowLinks] = useState(false)
   const [note, setNote] = useState('')
 
   const [isNoteExpanded, setIsNoteExpanded] = useState(false)
   const [isNoteOverflowing, setIsNoteOverflowing] = useState(false)
   const noteContentRef = useRef<HTMLDivElement>(null)
-
-  const toggleLinks = (resourceId: string) => {
-    setShowLinks((prev) => ({
-      ...prev,
-      [resourceId]: !prev[resourceId]
-    }))
-  }
 
   useEffect(() => {
     let cancelled = false
@@ -138,16 +131,14 @@ export const KunResourceDownload = ({ resource }: Props) => {
             variant="flat"
             isIconOnly
             aria-label={`下载 Galgame 补丁资源`}
-            onPress={() => toggleLinks(resource.id)}
+            onPress={() => setShowLinks((v) => !v)}
           >
             <Download className="size-4" />
           </Button>
         </div>
       </div>
 
-      {showLinks[resource.id] && (
-        <KunResourceDownloadCard resource={resource} />
-      )}
+      {showLinks && <KunResourceDownloadCard resource={resource} />}
     </div>
   )
 }

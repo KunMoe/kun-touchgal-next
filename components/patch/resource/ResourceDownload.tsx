@@ -16,14 +16,7 @@ interface Props {
 // 资源备注不在卡片上展示, 点击资源名进入资源详情页查看简介与评论
 export const ResourceDownload = ({ resource }: Props) => {
   const isPending = resource.status === 2 || resource.status === 3
-  const [showLinks, setShowLinks] = useState<Record<number, boolean>>({})
-
-  const toggleLinks = (resourceId: number) => {
-    setShowLinks((prev) => ({
-      ...prev,
-      [resourceId]: !prev[resourceId]
-    }))
-  }
+  const [showLinks, setShowLinks] = useState(false)
 
   return (
     <div className="space-y-3">
@@ -53,14 +46,14 @@ export const ResourceDownload = ({ resource }: Props) => {
             isIconOnly
             aria-label={`下载 Galgame 资源`}
             isDisabled={isPending}
-            onPress={() => toggleLinks(resource.id)}
+            onPress={() => setShowLinks((v) => !v)}
           >
             <Download className="size-4" />
           </Button>
         </div>
       </div>
 
-      {showLinks[resource.id] && (
+      {showLinks && (
         <div className="space-y-3">
           {resource.links.map((link) => (
             <ResourceDownloadCard
