@@ -9,8 +9,5 @@ refs
 # prisma generated
 prisma/generated
 
-# uploads
-uploads
-
 # pnpm-lock.yaml
 pnpm-lock.yaml

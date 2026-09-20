@@ -1,5 +1,4 @@
 import 'dotenv/config'
-import { existsSync, mkdirSync } from 'fs'
 import { execSync } from 'child_process'
 
 const runCommand = (command: string) => {
@@ -15,11 +14,6 @@ const runCommand = (command: string) => {
 runCommand('pnpm install')
 
 runCommand('pnpm prisma:push')
-
-if (!existsSync('./uploads')) {
-  mkdirSync('./uploads')
-}
-runCommand('chmod 777 uploads')
 
 // 配了搜索引擎密钥才拉起 Meilisearch（幂等）；未配则保持旧的 Prisma 回退，跳过。
 // 搜索为可选特性，引擎起不来仅告警、不阻断安装（runCommand 会 exit(1)，故此处直接用 execSync）

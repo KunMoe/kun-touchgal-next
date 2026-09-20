@@ -8,7 +8,6 @@ const globalTaskState = globalThis as typeof globalThis & {
 const getKUNGalgameTasks = async (): Promise<ScheduledTask[]> => {
   const [
     { resetDailyTask },
-    { setCleanupTask },
     { flushPatchViewsTask },
     { moderationTask },
     { searchOutboxTask },
@@ -17,7 +16,6 @@ const getKUNGalgameTasks = async (): Promise<ScheduledTask[]> => {
     { s3DeletionOutboxTask }
   ] = await Promise.all([
     import('./tasks/resetDailyTask'),
-    import('./tasks/setCleanupTask'),
     import('./tasks/flushPatchViewsTask'),
     import('./tasks/moderationTask'),
     import('./tasks/searchOutboxTask'),
@@ -28,7 +26,6 @@ const getKUNGalgameTasks = async (): Promise<ScheduledTask[]> => {
 
   return [
     resetDailyTask,
-    setCleanupTask,
     flushPatchViewsTask,
     moderationTask,
     searchOutboxTask,
