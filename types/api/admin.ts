@@ -96,6 +96,8 @@ export interface AdminReportPatchSummary {
 export interface AdminReportCommentSummary {
   id: number
   contentPreview: string
+  // 资源评论的资源 id (深链到资源详情页); 游戏评论为 null
+  resourceId: number | null
 }
 
 export interface AdminReportRatingSummary {

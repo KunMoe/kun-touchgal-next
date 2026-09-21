@@ -9,36 +9,19 @@ import {
 } from '@heroui/dropdown'
 import { MoreVertical } from 'lucide-react'
 import { useUserStore } from '~/store/userStore'
+import { buildPatchLink } from './buildPatchLink'
 import type { AdminReport } from '~/types/api/admin'
 
 interface Props {
   report: AdminReport
 }
 
-const buildPatchLink = (report: AdminReport) => {
-  const uniqueId = report.patch.uniqueId
-  if (!uniqueId) {
-    return ''
-  }
-  const params = new URLSearchParams()
-  if (report.targetType === 'comment' && report.comment) {
-    params.set('target', 'comment')
-    params.set('commentId', String(report.comment.id))
-  } else if (report.targetType === 'rating' && report.rating) {
-    params.set('tab', 'rating')
-    params.set('target', 'rating')
-    params.set('ratingId', String(report.rating.id))
-  }
-  if (report.reportedUser) {
-    params.set('reportedUid', String(report.reportedUser.id))
-  }
-  const query = params.toString()
-  return query ? `/${uniqueId}?${query}` : `/${uniqueId}`
-}
-
 export const ReportHandler = ({ report }: Props) => {
   const currentUser = useUserStore((state) => state.user)
   const patchLink = buildPatchLink(report)
+  // 资源评论的深链落点是资源详情页而非游戏详情页, 文案跟着落点走
+  const isResourceComment =
+    report.targetType === 'comment' && !!report.comment?.resourceId
   const userLink = report.reportedUser
     ? `/user/${report.reportedUser.id}/comment`
     : ''
@@ -69,7 +52,7 @@ export const ReportHandler = ({ report }: Props) => {
             }
           }}
         >
-          前往游戏
+          {isResourceComment ? '前往资源' : '前往游戏'}
         </DropdownItem>
         <DropdownItem
           key="user"

@@ -32,7 +32,7 @@ export const getReport = async (
           select: { id: true, unique_id: true, name: true }
         },
         comment: {
-          select: { id: true, content: true }
+          select: { id: true, content: true, resource_id: true }
         },
         rating: {
           select: {
@@ -70,7 +70,8 @@ export const getReport = async (
     comment: report.comment
       ? {
           id: report.comment.id,
-          contentPreview: convert(report.comment.content).trim().slice(0, 300)
+          contentPreview: convert(report.comment.content).trim().slice(0, 300),
+          resourceId: report.comment.resource_id
         }
       : null,
     rating: report.rating

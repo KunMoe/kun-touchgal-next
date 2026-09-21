@@ -26,7 +26,9 @@ const statusColorMap: Record<string, 'warning' | 'success' | 'danger'> = {
   rejected: 'danger'
 }
 
-// 与站内消息通知的深链格式一致 (createMentionMessage / rating like 等)
+// comment / rating 与站内消息通知的深链格式一致 (createMentionMessage / rating like 等);
+// resource 刻意偏离站内信的 ?tab=resources 列表锚点, 直达资源详情页 —— 申诉要看的是
+// 这一条资源的完整内容, 可见性口径与列表同为 getResourceVisibilityWhere, 不会多出 404
 const contentLinkMap: Partial<
   Record<string, (uniqueId: string, contentId: number) => string>
 > = {
@@ -34,8 +36,7 @@ const contentLinkMap: Partial<
     `/${uniqueId}?tab=comments&commentId=${contentId}`,
   rating: (uniqueId, contentId) =>
     `/${uniqueId}?tab=rating&ratingId=${contentId}`,
-  resource: (uniqueId, contentId) =>
-    `/${uniqueId}?tab=resources&resourceId=${contentId}`
+  resource: (uniqueId, contentId) => `/${uniqueId}/resource/${contentId}`
 }
 
 const formatPayload = (contentType: string, payload: AppealPayload) =>
