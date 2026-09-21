@@ -11,6 +11,7 @@ import { Clock, Download, Edit2 } from 'lucide-react'
 import { KunPatchAttribute } from '~/components/kun/PatchAttribute'
 import { KunUser } from '~/components/kun/floating-card/KunUser'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
+import { KunAutoImageViewer } from '~/components/kun/image-viewer/AutoImageViewer'
 import { ResourceLikeButton } from '~/components/patch/resource/ResourceLike'
 import { EditResourceDialog } from '~/components/patch/resource/edit/EditResourceDialog'
 import { UserFollow } from '~/components/user/follow/Follow'
@@ -53,6 +54,10 @@ export const ResourceDetail = ({ detail }: Props) => {
 
   return (
     <div className="w-full mx-auto max-w-7xl space-y-6">
+      {/* 与游戏详情页同一套 document 级图片灯箱: 评论与资源简介里的
+          markdown 图片点击后开灯箱, 挂载点决定作用域故必须留在页面内 */}
+      <KunAutoImageViewer />
+
       <GalgameSummaryCard galgame={galgame} />
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
