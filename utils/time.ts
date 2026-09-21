@@ -1,4 +1,4 @@
-import { differenceInSeconds, differenceInHours } from 'date-fns'
+import { differenceInSeconds } from 'date-fns'
 
 export const formatTimeDifference = (pastTime: number | Date | string) => {
   const now = new Date()
@@ -27,17 +27,6 @@ export const formatTimeDifference = (pastTime: number | Date | string) => {
     const years = Math.floor(diffInSeconds / 31536000)
     return `${years} 年前`
   }
-}
-
-export const hourDiff = (upvoteTime: number | Date | string, hours: number) => {
-  if (upvoteTime === 0 || upvoteTime === undefined) {
-    return false
-  }
-
-  const currentTime = new Date()
-  const time = new Date(upvoteTime)
-
-  return differenceInHours(currentTime, time) <= hours
 }
 
 // 站点时间展示固定为 UTC+8，避免 Node 服务器时区与浏览器本地时区不同导致 SSR/CSR 文本不一致。

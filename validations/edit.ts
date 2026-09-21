@@ -193,10 +193,3 @@ export const duplicateSchema = z
 export const imageSchema = z.object({
   image: nonEmptyFileSchema
 })
-
-export const editLinkSchema = z.object({
-  name: z.string({ message: '您的输入应为字符串' }),
-  link: z
-    .string({ message: '您的输入应为字符串' })
-    .url({ message: '您输入的链接必须为合法 URL' })
-})

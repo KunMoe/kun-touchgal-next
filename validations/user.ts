@@ -55,14 +55,6 @@ export const passwordSchema = z.object({
   })
 })
 
-export const updateUserSchema = z.object({
-  name: z.string().min(1).max(17).optional(),
-  email: z.string().email().max(1007).optional(),
-  password: z.string().min(6).max(1007).optional(),
-  avatar: z.string().max(233).optional(),
-  bio: z.string().max(107).optional()
-})
-
 export const getUserProfileSchema = z.object({
   id: z.coerce.number().min(1).max(9999999)
 })
