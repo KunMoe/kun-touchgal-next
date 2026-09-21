@@ -1,16 +1,21 @@
 'use client'
 
 import { useRef } from 'react'
+import { useRouter } from '@bprogress/next'
+import { Button } from '@heroui/button'
 import { Card, CardBody, CardHeader } from '@heroui/card'
 import { Chip } from '@heroui/chip'
+import { Modal, useDisclosure } from '@heroui/modal'
 import { Tooltip } from '@heroui/tooltip'
-import { Clock, Download } from 'lucide-react'
+import { Clock, Download, Edit2 } from 'lucide-react'
 import { KunPatchAttribute } from '~/components/kun/PatchAttribute'
 import { KunUser } from '~/components/kun/floating-card/KunUser'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { ResourceLikeButton } from '~/components/patch/resource/ResourceLike'
+import { EditResourceDialog } from '~/components/patch/resource/edit/EditResourceDialog'
 import { UserFollow } from '~/components/user/follow/Follow'
 import { ResourceDownloadCard } from '~/components/patch/resource/DownloadCard'
+import { useUserStore } from '~/store/userStore'
 import { useKunExternalLinkNavigation } from '~/components/kun/external-link/useKunExternalLinkNavigation'
 import { Comments } from '~/components/patch/comment/Comments'
 import { GalgameSummaryCard } from './GalgameSummaryCard'
@@ -31,6 +36,18 @@ export const ResourceDetail = ({ detail }: Props) => {
   const pageTitle = getResourcePageTitle(resource)
   const mainColumnRef = useRef<HTMLDivElement>(null)
   const noteRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
+  const user = useUserStore((state) => state.user)
+  const isAdmin = user.role > 2
+  const canEdit = isAdmin || user.uid === resource.userId
+  // 待审核资源后端只放行 role >= 3 (patch/resource/update.ts 的 status 闸门整段
+  // 挂在 userRole < 3 下), 作者本人提交必被拒, 故置灰而非让他点了才看到报错
+  const isEditDisabled = isPending && !isAdmin
+  const {
+    isOpen: isOpenEdit,
+    onOpen: onOpenEdit,
+    onClose: onCloseEdit
+  } = useDisclosure()
 
   useKunExternalLinkNavigation(noteRef, resource.noteHtml)
 
@@ -61,7 +78,20 @@ export const ResourceDetail = ({ detail }: Props) => {
                       </Tooltip>
                     )}
                   </div>
-                  <div className="shrink-0">
+                  <div className="flex shrink-0 items-center gap-1">
+                    {canEdit && (
+                      <Tooltip content="编辑资源" placement="bottom">
+                        <Button
+                          isIconOnly
+                          aria-label="编辑资源"
+                          variant="light"
+                          isDisabled={isEditDisabled}
+                          onPress={onOpenEdit}
+                        >
+                          <Edit2 className="size-4" />
+                        </Button>
+                      </Tooltip>
+                    )}
                     <ResourceLikeButton
                       resource={resource}
                       isDisabled={isPending}
@@ -176,6 +206,29 @@ export const ResourceDetail = ({ detail }: Props) => {
           />
         </aside>
       </div>
+
+      {canEdit && (
+        <Modal
+          size="3xl"
+          isOpen={isOpenEdit}
+          onClose={onCloseEdit}
+          scrollBehavior="outside"
+          isDismissable={false}
+          isKeyboardDismissDisabled={true}
+        >
+          {/* 关闭即卸载, 每次打开都以最新的 detail.resource 作表单初值;
+              保存后走 router.refresh() 而非回写接口返回值 —— PUT 的响应体
+              把 likeCount/isLike 硬编码为 0/false, 直接采信会清空点赞展示 */}
+          <EditResourceDialog
+            resource={resource}
+            onClose={onCloseEdit}
+            onSuccess={() => {
+              onCloseEdit()
+              router.refresh()
+            }}
+          />
+        </Modal>
+      )}
     </div>
   )
 }
