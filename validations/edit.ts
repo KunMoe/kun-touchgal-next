@@ -104,10 +104,10 @@ export const patchCreateSchema = z.object({
     }),
   alias: z
     .string()
-    .max(2333, { message: '别名字符串总长度不可超过 3000 个字符' }),
+    .max(2333, { message: '别名字符串总长度不可超过 2333 个字符' }),
   tag: z
     .string()
-    .max(2333, { message: '别名字符串总长度不可超过 3000 个字符' }),
+    .max(2333, { message: '标签字符串总长度不可超过 2333 个字符' }),
   // patch.released 是 VarChar(107)
   released: z.string().max(107, { message: '发售日期最多 107 个字符' }),
   contentLimit: z.string().max(10)
@@ -143,21 +143,29 @@ export const patchUpdateSchema = z.object({
     .refine(isIntroductionWithinByteLimit, {
       message: '游戏介绍内容体积过大，请精简后再提交'
     }),
-  tag: z.array(
-    z
-      .string()
-      .trim()
-      .min(1, { message: '单个标签至少一个字符' })
-      // patch_tag.name 是 VarChar(107), 放行更长会在事务提交后的 batchTag 才抛 22001
-      .max(107, { message: '单个标签至多 107 个字符' })
-  ),
-  alias: z.array(
-    z
-      .string()
-      .trim()
-      .min(1, { message: '单个别名至少一个字符' })
-      .max(500, { message: '单个别名至多 500 个字符' })
-  ),
+  // 条数上限是 batchTag 单请求成本上界(嵌套 OR 查询约 0.3ms/元素, 超 3 万元素撞 PG
+  // 绑定参数上限在主事务提交后才 500), 不是产品上限: PUT 的 tag 承载 patch 全部现存
+  // 标签(rewrite store 整份灌入 patch.tags, batchTag 全量同步), 外部来源即可把单个
+  // patch 推到 165 个, 不能与 POST 手动标签的 100 对齐
+  tag: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, { message: '单个标签至少一个字符' })
+        // patch_tag.name 是 VarChar(107), 放行更长会在事务提交后的 batchTag 才抛 22001
+        .max(107, { message: '单个标签至多 107 个字符' })
+    )
+    .max(1000, { message: '一个 Galgame 最多提交 1000 个标签' }),
+  alias: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, { message: '单个别名至少一个字符' })
+        .max(500, { message: '单个别名至多 500 个字符' })
+    )
+    .max(100, { message: '您最多使用 100 个别名' }),
   contentLimit: z.string().max(10),
   released: z
     .string()
