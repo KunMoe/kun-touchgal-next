@@ -44,17 +44,19 @@ export const Username = () => {
       setError('')
 
       setLoading(true)
+      // 发送与写回 store 都用 schema 解析后的值 (已 trim), 原因见 Bio.tsx
+      const nextName = result.data.username
 
       try {
         const res = await kunFetchPost<KunResponse<{}>>(
           '/user/setting/username',
-          { username }
+          { username: nextName }
         )
         kunErrorHandler(res, () => {
           toast.success('更新用户名成功')
           setUser({
             ...user,
-            name: username,
+            name: nextName,
             moemoepoint: user.moemoepoint - 30
           })
           setDraft(null)

@@ -30,16 +30,19 @@ export const Bio = () => {
     } else {
       setError('')
       setLoading(true)
+      // 发送与写回 store 都用 schema 解析后的值 (已 trim): 服务端落库的是 trim 后的值,
+      // 写回未 trim 的原文会让 bio.trim() === user.bio 闸门在保存成功后关不上
+      const nextBio = result.data.bio
 
       try {
         const res = await kunFetchPost<KunResponse<{ pending?: boolean }>>(
           '/user/setting/bio',
-          { bio }
+          { bio: nextBio }
         )
         kunErrorHandler(res, (value) => {
           toast.success('更新签名成功')
           // 保存按钮以 bio === user.bio 判未修改: 请求前乐观写 store 会让失败后二者相等, 按钮锁死无法重试
-          setUser({ ...user, bio })
+          setUser({ ...user, bio: nextBio })
           setDraft(null)
           markPending(!!value.pending)
         })
