@@ -1,17 +1,6 @@
 import toast from 'react-hot-toast'
 
-const decodeIfEncoded = (text: string) => {
-  try {
-    const decoded = decodeURIComponent(text)
-    return decoded !== text ? decoded : text
-  } catch (e) {
-    return text
-  }
-}
-
-export const kunCopy = (originText: string) => {
-  const text = decodeIfEncoded(originText)
-
+export const kunCopy = (text: string) => {
   navigator.clipboard
     .writeText(text)
     .then(() =>
