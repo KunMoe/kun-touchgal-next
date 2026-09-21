@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Card, CardBody, CardHeader } from '@heroui/card'
 import { kunFetchGet } from '~/utils/kunFetch'
-import { errorReporter } from '~/utils/kunErrorHandler'
+import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { KunLoading } from '~/components/kun/Loading'
 import { KunPagination } from '~/components/kun/Pagination'
 import { useMounted } from '~/hooks/useMounted'
@@ -31,10 +31,10 @@ export const AppealSettings = () => {
       if (requestId !== latestFetchRequestIdRef.current) {
         return
       }
-      if (typeof response !== 'string') {
-        setAppeals(response.appeals)
-        setTotal(response.total)
-      }
+      kunErrorHandler(response, (value) => {
+        setAppeals(value.appeals)
+        setTotal(value.total)
+      })
     } catch (error) {
       errorReporter(error)
     } finally {
