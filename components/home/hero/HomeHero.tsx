@@ -1,14 +1,11 @@
-import { Button } from '@heroui/button'
-import { Tooltip } from '@heroui/tooltip'
 import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Sparkles } from 'lucide-react'
 import { KunCarousel } from '../carousel/KunCarousel'
 import { getKunPosts } from '../carousel/mdx'
 import { RandomGalgameButton } from '../carousel/RandomGalgameButton'
-import { Discord } from '~/components/kun/icons/Discord'
+import { DiscordButton } from './DiscordButton'
 import { KunHomeNavigationItems } from '../NavigationItems'
-import { kunMoyuMoe } from '~/config/moyu-moe'
 
 export const HomeHero = () => {
   const posts = getKunPosts()
@@ -39,20 +36,7 @@ export const HomeHero = () => {
                 <RandomGalgameButton color="primary" variant="solid">
                   随机一部游戏
                 </RandomGalgameButton>
-                <Tooltip showArrow content="Discord 服务器">
-                  <Button
-                    isIconOnly
-                    as="a"
-                    href={kunMoyuMoe.domain.discord_group}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="加入 Discord 服务器"
-                    variant="flat"
-                    color="secondary"
-                  >
-                    <Discord />
-                  </Button>
-                </Tooltip>
+                <DiscordButton />
               </div>
             </CardBody>
           </Card>
