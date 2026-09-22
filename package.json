@@ -81,7 +81,7 @@
     "gray-matter": "^4.0.3",
     "hast-util-to-string": "^3.0.1",
     "html-to-text": "^10.0.1",
-    "ioredis": "^5.11.1",
+    "ioredis": "^6.0.0",
     "isomorphic-dompurify": "^4.3.0",
     "jose": "^6.2.12",
     "js-cookie": "^3.0.8",
