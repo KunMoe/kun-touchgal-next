@@ -58,6 +58,3 @@ allowBuilds:
 
 patchedDependencies:
   cap-widget@0.1.56: patches/cap-widget@0.1.56.patch
-
-minimumReleaseAgeExclude:
-  - lucide-react@1.28.0
