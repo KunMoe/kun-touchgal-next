@@ -45,7 +45,7 @@ overrides:
   deepmerge-ts: '>=8.0.0'
 
 patchedDependencies:
-  cap-widget@0.1.56: 7d7c6558a0ec4e8eb0ec769d65918580f8e272a2555ed8c4b5690a0f912cd1d2
+  cap-widget@0.1.57: 286b1d019b693f4c172e2ec887351cf3ed6c731c60c109c7214c0c601e25fc78
 
 importers:
 
@@ -133,8 +133,8 @@ importers:
         specifier: ^1.9.4
         version: 1.9.4
       cap-widget:
-        specifier: 0.1.56
-        version: 0.1.56(patch_hash=7d7c6558a0ec4e8eb0ec769d65918580f8e272a2555ed8c4b5690a0f912cd1d2)
+        specifier: 0.1.57
+        version: 0.1.57(patch_hash=286b1d019b693f4c172e2ec887351cf3ed6c731c60c109c7214c0c601e25fc78)
       capjs-core:
         specifier: ^0.1.2
         version: 0.1.2
@@ -4230,8 +4230,8 @@ packages:
   canvas-confetti@1.9.4:
     resolution: {integrity: sha512-yxQbJkAVrFXWNbTUjPqjF7G+g6pDotOUHGbkZq2NELZUMDpiJ85rIEazVb8GTaAptNW2miJAXbs1BtioA251Pw==}
 
-  cap-widget@0.1.56:
-    resolution: {integrity: sha512-mAoFWzouxCjvi0B0Y0s7cRGGaLvJxifMVeNIHiFCkZme/9BOASWliN0aqz9wTUdlrt3Awm0UEA8h8DV1IDUuug==}
+  cap-widget@0.1.57:
+    resolution: {integrity: sha512-SyIK5XgYIFSDgH683M9KpfBmDSDB0ZfPZQBxL6MggNrjjnbIQYpbsNpj0S7PC/wXp7oJgAuBD2vtJnN9jJghBg==}
 
   capjs-core@0.1.2:
     resolution: {integrity: sha512-2NavC99XsbPD0DoBWBapqyznaM0y6SFNqfUG4If18XM+hR0qYPBZa8bUAbwSyC/MNE/Oi8mK0pgU6yjVmBWM5Q==}
@@ -12926,7 +12926,7 @@ snapshots:
 
   canvas-confetti@1.9.4: {}
 
-  cap-widget@0.1.56(patch_hash=7d7c6558a0ec4e8eb0ec769d65918580f8e272a2555ed8c4b5690a0f912cd1d2): {}
+  cap-widget@0.1.57(patch_hash=286b1d019b693f4c172e2ec887351cf3ed6c731c60c109c7214c0c601e25fc78): {}
 
   capjs-core@0.1.2:
     dependencies:

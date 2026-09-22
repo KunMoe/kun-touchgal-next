@@ -71,7 +71,7 @@
     "@types/node-cron": "^3.0.11",
     "axios": "^1.20.0",
     "canvas-confetti": "^1.9.4",
-    "cap-widget": "0.1.56",
+    "cap-widget": "0.1.57",
     "capjs-core": "^0.1.2",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",

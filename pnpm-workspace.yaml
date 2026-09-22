@@ -57,4 +57,4 @@ allowBuilds:
   unrs-resolver: true
 
 patchedDependencies:
-  cap-widget@0.1.56: patches/cap-widget@0.1.56.patch
+  cap-widget@0.1.57: patches/cap-widget@0.1.57.patch
