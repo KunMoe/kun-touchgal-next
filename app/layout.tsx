@@ -45,7 +45,8 @@ export default function RootLayout({
               <KunTopBarSession initialSession={initialSession} />
             </Suspense>
             <KunNavigationBreadcrumb />
-            <div className="flex min-h-[calc(100dvh-256px)] w-full max-w-7xl grow px-3 sm:px-6">
+            {/* 流式外置的 Suspense 边界由内联 $RC 延迟揭示; 揭示前隐藏页脚, 长内容揭示时就不会把可见的页脚推下去 */}
+            <div className="flex min-h-[calc(100dvh-256px)] w-full max-w-7xl grow px-3 sm:px-6 [&:has(template[id^=B])~footer]:invisible">
               {children}
               <Toaster />
             </div>
