@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import {
   Alert,
@@ -48,12 +48,23 @@ const preloadPublishResource = () => {
 interface Props {
   id: number
   vndbId: string
+  onLoaded?: () => void
 }
 
-export const Resources = ({ id, vndbId }: Props) => {
-  const [loading, setLoading] = useState(false)
+export const Resources = ({ id, vndbId, onLoaded }: Props) => {
+  // 初值为 true: 否则挂载首帧会把空列表画成「本游戏暂无」并预加载 null.webp
+  const [loading, setLoading] = useState(true)
   const [resources, setResources] = useState<PatchResource[]>([])
   const uid = useUserStore((state) => state.user.uid)
+
+  // 用 layout effect: 先于 ResourceTabs 定位卡片的 passive effect 执行, 深链带
+  // resourceId 且卡片存在时, 父组件滚到 tabs 的平滑滚动会被随后滚到卡片的那次覆盖
+  useLayoutEffect(() => {
+    if (!loading) {
+      onLoaded?.()
+    }
+  }, [loading])
+
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true)

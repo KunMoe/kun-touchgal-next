@@ -6,9 +6,10 @@ import { Resources } from '~/components/patch/resource/Resource'
 interface Props {
   id: number
   vndbId: string
+  onLoaded?: () => void
 }
 
-export const ResourceTab = ({ id, vndbId }: Props) => {
+export const ResourceTab = ({ id, vndbId, onLoaded }: Props) => {
   return (
     <Card className="p-1 sm:p-8">
       <CardHeader className="p-4">
@@ -29,7 +30,7 @@ export const ResourceTab = ({ id, vndbId }: Props) => {
           </p>
         </div>
 
-        <Resources id={Number(id)} vndbId={vndbId} />
+        <Resources id={Number(id)} vndbId={vndbId} onLoaded={onLoaded} />
       </CardBody>
     </Card>
   )

@@ -108,6 +108,18 @@ export const PatchHeaderTabs = ({
   const [mountedTabs, setMountedTabs] = useState<Set<PatchTabKey>>(
     () => new Set([selected])
   )
+  // 首次渲染就落在资源 tab 时, 面板还只是 256px 的懒加载占位: 此时滚动会因页面
+  // 不够长停在半路, 之后「占位 → spinner → 列表」又会推动已滚进视口的页脚.
+  // 改为列表渲染完成后再滚; 带 resourceId 时 ResourceTabs 随后会改滚到对应卡片
+  const pendingResourceScrollRef = useRef(selected === 'resources')
+
+  const handleResourcesLoaded = () => {
+    if (!pendingResourceScrollRef.current) {
+      return
+    }
+    pendingResourceScrollRef.current = false
+    tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   // 资源 tab 组约 11KB gz, 水合后预热, 点「资源链接」或「下载」时不必再等块
   useEffect(() => {
@@ -128,7 +140,10 @@ export const PatchHeaderTabs = ({
       })
     })
 
-    if (hasTabDeepLink(searchParams)) {
+    if (
+      hasTabDeepLink(searchParams) &&
+      !(nextTab === 'resources' && pendingResourceScrollRef.current)
+    ) {
       requestAnimationFrame(() => {
         tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       })
@@ -193,7 +208,11 @@ export const PatchHeaderTabs = ({
 
         <Tab key="resources" title="资源链接" className="p-0 min-w-20">
           {mountedTabs.has('resources') && (
-            <ResourceTab id={id} vndbId={vndbId} />
+            <ResourceTab
+              id={id}
+              vndbId={vndbId}
+              onLoaded={handleResourcesLoaded}
+            />
           )}
         </Tab>
 
