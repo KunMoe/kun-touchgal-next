@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useDebounce } from 'use-debounce'
+import dynamic from 'next/dynamic'
 import { useRouter } from '@bprogress/next'
 import { useSearchParams } from 'next/navigation'
 import { Button, Chip } from '@heroui/react'
@@ -15,7 +16,7 @@ import { KunLoading } from '~/components/kun/Loading'
 import { GalgameCard } from '~/components/galgame/Card'
 import { KunNull } from '~/components/kun/Null'
 import { KunPagination } from '~/components/kun/Pagination'
-import { CompanyFormModal } from '../form/CompanyFormModal'
+import { LazyDialogFallback } from '~/components/patch/header/LazyDialogFallback'
 import { DeleteCompanyModal } from './DeleteCompanyModal'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { kunFetchGet } from '~/utils/kunFetch'
@@ -36,6 +37,17 @@ import {
 } from '~/utils/galgameFilter'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 
+// 表单连带 zod 全量 / RHF, 只有管理员用得到, 静态导入会让每位访客首屏
+// 多下约 110KB gz. 首次打开后保持挂载, 保留关闭动画
+const CompanyFormModal = dynamic(
+  () => import('../form/CompanyFormModal').then((m) => m.CompanyFormModal),
+  { ssr: false, loading: () => <LazyDialogFallback hint="正在加载编辑器..." /> }
+)
+
+const preloadCompanyFormModal = () => {
+  void import('../form/CompanyFormModal')
+}
+
 interface Props {
   initialCompany: CompanyDetail
   initialPatches: GalgameCard[]
@@ -50,6 +62,7 @@ export const CompanyDetailContainer: FC<Props> = ({
   filterEndYear
 }) => {
   const { isOpen, onOpen, onClose } = useDisclosure()
+  const [hasOpenedEdit, setHasOpenedEdit] = useState(false)
 
   const isMounted = useMounted()
   const user = useUserStore((state) => state.user)
@@ -216,7 +229,12 @@ export const CompanyDetailContainer: FC<Props> = ({
                 <Button
                   variant="flat"
                   color="primary"
-                  onPress={onOpen}
+                  onPress={() => {
+                    setHasOpenedEdit(true)
+                    onOpen()
+                  }}
+                  onPointerEnter={preloadCompanyFormModal}
+                  onFocus={preloadCompanyFormModal}
                   startContent={<Pencil />}
                 >
                   编辑会社信息
@@ -224,17 +242,19 @@ export const CompanyDetailContainer: FC<Props> = ({
                 <DeleteCompanyModal company={company} />
               </div>
             )}
-            <CompanyFormModal
-              type="edit"
-              company={company}
-              isOpen={isOpen}
-              onClose={onClose}
-              onSuccess={(newCompany) => {
-                setCompany(newCompany as CompanyDetail)
-                onClose()
-                router.refresh()
-              }}
-            />
+            {hasOpenedEdit && (
+              <CompanyFormModal
+                type="edit"
+                company={company}
+                isOpen={isOpen}
+                onClose={onClose}
+                onSuccess={(newCompany) => {
+                  setCompany(newCompany as CompanyDetail)
+                  onClose()
+                  router.refresh()
+                }}
+              />
+            )}
           </div>
         }
       />

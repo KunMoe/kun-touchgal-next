@@ -3,6 +3,7 @@
 import { useShallow } from 'zustand/react/shallow'
 import { useEffect, useRef, useState } from 'react'
 import { useDebounce } from 'use-debounce'
+import dynamic from 'next/dynamic'
 import { kunFetchDelete, kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
 import { Chip } from '@heroui/chip'
 import { Button } from '@heroui/button'
@@ -14,7 +15,7 @@ import { KunHeader } from '~/components/kun/Header'
 import { useMounted } from '~/hooks/useMounted'
 import { GalgameCard } from '~/components/galgame/Card'
 import { KunNull } from '~/components/kun/Null'
-import { EditTagModal } from './EditTagModal'
+import { LazyDialogFallback } from '~/components/patch/header/LazyDialogFallback'
 import { DeleteTagModal } from './DeleteTagModal'
 import { KunUser } from '~/components/kun/floating-card/KunUser'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
@@ -34,6 +35,17 @@ import {
 } from '~/utils/galgameFilter'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
+
+// 表单连带 zod 全量 / RHF, 只有管理员用得到, 静态导入会让每位访客 (含只看到
+// 登录占位的游客) 首屏多下约 110KB gz. 首次打开后保持挂载, 保留关闭动画
+const EditTagModal = dynamic(
+  () => import('./EditTagModal').then((m) => m.EditTagModal),
+  { ssr: false, loading: () => <LazyDialogFallback hint="正在加载编辑器..." /> }
+)
+
+const preloadEditTagModal = () => {
+  void import('./EditTagModal')
+}
 
 interface UpdateBlockedTagResponse {
   blockedTagIds: number[]
@@ -94,6 +106,7 @@ export const TagDetailContainer = ({
   const latestFetchRequestIdRef = useRef(0)
   const [updatingBlockedTag, setUpdatingBlockedTag] = useState(false)
   const { isOpen, onOpen, onClose } = useDisclosure()
+  const [hasOpenedEdit, setHasOpenedEdit] = useState(false)
   const isBlocked = user.blockedTagIds.includes(tag.id)
   const withPageReset = <T,>(setter: (value: T) => void) => {
     return (value: T) => {
@@ -270,21 +283,28 @@ export const TagDetailContainer = ({
                 <Button
                   variant="flat"
                   color="primary"
-                  onPress={onOpen}
+                  onPress={() => {
+                    setHasOpenedEdit(true)
+                    onOpen()
+                  }}
+                  onPointerEnter={preloadEditTagModal}
+                  onFocus={preloadEditTagModal}
                   startContent={<Pencil />}
                 >
                   编辑该标签
                 </Button>
               )}
-              <EditTagModal
-                tag={tag}
-                isOpen={isOpen}
-                onClose={onClose}
-                onSuccess={(newTag) => {
-                  setTag(newTag)
-                  onClose()
-                }}
-              />
+              {hasOpenedEdit && (
+                <EditTagModal
+                  tag={tag}
+                  isOpen={isOpen}
+                  onClose={onClose}
+                  onSuccess={(newTag) => {
+                    setTag(newTag)
+                    onClose()
+                  }}
+                />
+              )}
             </div>
           </div>
         }
