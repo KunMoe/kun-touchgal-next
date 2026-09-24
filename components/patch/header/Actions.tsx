@@ -37,7 +37,11 @@ export const PatchHeaderActions = ({ patch }: PatchHeaderActionsProps) => {
     params.delete('commentId')
     params.delete('ratingId')
     const query = params.toString()
-    router.push(query ? `${pathname}?${query}` : pathname, { scroll: false })
+    window.history.pushState(
+      null,
+      '',
+      query ? `${pathname}?${query}` : pathname
+    )
   }
 
   const handleShareLink = () => {

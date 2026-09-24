@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState, useRef, type Key } from 'react'
+import { startTransition, useEffect, useState, useRef, type Key } from 'react'
 import dynamic from 'next/dynamic'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { Tab, Tabs } from '@heroui/tabs'
 import { IntroductionTab } from '~/components/patch/introduction/IntroductionTab'
 import { KunLoading } from '~/components/kun/Loading'
@@ -22,11 +22,11 @@ interface SearchParamsLike {
   toString: () => string
 }
 
+// 预热与 dynamic 必须共用同一个 import(), 否则 Turbopack 会编出两份入口变体块
+const loadResourceTab = () => import('~/components/patch/resource/ResourceTab')
+
 const ResourceTab = dynamic(
-  () =>
-    import('~/components/patch/resource/ResourceTab').then(
-      (mod) => mod.ResourceTab
-    ),
+  () => loadResourceTab().then((mod) => mod.ResourceTab),
   {
     ssr: false,
     loading: () => (
@@ -99,7 +99,6 @@ export const PatchHeaderTabs = ({
   uid,
   intro
 }: PatchHeaderProps) => {
-  const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const tabsRef = useRef<HTMLDivElement>(null)
@@ -110,16 +109,23 @@ export const PatchHeaderTabs = ({
     () => new Set([selected])
   )
 
+  // 资源 tab 组约 11KB gz, 水合后预热, 点「资源链接」或「下载」时不必再等块
+  useEffect(() => {
+    void loadResourceTab()
+  }, [])
+
   useEffect(() => {
     const nextTab = getSelectedTab(searchParams)
-    setSelected(nextTab)
-    setMountedTabs((current) => {
-      if (current.has(nextTab)) {
-        return current
-      }
-      const next = new Set(current)
-      next.add(nextTab)
-      return next
+    startTransition(() => {
+      setSelected(nextTab)
+      setMountedTabs((current) => {
+        if (current.has(nextTab)) {
+          return current
+        }
+        const next = new Set(current)
+        next.add(nextTab)
+        return next
+      })
     })
 
     if (hasTabDeepLink(searchParams)) {
@@ -135,14 +141,18 @@ export const PatchHeaderTabs = ({
       return
     }
 
-    setSelected(nextTab)
-    setMountedTabs((current) => {
-      if (current.has(nextTab)) {
-        return current
-      }
-      const next = new Set(current)
-      next.add(nextTab)
-      return next
+    // 在 transition 里挂载懒加载 tab: 块已预热时 React 会等 import() 在微任务里
+    // 完成而不先提交 fallback, 从而绕开 Suspense 揭示的 300ms 节流
+    startTransition(() => {
+      setSelected(nextTab)
+      setMountedTabs((current) => {
+        if (current.has(nextTab)) {
+          return current
+        }
+        const next = new Set(current)
+        next.add(nextTab)
+        return next
+      })
     })
 
     const params = new URLSearchParams(searchParams.toString())
@@ -159,9 +169,13 @@ export const PatchHeaderTabs = ({
     }
 
     const query = params.toString()
-    router.replace(query ? `${pathname}?${query}` : pathname, {
-      scroll: false
-    })
+    // 只改 ?tab=, 用 history API 同步 useSearchParams; router.replace 会多一次
+    // page 段 RSC 往返并让浏览量 +1
+    window.history.replaceState(
+      null,
+      '',
+      query ? `${pathname}?${query}` : pathname
+    )
   }
 
   return (
