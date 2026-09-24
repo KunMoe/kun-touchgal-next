@@ -1,0 +1,39 @@
+diff --git a/dist/context.main.js b/dist/context.main.js
+index 4f264b183dd3a42f58d2d8317d31ac0bd99599b9..a67325b6be1cacd201d303390c003c1989e3686a 100644
+--- a/dist/context.main.js
++++ b/dist/context.main.js
+@@ -37,7 +37,7 @@ function $47fa5ec5ff482271$export$a54013f0d02a8f82(props) {
+             direction: (0, $4d65847630a056a8$exports.isRTL)(locale) ? 'rtl' : 'ltr'
+         };
+     }, [
+-        defaultLocale,
++        locale ? null : defaultLocale,
+         locale
+     ]);
+     return /*#__PURE__*/ (0, ($parcel$interopDefault($e7RNT$react))).createElement($47fa5ec5ff482271$var$I18nContext.Provider, {
+diff --git a/dist/context.mjs b/dist/context.mjs
+index f1ce50be1439533e0ddec4fe4aa36c0b136db2ca..d6c3b205d551290c9f96a8316464f2578821f4f4 100644
+--- a/dist/context.mjs
++++ b/dist/context.mjs
+@@ -26,7 +26,7 @@ function $18f2051aff69b9bf$export$a54013f0d02a8f82(props) {
+             direction: (0, $148a7a147e38ea7f$export$702d680b21cbd764)(locale) ? 'rtl' : 'ltr'
+         };
+     }, [
+-        defaultLocale,
++        locale ? null : defaultLocale,
+         locale
+     ]);
+     return /*#__PURE__*/ (0, $h9FiU$react).createElement($18f2051aff69b9bf$var$I18nContext.Provider, {
+diff --git a/dist/context.module.js b/dist/context.module.js
+index 6536f31a7ddab84c510c022a8a6a9cf31e8c6d5d..4e57cf4b561c1fefd0300a978cbf2a6fbfe5ad13 100644
+--- a/dist/context.module.js
++++ b/dist/context.module.js
+@@ -26,7 +26,7 @@ function $18f2051aff69b9bf$export$a54013f0d02a8f82(props) {
+             direction: (0, $148a7a147e38ea7f$export$702d680b21cbd764)(locale) ? 'rtl' : 'ltr'
+         };
+     }, [
+-        defaultLocale,
++        locale ? null : defaultLocale,
+         locale
+     ]);
+     return /*#__PURE__*/ (0, $h9FiU$react).createElement($18f2051aff69b9bf$var$I18nContext.Provider, {

@@ -45,6 +45,7 @@ overrides:
   deepmerge-ts: '>=8.0.0'
 
 patchedDependencies:
+  '@react-aria/i18n@3.12.10': 53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57
   cap-widget@0.1.57: 286b1d019b693f4c172e2ec887351cf3ed6c731c60c109c7214c0c601e25fc78
 
 importers:
@@ -8712,7 +8713,7 @@ snapshots:
       '@heroui/theme': 2.4.19(tailwindcss@4.3.3)
       '@heroui/use-safe-layout-effect': 2.1.8(react@19.3.0)
       '@react-aria/combobox': 3.12.5(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-stately/combobox': 3.10.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-types/combobox': 3.13.6(react@19.3.0)
       '@react-types/shared': 3.30.0(react@19.3.0)
@@ -8791,7 +8792,7 @@ snapshots:
       '@internationalized/date': 3.8.2
       '@react-aria/calendar': 3.8.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/focus': 3.20.5(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/interactions': 3.25.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/visually-hidden': 3.8.25(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-stately/calendar': 3.8.2(react@19.3.0)
@@ -8870,7 +8871,7 @@ snapshots:
       '@heroui/theme': 2.4.19(tailwindcss@4.3.3)
       '@internationalized/date': 3.8.2
       '@react-aria/datepicker': 3.14.5(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-stately/datepicker': 3.14.2(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-types/datepicker': 3.12.2(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-types/shared': 3.30.0(react@19.3.0)
@@ -8894,7 +8895,7 @@ snapshots:
       '@heroui/theme': 2.4.19(tailwindcss@4.3.3)
       '@internationalized/date': 3.8.2
       '@react-aria/datepicker': 3.14.5(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-stately/datepicker': 3.14.2(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-stately/utils': 3.10.7(react@19.3.0)
       '@react-types/datepicker': 3.12.2(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -9142,7 +9143,7 @@ snapshots:
       '@heroui/theme': 2.4.19(tailwindcss@4.3.3)
       '@heroui/use-safe-layout-effect': 2.1.8(react@19.3.0)
       '@react-aria/focus': 3.20.5(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/interactions': 3.25.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/numberfield': 3.11.16(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-stately/numberfield': 3.9.13(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -9165,7 +9166,7 @@ snapshots:
       '@heroui/use-intersection-observer': 2.2.14(react@19.3.0)
       '@heroui/use-pagination': 2.2.15(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/focus': 3.20.5(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/interactions': 3.25.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/utils': 3.29.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       react: 19.3.0
@@ -9366,7 +9367,7 @@ snapshots:
       '@heroui/theme': 2.4.19(tailwindcss@4.3.3)
       '@heroui/tooltip': 2.2.20(@heroui/system@2.4.19(@heroui/theme@2.4.19(tailwindcss@4.3.3))(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(framer-motion@13.4.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@heroui/theme@2.4.19(tailwindcss@4.3.3))(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(framer-motion@13.4.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/focus': 3.20.5(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/interactions': 3.25.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/slider': 3.7.21(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/visually-hidden': 3.8.25(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -9443,7 +9444,7 @@ snapshots:
     dependencies:
       '@heroui/react-utils': 2.1.12(react@19.3.0)
       '@heroui/system-rsc': 2.3.16(@heroui/theme@2.4.19(tailwindcss@4.3.3))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/overlays': 3.27.3(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/utils': 3.29.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       framer-motion: 13.4.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -9596,7 +9597,7 @@ snapshots:
 
   '@heroui/use-aria-multiselect@2.4.16(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/interactions': 3.25.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/label': 3.7.19(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/listbox': 3.14.6(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -9685,7 +9686,7 @@ snapshots:
   '@heroui/use-pagination@2.2.15(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@heroui/shared-utils': 2.1.10
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       react: 19.3.0
     transitivePeerDependencies:
       - react-dom
@@ -10740,7 +10741,7 @@ snapshots:
   '@react-aria/calendar@3.8.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@internationalized/date': 3.12.4
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/interactions': 3.25.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/live-announcer': 3.5.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/utils': 3.34.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -10778,7 +10779,7 @@ snapshots:
   '@react-aria/combobox@3.12.5(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@react-aria/focus': 3.22.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/listbox': 3.16.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/live-announcer': 3.5.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/menu': 3.22.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -10805,7 +10806,7 @@ snapshots:
       '@internationalized/string': 3.2.9
       '@react-aria/focus': 3.22.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/form': 3.2.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/interactions': 3.28.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/label': 3.8.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/spinbutton': 3.8.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -10884,7 +10885,7 @@ snapshots:
       react-aria: 3.50.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       react-dom: 19.3.0(react@19.3.0)
 
-  '@react-aria/i18n@3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@react-aria/i18n@3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@internationalized/date': 3.12.4
       '@internationalized/message': 3.1.10
@@ -11014,7 +11015,7 @@ snapshots:
 
   '@react-aria/numberfield@3.11.16(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/interactions': 3.25.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/spinbutton': 3.8.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/textfield': 3.19.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -11100,7 +11101,7 @@ snapshots:
 
   '@react-aria/slider@3.7.21(@react-spectrum/provider@3.11.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@react-aria/i18n': 3.12.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@react-aria/i18n': 3.12.10(patch_hash=53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/interactions': 3.25.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/label': 3.8.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-aria/utils': 3.34.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

@@ -57,4 +57,5 @@ allowBuilds:
   unrs-resolver: true
 
 patchedDependencies:
+  '@react-aria/i18n@3.12.10': patches/@react-aria__i18n@3.12.10.patch
   cap-widget@0.1.57: patches/cap-widget@0.1.57.patch
