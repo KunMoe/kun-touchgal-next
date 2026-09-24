@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import {
   ADMIN_COMMENT_DELETE_LIMIT,
   ADMIN_RATING_DELETE_LIMIT,

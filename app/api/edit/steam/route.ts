@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
+import * as z from 'zod'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { fetchSteamAppData } from '~/lib/arnebiae/steam'

@@ -23,7 +23,7 @@ import 'dotenv/config'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import {
   cleanupResourceCommentDerivatives,

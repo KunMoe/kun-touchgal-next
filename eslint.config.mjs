@@ -59,6 +59,18 @@ export default defineConfig([
         }
       ],
       '@typescript-eslint/no-empty-object-type': 'off',
+      // zod 根入口的 z 是整个命名空间再导出, Turbopack 无法按成员裁剪, 具名/默认导入会打进
+      // 全量 zod (含 62 个语言包, 约 90KB gz); 命名空间导入实测 32KB (C9)。
+      // 不用 no-restricted-imports 的 importNames: 它会连 import * as z 一起拦
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "ImportDeclaration[source.value='zod'][importKind!='type'] > :matches(ImportSpecifier[imported.name='z'][importKind!='type'], ImportDefaultSpecifier)",
+          message:
+            "用 import * as z from 'zod': 具名/默认导入 z 会让 Turbopack 打进全量 zod (约 90KB gz)"
+        }
+      ],
       '@next/next/no-img-element': 'off',
       'react-hooks/exhaustive-deps': 'off',
       // eslint-plugin-react-hooks v7 新增的编译器规则, 对存量代码大面积报错, 维持升级前基线

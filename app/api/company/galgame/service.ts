@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { getPatchByCompanySchema } from '~/validations/company'
 import {

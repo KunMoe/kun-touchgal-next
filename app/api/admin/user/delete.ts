@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { isPrismaTransactionConflict, prisma } from '~/prisma/index'
 import { deleteKunToken } from '~/app/api/utils/jwt'
 import { deleteResource } from '../resource/delete'

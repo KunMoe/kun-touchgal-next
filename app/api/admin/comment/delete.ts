@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminDeleteCommentSchema } from '~/validations/admin'
 import { collectCommentSubtreeIds } from '~/app/api/patch/comment/subtree'

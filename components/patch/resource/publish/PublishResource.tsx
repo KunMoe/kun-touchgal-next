@@ -1,6 +1,6 @@
 'use client'
 
-import { z } from 'zod'
+import * as z from 'zod'
 import { useRef, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'

@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import {
   ALL_SUPPORTED_LANGUAGE,
   ALL_SUPPORTED_PLATFORM,

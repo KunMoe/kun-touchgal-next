@@ -1,6 +1,6 @@
 'use server'
 
-import { z } from 'zod'
+import * as z from 'zod'
 import { cache } from 'react'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'
 import { getCompanyById } from '~/app/api/company/service'

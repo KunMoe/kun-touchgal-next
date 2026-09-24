@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 
 // 不要用 z.string().url(): zod 4 底层是 WHATWG new URL(), 'localhost:3000' /
 // 'www.moyu.moe:443' 这类 scheme-less 值会按 opaque scheme 解析而通过校验,

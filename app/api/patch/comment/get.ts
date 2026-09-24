@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { convert } from 'html-to-text'
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'

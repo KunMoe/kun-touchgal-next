@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 // 相对导入: 本文件经 dotenv-check 进入 next.config.ts 的加载链, 不解析 ~ 别名
 import { kunOptionalWebUrlSchema, kunWebUrlSchema } from './env-url'
 

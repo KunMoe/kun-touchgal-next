@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import type { ZodSchema } from 'zod'
 
 export const safeParseSchema = <T extends ZodSchema>(

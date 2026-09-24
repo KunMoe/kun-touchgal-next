@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { recomputePatchRatingStat } from '~/app/api/patch/rating/stat'
 import { adminUpdateRatingShadowBanSchema } from '~/validations/admin'

@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { recomputePatchRatingStat } from './stat'
 import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'

@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { recalcPatchType } from '~/app/api/patch/resource/_helper'
 import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'

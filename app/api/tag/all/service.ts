@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { getTagSchema } from '~/validations/tag'
 import { getCachedTagList, getTagListCacheKey, setTagListCache } from '../cache'

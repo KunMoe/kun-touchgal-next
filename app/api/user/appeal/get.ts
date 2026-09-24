@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { getUserAppealSchema } from '~/validations/appeal'
 import { APPEAL_CONTENT_TYPE } from '~/constants/appeal'

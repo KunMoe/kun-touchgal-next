@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { kunPasswordRegex } from '~/utils/validate'
 import { captchaVerifyTokenSchema } from './captcha'
 

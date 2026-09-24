@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto'
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { encryptClientSecret } from '~/lib/oidc/secret'
 import type {

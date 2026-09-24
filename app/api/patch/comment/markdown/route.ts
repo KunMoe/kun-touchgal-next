@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
 import { prisma } from '~/prisma/index'

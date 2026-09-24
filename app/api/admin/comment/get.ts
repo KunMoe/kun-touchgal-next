@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminCommentPaginationSchema } from '~/validations/admin'
 import { markdownToText } from '~/utils/markdownToText'

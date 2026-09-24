@@ -1,6 +1,6 @@
 'use server'
 
-import { z } from 'zod'
+import * as z from 'zod'
 import { getAppeals } from '~/app/api/admin/appeal/get'
 import { adminAppealPaginationSchema } from '~/validations/admin'
 import { parseSuperAdminAction } from '~/utils/actions/parseSuperAdminAction'

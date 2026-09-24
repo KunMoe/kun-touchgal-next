@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { searchCompanySchema } from '~/validations/company'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'

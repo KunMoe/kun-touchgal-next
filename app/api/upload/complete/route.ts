@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { delKv, getKv } from '~/lib/redis'
 import { deleteFileFromS3, headObject } from '~/lib/s3'

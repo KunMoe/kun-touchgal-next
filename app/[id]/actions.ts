@@ -1,7 +1,7 @@
 'use server'
 
 import { cache } from 'react'
-import { z } from 'zod'
+import * as z from 'zod'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'
 import { getPatchPageData } from '~/app/api/patch/pageData'

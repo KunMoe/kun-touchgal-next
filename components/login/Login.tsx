@@ -1,7 +1,7 @@
 'use client'
 
 import { useTransition } from 'react'
-import { z } from 'zod'
+import * as z from 'zod'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Button, Input, Link, useDisclosure } from '@heroui/react'

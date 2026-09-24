@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { NextRequest } from 'next/server'
 import type { ZodSchema } from 'zod'
 

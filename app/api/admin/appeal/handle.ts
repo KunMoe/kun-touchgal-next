@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma, isPrismaTransactionConflict } from '~/prisma/index'
 import type { moderation_appealModel } from '~/prisma/generated/prisma/models'
 import { adminHandleAppealSchema } from '~/validations/admin'

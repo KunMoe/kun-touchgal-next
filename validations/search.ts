@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { MAX_GALGAME_FILTER_VALUES } from '~/utils/galgameFilter'
 import type { SearchSuggestionType } from '~/types/api/search'
 

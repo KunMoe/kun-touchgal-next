@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { z } from 'zod'
+import * as z from 'zod'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Button, Input, useDisclosure } from '@heroui/react'

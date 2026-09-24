@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { updatePatchResource as updatePatchResourceByRole } from '~/app/api/patch/resource/update'
 import { sanitizeResourceLinksForAuditLog } from '~/app/api/patch/resource/_helper'

@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import {

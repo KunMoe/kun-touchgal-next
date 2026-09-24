@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { kunParsePostBody, kunParsePutBody } from '~/app/api/utils/parseQuery'
 import { prisma } from '~/prisma/index'
 import { patchTagChangeSchema } from '~/validations/patch'

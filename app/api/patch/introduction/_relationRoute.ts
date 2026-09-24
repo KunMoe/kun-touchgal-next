@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'

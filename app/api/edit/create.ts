@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import {

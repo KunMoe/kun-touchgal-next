@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 
 const isBlobLike = (value: unknown): value is Blob =>
   typeof Blob !== 'undefined' && value instanceof Blob

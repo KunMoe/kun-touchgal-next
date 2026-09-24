@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminUserPaginationSchema } from '~/validations/admin'
 import type { AdminUser } from '~/types/api/admin'

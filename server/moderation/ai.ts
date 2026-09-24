@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import {
   MODERATION_AI_MAX_TOKENS,
   MODERATION_AI_TIMEOUT_MS,

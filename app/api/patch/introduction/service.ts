@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { kunCacheSingleflight } from '~/app/api/utils/cacheSingleflight'
 import {
   PATCH_NOT_FOUND,

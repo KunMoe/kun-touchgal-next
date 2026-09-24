@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { patchResourceUpdateSchema } from '~/validations/patch'
 import { markdownToHtml } from '~/app/api/utils/render/markdownToHtml'

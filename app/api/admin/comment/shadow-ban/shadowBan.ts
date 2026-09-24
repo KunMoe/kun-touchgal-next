@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminUpdateCommentShadowBanSchema } from '~/validations/admin'
 import { deletePendingModerationTasks } from '~/server/moderation/submit'

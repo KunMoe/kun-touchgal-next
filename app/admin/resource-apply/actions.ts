@@ -1,6 +1,6 @@
 'use server'
 
-import { z } from 'zod'
+import * as z from 'zod'
 import { adminPaginationSchema } from '~/validations/admin'
 import { getPatchResourceApply } from '~/app/api/admin/resource-apply/get'
 import { getNSFWHeader } from '~/utils/actions/getNSFWHeader'

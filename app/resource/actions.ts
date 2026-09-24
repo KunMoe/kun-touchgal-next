@@ -1,6 +1,6 @@
 'use server'
 
-import { z } from 'zod'
+import * as z from 'zod'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'
 import { resourceSchema } from '~/validations/resource'
 import { getPatchResource } from '~/app/api/resource/service'

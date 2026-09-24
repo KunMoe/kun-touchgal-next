@@ -1,6 +1,6 @@
 'use server'
 
-import { z } from 'zod'
+import * as z from 'zod'
 import { adminPaginationSchema } from '~/validations/admin'
 import { getGalgame } from '~/app/api/admin/galgame/service'
 import { getNSFWHeader } from '~/utils/actions/getNSFWHeader'

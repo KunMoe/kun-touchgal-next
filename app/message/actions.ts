@@ -1,6 +1,6 @@
 'use server'
 
-import { z } from 'zod'
+import * as z from 'zod'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'
 import { getMessageSchema } from '~/validations/message'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'

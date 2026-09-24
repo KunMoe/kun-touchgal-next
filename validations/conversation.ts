@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 
 const conversationIdSchema = z.coerce.number().int().min(1).max(9999999)
 

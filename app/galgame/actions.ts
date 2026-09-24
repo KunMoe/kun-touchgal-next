@@ -1,6 +1,6 @@
 'use server'
 
-import { z } from 'zod'
+import * as z from 'zod'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'
 import { galgameSchema } from '~/validations/galgame'
 import { getGalgame } from '~/app/api/galgame/service'

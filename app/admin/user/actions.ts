@@ -1,6 +1,6 @@
 'use server'
 
-import { z } from 'zod'
+import * as z from 'zod'
 import { adminUserPaginationSchema } from '~/validations/admin'
 import { getUserInfo } from '~/app/api/admin/user/get'
 import { parseSuperAdminAction } from '~/utils/actions/parseSuperAdminAction'

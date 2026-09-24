@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { galgameSchema } from './galgame'
 import { DEFAULT_TAG_COMPANY_MIN_RATING_COUNT } from '~/utils/galgameFilter'
 

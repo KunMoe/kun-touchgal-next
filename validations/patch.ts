@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { ResourceSizeRegex } from '~/utils/validate'
 import { nonEmptyFileSchema } from './file'
 import {

@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { delKv, getKv } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
 import { NextRequest, NextResponse } from 'next/server'

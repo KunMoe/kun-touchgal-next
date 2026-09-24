@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { z } from 'zod'
+import * as z from 'zod'
 
 const { verifyHeaderCookieMock } = vi.hoisted(() => ({
   verifyHeaderCookieMock: vi.fn()

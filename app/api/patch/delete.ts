@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { enqueueResourceLinkDeletions } from './resource/_helper'
 import { invalidateResourceListCache } from '~/app/api/resource/cache'

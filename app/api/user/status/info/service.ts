@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { getUserProfileSchema } from '~/validations/user'
 import type { KunViewer } from '~/app/api/utils/contentVisibility'

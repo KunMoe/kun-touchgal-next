@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminAppealPaginationSchema } from '~/validations/admin'
 import type { AdminAppealItem, AppealPayload } from '~/types/api/appeal'

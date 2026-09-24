@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
+import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import {

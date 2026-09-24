@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'crypto'
-import { z } from 'zod'
+import * as z from 'zod'
 import { RESOURCE_LIST_CACHE_DURATION } from '~/config/cache'
 import { delKv, getKv, getKvs, setKv, setKvIfAbsent } from '~/lib/redis'
 import { resourceSchema } from '~/validations/resource'

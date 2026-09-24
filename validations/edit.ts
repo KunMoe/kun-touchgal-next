@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { nonEmptyFileSchema } from './file'
 import { MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES } from '~/config/cache'
 

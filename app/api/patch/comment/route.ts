@@ -15,7 +15,7 @@ import { getPatchComment } from './get'
 import { createPatchComment } from './create'
 import { updateComment } from './update'
 import { deleteComment } from './delete'
-import { z } from 'zod'
+import * as z from 'zod'
 
 const commentIdSchema = z.object({
   commentId: z.coerce

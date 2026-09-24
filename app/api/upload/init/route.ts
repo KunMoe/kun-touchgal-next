@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { setKv } from '~/lib/redis'

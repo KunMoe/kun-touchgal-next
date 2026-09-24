@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { MESSAGE_TYPE } from '~/constants/message'
 
 export const getMessageSchema = z.object({

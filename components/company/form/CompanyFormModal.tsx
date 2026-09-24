@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useTransition } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import * as z from 'zod'
 import { createCompanySchema, updateCompanySchema } from '~/validations/company'
 import toast from 'react-hot-toast'
 import {
