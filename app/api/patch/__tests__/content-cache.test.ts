@@ -107,7 +107,9 @@ const patchRow = {
   alias: [{ name: 'alias-1' }],
   tag: [{ tag: { id: 1, name: 'tag-1', count: 1, alias: [] } }],
   company: [{ company: { id: 2, name: 'company-1', count: 1, alias: [] } }],
-  _count: { favorite_folder: 0, resource: 0, comment: 0 }
+  favorite_count: 3,
+  resource_count: 2,
+  comment_count: 1
 }
 
 beforeEach(() => {
@@ -283,6 +285,25 @@ describe('getPatchPageData', () => {
     expect(result).toMatchObject({
       patch: { id: 7, uniqueId, isFavorite: false }
     })
+  })
+})
+
+// 关系 _count 会被 Prisma 编译成子表整表 GROUP BY (C3), 详情计数必须读计数列
+describe('详情计数读触发器计数列', () => {
+  const expectedCount = { favorite_folder: 3, resource: 2, comment: 1 }
+
+  it('getPatchById 不查关系 _count, 由计数列映射', async () => {
+    const result = await getPatchById(input, null)
+
+    expect(findUniqueMock.mock.calls[0][0].include).not.toHaveProperty('_count')
+    expect(result).toMatchObject({ _count: expectedCount })
+  })
+
+  it('getPatchPageData 不查关系 _count, 由计数列映射', async () => {
+    const result = await getPatchPageData(input, null)
+
+    expect(findUniqueMock.mock.calls[0][0].include).not.toHaveProperty('_count')
+    expect(result).toMatchObject({ patch: { _count: expectedCount } })
   })
 })
 

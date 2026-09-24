@@ -2,6 +2,7 @@ import {
   PATCH_CACHE_DURATION,
   PATCH_INTRODUCTION_CACHE_DURATION
 } from '~/config/cache'
+import { toGalgameCardCount } from '~/constants/api/select'
 import { getKv, setKv, setKvIfAbsent } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
 import { roundOneDecimal } from '~/utils/rating/average'
@@ -116,7 +117,9 @@ export const buildCachedPatch = (patch: CachedPatchSource): CachedPatch => ({
   },
   created: String(patch.created),
   updated: String(patch.updated),
-  _count: patch._count
+  // 读触发器维护的计数列 (migration/ensurePatchCounters.ts); 关系 _count 会被
+  // Prisma 编译成子表整表 GROUP BY, 每次未命中多耗 ~75ms
+  _count: toGalgameCardCount(patch)
 })
 
 export const buildPatchIntroduction = async (

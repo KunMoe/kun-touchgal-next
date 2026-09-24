@@ -10,13 +10,6 @@ const patchAliasSelect = {
   name: true
 } as const
 
-const patchCountSelect = {
-  favorite_folder: true,
-  resource: { where: { status: 0 } },
-  // 资源评论 (resource_id 非空) 属资源详情页评论区, 不计入补丁评论数
-  comment: { where: { status: 0, resource_id: null } }
-} as const
-
 const patchTagNameSelect = {
   tag: {
     select: {
@@ -60,10 +53,7 @@ export const getPatchSummaryByUniqueId = async (uniqueId: string) =>
       alias: {
         select: patchAliasSelect
       },
-      rating_stat: true,
-      _count: {
-        select: patchCountSelect
-      }
+      rating_stat: true
     }
   })
 
@@ -99,9 +89,6 @@ export const getPatchPageContentByUniqueId = async (uniqueId: string) =>
       alias: {
         select: patchAliasSelect
       },
-      rating_stat: true,
-      _count: {
-        select: patchCountSelect
-      }
+      rating_stat: true
     }
   })
