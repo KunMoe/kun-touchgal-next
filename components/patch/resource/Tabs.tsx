@@ -40,6 +40,11 @@ import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
 
 type ResourceSection = (typeof SUPPORTED_RESOURCE_SECTION)[number]
 
+// 编辑表单在 Resource.tsx 里是懒加载的, 打开操作菜单时先预热
+const preloadEditResourceDialog = () => {
+  void import('./edit/EditResourceDialog')
+}
+
 interface Props {
   vndbId: string
   resources: PatchResource[]
@@ -235,7 +240,13 @@ export const ResourceTabs = ({
               </Tooltip>
             )}
           </div>
-          <Dropdown>
+          <Dropdown
+            onOpenChange={(isOpen) => {
+              if (isOpen && user.uid > 0) {
+                preloadEditResourceDialog()
+              }
+            }}
+          >
             <DropdownTrigger>
               <Button variant="light" isIconOnly size="sm">
                 <MoreHorizontal aria-label="资源操作" className="size-4" />

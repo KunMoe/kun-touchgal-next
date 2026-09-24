@@ -1,6 +1,5 @@
 'use client'
 
-import DOMPurify from 'isomorphic-dompurify'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, User } from '@heroui/react'
 import { ChevronDown, ChevronUp, Download } from 'lucide-react'
@@ -26,7 +25,12 @@ export const KunResourceDownload = ({ resource }: Props) => {
   useEffect(() => {
     let cancelled = false
     const getResourceNoteHtml = async () => {
-      const { markdownToHtml } = await import('./markdownToHtml')
+      // DOMPurify 只有「补丁」分区的鲲补丁资源用得到, 与 markdownToHtml 一并按需加载;
+      // 备注来自第三方, 净化不能省
+      const [{ markdownToHtml }, { default: DOMPurify }] = await Promise.all([
+        import('./markdownToHtml'),
+        import('isomorphic-dompurify')
+      ])
       const html = await markdownToHtml(resource.note)
       if (cancelled) {
         return

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import {
   Alert,
   Button,
@@ -14,13 +15,35 @@ import {
 import { Plus } from 'lucide-react'
 import { kunFetchDelete, kunFetchGet } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
-import { PublishResource } from './publish/PublishResource'
-import { EditResourceDialog } from './edit/EditResourceDialog'
 import { ResourceTabs } from './Tabs'
 import { KunLoading } from '~/components/kun/Loading'
+import { LazyDialogFallback } from '~/components/patch/header/LazyDialogFallback'
 import { useUserStore } from '~/store/userStore'
 import toast from 'react-hot-toast'
 import type { PatchResource } from '~/types/api/patch'
+
+// 发布 / 编辑表单连带 zod / RHF / Select / 上传与人机验证, 只有发布者和作者 / 管理员
+// 用得到; 静态导入会让每位打开资源 tab 的访客在资源列表出现前多下约 107KB gz.
+// Modal 关闭时不渲染 children, 故首次打开才开始加载
+const PublishResource = dynamic(
+  () => import('./publish/PublishResource').then((m) => m.PublishResource),
+  {
+    ssr: false,
+    loading: () => <LazyDialogFallback hint="正在加载发布表单..." />
+  }
+)
+
+const EditResourceDialog = dynamic(
+  () => import('./edit/EditResourceDialog').then((m) => m.EditResourceDialog),
+  {
+    ssr: false,
+    loading: () => <LazyDialogFallback hint="正在加载编辑器..." />
+  }
+)
+
+const preloadPublishResource = () => {
+  void import('./publish/PublishResource')
+}
 
 interface Props {
   id: number
@@ -99,6 +122,8 @@ export const Resources = ({ id, vndbId }: Props) => {
             variant="flat"
             startContent={<Plus className="size-4" />}
             onPress={onOpenCreate}
+            onPointerEnter={preloadPublishResource}
+            onFocus={preloadPublishResource}
           >
             添加资源
           </Button>
