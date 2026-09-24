@@ -18,7 +18,6 @@ interface BreakpointCols {
 interface KunMasonryProps {
   children: React.ReactNode
   breakpointCols?: BreakpointCols
-  columnWidth?: number
   gap?: number
   estimatedItemHeight?: number
   className?: string
@@ -32,13 +31,8 @@ const DEFAULT_BREAKPOINTS: BreakpointCols = {
 
 const resolveColumns = (
   breakpointCols: BreakpointCols,
-  width: number,
-  gap: number,
-  columnWidth?: number
+  width: number
 ): number => {
-  if (columnWidth && columnWidth > 0) {
-    return Math.max(1, Math.floor((width + gap) / (columnWidth + gap)))
-  }
   const breakpoints = Object.keys(breakpointCols)
     .map(Number)
     .filter((k) => Number.isFinite(k))
@@ -55,7 +49,6 @@ const resolveColumns = (
 export const KunMasonry = ({
   children,
   breakpointCols = DEFAULT_BREAKPOINTS,
-  columnWidth,
   gap = 16,
   estimatedItemHeight = 280,
   className
@@ -104,7 +97,7 @@ export const KunMasonry = ({
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [columns, setColumns] = useState(() =>
-    resolveColumns(breakpointCols, 0, gap, columnWidth)
+    resolveColumns(breakpointCols, 0)
   )
   const [heights, setHeights] = useState<Record<string, number>>({})
 
@@ -116,13 +109,11 @@ export const KunMasonry = ({
     const observer = new ResizeObserver((entries) => {
       const width = entries[0].contentRect.width
       setContainerWidth(width)
-      setColumns(
-        resolveColumns(breakpointsRef.current, width, gap, columnWidth)
-      )
+      setColumns(resolveColumns(breakpointsRef.current, width))
     })
     observer.observe(node)
     return () => observer.disconnect()
-  }, [columnWidth, gap])
+  }, [])
 
   useEffect(() => {
     const observer = new ResizeObserver((entries) => {

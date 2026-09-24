@@ -1,4 +1,3 @@
-import { KunMasonry } from '~/components/kun/KunMasonry'
 import { TagCard } from './Card'
 import { KunNull } from '~/components/kun/Null'
 import { KunLoading } from '~/components/kun/Loading'
@@ -33,10 +32,10 @@ export const TagList = ({ tags, loading, searching }: TagListProps) => {
   }
 
   return (
-    <KunMasonry columnWidth={256} gap={16} estimatedItemHeight={112}>
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(min(256px,100%),1fr))] gap-4">
       {tags.map((tag) => (
         <TagCard key={tag.id} tag={tag} />
       ))}
-    </KunMasonry>
+    </div>
   )
 }
