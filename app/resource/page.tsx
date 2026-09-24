@@ -26,12 +26,15 @@ export default async function Kun({ searchParams }: Props) {
     return <ErrorComponent error={response} />
   }
 
+  // 揭示前预留整屏高度, 原因见 app/galgame/page.tsx
   return (
-    <Suspense>
-      <CardContainer
-        initialResources={response.resources}
-        initialTotal={response.total}
-      />
-    </Suspense>
+    <div className="w-full has-[>template]:min-h-dvh">
+      <Suspense>
+        <CardContainer
+          initialResources={response.resources}
+          initialTotal={response.total}
+        />
+      </Suspense>
+    </div>
   )
 }

@@ -25,13 +25,18 @@ export default async function Kun() {
     return <ErrorComponent error={response} />
   }
 
+  // 页面级 Suspense 在流式 SSR 中总被外置 (S:1), 由内联 $RC 脚本稍后揭示; shell 若先于
+  // 揭示绘制, 列表出现时会把页脚推下去 (移动 CLS 0.1374). 仅在占位 <template> 尚在时
+  // 预留整屏高度让页脚落在视口外, 揭示后占位被移除, 规则随之失效
   return (
-    <Suspense>
-      <CardContainer
-        initialGalgames={response.galgames}
-        initialTotal={response.total}
-        filterEndYear={getCurrentSiteYear()}
-      />
-    </Suspense>
+    <div className="w-full has-[>template]:min-h-dvh">
+      <Suspense>
+        <CardContainer
+          initialGalgames={response.galgames}
+          initialTotal={response.total}
+          filterEndYear={getCurrentSiteYear()}
+        />
+      </Suspense>
+    </div>
   )
 }
