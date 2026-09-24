@@ -1,3 +1,6 @@
+'use client'
+
+import { useState } from 'react'
 import { Chip } from '@heroui/chip'
 import { Card, CardBody } from '@heroui/card'
 import { Image } from '@heroui/image'
@@ -12,9 +15,11 @@ interface Props {
 }
 
 export const UserResourceCard = ({ resource }: Props) => {
-  const bannerImageSrc = resource.patchBanner
-    ? resource.patchBanner.replace(/\.avif$/, '-mini.avif')
-    : '/touchgal.avif'
+  const [bannerFailed, setBannerFailed] = useState(false)
+  const bannerImageSrc =
+    resource.patchBanner && !bannerFailed
+      ? resource.patchBanner.replace(/\.avif$/, '-mini.avif')
+      : '/touchgal.avif'
 
   return (
     <Card
@@ -27,11 +32,13 @@ export const UserResourceCard = ({ resource }: Props) => {
       <CardBody className="p-4">
         <div className="flex flex-col gap-4 sm:flex-row">
           <div className="relative w-full sm:h-auto sm:w-40">
+            {/* opacity-100 经 twMerge 顶掉 HeroUI img slot 的 opacity-0, 否则 SSR 封面要等水合才可见 */}
             <Image
               src={bannerImageSrc}
               alt={resource.patchName}
-              className="object-cover rounded-lg size-full max-h-52"
+              className="object-cover rounded-lg size-full max-h-52 opacity-100"
               radius="lg"
+              onError={() => setBannerFailed(true)}
             />
           </div>
           <div className="flex-1 space-y-3">

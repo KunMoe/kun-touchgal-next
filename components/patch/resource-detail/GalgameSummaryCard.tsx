@@ -87,6 +87,8 @@ interface Props {
 // rounded-large 与 HeroUI Card 默认圆角耦合 (rounded-[inherit] 在 v4 不生成);
 // after:z-20 必须压过 HeroUI Image 自带的 z-10, 否则线在封面区域被图片盖住
 export const GalgameSummaryCard = ({ galgame }: Props) => {
+  const [bannerFailed, setBannerFailed] = useState(false)
+
   return (
     <Card
       isPressable
@@ -96,16 +98,18 @@ export const GalgameSummaryCard = ({ galgame }: Props) => {
     >
       <CardBody className="flex flex-row items-stretch gap-4 p-0 sm:gap-6">
         <div className="relative aspect-video w-32 shrink-0 bg-default-100 sm:w-48">
+          {/* opacity-100 经 twMerge 顶掉 HeroUI img slot 的 opacity-0, 否则 SSR 封面要等水合才可见 */}
           <Image
             radius="none"
             removeWrapper
             alt={galgame.name}
-            className="absolute inset-0 size-full object-cover"
+            className="absolute inset-0 size-full object-cover opacity-100"
             src={
-              galgame.banner
+              galgame.banner && !bannerFailed
                 ? galgame.banner.replace(/\.avif$/, '-mini.avif')
                 : '/touchgal.avif'
             }
+            onError={() => setBannerFailed(true)}
           />
         </div>
 

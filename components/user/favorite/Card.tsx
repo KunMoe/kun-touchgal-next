@@ -19,7 +19,6 @@ import Link from 'next/link'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { kunFetchPut } from '~/utils/kunFetch'
 import toast from 'react-hot-toast'
-import { cn } from '~/utils/cn'
 
 interface Props {
   galgame: GalgameCard
@@ -37,7 +36,7 @@ export const UserGalgameCard = ({
   onRemoveFavorite
 }: Props) => {
   const [isPending, startTransition] = useTransition()
-  const [imageLoaded, setImageLoaded] = useState(false)
+  const [bannerFailed, setBannerFailed] = useState(false)
 
   const {
     isOpen: isOpenDelete,
@@ -89,29 +88,19 @@ export const UserGalgameCard = ({
       >
         <CardHeader className="p-0">
           <div className="relative w-full overflow-hidden rounded-t-lg opacity-90">
-            <div
-              className={cn(
-                'absolute inset-0 animate-pulse bg-default-100',
-                imageLoaded ? 'opacity-0' : 'opacity-90',
-                'transition-opacity duration-300'
-              )}
-              style={{ aspectRatio: '16/9' }}
-            />
+            {/* opacity-90 经 twMerge 顶掉 HeroUI img slot 的 opacity-0, 否则 SSR 封面要等水合才可见 */}
             <Image
               alt={galgame.name}
-              className={cn(
-                'size-full object-cover transition-all duration-300',
-                imageLoaded ? 'scale-100 opacity-90' : 'scale-105 opacity-0'
-              )}
+              className="size-full object-cover opacity-90"
               radius="none"
               removeWrapper={true}
               src={
-                galgame.banner
+                galgame.banner && !bannerFailed
                   ? galgame.banner.replace(/\.avif$/, '-mini.avif')
                   : '/touchgal.avif'
               }
               style={{ aspectRatio: '16/9' }}
-              onLoad={() => setImageLoaded(true)}
+              onError={() => setBannerFailed(true)}
             />
           </div>
         </CardHeader>

@@ -1,6 +1,5 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
 import { Card, CardBody, CardFooter } from '@heroui/react'
 import { ArrowRight, Calendar, Type } from 'lucide-react'
 import { Image } from '@heroui/image'
@@ -13,23 +12,7 @@ interface Props {
 }
 
 export const KunAboutCard = ({ post }: Props) => {
-  const [imageLoaded, setImageLoaded] = useState(false)
   const textCount = Math.max(post.textCount, 0)
-  const imageRef = useRef<HTMLImageElement>(null)
-
-  useEffect(() => {
-    const image = imageRef.current
-    if (!image) {
-      return
-    }
-
-    const handleLoad = () => setImageLoaded(true)
-    image.addEventListener('load', handleLoad)
-
-    setImageLoaded(image.complete && image.naturalWidth > 0)
-
-    return () => image.removeEventListener('load', handleLoad)
-  }, [post.banner])
 
   return (
     <Card
@@ -43,19 +26,12 @@ export const KunAboutCard = ({ post }: Props) => {
           className="relative w-full overflow-hidden bg-default-100"
           style={{ aspectRatio: '16/9' }}
         >
-          <div
-            className={`absolute inset-0 animate-pulse bg-default-100 ${
-              imageLoaded ? 'opacity-0' : 'opacity-90'
-            } transition-opacity duration-300`}
-          />
+          {/* opacity-95 经 twMerge 顶掉 HeroUI img slot 的 opacity-0, 否则 SSR 头图要等水合才可见 */}
           <Image
-            ref={imageRef}
             removeWrapper
             radius="none"
             alt={post.title}
-            className={`absolute inset-0 block size-full object-cover transition-all duration-300 group-hover:scale-105 ${
-              imageLoaded ? 'scale-100 opacity-95' : 'scale-105 opacity-0'
-            }`}
+            className="absolute inset-0 block size-full object-cover opacity-95 transition-all duration-300 group-hover:scale-105"
             loading="lazy"
             src={post.banner}
           />

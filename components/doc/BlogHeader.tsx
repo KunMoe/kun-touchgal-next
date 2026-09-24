@@ -15,11 +15,12 @@ export const BlogHeader = ({ frontmatter }: BlogHeaderProps) => {
     <Card className="overflow-hidden rounded-[22px] border border-default-200/60 bg-background shadow-[0_12px_32px_rgba(15,23,42,0.05)] dark:bg-content1 dark:shadow-[0_12px_32px_rgba(0,0,0,0.15)]">
       <CardHeader className="block p-0">
         <div className="relative aspect-[16/9] w-full overflow-hidden bg-default-100 sm:aspect-[16/7]">
+          {/* opacity-100 经 twMerge 顶掉 HeroUI img slot 的 opacity-0, 否则静态页头图 (LCP) 要等水合才可见 */}
           <Image
             removeWrapper
             radius="none"
             alt={frontmatter.title}
-            className="absolute inset-0 block size-full object-cover"
+            className="absolute inset-0 block size-full object-cover opacity-100"
             src={frontmatter.banner}
             width="100%"
             height="100%"

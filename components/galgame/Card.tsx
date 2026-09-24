@@ -18,10 +18,9 @@ const CARD_ATTRIBUTE_STYLE_MAP: Record<string, string> = {
 const CARD_CLASS_NAME =
   'group flex h-full w-full flex-col overflow-hidden rounded-[22px] border border-default-200/60 bg-background shadow-[0_12px_32px_rgba(15,23,42,0.05)] transition-[box-shadow,transform,scale] duration-300 hover:shadow-[0_16px_42px_rgba(15,23,42,0.08)] motion-reduce:transition-none dark:bg-content1 dark:shadow-[0_12px_32px_rgba(0,0,0,0.15)]'
 
-const IMAGE_LOADED_CLASS_NAME =
-  'size-full object-cover duration-500 opacity-100 transition-opacity'
-const IMAGE_LOADING_CLASS_NAME =
-  'size-full object-cover duration-500 opacity-0 transition-opacity'
+// opacity-100 经 twMerge 顶掉 HeroUI img slot 的 opacity-0 (水合前 data-loaded 不成立),
+// 否则 SSR 封面要等水合完才可见, LCP 被水合时间卡住
+const IMAGE_CLASS_NAME = 'size-full object-cover opacity-100'
 
 const PC_PLATFORMS = ['windows', 'macos', 'linux']
 const PE_PLATFORMS = ['apk', 'ipa']
@@ -61,7 +60,7 @@ export const GalgameCard = memo(function GalgameCard({
   patch,
   openOnNewTab = true
 }: Props) {
-  const [imageLoaded, setImageLoaded] = useState(false)
+  const [bannerFailed, setBannerFailed] = useState(false)
   const attributeLabels = getCardAttributeLabels(patch)
   const averageRating = patch.averageRating
   const ratingText = hasRating(averageRating)
@@ -79,28 +78,18 @@ export const GalgameCard = memo(function GalgameCard({
       className={CARD_CLASS_NAME}
     >
       <div className="relative w-full overflow-hidden bg-default-100">
-        <div
-          className={cn(
-            'absolute inset-0 animate-pulse bg-default-200',
-            imageLoaded ? 'opacity-0' : 'opacity-100',
-            'transition-opacity duration-300'
-          )}
-          style={{ aspectRatio: '16/9' }}
-        />
         <Image
           radius="none"
           alt={patch.name}
-          className={
-            imageLoaded ? IMAGE_LOADED_CLASS_NAME : IMAGE_LOADING_CLASS_NAME
-          }
+          className={IMAGE_CLASS_NAME}
           removeWrapper={true}
           src={
-            patch.banner
+            patch.banner && !bannerFailed
               ? patch.banner.replace(/\.avif$/, '-mini.avif')
               : '/touchgal.avif'
           }
           style={{ aspectRatio: '16/9' }}
-          onLoad={() => setImageLoaded(true)}
+          onError={() => setBannerFailed(true)}
         />
       </div>
 
