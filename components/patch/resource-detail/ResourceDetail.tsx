@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter } from '@bprogress/next'
 import { Button } from '@heroui/button'
 import { Card, CardBody, CardHeader } from '@heroui/card'
@@ -13,12 +14,12 @@ import { KunUser } from '~/components/kun/floating-card/KunUser'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { KunAutoImageViewer } from '~/components/kun/image-viewer/AutoImageViewer'
 import { ResourceLikeButton } from '~/components/patch/resource/ResourceLike'
-import { EditResourceDialog } from '~/components/patch/resource/edit/EditResourceDialog'
 import { UserFollow } from '~/components/user/follow/Follow'
 import { ResourceDownloadCard } from '~/components/patch/resource/DownloadCard'
 import { useUserStore } from '~/store/userStore'
 import { useKunExternalLinkNavigation } from '~/components/kun/external-link/useKunExternalLinkNavigation'
-import { Comments } from '~/components/patch/comment/Comments'
+import { KunNull } from '~/components/kun/Null'
+import { LazyDialogFallback } from '~/components/patch/header/LazyDialogFallback'
 import { GalgameSummaryCard } from './GalgameSummaryCard'
 import { OtherResources } from './OtherResources'
 import { getResourcePageTitle } from '~/utils/patch/getResourcePageTitle'
@@ -27,11 +28,37 @@ import { cn } from '~/utils/cn'
 import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
 import type { PatchResourceDetail } from '~/app/api/patch/resource/detail'
 
-interface Props {
-  detail: PatchResourceDetail
+// 编辑表单连带 zod 全量 / RHF / Select / 上传, 只有上传者和管理员用得到,
+// 静态导入会让每位访客首屏多下约 150KB gz
+const EditResourceDialog = dynamic(
+  () =>
+    import('~/components/patch/resource/edit/EditResourceDialog').then(
+      (m) => m.EditResourceDialog
+    ),
+  {
+    ssr: false,
+    loading: () => <LazyDialogFallback hint="正在加载编辑器..." />
+  }
+)
+
+const preloadEditResourceDialog = () => {
+  void import('~/components/patch/resource/edit/EditResourceDialog')
 }
 
-export const ResourceDetail = ({ detail }: Props) => {
+// 游客由下方直接给占位, 不下发评论块; 登录用户 SSR 时低优先级 preload.
+// loading 承重: next/dynamic 在 ssr:true 且无 loading 时不包 Suspense,
+// 评论块未到会挂起外层边界, 拖住整个详情页的水合
+const Comments = dynamic(
+  () => import('~/components/patch/comment/Comments').then((m) => m.Comments),
+  { loading: () => <KunNull message="加载中..." /> }
+)
+
+interface Props {
+  detail: PatchResourceDetail
+  isLoggedIn: boolean
+}
+
+export const ResourceDetail = ({ detail, isLoggedIn }: Props) => {
   const { resource, galgame, otherResources } = detail
   const isPending = resource.status === 2 || resource.status === 3
   const pageTitle = getResourcePageTitle(resource)
@@ -92,6 +119,8 @@ export const ResourceDetail = ({ detail }: Props) => {
                           variant="light"
                           isDisabled={isEditDisabled}
                           onPress={onOpenEdit}
+                          onPointerEnter={preloadEditResourceDialog}
+                          onFocus={preloadEditResourceDialog}
                         >
                           <Edit2 className="size-4" />
                         </Button>
@@ -174,7 +203,11 @@ export const ResourceDetail = ({ detail }: Props) => {
               </p>
             </CardHeader>
             <CardBody>
-              <Comments id={resource.patchId} resourceId={resource.id} />
+              {isLoggedIn ? (
+                <Comments id={resource.patchId} resourceId={resource.id} />
+              ) : (
+                <KunNull message="请登录后查看评论" />
+              )}
             </CardBody>
           </Card>
         </div>

@@ -80,7 +80,7 @@ export default async function Kun({ params }: Props) {
           }
         />
       ) : (
-        <ResourceDetail detail={detail} />
+        <ResourceDetail detail={detail} isLoggedIn={!!payload?.uid} />
       )}
     </div>
   )
