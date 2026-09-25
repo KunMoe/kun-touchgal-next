@@ -31,5 +31,5 @@
     ".next-deploy/types/**/*.ts",
     ".next-deploy/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "docs"]
 }
