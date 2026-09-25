@@ -1,13 +1,18 @@
 'use client'
 
+import { memo } from 'react'
 import { Card, CardBody, CardHeader } from '@heroui/card'
 import { Ratings } from '~/components/patch/rating/Ratings'
 
 interface Props {
   id: number
+  targetRatingId: number | null
 }
 
-export const RatingTab = ({ id }: Props) => {
+export const RatingTab = memo(function RatingTab({
+  id,
+  targetRatingId
+}: Props) {
   return (
     <Card className="p-1 sm:p-8">
       <CardHeader className="p-4">
@@ -18,8 +23,8 @@ export const RatingTab = ({ id }: Props) => {
           <p>您可以发布对于这个游戏的看法, 建议填写一定字数的短评。</p>
         </div>
 
-        <Ratings id={Number(id)} />
+        <Ratings id={Number(id)} targetRatingId={targetRatingId} />
       </CardBody>
     </Card>
   )
-}
+})

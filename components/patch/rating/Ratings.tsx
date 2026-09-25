@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { Modal } from '@heroui/modal'
 import { Button } from '@heroui/button'
 import { Switch } from '@heroui/switch'
@@ -22,6 +21,8 @@ import type {
 
 interface Props {
   id: number
+  // 深链 ?ratingId=, 由详情页 tabs 解析后传入; 本组件不订阅 URL, 以免随 ?tab= 变化重渲染
+  targetRatingId: number | null
 }
 
 const RATINGS_PER_PAGE = 24
@@ -35,8 +36,7 @@ const MASONRY_BREAKPOINTS = {
 const hasShortSummary = (rating: KunPatchRating) =>
   Boolean(rating.shortSummary?.trim())
 
-export const Ratings = ({ id }: Props) => {
-  const searchParams = useSearchParams()
+export const Ratings = ({ id, targetRatingId }: Props) => {
   const [ratings, setRatings] = useState<KunPatchRating[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -53,17 +53,9 @@ export const Ratings = ({ id }: Props) => {
   const loadMoreRef = useRef<HTMLDivElement>(null)
   const loadingRef = useRef(false)
   const requestIdRef = useRef(0)
-  const targetRatingId = useMemo(() => {
-    const rawRatingId = searchParams.get('ratingId')
-    if (!rawRatingId) {
-      return null
-    }
-
-    const parsedRatingId = Number(rawRatingId)
-    return Number.isSafeInteger(parsedRatingId) && parsedRatingId > 0
-      ? parsedRatingId
-      : null
-  }, [searchParams])
+  // 已滚动定位过的深链 ratingId: 同一目标只滚一次, 否则之后每次无限滚动加载下一页
+  // 或切换过滤开关都会把页面拽回目标评价 (tab 保活后目标会一直留在 props 里)
+  const scrolledRatingIdRef = useRef<number | null>(null)
 
   const fetchRatings = useCallback(
     async (pageNum: number, reset = false) => {
@@ -152,13 +144,16 @@ export const Ratings = ({ id }: Props) => {
   }, [fetchRatings, page])
 
   useEffect(() => {
-    if (loading || !targetRatingId) {
+    if (
+      loading ||
+      !targetRatingId ||
+      scrolledRatingIdRef.current === targetRatingId
+    ) {
       return
     }
 
     const targetElement = document.getElementById(`rating-${targetRatingId}`)
     if (!targetElement) {
-      setHighlightedRatingId(null)
       return
     }
 
@@ -167,6 +162,7 @@ export const Ratings = ({ id }: Props) => {
     let lastTop = Number.NaN
 
     const performScroll = () => {
+      scrolledRatingIdRef.current = targetRatingId
       targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
       setHighlightedRatingId(targetRatingId)
     }
@@ -188,17 +184,18 @@ export const Ratings = ({ id }: Props) => {
 
     raf = requestAnimationFrame(waitForLayout)
 
-    const timer = window.setTimeout(() => {
-      setHighlightedRatingId((current) =>
-        current === targetRatingId ? null : current
-      )
-    }, 3500)
-
-    return () => {
-      cancelAnimationFrame(raf)
-      window.clearTimeout(timer)
-    }
+    return () => cancelAnimationFrame(raf)
   }, [ratings, loading, targetRatingId])
+
+  // 高亮计时独立于定位 effect: 后者重跑时会提前返回, 不能靠它的 cleanup 清计时器
+  useEffect(() => {
+    if (highlightedRatingId === null) {
+      return
+    }
+
+    const timer = window.setTimeout(() => setHighlightedRatingId(null), 3500)
+    return () => window.clearTimeout(timer)
+  }, [highlightedRatingId])
 
   const handleCreated = useCallback(
     (rating?: KunPatchRating) => {

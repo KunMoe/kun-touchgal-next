@@ -49,9 +49,17 @@ interface Props {
   id: number
   vndbId: string
   onLoaded?: () => void
+  targetResourceId: number | null
+  targetResourceSection: string | null
 }
 
-export const Resources = ({ id, vndbId, onLoaded }: Props) => {
+export const Resources = ({
+  id,
+  vndbId,
+  onLoaded,
+  targetResourceId,
+  targetResourceSection
+}: Props) => {
   // 初值为 true: 否则挂载首帧会把空列表画成「本游戏暂无」并预加载 null.webp
   const [loading, setLoading] = useState(true)
   const [resources, setResources] = useState<PatchResource[]>([])
@@ -147,6 +155,8 @@ export const Resources = ({ id, vndbId, onLoaded }: Props) => {
         <ResourceTabs
           vndbId={vndbId}
           resources={resources}
+          targetResourceId={targetResourceId}
+          targetResourceSection={targetResourceSection}
           setEditResource={setEditResource}
           onOpenEdit={onOpenEdit}
           onOpenDelete={onOpenDelete}

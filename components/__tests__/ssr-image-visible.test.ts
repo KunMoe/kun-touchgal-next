@@ -9,7 +9,9 @@ import { UserResourceCard } from '~/components/user/resource/Card'
 import { GalgameSummaryCard } from '~/components/patch/resource-detail/GalgameSummaryCard'
 import type { ReactElement } from 'react'
 
-vi.mock('@bprogress/next/app', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('~/components/kun/KunRouterProvider', () => ({
+  useKunRouter: () => ({ push: vi.fn() })
+}))
 
 // HeroUI img slot 基础类为 opacity-0, 靠 data-loaded 显现, 而 use-image 在水合前
 // status 恒为 pending: 内容图必须在 className 里显式给出不透明度, 经 twMerge 顶掉

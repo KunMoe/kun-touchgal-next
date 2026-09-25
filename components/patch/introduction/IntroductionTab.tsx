@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Card, CardBody } from '@heroui/card'
 import dynamic from 'next/dynamic'
@@ -75,7 +75,11 @@ interface Props {
   uid?: number
 }
 
-export const IntroductionTab = ({ intro, patchId, uid }: Props) => {
+export const IntroductionTab = memo(function IntroductionTab({
+  intro,
+  patchId,
+  uid
+}: Props) {
   const contentRef = useRef<HTMLDivElement>(null)
 
   useKunExternalLinkNavigation(contentRef, intro.introduction)
@@ -174,4 +178,4 @@ export const IntroductionTab = ({ intro, patchId, uid }: Props) => {
       </CardBody>
     </Card>
   )
-}
+})

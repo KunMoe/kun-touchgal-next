@@ -1,11 +1,19 @@
 'use client'
 
-import { startTransition, useEffect, useState, useRef, type Key } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useState,
+  useRef,
+  type Key
+} from 'react'
 import dynamic from 'next/dynamic'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { Tab, Tabs } from '@heroui/tabs'
 import { IntroductionTab } from '~/components/patch/introduction/IntroductionTab'
 import { KunLoading } from '~/components/kun/Loading'
+import { mergePatchTabTargets, readPatchTabTargets } from './tabTargets'
 import type { PatchIntroduction } from '~/types/api/patch'
 
 type PatchTabKey = 'introduction' | 'resources' | 'comments' | 'rating'
@@ -108,18 +116,22 @@ export const PatchHeaderTabs = ({
   const [mountedTabs, setMountedTabs] = useState<Set<PatchTabKey>>(
     () => new Set([selected])
   )
+  const [targets, setTargets] = useState(() =>
+    readPatchTabTargets(searchParams)
+  )
   // 首次渲染就落在资源 tab 时, 面板还只是 256px 的懒加载占位: 此时滚动会因页面
   // 不够长停在半路, 之后「占位 → spinner → 列表」又会推动已滚进视口的页脚.
   // 改为列表渲染完成后再滚; 带 resourceId 时 ResourceTabs 随后会改滚到对应卡片
   const pendingResourceScrollRef = useRef(selected === 'resources')
 
-  const handleResourcesLoaded = () => {
+  // 保持引用稳定, 否则每次 URL 变化都会击穿资源 tab 的 memo
+  const handleResourcesLoaded = useCallback(() => {
     if (!pendingResourceScrollRef.current) {
       return
     }
     pendingResourceScrollRef.current = false
     tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
+  }, [])
 
   // 资源 tab 组约 11KB gz, 水合后预热, 点「资源链接」或「下载」时不必再等块
   useEffect(() => {
@@ -138,6 +150,7 @@ export const PatchHeaderTabs = ({
         next.add(nextTab)
         return next
       })
+      setTargets((current) => mergePatchTabTargets(current, searchParams))
     })
 
     if (
@@ -193,6 +206,10 @@ export const PatchHeaderTabs = ({
     )
   }
 
+  // 访问过的资源 / 讨论 / 评价 tab 切走后保活 (隐藏而不卸载): 切回不重拉, 页码、
+  // 草稿与滚动进度都在. 简介例外, 切走即卸载: 保活会让已播放的 PV 视频在隐藏后继续播放.
+  // 各 tab 组件均为 memo 且不订阅 URL, 深链目标只经 props 传入, 否则每次点 tab 都会
+  // 在点击事件里同步重渲染全部保活面板
   return (
     <div ref={tabsRef} id="patch-detail-tabs">
       <Tabs
@@ -201,9 +218,12 @@ export const PatchHeaderTabs = ({
         defaultSelectedKey="introduction"
         onSelectionChange={handleSelectionChange}
         selectedKey={selected}
+        destroyInactiveTabPanel={false}
       >
         <Tab key="introduction" title="游戏信息" className="p-0 min-w-20">
-          <IntroductionTab intro={intro} patchId={Number(id)} uid={uid} />
+          {selected === 'introduction' && (
+            <IntroductionTab intro={intro} patchId={Number(id)} uid={uid} />
+          )}
         </Tab>
 
         <Tab key="resources" title="资源链接" className="p-0 min-w-20">
@@ -212,16 +232,22 @@ export const PatchHeaderTabs = ({
               id={id}
               vndbId={vndbId}
               onLoaded={handleResourcesLoaded}
+              targetResourceId={targets.resourceId}
+              targetResourceSection={targets.resourceSection}
             />
           )}
         </Tab>
 
         <Tab key="comments" title="讨论版" className="p-0 min-w-20">
-          {mountedTabs.has('comments') && <CommentTab id={id} />}
+          {mountedTabs.has('comments') && (
+            <CommentTab id={id} targetCommentId={targets.commentId} />
+          )}
         </Tab>
 
         <Tab key="rating" title="游戏评价" className="p-0 min-w-20">
-          {mountedTabs.has('rating') && <RatingTab id={id} />}
+          {mountedTabs.has('rating') && (
+            <RatingTab id={id} targetRatingId={targets.ratingId} />
+          )}
         </Tab>
       </Tabs>
     </div>

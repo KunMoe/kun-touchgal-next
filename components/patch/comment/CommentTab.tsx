@@ -1,13 +1,18 @@
 'use client'
 
+import { memo } from 'react'
 import { Card, CardBody, CardHeader } from '@heroui/card'
 import { Comments } from '~/components/patch/comment/Comments'
 
 interface Props {
   id: number
+  targetCommentId: number | null
 }
 
-export const CommentTab = ({ id }: Props) => {
+export const CommentTab = memo(function CommentTab({
+  id,
+  targetCommentId
+}: Props) {
   return (
     <Card className="p-1 sm:p-8">
       <CardHeader className="p-4">
@@ -21,8 +26,8 @@ export const CommentTab = ({ id }: Props) => {
           </p>
         </div>
 
-        <Comments id={Number(id)} />
+        <Comments id={Number(id)} targetCommentId={targetCommentId} />
       </CardBody>
     </Card>
   )
-}
+})

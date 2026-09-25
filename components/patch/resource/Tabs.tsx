@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import {
   Button,
@@ -31,6 +30,7 @@ import { KunResourceDownload } from './kun/KunResourceDownload'
 import { KunLoading } from '~/components/kun/Loading'
 import { KunNull } from '~/components/kun/Null'
 import { kunFetchGet } from '~/utils/kunFetch'
+import { useKunNextRouter } from '~/components/kun/KunRouterProvider'
 import type { PatchResource } from '~/types/api/patch'
 import type { KunMoyuPatchResource } from '~/types/api/kun/moyu-moe'
 import Link from 'next/link'
@@ -52,6 +52,8 @@ interface Props {
   onOpenEdit: () => void
   onOpenDelete: () => void
   setDeleteResourceId: (resourceId: number) => void
+  targetResourceId: number | null
+  targetResourceSection: ResourceSection | null
 }
 
 export const ResourceTabs = ({
@@ -60,10 +62,11 @@ export const ResourceTabs = ({
   setEditResource,
   onOpenEdit,
   onOpenDelete,
-  setDeleteResourceId
+  setDeleteResourceId,
+  targetResourceId,
+  targetResourceSection
 }: Props) => {
-  const router = useRouter()
-  const searchParams = useSearchParams()
+  const router = useKunNextRouter()
   const user = useUserStore((state) => state.user)
   const [selectedSection, setSelectedSection] =
     useState<ResourceSection>('galgame')
@@ -77,26 +80,19 @@ export const ResourceTabs = ({
   const [kunResources, setKunResources] = useState<KunMoyuPatchResource[]>([])
   const [kunLoading, setKunLoading] = useState(false)
   const [kunLoaded, setKunLoaded] = useState(false)
-  const targetResourceId = useMemo(() => {
-    const rawResourceId = searchParams.get('resourceId')
-    if (!rawResourceId) {
-      return null
-    }
-
-    const parsedResourceId = Number(rawResourceId)
-    return Number.isSafeInteger(parsedResourceId) && parsedResourceId > 0
-      ? parsedResourceId
-      : null
-  }, [searchParams])
-  const targetResourceSection = useMemo(() => {
-    const section = searchParams.get('resourceSection')
-    return SUPPORTED_RESOURCE_SECTION.includes(section as ResourceSection)
-      ? (section as ResourceSection)
-      : null
-  }, [searchParams])
+  // 深链目标只定位一次: tab 保活后目标会一直留在 props 里, 不设防的话之后每次增删改
+  // 资源或切分区, 都会把用户拽回目标分区 / 目标卡片
+  const locatedSectionTargetRef = useRef<string | null>(null)
+  const scrolledResourceIdRef = useRef<number | null>(null)
 
   useEffect(() => {
+    const targetKey = `${targetResourceSection}:${targetResourceId}`
+    if (locatedSectionTargetRef.current === targetKey) {
+      return
+    }
+
     if (targetResourceSection) {
+      locatedSectionTargetRef.current = targetKey
       setSelectedSection(targetResourceSection)
       return
     }
@@ -109,6 +105,7 @@ export const ResourceTabs = ({
       (resource) => resource.id === targetResourceId
     )
     if (targetResource) {
+      locatedSectionTargetRef.current = targetKey
       setSelectedSection(targetResource.section as ResourceSection)
     }
   }, [resources, targetResourceId, targetResourceSection])
@@ -140,7 +137,10 @@ export const ResourceTabs = ({
   }, [selectedSection])
 
   useEffect(() => {
-    if (!targetResourceId) {
+    if (
+      !targetResourceId ||
+      scrolledResourceIdRef.current === targetResourceId
+    ) {
       return
     }
 
@@ -148,21 +148,23 @@ export const ResourceTabs = ({
       `resource-${targetResourceId}`
     )
     if (!targetElement) {
-      setHighlightedResourceId(null)
       return
     }
 
+    scrolledResourceIdRef.current = targetResourceId
     targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
     setHighlightedResourceId(targetResourceId)
-
-    const timer = window.setTimeout(() => {
-      setHighlightedResourceId((current) =>
-        current === targetResourceId ? null : current
-      )
-    }, 3000)
-
-    return () => window.clearTimeout(timer)
   }, [resources, selectedSection, targetResourceId])
+
+  // 高亮计时独立于定位 effect: 后者重跑时会提前返回, 不能靠它的 cleanup 清计时器
+  useEffect(() => {
+    if (highlightedResourceId === null) {
+      return
+    }
+
+    const timer = window.setTimeout(() => setHighlightedResourceId(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [highlightedResourceId])
 
   const categorizedResources = SUPPORTED_RESOURCE_SECTION.reduce(
     (acc, section) => {

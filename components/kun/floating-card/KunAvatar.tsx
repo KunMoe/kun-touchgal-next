@@ -1,7 +1,7 @@
 'use client'
 
 import { Avatar } from '@heroui/avatar'
-import { useRouter } from '@bprogress/next/app'
+import { useKunRouter } from '~/components/kun/KunRouterProvider'
 import { KunUserCardTooltip, preloadKunUserCard } from './KunUserCardTooltip'
 import type { AvatarProps } from '@heroui/avatar'
 
@@ -16,7 +16,7 @@ interface Props {
 }
 
 export const KunAvatar = ({ uid, avatarProps }: Props) => {
-  const router = useRouter()
+  const router = useKunRouter()
 
   const { alt, name, ...rest } = avatarProps
   const username = name?.charAt(0).toUpperCase() ?? '杂鱼'

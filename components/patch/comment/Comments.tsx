@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useEffect, useRef, useState } from 'react'
 import { Card, CardBody } from '@heroui/card'
 import { Button } from '@heroui/button'
 import { Pagination } from '@heroui/pagination'
@@ -25,12 +24,13 @@ import type { PatchComment, PatchCommentResponse } from '~/types/api/patch'
 interface Props {
   id: number
   resourceId?: number
+  // 深链 ?commentId=, 由页面解析后传入; 本组件不订阅 URL, 以免随 ?tab= 等变化重渲染
+  targetCommentId: number | null
 }
 
 const COMMENTS_PER_PAGE = 30
 
-export const Comments = ({ id, resourceId }: Props) => {
-  const searchParams = useSearchParams()
+export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
   const [comments, setComments] = useState<PatchComment[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -49,17 +49,9 @@ export const Comments = ({ id, resourceId }: Props) => {
   const locatedCommentIdRef = useRef<number | null>(null)
   // 定位响应跨页时由 setPage 同步页码, 数据已是该页, 紧随其后的那次拉取 effect 跳过
   const skipNextFetchRef = useRef(false)
-  const targetCommentId = useMemo(() => {
-    const rawCommentId = searchParams.get('commentId')
-    if (!rawCommentId) {
-      return null
-    }
-
-    const parsedCommentId = Number(rawCommentId)
-    return Number.isSafeInteger(parsedCommentId) && parsedCommentId > 0
-      ? parsedCommentId
-      : null
-  }, [searchParams])
+  // 已滚动定位过的深链 commentId: 同一目标只滚一次, 否则之后翻回该页、发评论或删评论
+  // 都会把页面拽回目标评论 (详情页 tab 保活后目标会一直留在 props 里)
+  const scrolledCommentIdRef = useRef<number | null>(null)
 
   const fetchComments = async (
     pageNum: number,
@@ -116,27 +108,33 @@ export const Comments = ({ id, resourceId }: Props) => {
   }, [page, user.uid, targetCommentId])
 
   useEffect(() => {
-    if (loading || !targetCommentId) {
+    if (
+      loading ||
+      !targetCommentId ||
+      scrolledCommentIdRef.current === targetCommentId
+    ) {
       return
     }
 
     const targetElement = document.getElementById(`comment-${targetCommentId}`)
     if (!targetElement) {
-      setHighlightedCommentId(null)
       return
     }
 
+    scrolledCommentIdRef.current = targetCommentId
     targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
     setHighlightedCommentId(targetCommentId)
-
-    const timer = window.setTimeout(() => {
-      setHighlightedCommentId((current) =>
-        current === targetCommentId ? null : current
-      )
-    }, 3000)
-
-    return () => window.clearTimeout(timer)
   }, [comments, loading, targetCommentId])
+
+  // 高亮计时独立于定位 effect: 后者重跑时会提前返回, 不能靠它的 cleanup 清计时器
+  useEffect(() => {
+    if (highlightedCommentId === null) {
+      return
+    }
+
+    const timer = window.setTimeout(() => setHighlightedCommentId(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [highlightedCommentId])
 
   const handleNewComment = async (newComment: PatchComment) => {
     if (newComment.parentId === null) {

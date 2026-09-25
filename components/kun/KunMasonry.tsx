@@ -108,6 +108,11 @@ export const KunMasonry = ({
     }
     const observer = new ResizeObserver((entries) => {
       const width = entries[0].contentRect.width
+      // 所在的 tab 面板被隐藏 (display:none) 时宽度报 0: 保留上次布局. 否则切回时先画
+      // 一帧空白, 且容器高度塌成 0 会让「加载更多」哨兵进入视口, 自动多拉一页
+      if (width === 0) {
+        return
+      }
       setContainerWidth(width)
       setColumns(resolveColumns(breakpointsRef.current, width))
     })

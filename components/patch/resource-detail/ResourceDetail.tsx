@@ -3,6 +3,7 @@
 import { useRef } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from '@bprogress/next/app'
+import { useSearchParams } from 'next/navigation'
 import { Button } from '@heroui/button'
 import { Card, CardBody, CardHeader } from '@heroui/card'
 import { Chip } from '@heroui/chip'
@@ -23,6 +24,7 @@ import { LazyDialogFallback } from '~/components/patch/header/LazyDialogFallback
 import { GalgameSummaryCard } from './GalgameSummaryCard'
 import { OtherResources } from './OtherResources'
 import { getResourcePageTitle } from '~/utils/patch/getResourcePageTitle'
+import { parseDeepLinkId } from '~/utils/patch/parseDeepLinkId'
 import { formatNumber } from '~/utils/formatNumber'
 import { cn } from '~/utils/cn'
 import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
@@ -65,6 +67,7 @@ export const ResourceDetail = ({ detail, isLoggedIn }: Props) => {
   const mainColumnRef = useRef<HTMLDivElement>(null)
   const noteRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const user = useUserStore((state) => state.user)
   const isAdmin = user.role > 2
   const canEdit = isAdmin || user.uid === resource.userId
@@ -204,7 +207,13 @@ export const ResourceDetail = ({ detail, isLoggedIn }: Props) => {
             </CardHeader>
             <CardBody>
               {isLoggedIn ? (
-                <Comments id={resource.patchId} resourceId={resource.id} />
+                <Comments
+                  id={resource.patchId}
+                  resourceId={resource.id}
+                  targetCommentId={parseDeepLinkId(
+                    searchParams.get('commentId')
+                  )}
+                />
               ) : (
                 <KunNull message="请登录后查看评论" />
               )}
