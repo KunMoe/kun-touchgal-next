@@ -48,7 +48,8 @@ export const BannerImage = ({ banner, name }: Props) => {
         className="object-cover cursor-pointer"
         fill
         sizes="(max-width: 768px) 100vw, 33vw"
-        priority
+        preload
+        fetchPriority="high"
         unoptimized
         data-no-lightbox
         onClick={openLightbox}
