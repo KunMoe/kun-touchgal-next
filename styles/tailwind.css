@@ -2,7 +2,14 @@
 
 @plugin './hero.ts';
 
-@source '../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}';
+/* 只扫描 HeroUI 各组件的主题文件, 并排除全量打包的 index.js 与未使用的组件,
+   减掉阻塞渲染 CSS 里约 52KB 的无用规则。注意: 显式 @source 让扫描器进入
+   node_modules 后, 自动源检测的 ** 会把遍历到的整个目录都收进来 (tailwind
+   4.3.3 实测), 所以只收窄正向 glob 无效, 必须靠 @source not 排除。
+   要启用下列任一组件, 先把它从排除表中删掉 (styles/__tests__ 守护测试会拦) */
+@source '../node_modules/@heroui/theme/dist/components/*.js';
+@source not '../node_modules/@heroui/theme/dist/components/index.js';
+@source not '../node_modules/@heroui/theme/dist/components/{accordion,badge,breadcrumbs,calendar,code,date-input,date-picker,drip,input-otp,kbd,number-input,toast}.js';
 @custom-variant dark (&:is(.dark *));
 
 @theme {
