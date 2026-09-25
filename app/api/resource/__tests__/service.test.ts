@@ -140,6 +140,65 @@ describe('getPatchResource', () => {
     )
   })
 
+  // C15: 资源级 _count (like_by/links) 从未被渲染, 且 Prisma 7 会把它编译成
+  // 点赞表/链接表整表 GROUP BY; 上传者的 _count.patch_resource 仍被渲染须保留
+  it('does not select resource-level _count but keeps the uploader patch count', async () => {
+    getKvMock.mockResolvedValue(null)
+    acquireKvLockMock.mockResolvedValue('token-1')
+
+    await getPatchResource(INPUT, {}, null, false)
+
+    expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
+    const { select } = resourceFindManyMock.mock.calls[0][0]
+    expect(select).not.toHaveProperty('_count')
+    expect(select.user.select._count).toStrictEqual({
+      select: { patch_resource: true }
+    })
+  })
+
+  it('still sorts by like count via the like_by relation when sortField is like', async () => {
+    getKvMock.mockResolvedValue(null)
+    acquireKvLockMock.mockResolvedValue('token-1')
+
+    await getPatchResource(
+      { ...INPUT, sortField: 'like', sortOrder: 'asc' },
+      {},
+      null,
+      false
+    )
+
+    expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
+    expect(resourceFindManyMock.mock.calls[0][0].orderBy).toStrictEqual([
+      { like_by: { _count: 'asc' } },
+      { id: 'asc' }
+    ])
+  })
+
+  // 点赞 / 下载数大量并列, 去掉 id 兜底后并列项顺序随执行计划漂移, 翻页重复或漏项
+  it.each([
+    ['created', 'desc'],
+    ['download', 'desc'],
+    ['download', 'asc']
+  ] as const)(
+    'breaks %s %s ties by id in the same direction',
+    async (sortField, sortOrder) => {
+      getKvMock.mockResolvedValue(null)
+      acquireKvLockMock.mockResolvedValue('token-1')
+
+      await getPatchResource(
+        { ...INPUT, sortField, sortOrder },
+        {},
+        null,
+        false
+      )
+
+      expect(resourceFindManyMock.mock.calls[0][0].orderBy).toStrictEqual([
+        { [sortField]: sortOrder },
+        { id: sortOrder }
+      ])
+    }
+  )
+
   it('waits and returns the cache written by the lock holder', async () => {
     getKvMock
       .mockResolvedValueOnce(null)

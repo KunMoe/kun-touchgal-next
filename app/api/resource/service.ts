@@ -34,7 +34,8 @@ const queryPatchResource = async (
     prisma.patch_resource.findMany({
       take: limit,
       skip: offset,
-      orderBy: orderByField,
+      // 点赞 / 下载数大量并列, 无 id 兜底时并列项顺序随执行计划漂移, 翻页会重复或漏项
+      orderBy: [orderByField, { id: sortOrder }],
       where: { patch: visibilityWhere, section: 'patch', ...statusWhere },
       select: {
         id: true,
@@ -71,12 +72,6 @@ const queryPatchResource = async (
           select: {
             size: true
           }
-        },
-        _count: {
-          select: {
-            like_by: true,
-            links: true
-          }
         }
       }
     }),
@@ -96,8 +91,6 @@ const queryPatchResource = async (
     emulatorType: resource.emulator_type,
     modelName: resource.model_name,
     primaryLink: resource.links[0] ? { size: resource.links[0].size } : null,
-    linkCount: resource._count.links,
-    likeCount: resource._count.like_by,
     download: resource.download,
     patchId: resource.patch_id,
     patchName: resource.patch.name,

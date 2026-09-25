@@ -90,6 +90,22 @@ describe('getHomeData', () => {
     expect(releaseKvLockMock).toHaveBeenCalledWith(LOCK_KEY, 'token-1')
   })
 
+  // C15: 资源级 _count (like_by/links) 从未被渲染, 且 Prisma 7 会把它编译成
+  // 点赞表/链接表整表 GROUP BY; 上传者的 _count.patch_resource 仍被渲染须保留
+  it('does not select resource-level _count but keeps the uploader patch count', async () => {
+    getKvMock.mockResolvedValue(null)
+    acquireKvLockMock.mockResolvedValue('token-1')
+
+    await getHomeData({}, null, false)
+
+    expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
+    const { select } = resourceFindManyMock.mock.calls[0][0]
+    expect(select).not.toHaveProperty('_count')
+    expect(select.user.select._count).toStrictEqual({
+      select: { patch_resource: true }
+    })
+  })
+
   it('releases the lock when the query fails', async () => {
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue('token-1')

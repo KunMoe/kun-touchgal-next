@@ -87,13 +87,31 @@ export const mapResource = async (
   }
 })
 
+// 资源 tab 列表查询 (详情页 findFirst 仍用 resourceInclude, 按 id 可自行下推)。
+// patch_id 过滤对返回行恒真, 勿删: 无外层条件时 Prisma 把 _count 编译成点赞表
+// 整表 GROUP BY, 有它 (配合 resource_id 索引) 才下推成按本 patch 聚合
+const listInclude = (patchId: number) =>
+  ({
+    ...resourceInclude,
+    _count: {
+      select: { like_by: { where: { resource: { patch_id: patchId } } } }
+    }
+  }) satisfies Prisma.patch_resourceInclude
+
+// 按发布时间从新到旧; 迁移数据同一 patch 内 created 有并列, id 兜底保证顺序确定
+const listOrderBy = [
+  { created: 'desc' },
+  { id: 'desc' }
+] satisfies Prisma.patch_resourceOrderByWithRelationInput[]
+
 // 公开视角查询: 恒按 status=0, 不含 viewer 私有点赞态, 结果可跨 viewer 共享缓存
 const queryPublicResources = async (
   patchId: number
 ): Promise<PatchResource[]> => {
   const data = await prisma.patch_resource.findMany({
     where: { patch_id: patchId, status: 0 },
-    include: resourceInclude
+    include: listInclude(patchId),
+    orderBy: listOrderBy
   })
   return Promise.all(data.map((resource) => mapResource(resource, false)))
 }
@@ -131,7 +149,11 @@ export const getPatchResource = async (
   if (await shouldBypassSharedCache(viewer)) {
     const data = await prisma.patch_resource.findMany({
       where: { patch_id: patchId, ...getResourceVisibilityWhere(viewer) },
-      include: { ...resourceInclude, like_by: { where: { user_id: uid } } }
+      include: {
+        ...listInclude(patchId),
+        like_by: { where: { user_id: uid } }
+      },
+      orderBy: listOrderBy
     })
     return Promise.all(
       data.map((resource) => mapResource(resource, resource.like_by.length > 0))

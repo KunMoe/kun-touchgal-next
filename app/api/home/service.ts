@@ -135,12 +135,6 @@ const queryHomeData = async (
           select: {
             size: true
           }
-        },
-        _count: {
-          select: {
-            like_by: true,
-            links: true
-          }
         }
       },
       take: 6
@@ -174,8 +168,6 @@ const queryHomeData = async (
     emulatorType: resource.emulator_type,
     modelName: resource.model_name,
     primaryLink: resource.links[0] ? { size: resource.links[0].size } : null,
-    linkCount: resource._count.links,
-    likeCount: resource._count.like_by,
     download: resource.download,
     patchId: resource.patch_id,
     patchName: resource.patch.name,

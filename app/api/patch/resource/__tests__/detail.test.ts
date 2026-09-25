@@ -96,6 +96,16 @@ describe('getPatchResourceDetail', () => {
     )
   })
 
+  // C15: 列表查询的 _count 带 patch_id 冗余过滤以免整表 GROUP BY; 详情按 id
+  // findFirst 本身即可下推, 保持无过滤形式, 勿与列表「统一」
+  it('详情查询的点赞计数保持无过滤的 _count', async () => {
+    await getPatchResourceDetail(5, null)
+
+    expect(findFirstMock.mock.calls[0]?.[0].include._count).toStrictEqual({
+      select: { like_by: true }
+    })
+  })
+
   it('返回资源映射与所属游戏信息', async () => {
     const result = await getPatchResourceDetail(5, null)
 

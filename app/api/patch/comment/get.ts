@@ -173,8 +173,10 @@ const buildCommentPage = async (
         unique_id: true
       }
     },
+    // patch_id 过滤对根评论与后代评论恒真, 勿删: 无外层条件时 Prisma 把 _count
+    // 编译成点赞表整表 GROUP BY, 有它才下推成按本 patch 聚合
     _count: {
-      select: { like_by: true }
+      select: { like_by: { where: { comment: { patch_id: patchId } } } }
     }
   } satisfies Prisma.patch_commentSelect
 

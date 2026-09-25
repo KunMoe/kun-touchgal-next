@@ -21,10 +21,10 @@ export const getUserPatchRating = async (
       where: { user_id: uid, ...visibilityWhere },
       include: {
         patch: { select: PatchRefSelectField },
+        // user_id 过滤对返回行恒真, 勿删: 无外层条件时 Prisma 把 _count
+        // 编译成点赞表整表 GROUP BY, 有它才下推成按该用户聚合
         _count: {
-          select: {
-            like: true
-          }
+          select: { like: { where: { patch_rating: { user_id: uid } } } }
         }
       },
       orderBy: { created: 'desc' },

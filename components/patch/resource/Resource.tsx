@@ -176,7 +176,7 @@ export const Resources = ({
           patchId={id}
           onClose={onCloseCreate}
           onSuccess={(res) => {
-            setResources([...resources, res])
+            setResources([res, ...resources])
             onCloseCreate()
           }}
         />

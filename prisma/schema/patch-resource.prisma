@@ -65,4 +65,5 @@ model user_patch_resource_like_relation {
   updated DateTime @updatedAt
 
   @@unique([user_id, resource_id])
+  @@index([resource_id])
 }

@@ -13,8 +13,6 @@ export interface PatchResource {
   emulatorType: string[]
   modelName: string
   primaryLink: PatchResourceLinkSummary | null
-  linkCount: number
-  likeCount: number
   download: number
   patchId: number
   patchName: string

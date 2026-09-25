@@ -198,4 +198,37 @@ describe('getPatchResource', () => {
     })
     expect(args.include.like_by).toEqual({ where: { user_id: 9 } })
   })
+
+  // C15: patch_id 过滤对返回行恒真, 看似冗余但勿删——无外层条件时 Prisma 7 把
+  // _count 编译成点赞表整表 GROUP BY; 列表按发布时间新到旧, id 兜底 created 并列
+  const LIST_COUNT = {
+    select: { like_by: { where: { resource: { patch_id: 123 } } } }
+  }
+  const LIST_ORDER_BY = [{ created: 'desc' }, { id: 'desc' }]
+
+  it('pushes the like count down to this patch and orders newest first on a shared cache miss', async () => {
+    const resources = await getPatchResource({ patchId: 123 }, null)
+
+    expect(findManyMock).toHaveBeenCalledTimes(1)
+    const args = findManyMock.mock.calls[0]?.[0]
+    expect(args.include._count).toStrictEqual(LIST_COUNT)
+    expect(args.orderBy).toStrictEqual(LIST_ORDER_BY)
+    expect(resources[0]?.likeCount).toBe(3)
+  })
+
+  it('pushes the like count down to this patch and orders newest first when bypassing the cache', async () => {
+    findManyMock.mockResolvedValue([buildRow({ like_by: [] })])
+
+    const resources = await getPatchResource(
+      { patchId: 123 },
+      { uid: 9, role: 5 }
+    )
+
+    expect(getKvMock).not.toHaveBeenCalled()
+    expect(findManyMock).toHaveBeenCalledTimes(1)
+    const args = findManyMock.mock.calls[0]?.[0]
+    expect(args.include._count).toStrictEqual(LIST_COUNT)
+    expect(args.orderBy).toStrictEqual(LIST_ORDER_BY)
+    expect(resources[0]?.likeCount).toBe(3)
+  })
 })
