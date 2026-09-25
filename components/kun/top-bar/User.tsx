@@ -2,7 +2,7 @@
 
 import { useShallow } from 'zustand/react/shallow'
 import toast from 'react-hot-toast'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { NavbarContent, NavbarItem } from '@heroui/navbar'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
@@ -14,7 +14,6 @@ import { useSettingStore } from '~/store/settingStore'
 import { useRouter } from '@bprogress/next/app'
 import { ThemeSwitcher } from './ThemeSwitcher'
 import { useMounted } from '~/hooks/useMounted'
-import { UserDropdown } from './UserDropdown'
 import { KunSearch } from './Search'
 import { UserMessageBell } from './UserMessageBell'
 import { Tooltip } from '@heroui/tooltip'
@@ -38,6 +37,42 @@ const hasPersistedUserStore = () => {
   } catch {
     return true
   }
+}
+
+// UserDropdown 连带 Dropdown / Menu / Popover / Modal / Avatar 只对登录用户渲染, 静态导入
+// 会让游客在每一页都下载它们. 改为确认会话时并行按需加载, 加载完成后再翻转会话状态,
+// 头像与铃铛仍在同一帧出现. 不用 next/dynamic: 会话翻转由 zustand 同步渲染驱动, 走
+// Suspense 揭示会被 React 19 节流到 fallback 后 300ms, 预热也绕不开
+const loadUserDropdown = () => import('./UserDropdown')
+type UserDropdownModule = Awaited<ReturnType<typeof loadUserDropdown>>
+let userDropdownModule: UserDropdownModule | null = null
+let userDropdownLoading: Promise<void> | null = null
+const userDropdownListeners = new Set<() => void>()
+const subscribeUserDropdown = (listener: () => void) => {
+  userDropdownListeners.add(listener)
+  return () => {
+    userDropdownListeners.delete(listener)
+  }
+}
+const getUserDropdownModule = () => userDropdownModule
+const getServerUserDropdownModule = () => null
+const ensureUserDropdownModule = () => {
+  if (userDropdownModule) {
+    return Promise.resolve()
+  }
+  userDropdownLoading ??= loadUserDropdown()
+    .then(
+      (module) => {
+        userDropdownModule = module
+        userDropdownListeners.forEach((listener) => listener())
+      },
+      // 块加载失败: 头像位保留骨架, 会话就绪后的 effect 会再试一次
+      () => {}
+    )
+    .finally(() => {
+      userDropdownLoading = null
+    })
+  return userDropdownLoading
 }
 const fetchCurrentSession = async (): Promise<SessionCheckResult> => {
   try {
@@ -121,6 +156,11 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
   )
   const resetSettings = useSettingStore((state) => state.resetData)
   const isMounted = useMounted()
+  const dropdownModule = useSyncExternalStore(
+    subscribeUserDropdown,
+    getUserDropdownModule,
+    getServerUserDropdownModule
+  )
   const missingSessionCheckedRef = useRef(false)
   const [isMissingSessionChecked, setIsMissingSessionChecked] = useState(
     !!initialSession || isSessionPending
@@ -133,7 +173,10 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
 
     let cancelled = false
     const hydrateSession = async () => {
-      await useSettingStore.persist.rehydrate()
+      await Promise.all([
+        useSettingStore.persist.rehydrate(),
+        ensureUserDropdownModule()
+      ])
       if (cancelled) {
         return
       }
@@ -176,7 +219,10 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
         ? useUserStore.getState().user
         : { uid: 0 }
       if (currentUser.uid) {
-        const sessionCheck = await fetchCurrentSession()
+        const [sessionCheck] = await Promise.all([
+          fetchCurrentSession(),
+          ensureUserDropdownModule()
+        ])
         if (cancelled) {
           return
         }
@@ -227,6 +273,15 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
       : isMissingSessionChecked
 
   const hasUnread = hasUnreadNotification || hasUnreadConversation
+  const isUserReady = isMounted && isSessionReady && !!user.name
+
+  // 站内登录 (登录页 setUser) 等不经过上面两条会话路径的翻转, 以及加载失败后的重试
+  useEffect(() => {
+    if (!isUserReady || dropdownModule) {
+      return
+    }
+    void ensureUserDropdownModule()
+  }, [dropdownModule, isUserReady])
 
   return (
     <NavbarContent as="div" className="items-center" justify="end">
@@ -251,14 +306,18 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
 
       <ThemeSwitcher />
 
-      {isMounted && isSessionReady && user.name && (
+      {isUserReady && (
         <>
           <UserMessageBell
             hasUnreadMessages={hasUnread}
             setReadMessage={() => setHasUnreadNotification(false)}
           />
 
-          <UserDropdown />
+          {dropdownModule ? (
+            <dropdownModule.UserDropdown />
+          ) : (
+            <Skeleton className="size-8 shrink-0 rounded-full" />
+          )}
         </>
       )}
     </NavbarContent>
