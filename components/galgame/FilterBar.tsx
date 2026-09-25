@@ -1,6 +1,7 @@
 'use client'
 
-import { memo, useMemo, useState } from 'react'
+import { memo, startTransition, useState } from 'react'
+import dynamic from 'next/dynamic'
 import {
   Dropdown,
   DropdownItem,
@@ -9,47 +10,56 @@ import {
 } from '@heroui/dropdown'
 import { Button } from '@heroui/button'
 import { Card, CardHeader, CardBody } from '@heroui/card'
-import { Select, SelectItem } from '@heroui/select'
-import { Input } from '@heroui/react'
 import { Divider } from '@heroui/divider'
-import {
-  ArrowDownAZ,
-  ArrowUpAZ,
-  Calendar,
-  ChevronDown,
-  ChevronUp,
-  Filter
-} from 'lucide-react'
-import {
-  ALL_SUPPORTED_LANGUAGE,
-  ALL_SUPPORTED_PLATFORM,
-  ALL_SUPPORTED_TYPE,
-  SUPPORTED_LANGUAGE_MAP,
-  SUPPORTED_PLATFORM_MAP,
-  SUPPORTED_TYPE_MAP
-} from '~/constants/resource'
+import { Skeleton } from '@heroui/skeleton'
+import { ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronUp } from 'lucide-react'
 import { DEFAULT_GALGAME_MIN_RATING_COUNT } from '~/utils/galgameFilter'
+import type { AdvancedFilterPanelProps } from './AdvancedFilterPanel'
 import type { SortField, SortOrder } from './_sort'
 
-interface Props {
-  selectedType: string
-  setSelectedType: (types: string) => void
-  sortField: SortField
+// 高级筛选面板默认收起, 却连带 Select / Listbox / 虚拟列表约 22KB gz 进入
+// /galgame、/search、/tag/[id]、/company/[id] 首屏. 改为按需加载, 悬停与聚焦时预热
+const loadAdvancedFilterPanel = () => import('./AdvancedFilterPanel')
+
+const AdvancedFilterPanel = dynamic(
+  () => loadAdvancedFilterPanel().then((mod) => mod.AdvancedFilterPanel),
+  { loading: () => <AdvancedFilterPanelFallback /> }
+)
+
+const preloadAdvancedFilterPanel = () => {
+  void loadAdvancedFilterPanel()
+}
+
+// 与面板同高 (两行 48px 控件), 块未到时先占位, 避免到达后再把卡片列表推下去
+const AdvancedFilterPanelFallback = () => (
+  <>
+    <Divider />
+    <CardBody className="pt-3">
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Skeleton className="h-12 rounded-large" />
+          <Skeleton className="h-12 rounded-large" />
+          <Skeleton className="h-12 rounded-large" />
+        </div>
+        <div className="flex flex-wrap sm:flex-nowrap gap-3">
+          <Skeleton className="h-12 w-full rounded-large" />
+          <Skeleton className="h-12 w-full rounded-large" />
+          <Skeleton className="h-12 w-full rounded-large" />
+          <Skeleton className="h-12 w-24 shrink-0 rounded-large ml-auto" />
+        </div>
+      </div>
+    </CardBody>
+  </>
+)
+
+interface Props extends Omit<
+  AdvancedFilterPanelProps,
+  'defaultMinRatingCount'
+> {
   setSortField: (option: SortField) => void
   sortOrder: SortOrder
   setSortOrder: (direction: SortOrder) => void
-  selectedLanguage: string
-  setSelectedLanguage: (language: string) => void
-  selectedPlatform: string
-  setSelectedPlatform: (platform: string) => void
-  selectedYears: string[]
-  setSelectedYears: (years: string[]) => void
-  selectedMonths: string[]
-  setSelectedMonths: (months: string[]) => void
-  minRatingCount?: number
-  setMinRatingCount?: (count: number) => void
   defaultMinRatingCount?: number
-  endYear: number
 }
 
 const sortFieldLabelMap: Record<string, string> = {
@@ -60,35 +70,6 @@ const sortFieldLabelMap: Record<string, string> = {
   download: '下载量',
   favorite: '收藏量'
 }
-
-const getGalgameSortYears = (endYear: number) => [
-  'all',
-  'future',
-  'unknown',
-  ...Array.from({ length: endYear - 1979 }, (_, i) => String(endYear - i))
-]
-
-const GALGAME_SORT_YEARS_MAP: Record<string, string> = {
-  all: '全部年份',
-  future: '未发售',
-  unknown: '未知年份'
-}
-
-const GALGAME_SORT_MONTHS = [
-  'all',
-  '01',
-  '02',
-  '03',
-  '04',
-  '05',
-  '06',
-  '07',
-  '08',
-  '09',
-  '10',
-  '11',
-  '12'
-]
 
 export const FilterBar = memo(function FilterBar({
   selectedType,
@@ -110,7 +91,6 @@ export const FilterBar = memo(function FilterBar({
   defaultMinRatingCount = DEFAULT_GALGAME_MIN_RATING_COUNT,
   endYear
 }: Props) {
-  const yearOptions = useMemo(() => getGalgameSortYears(endYear), [endYear])
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const currentSortLabel =
     sortFieldLabelMap[sortField] ?? (sortField === 'rating' ? '评分' : '排序')
@@ -125,6 +105,14 @@ export const FilterBar = memo(function FilterBar({
     !selectedYears.includes('all') ||
     !selectedMonths.includes('all') ||
     ratingFilterActive
+
+  const toggleAdvancedFilters = () => {
+    // 在 transition 里挂载懒加载面板: 块已预热时 React 会等 import() 在微任务里
+    // 完成而不先提交 fallback, 从而绕开 Suspense 揭示的 300ms 节流
+    startTransition(() => {
+      setShowAdvancedFilters((current) => !current)
+    })
+  }
 
   return (
     <Card>
@@ -196,7 +184,9 @@ export const FilterBar = memo(function FilterBar({
           <Button
             variant={showAdvancedFilters ? 'solid' : 'flat'}
             className="sm:w-auto text-sm"
-            onPress={() => setShowAdvancedFilters(!showAdvancedFilters)}
+            onPress={toggleAdvancedFilters}
+            onPointerEnter={preloadAdvancedFilterPanel}
+            onFocus={preloadAdvancedFilterPanel}
             endContent={
               showAdvancedFilters ? (
                 <ChevronUp className="size-4" />
@@ -212,181 +202,23 @@ export const FilterBar = memo(function FilterBar({
       </CardHeader>
 
       {showAdvancedFilters && (
-        <>
-          <Divider />
-          <CardBody className="pt-3">
-            <div className="flex flex-col gap-3">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <Select
-                  label="类型筛选"
-                  placeholder="选择类型"
-                  selectedKeys={[selectedType]}
-                  onChange={(event) => {
-                    if (!event.target.value) {
-                      return
-                    }
-                    setSelectedType(event.target.value)
-                  }}
-                  startContent={<Filter className="size-4 text-default-400" />}
-                  radius="lg"
-                  size="sm"
-                >
-                  {ALL_SUPPORTED_TYPE.map((type) => (
-                    <SelectItem key={type} className="text-default-700">
-                      {SUPPORTED_TYPE_MAP[type]}
-                    </SelectItem>
-                  ))}
-                </Select>
-
-                <Select
-                  label="语言筛选"
-                  placeholder="选择语言"
-                  selectedKeys={[selectedLanguage]}
-                  onChange={(event) => {
-                    if (!event.target.value) {
-                      return
-                    }
-                    setSelectedLanguage(event.target.value)
-                  }}
-                  startContent={<Filter className="size-4 text-default-400" />}
-                  radius="lg"
-                  size="sm"
-                >
-                  {ALL_SUPPORTED_LANGUAGE.map((language) => (
-                    <SelectItem key={language} className="text-default-700">
-                      {SUPPORTED_LANGUAGE_MAP[language]}
-                    </SelectItem>
-                  ))}
-                </Select>
-
-                <Select
-                  label="平台筛选"
-                  placeholder="选择平台"
-                  selectedKeys={[selectedPlatform]}
-                  onChange={(event) => {
-                    if (!event.target.value) {
-                      return
-                    }
-                    setSelectedPlatform(event.target.value)
-                  }}
-                  startContent={<Filter className="size-4 text-default-400" />}
-                  radius="lg"
-                  size="sm"
-                >
-                  {ALL_SUPPORTED_PLATFORM.map((platform) => (
-                    <SelectItem key={platform} className="text-default-700">
-                      {SUPPORTED_PLATFORM_MAP[platform]}
-                    </SelectItem>
-                  ))}
-                </Select>
-              </div>
-
-              <div className="flex flex-wrap sm:flex-nowrap gap-3">
-                <Select
-                  disallowEmptySelection
-                  label="发售年份"
-                  placeholder="选择年份"
-                  selectedKeys={selectedYears}
-                  disabledKeys={['future']}
-                  onSelectionChange={(keys) => {
-                    if (keys.anchorKey === 'all') {
-                      setSelectedYears(['all'])
-                      setSelectedMonths(['all'])
-                    } else {
-                      setSelectedYears(
-                        Array.from(keys as Set<string>).filter(
-                          (item) => item !== 'all'
-                        )
-                      )
-                    }
-                  }}
-                  startContent={
-                    <Calendar className="size-4 text-default-400" />
-                  }
-                  selectionMode="multiple"
-                  radius="lg"
-                  size="sm"
-                >
-                  {yearOptions.map((year) => (
-                    <SelectItem key={year} className="text-default-700">
-                      {GALGAME_SORT_YEARS_MAP[year] ?? year}
-                    </SelectItem>
-                  ))}
-                </Select>
-
-                <Select
-                  disallowEmptySelection
-                  label="发售月份"
-                  placeholder="选择月份"
-                  selectedKeys={selectedMonths}
-                  onSelectionChange={(keys) => {
-                    if (keys.anchorKey === 'all') {
-                      setSelectedMonths(['all'])
-                    } else {
-                      setSelectedMonths(
-                        Array.from(keys as Set<string>).filter(
-                          (item) => item !== 'all'
-                        )
-                      )
-                    }
-                  }}
-                  startContent={
-                    <Calendar className="size-4 text-default-400" />
-                  }
-                  selectionMode="multiple"
-                  radius="lg"
-                  size="sm"
-                  isDisabled={
-                    selectedYears.includes('all') ||
-                    selectedYears.includes('future')
-                  }
-                >
-                  {GALGAME_SORT_MONTHS.map((month) => (
-                    <SelectItem key={month} className="text-default-700">
-                      {month === 'all' ? '全部月份' : month}
-                    </SelectItem>
-                  ))}
-                </Select>
-
-                {setMinRatingCount && (
-                  <Input
-                    type="number"
-                    label="最低评分人数（仅评分排序生效）"
-                    placeholder={String(defaultMinRatingCount)}
-                    size="sm"
-                    value={String(minRatingCount)}
-                    min={0}
-                    onValueChange={(value) => {
-                      const parsed = Number(value)
-                      if (Number.isNaN(parsed)) {
-                        return
-                      }
-                      setMinRatingCount(Math.max(0, parsed))
-                    }}
-                    isDisabled={sortField !== 'rating'}
-                  />
-                )}
-
-                <Button
-                  radius="lg"
-                  size="lg"
-                  variant="flat"
-                  className="text-sm ml-auto"
-                  onPress={() => {
-                    setSelectedType('all')
-                    setSelectedLanguage('all')
-                    setSelectedPlatform('all')
-                    setSelectedYears(['all'])
-                    setSelectedMonths(['all'])
-                    setMinRatingCount?.(defaultMinRatingCount)
-                  }}
-                >
-                  重置筛选
-                </Button>
-              </div>
-            </div>
-          </CardBody>
-        </>
+        <AdvancedFilterPanel
+          selectedType={selectedType}
+          setSelectedType={setSelectedType}
+          sortField={sortField}
+          selectedLanguage={selectedLanguage}
+          setSelectedLanguage={setSelectedLanguage}
+          selectedPlatform={selectedPlatform}
+          setSelectedPlatform={setSelectedPlatform}
+          selectedYears={selectedYears}
+          setSelectedYears={setSelectedYears}
+          selectedMonths={selectedMonths}
+          setSelectedMonths={setSelectedMonths}
+          minRatingCount={minRatingCount}
+          setMinRatingCount={setMinRatingCount}
+          defaultMinRatingCount={defaultMinRatingCount}
+          endYear={endYear}
+        />
       )}
     </Card>
   )
