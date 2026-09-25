@@ -29,8 +29,10 @@ export const getFolders = async (
             patch_id: input.patchId ?? 0
           }
         },
+        // 关系 _count 会被 Prisma 编译成子表整表 GROUP BY, 外层 user_id 下推不进去
+        // (C16, 每次 ~95ms); 这个对返回行恒真的过滤会编进聚合子查询, 让它走索引
         _count: {
-          select: { patch: true }
+          select: { patch: { where: { folder: { user_id: pageUid } } } }
         }
       },
       orderBy: { created: 'desc' },
