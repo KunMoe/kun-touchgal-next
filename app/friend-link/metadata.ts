@@ -1,16 +1,8 @@
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { kunFriends } from '~/config/friend'
 import type { Metadata } from 'next'
-import type { KunSiteImage } from '~/config/config'
 
 const friendName = kunFriends.map((f) => f.name)
-
-const friendIcons: KunSiteImage[] = kunFriends.map((f) => ({
-  url: f.link,
-  width: 64,
-  height: 64,
-  alt: f.label
-}))
 
 export const kunMetadata: Metadata = {
   title: '友情链接',
@@ -19,7 +11,7 @@ export const kunMetadata: Metadata = {
     title: '友情链接',
     description: `点击以进入 ${friendName}`,
     type: 'website',
-    images: friendIcons
+    images: kunMoyuMoe.images
   },
   twitter: {
     card: 'summary_large_image',
