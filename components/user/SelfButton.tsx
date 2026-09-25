@@ -2,7 +2,7 @@
 
 import { Button } from '@heroui/button'
 import { BadgeCheck, Pencil, Shield } from 'lucide-react'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import type { UserInfo } from '~/types/api/user'
 
 interface Props {

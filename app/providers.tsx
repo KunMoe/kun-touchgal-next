@@ -1,6 +1,6 @@
 'use client'
 
-import { AppProgressProvider as ProgressProvider } from '@bprogress/next'
+import { ProgressProvider } from '@bprogress/next/app'
 import { HeroUIProvider } from '@heroui/system'
 import { ThemeProvider } from 'next-themes'
 import { useRouter } from 'next/navigation'

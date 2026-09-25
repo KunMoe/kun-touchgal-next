@@ -2,7 +2,7 @@
 
 import { useRef } from 'react'
 import dynamic from 'next/dynamic'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import { Button } from '@heroui/button'
 import { Card, CardBody, CardHeader } from '@heroui/card'
 import { Chip } from '@heroui/chip'

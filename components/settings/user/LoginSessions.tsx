@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import {
   Button,
   Card,

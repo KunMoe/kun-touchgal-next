@@ -71,6 +71,21 @@ export default defineConfig([
             "用 import * as z from 'zod': 具名/默认导入 z 会让 Turbopack 打进全量 zod (约 90KB gz)"
         }
       ],
+      // @bprogress/next 根入口顶层 import next/router 并给 PagesProgress 赋 displayName,
+      // 补 sideEffects:false 也裁不掉, 整套 Pages Router (46 模块, 约 23KB gz) 会进全站 layout 块 (C19)。
+      // 只许 @bprogress/next/app 子路径: 它的前 273 行与根入口逐字相同, useRouter 是同一个函数
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@bprogress/next',
+              message:
+                "用 '@bprogress/next/app': 根入口顶层 import next/router, 会把整套 Pages Router 打进全站 layout 块 (约 23KB gz)"
+            }
+          ]
+        }
+      ],
       '@next/next/no-img-element': 'off',
       'react-hooks/exhaustive-deps': 'off',
       // eslint-plugin-react-hooks v7 新增的编译器规则, 对存量代码大面积报错, 维持升级前基线

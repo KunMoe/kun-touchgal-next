@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import { Button } from '@heroui/button'
 import {
   Modal,

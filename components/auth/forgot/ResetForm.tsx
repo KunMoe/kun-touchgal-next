@@ -11,7 +11,7 @@ import type { forgotPasswordResetSchema } from '~/validations/forgot'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 
 type ResetFormData = z.infer<typeof forgotPasswordResetSchema>
 

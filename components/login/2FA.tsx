@@ -1,7 +1,7 @@
 'use client'
 
 import { type FormEvent, useEffect, useState, useTransition } from 'react'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import { Button, Input } from '@heroui/react'
 import toast from 'react-hot-toast'
 import { useUserStore } from '~/store/userStore'

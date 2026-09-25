@@ -30,7 +30,7 @@ import {
 import { useUserStore } from '~/store/userStore'
 import { useSettingStore } from '~/store/settingStore'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import { kunFetchPost } from '~/utils/kunFetch'
 import toast from 'react-hot-toast'
 import { showKunSooner } from '~/components/kun/Sooner'

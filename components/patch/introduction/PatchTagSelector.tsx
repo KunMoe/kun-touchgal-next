@@ -20,7 +20,7 @@ import { kunFetchGet, kunFetchPost, kunFetchPut } from '~/utils/kunFetch'
 import { useDebounce } from 'use-debounce'
 import { SearchTags } from './SearchTag'
 import { KunLoading } from '~/components/kun/Loading'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import type { Tag as TagType } from '~/types/api/tag'
 import toast from 'react-hot-toast'
 

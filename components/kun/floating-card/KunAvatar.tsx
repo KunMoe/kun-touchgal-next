@@ -1,7 +1,7 @@
 'use client'
 
 import { Avatar } from '@heroui/avatar'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import { KunUserCardTooltip, preloadKunUserCard } from './KunUserCardTooltip'
 import type { AvatarProps } from '@heroui/avatar'
 

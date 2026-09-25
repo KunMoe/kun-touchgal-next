@@ -3,7 +3,7 @@
 import { Button } from '@heroui/button'
 import { Tooltip } from '@heroui/tooltip'
 import { Bell, BellRing } from 'lucide-react'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 
 interface AnimatedNotificationBellProps {
   hasUnreadMessages: boolean

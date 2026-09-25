@@ -13,7 +13,7 @@ import {
   useDisclosure
 } from '@heroui/react'
 import { Button } from '@heroui/button'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import toast from 'react-hot-toast'
 import { useState } from 'react'
 import { kunFetchPost } from '~/utils/kunFetch'

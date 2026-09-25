@@ -2,7 +2,7 @@
 
 import { Button, Card, CardBody, CardFooter, CardHeader } from '@heroui/react'
 import { AlertTriangle, ArrowLeft, Home, RefreshCw } from 'lucide-react'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 
 interface ErrorComponentProps {
   error: string

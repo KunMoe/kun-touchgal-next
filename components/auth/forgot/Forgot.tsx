@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Card, CardBody, CardHeader } from '@heroui/card'
 import { Button, Divider } from '@heroui/react'
 import { LockKeyhole, MailCheck } from 'lucide-react'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import { RequestForm } from './RequestForm'
 
 export const ForgotPassword = () => {

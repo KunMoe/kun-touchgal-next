@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDebounce } from 'use-debounce'
 import dynamic from 'next/dynamic'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import { useSearchParams } from 'next/navigation'
 import { Button, Chip } from '@heroui/react'
 import { useDisclosure } from '@heroui/modal'

@@ -1,7 +1,7 @@
 'use client'
 
 import { User } from '@heroui/user'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import { KunUserCardTooltip, preloadKunUserCard } from './KunUserCardTooltip'
 import type { UserProps } from '@heroui/user'
 

@@ -13,7 +13,7 @@ import {
   Progress
 } from '@heroui/react'
 import { BadgeCheck, CheckCircle2, CircleSlash, Trophy } from 'lucide-react'
-import { useRouter } from '@bprogress/next'
+import { useRouter } from '@bprogress/next/app'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { Link } from '@heroui/react'
