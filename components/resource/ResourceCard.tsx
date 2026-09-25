@@ -2,9 +2,9 @@
 
 import Link from 'next/link'
 import { Card, CardBody } from '@heroui/card'
-import { Chip } from '@heroui/chip'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { KunPatchAttribute } from '~/components/kun/PatchAttribute'
+import { KunStaticChip } from '~/components/kun/StaticChip'
 import { KunUser } from '../kun/floating-card/KunUser'
 import { cn } from '~/utils/cn'
 import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
@@ -84,9 +84,9 @@ export const ResourceCard = ({ resource }: Props) => {
             />
           </div>
           {primaryLink && (
-            <Chip size="sm" variant="flat" className="shrink-0">
+            <KunStaticChip size="sm" className="shrink-0">
               {primaryLink.size}
-            </Chip>
+            </KunStaticChip>
           )}
         </div>
       </CardBody>

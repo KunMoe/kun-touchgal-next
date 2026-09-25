@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { Card, CardBody } from '@heroui/card'
-import { Chip } from '@heroui/chip'
+import { KunStaticChip } from '~/components/kun/StaticChip'
 import type { Company as CompanyType } from '~/types/api/company'
 
 interface Props {
@@ -21,16 +21,14 @@ export const CompanyCard = ({ company }: Props) => {
           <h2 className="text-lg font-semibold transition-colors line-clamp-2 hover:text-primary-500">
             {company.name}
           </h2>
-          <Chip size="sm" variant="flat">
-            {company.count} 个 Galgame
-          </Chip>
+          <KunStaticChip size="sm">{company.count} 个 Galgame</KunStaticChip>
         </div>
         {company.alias.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2">
             {company.alias.map((alias, index) => (
-              <Chip key={index} size="sm" variant="flat" color="secondary">
+              <KunStaticChip key={index} size="sm" color="secondary">
                 {alias}
-              </Chip>
+              </KunStaticChip>
             ))}
           </div>
         )}
