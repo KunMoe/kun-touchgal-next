@@ -26,7 +26,8 @@ export const KunMobileCard = ({ posts, currentSlide }: Props) => {
           src={post.banner}
           fill
           sizes="100vw"
-          priority={isPriorityImage}
+          preload={isPriorityImage}
+          fetchPriority={isPriorityImage ? 'high' : undefined}
           unoptimized
         />
 

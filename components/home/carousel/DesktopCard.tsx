@@ -27,7 +27,8 @@ export const KunDesktopCard = ({ posts, currentSlide }: Props) => {
         src={post.banner}
         fill
         sizes="(min-width: 1280px) 616px, (min-width: 640px) 50vw, 100vw"
-        priority={isPriorityImage}
+        preload={isPriorityImage}
+        fetchPriority={isPriorityImage ? 'high' : undefined}
         unoptimized
       />
       <div className="absolute inset-0 rounded-2xl bg-gradient-to-t from-black/30 via-black/10 to-transparent" />
