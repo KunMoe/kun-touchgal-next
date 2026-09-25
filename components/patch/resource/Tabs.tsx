@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { MouseEvent } from 'react'
+import type { MouseEvent, PointerEvent } from 'react'
 import {
   Button,
   Card,
@@ -73,9 +73,6 @@ export const ResourceTabs = ({
   const [highlightedResourceId, setHighlightedResourceId] = useState<
     number | null
   >(null)
-  const [pressedResourceId, setPressedResourceId] = useState<number | null>(
-    null
-  )
 
   const [kunResources, setKunResources] = useState<KunMoyuPatchResource[]>([])
   const [kunLoading, setKunLoading] = useState(false)
@@ -196,6 +193,11 @@ export const ResourceTabs = ({
     router.push(`/${resource.uniqueId}/resource/${resource.id}`)
   }
 
+  // 按压态直接写在卡片 DOM 上而不放 state: 放在本组件顶层时, 按下和抬起
+  // 各会让当前分区的整张卡片列表重渲染一次
+  const clearPressed = (event: PointerEvent<HTMLDivElement>) =>
+    event.currentTarget.removeAttribute('data-pressed')
+
   // 按压缩放动画参考首页 GalgameCard (isPressable), 缩放幅度更轻 (0.99);
   // 只在会触发整卡导航的按压上出现, 点卡内交互元素不缩放
   const renderResourceCard = (resource: PatchResource) => (
@@ -203,20 +205,19 @@ export const ResourceTabs = ({
       key={resource.id}
       id={`resource-${resource.id}`}
       className={cn(
-        'group/resource-card cursor-pointer border p-3 rounded-2xl border-default-200 transition tap-highlight-transparent hover:border-primary-400',
-        pressedResourceId === resource.id && 'scale-[0.99]',
+        'group/resource-card cursor-pointer border p-3 rounded-2xl border-default-200 transition tap-highlight-transparent hover:border-primary-400 data-[pressed]:scale-[0.99]',
         highlightedResourceId === resource.id &&
           'ring-2 ring-primary ring-offset-2 ring-offset-background'
       )}
       onClick={(event) => handleResourceCardClick(event, resource)}
       onPointerDown={(event) => {
         if (!isNavigationBlocked(event)) {
-          setPressedResourceId(resource.id)
+          event.currentTarget.setAttribute('data-pressed', '')
         }
       }}
-      onPointerUp={() => setPressedResourceId(null)}
-      onPointerLeave={() => setPressedResourceId(null)}
-      onPointerCancel={() => setPressedResourceId(null)}
+      onPointerUp={clearPressed}
+      onPointerLeave={clearPressed}
+      onPointerCancel={clearPressed}
     >
       <div className="space-y-3">
         <div className="flex items-start justify-between">
