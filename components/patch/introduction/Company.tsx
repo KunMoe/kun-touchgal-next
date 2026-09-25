@@ -7,10 +7,16 @@ import { Link } from '@heroui/link'
 import { Button } from '@heroui/button'
 import { Download } from 'lucide-react'
 import { Company } from '~/types/api/company'
-import { PatchCompanySelector } from './PatchCompanySelector'
+import dynamic from 'next/dynamic'
 import { useUserStore } from '~/store/userStore'
 import { kunFetchPost } from '~/utils/kunFetch'
 import toast from 'react-hot-toast'
+
+const PatchCompanySelector = dynamic(
+  () =>
+    import('./PatchCompanySelector').then((mod) => mod.PatchCompanySelector),
+  { ssr: false }
+)
 
 interface Props {
   patchId: number

@@ -4,9 +4,14 @@ import { useState } from 'react'
 import { Chip } from '@heroui/chip'
 import { Tooltip } from '@heroui/tooltip'
 import { Link } from '@heroui/link'
-import { PatchTagSelector } from './PatchTagSelector'
+import dynamic from 'next/dynamic'
 import { useUserStore } from '~/store/userStore'
 import type { Tag } from '~/types/api/tag'
+
+const PatchTagSelector = dynamic(
+  () => import('./PatchTagSelector').then((mod) => mod.PatchTagSelector),
+  { ssr: false }
+)
 
 interface Props {
   patchId: number
