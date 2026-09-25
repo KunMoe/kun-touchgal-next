@@ -1,0 +1,168 @@
+diff --git a/dist/chunk-EVPGEU4E.mjs b/dist/chunk-EVPGEU4E.mjs
+index 07c7635773f0a56f3f5a9f39cb83a5f02fdb218a..19c888a8663c01a5507f55e503261c02329f58ed 100644
+--- a/dist/chunk-EVPGEU4E.mjs
++++ b/dist/chunk-EVPGEU4E.mjs
+@@ -8,7 +8,6 @@ import scrollIntoView from "scroll-into-view-if-needed";
+ import { useFocusRing } from "@react-aria/focus";
+ import { useTab } from "@react-aria/tabs";
+ import { useHover } from "@react-aria/interactions";
+-import { m, domMax, LazyMotion } from "framer-motion";
+ import { useIsMounted } from "@heroui/use-is-mounted";
+ import { jsx, jsxs } from "react/jsx-runtime";
+ var Tab = forwardRef((props, ref) => {
+@@ -91,23 +90,12 @@ var Tab = forwardRef((props, ref) => {
+       type: Component === "button" ? "button" : void 0,
+       children: [
+         isSelected && !disableAnimation && !disableCursorAnimation && isMounted ? (
+-          // use synchronous loading for domMax here
+-          // since lazy loading produces different behaviour
+-          /* @__PURE__ */ jsx(LazyMotion, { features: domMax, children: /* @__PURE__ */ jsx(
+-            m.span,
+-            {
+-              className: slots.cursor({ class: classNames == null ? void 0 : classNames.cursor }),
+-              "data-slot": "cursor",
+-              layoutDependency: false,
+-              layoutId: "cursor",
+-              transition: {
+-                type: "spring",
+-                bounce: 0.15,
+-                duration: 0.5
+-              },
+-              ...motionProps
+-            }
+-          ) })
++          // C22: 本站这个共享布局 cursor 动画从未生效, 上游 2.2.24 起也已改为纯 CSS 定位;
++          // 去掉动画库包装, 避免 /[id] 等入口静态引入 drag+layout+domAnimation 三个特性块 (共 31.6KB gz)
++          /* @__PURE__ */ jsx("span", {
++            className: slots.cursor({ class: classNames == null ? void 0 : classNames.cursor }),
++            "data-slot": "cursor"
++          })
+         ) : null,
+         /* @__PURE__ */ jsx(
+           "div",
+diff --git a/dist/index.js b/dist/index.js
+index f3b9561089d31f8144013b92d46b445ef541f884..1a662548e85261d59a92cbd82c9797f32a6da325 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -162,7 +162,6 @@ var import_scroll_into_view_if_needed = __toESM(require("scroll-into-view-if-nee
+ var import_focus = require("@react-aria/focus");
+ var import_tabs3 = require("@react-aria/tabs");
+ var import_interactions = require("@react-aria/interactions");
+-var import_framer_motion = require("framer-motion");
+ var import_use_is_mounted = require("@heroui/use-is-mounted");
+ var import_jsx_runtime = require("react/jsx-runtime");
+ var Tab = (0, import_system2.forwardRef)((props, ref) => {
+@@ -245,23 +244,12 @@ var Tab = (0, import_system2.forwardRef)((props, ref) => {
+       type: Component === "button" ? "button" : void 0,
+       children: [
+         isSelected && !disableAnimation && !disableCursorAnimation && isMounted ? (
+-          // use synchronous loading for domMax here
+-          // since lazy loading produces different behaviour
+-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_framer_motion.LazyMotion, { features: import_framer_motion.domMax, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+-            import_framer_motion.m.span,
+-            {
+-              className: slots.cursor({ class: classNames == null ? void 0 : classNames.cursor }),
+-              "data-slot": "cursor",
+-              layoutDependency: false,
+-              layoutId: "cursor",
+-              transition: {
+-                type: "spring",
+-                bounce: 0.15,
+-                duration: 0.5
+-              },
+-              ...motionProps
+-            }
+-          ) })
++          // C22: 本站这个共享布局 cursor 动画从未生效, 上游 2.2.24 起也已改为纯 CSS 定位;
++          // 去掉动画库包装, 避免 /[id] 等入口静态引入 drag+layout+domAnimation 三个特性块 (共 31.6KB gz)
++          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
++            className: slots.cursor({ class: classNames == null ? void 0 : classNames.cursor }),
++            "data-slot": "cursor"
++          })
+         ) : null,
+         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+           "div",
+diff --git a/dist/tab.js b/dist/tab.js
+index ca2eea39898e4165d3042ae9663487d716c37dd0..9b261980add5a1ed4e18b5a7e1fe8ed0e0ae11d9 100644
+--- a/dist/tab.js
++++ b/dist/tab.js
+@@ -41,7 +41,6 @@ var import_scroll_into_view_if_needed = __toESM(require("scroll-into-view-if-nee
+ var import_focus = require("@react-aria/focus");
+ var import_tabs = require("@react-aria/tabs");
+ var import_interactions = require("@react-aria/interactions");
+-var import_framer_motion = require("framer-motion");
+ var import_use_is_mounted = require("@heroui/use-is-mounted");
+ var import_jsx_runtime = require("react/jsx-runtime");
+ var Tab = (0, import_system.forwardRef)((props, ref) => {
+@@ -124,23 +123,12 @@ var Tab = (0, import_system.forwardRef)((props, ref) => {
+       type: Component === "button" ? "button" : void 0,
+       children: [
+         isSelected && !disableAnimation && !disableCursorAnimation && isMounted ? (
+-          // use synchronous loading for domMax here
+-          // since lazy loading produces different behaviour
+-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_framer_motion.LazyMotion, { features: import_framer_motion.domMax, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+-            import_framer_motion.m.span,
+-            {
+-              className: slots.cursor({ class: classNames == null ? void 0 : classNames.cursor }),
+-              "data-slot": "cursor",
+-              layoutDependency: false,
+-              layoutId: "cursor",
+-              transition: {
+-                type: "spring",
+-                bounce: 0.15,
+-                duration: 0.5
+-              },
+-              ...motionProps
+-            }
+-          ) })
++          // C22: 本站这个共享布局 cursor 动画从未生效, 上游 2.2.24 起也已改为纯 CSS 定位;
++          // 去掉动画库包装, 避免 /[id] 等入口静态引入 drag+layout+domAnimation 三个特性块 (共 31.6KB gz)
++          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
++            className: slots.cursor({ class: classNames == null ? void 0 : classNames.cursor }),
++            "data-slot": "cursor"
++          })
+         ) : null,
+         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+           "div",
+diff --git a/dist/tabs.js b/dist/tabs.js
+index e7faa162d8d43a590e3e307195f918acbb6fbf54..853c42c4d507357795c3521b620f6ecc19f23927 100644
+--- a/dist/tabs.js
++++ b/dist/tabs.js
+@@ -158,7 +158,6 @@ var import_scroll_into_view_if_needed = __toESM(require("scroll-into-view-if-nee
+ var import_focus = require("@react-aria/focus");
+ var import_tabs3 = require("@react-aria/tabs");
+ var import_interactions = require("@react-aria/interactions");
+-var import_framer_motion = require("framer-motion");
+ var import_use_is_mounted = require("@heroui/use-is-mounted");
+ var import_jsx_runtime = require("react/jsx-runtime");
+ var Tab = (0, import_system2.forwardRef)((props, ref) => {
+@@ -241,23 +240,12 @@ var Tab = (0, import_system2.forwardRef)((props, ref) => {
+       type: Component === "button" ? "button" : void 0,
+       children: [
+         isSelected && !disableAnimation && !disableCursorAnimation && isMounted ? (
+-          // use synchronous loading for domMax here
+-          // since lazy loading produces different behaviour
+-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_framer_motion.LazyMotion, { features: import_framer_motion.domMax, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+-            import_framer_motion.m.span,
+-            {
+-              className: slots.cursor({ class: classNames == null ? void 0 : classNames.cursor }),
+-              "data-slot": "cursor",
+-              layoutDependency: false,
+-              layoutId: "cursor",
+-              transition: {
+-                type: "spring",
+-                bounce: 0.15,
+-                duration: 0.5
+-              },
+-              ...motionProps
+-            }
+-          ) })
++          // C22: 本站这个共享布局 cursor 动画从未生效, 上游 2.2.24 起也已改为纯 CSS 定位;
++          // 去掉动画库包装, 避免 /[id] 等入口静态引入 drag+layout+domAnimation 三个特性块 (共 31.6KB gz)
++          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
++            className: slots.cursor({ class: classNames == null ? void 0 : classNames.cursor }),
++            "data-slot": "cursor"
++          })
+         ) : null,
+         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+           "div",

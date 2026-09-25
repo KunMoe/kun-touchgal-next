@@ -57,5 +57,6 @@ allowBuilds:
   unrs-resolver: true
 
 patchedDependencies:
+  '@heroui/tabs@2.2.20': patches/@heroui__tabs@2.2.20.patch
   '@react-aria/i18n@3.12.10': patches/@react-aria__i18n@3.12.10.patch
   cap-widget@0.1.57: patches/cap-widget@0.1.57.patch
