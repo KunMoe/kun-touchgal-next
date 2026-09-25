@@ -503,7 +503,7 @@ export const KunMarkdownEditor = ({
           </>
         ) : (
           <div
-            className="kun-prose overflow-y-auto px-4 py-3 text-sm"
+            className="kun-prose kun-prose-compact overflow-y-auto px-4 py-3 text-sm"
             style={{ height: `${contentHeight}px` }}
             dangerouslySetInnerHTML={{ __html: previewHtml }}
           />

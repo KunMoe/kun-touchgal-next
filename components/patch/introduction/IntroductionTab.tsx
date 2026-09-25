@@ -11,8 +11,6 @@ import { SAFE_MEDIA_PROTOCOLS, sanitizeUserUrl } from '~/utils/safeUrl'
 import { useKunExternalLinkNavigation } from '~/components/kun/external-link/useKunExternalLinkNavigation'
 import type { PatchIntroduction } from '~/types/api/patch'
 
-import './_adjust.scss'
-
 const KunPlyr = dynamic(
   () =>
     import('~/components/kun/milkdown/plugins/components/video/Plyr').then(
@@ -156,7 +154,7 @@ export const IntroductionTab = memo(function IntroductionTab({
         <div
           ref={contentRef}
           dangerouslySetInnerHTML={{ __html: intro.introduction }}
-          className="kun-prose max-w-none"
+          className="kun-prose kun-prose-compact max-w-none"
         />
 
         {/* <div className="mt-4">

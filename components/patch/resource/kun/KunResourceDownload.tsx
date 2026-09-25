@@ -74,7 +74,7 @@ export const KunResourceDownload = ({ resource }: Props) => {
           <div className="relative mt-2">
             <div
               ref={noteContentRef}
-              className={`kun-prose max-w-none overflow-hidden transition-all duration-300 ease-in-out`}
+              className={`kun-prose kun-prose-compact max-w-none overflow-hidden transition-all duration-300 ease-in-out`}
               style={{
                 maxHeight: isNoteExpanded ? '' : `${COLLAPSED_HEIGHT_PX}px`
               }}

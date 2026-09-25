@@ -163,7 +163,7 @@ export const ResourceDetail = ({ detail, isLoggedIn }: Props) => {
                   <CardBody>
                     <div
                       ref={noteRef}
-                      className="kun-prose max-w-none"
+                      className="kun-prose kun-prose-compact max-w-none"
                       dangerouslySetInnerHTML={{ __html: resource.noteHtml }}
                     />
                   </CardBody>

@@ -42,6 +42,19 @@
          pt-7 mb-4 leading-tight tracking-tight scroll-m-20;
 }
 
+/* 嵌入式正文 (简介/评论/资源备注): h2 降一档字重, 开头的 h2 不画分隔线、不留顶部空白。
+   须留在全局样式里显式挂类: 组件内 import 的样式表在客户端导航后不会卸载,
+   会泄漏到 /doc 等页面; prose 规则未分层, 也不能改用 [&_h2]: 工具类覆盖 */
+.kun-prose-compact h2 {
+  font-weight: 500;
+}
+
+.kun-prose-compact h2:first-child {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: 0;
+}
+
 .kun-prose h3 {
   @apply text-default-900 font-semibold text-xl mt-8 mb-4 leading-snug
          tracking-tight scroll-m-20;

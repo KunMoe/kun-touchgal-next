@@ -154,7 +154,7 @@ export const CommentContent = ({ comment }: Props) => {
       <div className="relative">
         <div
           ref={contentRef}
-          className={`kun-prose kun-comment-content max-w-none overflow-hidden transition-all duration-300 ease-in-out`}
+          className={`kun-prose kun-prose-compact kun-comment-content max-w-none overflow-hidden transition-all duration-300 ease-in-out`}
           style={
             isExpanded ? undefined : { maxHeight: `${collapsedMaxHeight}px` }
           }

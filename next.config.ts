@@ -22,9 +22,6 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: skipDeployBuildChecks
   },
-  sassOptions: {
-    silenceDeprecations: ['legacy-js-api']
-  },
   images: {
     formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 60 * 60 * 24 * 7,
