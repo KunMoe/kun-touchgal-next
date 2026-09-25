@@ -16,7 +16,6 @@ const {
   preScreenTextMock,
   enqueueSearchOutboxMock,
   queueSearchSyncMock,
-  markdownToHtmlMock,
   invalidatePatchResourceDetailCacheMock,
   invalidateResourceListCacheMock,
   invalidatePatchContentCacheMock,
@@ -38,7 +37,6 @@ const {
   preScreenTextMock: vi.fn(),
   enqueueSearchOutboxMock: vi.fn(),
   queueSearchSyncMock: vi.fn(),
-  markdownToHtmlMock: vi.fn(),
   invalidatePatchResourceDetailCacheMock: vi.fn(),
   invalidateResourceListCacheMock: vi.fn(),
   invalidatePatchContentCacheMock: vi.fn(),
@@ -97,10 +95,6 @@ vi.mock('~/server/search/sync', () => ({
 
 vi.mock('~/server/storage/s3Outbox', () => ({
   kickS3DeletionDrain: kickS3DeletionDrainMock
-}))
-
-vi.mock('~/app/api/utils/render/markdownToHtml', () => ({
-  markdownToHtml: markdownToHtmlMock
 }))
 
 import { updatePatchResource } from '~/app/api/patch/resource/update'
@@ -180,7 +174,6 @@ beforeEach(() => {
   hasPendingModerationMock.mockResolvedValue(false)
   invalidatePatchContentCacheMock.mockResolvedValue(undefined)
   recalcPatchTypeMock.mockResolvedValue('patch-10')
-  markdownToHtmlMock.mockResolvedValue('')
   transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'galgame' }])
   transactionMock.mockImplementation(
     async (callback: (client: typeof transactionClient) => unknown) =>

@@ -128,10 +128,6 @@ vi.mock('~/app/api/utils/message', () => ({
   createMessage: createMessageMock
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtml', () => ({
-  markdownToHtml: vi.fn().mockResolvedValue('<p>Note</p>')
-}))
-
 import { createPatchResource } from '~/app/api/patch/resource/create'
 import { updatePatchResource } from '~/app/api/patch/resource/update'
 

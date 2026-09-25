@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import { markdownToHtml } from '~/app/api/utils/render/markdownToHtml'
 import {
   getResourceVisibilityWhere,
   type KunViewer
@@ -22,7 +23,8 @@ export interface ResourceDetailOther {
 }
 
 export interface PatchResourceDetail {
-  resource: PatchResource
+  // noteHtml 只在详情页渲染, 列表 / 创建 / 编辑的响应都不带
+  resource: PatchResource & { noteHtml: string }
   patchName: string
   contentLimit: string
   galgame: GalgameCard
@@ -54,8 +56,8 @@ export const getPatchResourceDetail = async (
   }
 
   // 其他资源与本资源同 patch 同 section, 可见性口径与本资源一致
-  const [resource, others, followRelation] = await Promise.all([
-    mapResource(data, data.like_by.length > 0),
+  const [noteHtml, others, followRelation] = await Promise.all([
+    data.note ? markdownToHtml(data.note) : '',
     prisma.patch_resource.findMany({
       where: {
         patch_id: data.patch_id,
@@ -104,7 +106,7 @@ export const getPatchResourceDetail = async (
   }
 
   return {
-    resource,
+    resource: { ...mapResource(data, data.like_by.length > 0), noteHtml },
     patchName: gal.name,
     contentLimit: gal.content_limit,
     galgame,

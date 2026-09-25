@@ -1,6 +1,5 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
-import { markdownToHtml } from '~/app/api/utils/render/markdownToHtml'
 import {
   getResourceVisibilityWhere,
   shouldBypassSharedCache,
@@ -45,10 +44,12 @@ type PatchResourcePayload = Prisma.patch_resourceGetPayload<{
   include: typeof resourceInclude
 }>
 
-export const mapResource = async (
+// 不渲染 noteHtml: 列表卡片不展示备注, 只有详情页 (detail.ts) 需要;
+// note 原文须保留, 编辑弹窗用它预填表单
+export const mapResource = (
   resource: PatchResourcePayload,
   isLike: boolean
-): Promise<PatchResource> => ({
+): PatchResource => ({
   id: resource.id,
   name: resource.name,
   section: resource.section,
@@ -56,7 +57,6 @@ export const mapResource = async (
   type: resource.type,
   language: resource.language,
   note: resource.note,
-  noteHtml: resource.note ? await markdownToHtml(resource.note) : '',
   platform: resource.platform,
   emulatorType: resource.emulator_type,
   modelName: resource.model_name,
@@ -113,7 +113,7 @@ const queryPublicResources = async (
     include: listInclude(patchId),
     orderBy: listOrderBy
   })
-  return Promise.all(data.map((resource) => mapResource(resource, false)))
+  return data.map((resource) => mapResource(resource, false))
 }
 
 // 为登录用户在公开列表上叠加个人点赞态 (单次 in 查询, 匿名跳过)
@@ -155,8 +155,8 @@ export const getPatchResource = async (
       },
       orderBy: listOrderBy
     })
-    return Promise.all(
-      data.map((resource) => mapResource(resource, resource.like_by.length > 0))
+    return data.map((resource) =>
+      mapResource(resource, resource.like_by.length > 0)
     )
   }
 

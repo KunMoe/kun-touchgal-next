@@ -144,6 +144,20 @@ describe('getPatchResource', () => {
     expect(setKvMock).toHaveBeenCalledTimes(1)
   })
 
+  // C25: 列表卡片不展示备注, noteHtml 只由详情页渲染; note 原文勿删, 编辑弹窗靠它预填
+  it('omits noteHtml and skips markdown rendering on both list paths but keeps note', async () => {
+    const shared = await getPatchResource({ patchId: 123 }, null)
+    findManyMock.mockResolvedValue([buildRow({ like_by: [] })])
+    const bypass = await getPatchResource({ patchId: 123 }, { uid: 9, role: 5 })
+
+    for (const resources of [shared, bypass]) {
+      expect(resources[0]).not.toHaveProperty('noteHtml')
+      expect(resources[0]?.note).toBe('Release notes')
+    }
+    expect(findManyMock).toHaveBeenCalledTimes(2)
+    expect(markdownToHtmlMock).not.toHaveBeenCalled()
+  })
+
   it('overlays personal like state on the shared cache for logged-in users', async () => {
     getKvMock.mockResolvedValue(
       JSON.stringify([{ id: 1, isLike: false, likeCount: 3 }])

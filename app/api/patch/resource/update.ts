@@ -1,7 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { patchResourceUpdateSchema } from '~/validations/patch'
-import { markdownToHtml } from '~/app/api/utils/render/markdownToHtml'
 import {
   abandonBoundResourceObjects,
   bindUploadedResource,
@@ -345,7 +344,6 @@ export const updatePatchResource = async (
       type: newResource.type,
       language: newResource.language,
       note: newResource.note,
-      noteHtml: newResource.note ? await markdownToHtml(newResource.note) : '',
       platform: newResource.platform,
       emulatorType: newResource.emulator_type,
       modelName: newResource.model_name,

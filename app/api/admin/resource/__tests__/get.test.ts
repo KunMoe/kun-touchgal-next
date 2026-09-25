@@ -14,10 +14,6 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtml', () => ({
-  markdownToHtml: vi.fn(async () => '')
-}))
-
 import { getPatchResource } from '~/app/api/admin/resource/get'
 import { adminResourcePaginationSchema } from '~/validations/admin'
 

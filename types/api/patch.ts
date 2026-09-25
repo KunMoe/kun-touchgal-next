@@ -92,7 +92,6 @@ export interface PatchResource {
   type: string[]
   language: string[]
   note: string
-  noteHtml: string
   platform: string[]
   emulatorType: string[]
   modelName: string

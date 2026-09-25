@@ -26,8 +26,7 @@ const {
   invalidateUserSessionMock,
   invalidateUserPendingResourceCacheMock,
   createMessageMock,
-  kickS3DeletionDrainMock,
-  markdownToHtmlMock
+  kickS3DeletionDrainMock
 } = vi.hoisted(() => ({
   patchFindUniqueMock: vi.fn(),
   resourceFindUniqueMock: vi.fn(),
@@ -54,8 +53,7 @@ const {
   invalidateUserSessionMock: vi.fn(),
   invalidateUserPendingResourceCacheMock: vi.fn(),
   createMessageMock: vi.fn(),
-  kickS3DeletionDrainMock: vi.fn(),
-  markdownToHtmlMock: vi.fn()
+  kickS3DeletionDrainMock: vi.fn()
 }))
 
 const transactionClient = {
@@ -129,10 +127,6 @@ vi.mock('~/server/moderation/submit', () => ({
 
 vi.mock('~/app/api/utils/message', () => ({
   createMessage: createMessageMock
-}))
-
-vi.mock('~/app/api/utils/render/markdownToHtml', () => ({
-  markdownToHtml: markdownToHtmlMock
 }))
 
 import { createPatchResource } from '~/app/api/patch/resource/create'
@@ -235,7 +229,6 @@ beforeEach(() => {
   })
   invalidatePatchContentCacheMock.mockResolvedValue(undefined)
   recalcPatchTypeMock.mockResolvedValue('kun-10')
-  markdownToHtmlMock.mockResolvedValue('')
   transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'galgame' }])
   transactionLinkFindManyMock.mockResolvedValue([])
 })

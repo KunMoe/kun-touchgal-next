@@ -104,10 +104,6 @@ vi.mock('~/app/api/message/unread/cache', () => ({
   invalidateUnread: invalidateUnreadMock
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtml', () => ({
-  markdownToHtml: vi.fn().mockResolvedValue('<p>Note</p>')
-}))
-
 import { createPatchResource } from '~/app/api/patch/resource/create'
 import { updatePatchResource } from '~/app/api/patch/resource/update'
 
