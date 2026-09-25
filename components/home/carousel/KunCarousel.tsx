@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, LazyMotion, m } from 'framer-motion'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { KunDesktopCard } from './DesktopCard'
 import { KunMobileCard } from './MobileCard'
@@ -12,6 +12,11 @@ import type { HomeCarouselMetadata } from './mdx'
 interface KunCarouselProps {
   posts: readonly HomeCarouselMetadata[]
 }
+
+// 完整版 motion 会把 drag + layout 与 domAnimation 两个特性块静态放进首页入口,
+// 水合前多下载 31.6KB gz; 改为 m + 异步 LazyMotion, 特性在水合后空闲期再加载
+const loadMotionFeatures = () =>
+  import('~/motion/features-max').then((mod) => mod.default)
 
 export const KunCarousel = ({ posts }: KunCarouselProps) => {
   const [currentSlide, setCurrentSlide] = useState(0)
@@ -148,38 +153,40 @@ export const KunCarousel = ({ posts }: KunCarouselProps) => {
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <AnimatePresence initial={false} custom={direction} mode="sync">
-        <motion.div
-          key={currentSlide}
-          custom={direction}
-          variants={slideVariants}
-          initial={direction === 0 ? false : 'enter'}
-          animate="center"
-          exit="exit"
-          transition={{
-            x: { type: 'tween', duration: 0.4, ease: 'easeInOut' },
-            opacity: { duration: 0.3 },
-            scale: { duration: 0.3 }
-          }}
-          drag="x"
-          dragConstraints={{ left: 0, right: 0 }}
-          dragElastic={0.7}
-          onDragEnd={(_, { offset, velocity }) => {
-            const swipe = swipePower(offset.x, velocity.x)
+      <LazyMotion features={loadMotionFeatures}>
+        <AnimatePresence initial={false} custom={direction} mode="sync">
+          <m.div
+            key={currentSlide}
+            custom={direction}
+            variants={slideVariants}
+            initial={direction === 0 ? false : 'enter'}
+            animate="center"
+            exit="exit"
+            transition={{
+              x: { type: 'tween', duration: 0.4, ease: 'easeInOut' },
+              opacity: { duration: 0.3 },
+              scale: { duration: 0.3 }
+            }}
+            drag="x"
+            dragConstraints={{ left: 0, right: 0 }}
+            dragElastic={0.7}
+            onDragEnd={(_, { offset, velocity }) => {
+              const swipe = swipePower(offset.x, velocity.x)
 
-            if (swipe < -swipeConfidenceThreshold) {
-              paginate(1)
-            } else if (swipe > swipeConfidenceThreshold) {
-              paginate(-1)
-            }
-          }}
-          className="absolute w-full h-full cursor-grab active:cursor-grabbing"
-        >
-          <KunDesktopCard posts={posts} currentSlide={currentSlide} />
+              if (swipe < -swipeConfidenceThreshold) {
+                paginate(1)
+              } else if (swipe > swipeConfidenceThreshold) {
+                paginate(-1)
+              }
+            }}
+            className="absolute w-full h-full cursor-grab active:cursor-grabbing"
+          >
+            <KunDesktopCard posts={posts} currentSlide={currentSlide} />
 
-          <KunMobileCard posts={posts} currentSlide={currentSlide} />
-        </motion.div>
-      </AnimatePresence>
+            <KunMobileCard posts={posts} currentSlide={currentSlide} />
+          </m.div>
+        </AnimatePresence>
+      </LazyMotion>
 
       <div className="z-10 w-full py-3 space-y-3 sm:hidden">
         <RandomGalgameButton
