@@ -2,9 +2,9 @@
 
 import { useState } from 'react'
 import { Chip } from '@heroui/chip'
-import { Tooltip } from '@heroui/tooltip'
 import { Link } from '@heroui/link'
 import dynamic from 'next/dynamic'
+import { useShallow } from 'zustand/react/shallow'
 import { useUserStore } from '~/store/userStore'
 import type { Tag } from '~/types/api/tag'
 
@@ -20,9 +20,12 @@ interface Props {
 
 export const PatchTag = ({ patchId, initialTags }: Props) => {
   const [selectedTags, setSelectedTags] = useState<Tag[]>(initialTags ?? [])
-  const user = useUserStore((state) => state.user)
+  const blockedTagIds = useUserStore(
+    useShallow((state) => state.user.blockedTagIds)
+  )
+  const canEditTags = useUserStore((state) => state.user.role > 2)
   const visibleTags = selectedTags.filter(
-    (tag) => !user.blockedTagIds.includes(tag.id)
+    (tag) => !blockedTagIds.includes(tag.id)
   )
 
   return (
@@ -33,14 +36,16 @@ export const PatchTag = ({ patchId, initialTags }: Props) => {
 
       <div className="flex flex-wrap gap-2">
         {visibleTags.map((tag) => (
-          <Tooltip key={tag.id} content={`${tag.count} 个 Galgame 使用此标签`}>
-            <Link href={`/tag/${tag.id}`}>
-              <Chip color="secondary" variant="flat">
-                {tag.name}
-                {` +${tag.count}`}
-              </Chip>
-            </Link>
-          </Tooltip>
+          <Link
+            key={tag.id}
+            href={`/tag/${tag.id}`}
+            title={`${tag.count} 个 Galgame 使用此标签`}
+          >
+            <Chip color="secondary" variant="flat">
+              {tag.name}
+              {` +${tag.count}`}
+            </Chip>
+          </Link>
         ))}
 
         {!visibleTags.length && (
@@ -48,7 +53,7 @@ export const PatchTag = ({ patchId, initialTags }: Props) => {
         )}
       </div>
 
-      {user.role > 2 && (
+      {canEditTags && (
         <PatchTagSelector
           patchId={patchId}
           initialTags={selectedTags}

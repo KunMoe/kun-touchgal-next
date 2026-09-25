@@ -92,17 +92,16 @@ export const PatchCompany: FC<Props> = ({
 
       <div className="flex flex-wrap gap-2">
         {selectedCompanies.map((company) => (
-          <Tooltip
+          <Link
             key={company.id}
-            content={`${company.count} 个 Galgame 属于此会社`}
+            href={`/company/${company.id}`}
+            title={`${company.count} 个 Galgame 属于此会社`}
           >
-            <Link href={`/company/${company.id}`}>
-              <Chip color="secondary" variant="flat">
-                {company.name}
-                {` +${company.count}`}
-              </Chip>
-            </Link>
-          </Tooltip>
+            <Chip color="secondary" variant="flat">
+              {company.name}
+              {` +${company.count}`}
+            </Chip>
+          </Link>
         ))}
 
         {!selectedCompanies.length && (
