@@ -42,6 +42,8 @@ overrides:
   find-my-way: '>=9.7.0'
   'nanoid@<3.3.18': '>=3.3.18 <4'
   deepmerge-ts: '>=8.0.0'
+  '@heroui/theme>tailwind-merge': '^3.7.0'
+  'tailwind-variants>tailwind-merge': '^3.7.0'
 
 allowBuilds:
   '@heroui/shared-utils': true
