@@ -22,7 +22,7 @@ const getTextContent = (children: ReactNode): string => {
   return ''
 }
 
-const slugify = (str: string): string => {
+export const slugify = (str: string): string => {
   return str
     .toString()
     .toLowerCase()

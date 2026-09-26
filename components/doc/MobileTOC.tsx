@@ -3,10 +3,13 @@
 import { useState } from 'react'
 import { ChevronDown, ListTree } from 'lucide-react'
 import { cn } from '~/utils/cn'
-import { useArticleHeadings } from './TableOfContents'
+import type { TOCItem } from '~/lib/mdx/types'
 
-export const KunMobileTOC = () => {
-  const headings = useArticleHeadings()
+interface MobileTOCProps {
+  headings: TOCItem[]
+}
+
+export const KunMobileTOC = ({ headings }: MobileTOCProps) => {
   const [open, setOpen] = useState(false)
 
   if (headings.length === 0) {

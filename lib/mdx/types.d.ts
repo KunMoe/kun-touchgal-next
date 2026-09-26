@@ -34,3 +34,9 @@ export interface KunBlog {
   content: string
   frontmatter: KunFrontmatter
 }
+
+export interface TOCItem {
+  id: string
+  text: string
+  level: number
+}

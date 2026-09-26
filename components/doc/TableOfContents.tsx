@@ -4,36 +4,10 @@ import { useEffect, useState } from 'react'
 import { ListTree } from 'lucide-react'
 import { cn } from '~/utils/cn'
 import { usePrioritizedWheelScroll } from './usePrioritizedWheelScroll'
+import type { TOCItem } from '~/lib/mdx/types'
 
-export interface TOCItem {
-  id: string
-  text: string
-  level: number
-}
-
-export const useArticleHeadings = () => {
-  const [headings, setHeadings] = useState<TOCItem[]>([])
-
-  useEffect(() => {
-    const elements = Array.from(
-      document.querySelectorAll('article h1, article h2, article h3')
-    )
-      .map((element) => ({
-        id: element.id,
-        text: Array.from(element.childNodes)
-          .filter(
-            (node) => !(node as HTMLElement).classList?.contains?.('kun-anchor')
-          )
-          .map((node) => node.textContent || '')
-          .join(''),
-        level: Number(element.tagName.charAt(1))
-      }))
-      .filter((heading) => heading.id && heading.text)
-
-    setHeadings(elements)
-  }, [])
-
-  return headings
+interface TableOfContentsProps {
+  headings: TOCItem[]
 }
 
 const scrollToHeading = (id: string) => {
@@ -53,8 +27,7 @@ const scrollToHeading = (id: string) => {
   })
 }
 
-export const TableOfContents = () => {
-  const headings = useArticleHeadings()
+export const TableOfContents = ({ headings }: TableOfContentsProps) => {
   const [activeId, setActiveId] = useState('')
   const { containerRef: tableOfContentsRef, scrollContainerRef } =
     usePrioritizedWheelScroll<HTMLElement, HTMLUListElement>()

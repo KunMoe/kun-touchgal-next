@@ -4,6 +4,7 @@ import {
   getPostBySlug
 } from '~/lib/mdx/getPosts'
 import { CustomMDX } from '~/lib/mdx/CustomMDX'
+import { extractKunHeadings } from '~/lib/mdx/extractHeadings'
 import { TableOfContents } from '~/components/doc/TableOfContents'
 import { KunMobileTOC } from '~/components/doc/MobileTOC'
 import { KunBottomNavigation } from '~/components/doc/Navigation'
@@ -42,6 +43,7 @@ export default async function Kun({ params }: Props) {
   const url = slug.join('/')
   const { content, frontmatter } = getPostBySlug(url)
   const { prev, next } = getAdjacentPosts(url)
+  const headings = extractKunHeadings(content)
 
   return (
     <div className="flex w-full min-w-0 gap-6">
@@ -49,7 +51,7 @@ export default async function Kun({ params }: Props) {
       <div className="min-w-0 flex-1">
         <div className="space-y-6">
           <BlogHeader frontmatter={frontmatter} />
-          <KunMobileTOC />
+          <KunMobileTOC headings={headings} />
           <article className="kun-prose rounded-[22px] border border-default-200/60 bg-background p-5 shadow-[0_12px_32px_rgba(15,23,42,0.05)] dark:bg-content1 dark:shadow-[0_12px_32px_rgba(0,0,0,0.15)] sm:p-8">
             <CustomMDX source={content} />
           </article>
@@ -57,7 +59,7 @@ export default async function Kun({ params }: Props) {
         </div>
       </div>
 
-      <TableOfContents />
+      <TableOfContents headings={headings} />
     </div>
   )
 }
