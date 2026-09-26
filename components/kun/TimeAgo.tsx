@@ -1,7 +1,6 @@
 'use client'
 
-import { differenceInDays } from 'date-fns'
-import { useMounted } from '~/hooks/useMounted'
+import { useKunNow } from '~/components/kun/KunNowProvider'
 import { formatDate, formatTimeDifference } from '~/utils/time'
 
 interface KunTimeAgoProps {
@@ -10,24 +9,21 @@ interface KunTimeAgoProps {
   maxRelativeDays?: number
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
 export const KunTimeAgo = ({ date, maxRelativeDays }: KunTimeAgoProps) => {
-  // SSR 和客户端首次渲染使用固定时区的绝对时间，避免相对时间跨秒/分钟边界导致 hydration mismatch。
-  const stableText = formatDate(date, { isShowYear: true, isPrecise: true })
-  const isMounted = useMounted()
-
-  if (!isMounted) {
-    return <>{stableText}</>
-  }
-
+  // SSR 与水合首帧用同一个服务端 now，文本一致不会 hydration mismatch；水合后换成浏览器时间，通常文本不变。
+  // 天数按毫秒差计算，不依赖所在时区的夏令时，服务端与浏览器结果一致。
+  const now = useKunNow()
   const isBeyondRelativeRange =
     maxRelativeDays !== undefined &&
-    differenceInDays(new Date(), new Date(date)) > maxRelativeDays
+    Math.floor((now - new Date(date).getTime()) / DAY_MS) > maxRelativeDays
 
   return (
     <>
       {isBeyondRelativeRange
         ? formatDate(date, { isShowYear: true })
-        : formatTimeDifference(date)}
+        : formatTimeDifference(date, now)}
     </>
   )
 }

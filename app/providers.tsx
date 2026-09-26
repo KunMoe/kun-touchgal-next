@@ -5,8 +5,15 @@ import { HeroUIProvider } from '@heroui/system'
 import { ThemeProvider } from 'next-themes'
 import { useRouter } from 'next/navigation'
 import { KunRouterProvider } from '~/components/kun/KunRouterProvider'
+import { KunNowProvider } from '~/components/kun/KunNowProvider'
 
-export const Providers = ({ children }: { children: React.ReactNode }) => {
+export const Providers = ({
+  children,
+  now
+}: {
+  children: React.ReactNode
+  now: number
+}) => {
   const router = useRouter()
   return (
     <ProgressProvider
@@ -17,7 +24,9 @@ export const Providers = ({ children }: { children: React.ReactNode }) => {
     >
       <KunRouterProvider>
         <HeroUIProvider navigate={router.push}>
-          <ThemeProvider attribute="class">{children}</ThemeProvider>
+          <ThemeProvider attribute="class">
+            <KunNowProvider now={now}>{children}</KunNowProvider>
+          </ThemeProvider>
         </HeroUIProvider>
       </KunRouterProvider>
     </ProgressProvider>

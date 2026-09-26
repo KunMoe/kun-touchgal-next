@@ -1,7 +1,9 @@
 import { differenceInSeconds } from 'date-fns'
 
-export const formatTimeDifference = (pastTime: number | Date | string) => {
-  const now = new Date()
+export const formatTimeDifference = (
+  pastTime: number | Date | string,
+  now: number | Date = Date.now()
+) => {
   const past = new Date(pastTime)
   const diffInSeconds = differenceInSeconds(now, past)
 

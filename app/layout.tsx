@@ -24,6 +24,9 @@ export default function RootLayout({
   preconnect(kunMoyuMoe.domain.imageBed)
   prefetchDNS(kunMoyuMoe.domain.imageBed)
   const initialSession = getServerUserSession()
+  // 请求时刻经 Providers 下发, SSR 与水合首帧据此计算相对时间 (KunTimeAgo); 服务端组件每请求只渲染一次
+  // eslint-disable-next-line react-hooks/purity
+  const requestTime = Date.now()
   return (
     // next-themes 会在客户端接管 <html> 的 class；只在根节点允许该不可避免差异。
     <html lang="zh-Hans" suppressHydrationWarning>
@@ -35,7 +38,7 @@ export default function RootLayout({
       )}
 
       <body>
-        <Providers>
+        <Providers now={requestTime}>
           <div className="relative flex flex-col items-center justify-center min-h-dvh bg-radial">
             <Suspense
               fallback={
