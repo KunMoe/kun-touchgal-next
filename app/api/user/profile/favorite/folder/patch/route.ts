@@ -4,10 +4,7 @@ import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { prisma } from '~/prisma/index'
 import { getFavoriteFolderPatchSchema } from '~/validations/user'
-import {
-  GalgameCardSelectField,
-  toGalgameCardCount
-} from '~/constants/api/select'
+import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 
 export const GET = async (req: NextRequest) => {
   const input = kunParseGetQuery(req, getFavoriteFolderPatchSchema)
@@ -53,22 +50,9 @@ const getPatchByFolder = async (
     })
   ])
 
-  const patches: GalgameCard[] = relations.map((relation) => ({
-    id: relation.patch.id,
-    uniqueId: relation.patch.unique_id,
-    name: relation.patch.name,
-    banner: relation.patch.banner,
-    view: relation.patch.view,
-    download: relation.patch.download,
-    type: relation.patch.type,
-    language: relation.patch.language,
-    platform: relation.patch.platform,
-    created: relation.patch.created,
-    _count: toGalgameCardCount(relation.patch),
-    averageRating: relation.patch.rating_stat?.avg_overall
-      ? Math.round(relation.patch.rating_stat.avg_overall * 10) / 10
-      : 0
-  }))
+  const patches: GalgameCard[] = relations.map((relation) =>
+    toGalgameCard(relation.patch)
+  )
 
   return { patches, total }
 }

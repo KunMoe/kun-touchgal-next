@@ -4,10 +4,7 @@ import {
   getResourceVisibilityWhere,
   type KunViewer
 } from '~/app/api/utils/contentVisibility'
-import {
-  GalgameCardSelectField,
-  toGalgameCardCount
-} from '~/constants/api/select'
+import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 import { mapResource, resourceInclude } from './get'
 import type { PatchResource } from '~/types/api/patch'
 
@@ -88,22 +85,7 @@ export const getPatchResourceDetail = async (
       : null
   ])
   const gal = data.patch
-  const galgame: GalgameCard = {
-    id: gal.id,
-    uniqueId: gal.unique_id,
-    name: gal.name,
-    banner: gal.banner,
-    view: gal.view,
-    download: gal.download,
-    type: gal.type,
-    language: gal.language,
-    platform: gal.platform,
-    created: gal.created,
-    _count: toGalgameCardCount(gal),
-    averageRating: gal.rating_stat?.avg_overall
-      ? Math.round(gal.rating_stat.avg_overall * 10) / 10
-      : 0
-  }
+  const galgame = toGalgameCard(gal)
 
   return {
     resource: { ...mapResource(data, data.like_by.length > 0), noteHtml },

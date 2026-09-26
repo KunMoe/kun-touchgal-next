@@ -1,10 +1,7 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { galgameSchema } from '~/validations/galgame'
-import {
-  GalgameCardSelectField,
-  toGalgameCardCount
-} from '~/constants/api/select'
+import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 import {
   buildGalgameDateFilter,
   buildGalgameOrderBy,
@@ -107,22 +104,7 @@ const getGalgameFromPrisma = async (
     })
   ])
 
-  const galgames: GalgameCard[] = data.map((gal) => ({
-    id: gal.id,
-    uniqueId: gal.unique_id,
-    name: gal.name,
-    banner: gal.banner,
-    view: gal.view,
-    download: gal.download,
-    type: gal.type,
-    language: gal.language,
-    platform: gal.platform,
-    created: gal.created,
-    _count: toGalgameCardCount(gal),
-    averageRating: gal.rating_stat?.avg_overall
-      ? Math.round(gal.rating_stat.avg_overall * 10) / 10
-      : 0
-  }))
+  const galgames: GalgameCard[] = data.map(toGalgameCard)
 
   return { galgames, total }
 }

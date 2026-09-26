@@ -1,10 +1,7 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { getPatchByTagSchema } from '~/validations/tag'
-import {
-  GalgameCardSelectField,
-  toGalgameCardCount
-} from '~/constants/api/select'
+import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 import {
   buildGalgameDateFilter,
   buildGalgameOrderBy,
@@ -105,21 +102,7 @@ const legacyGetPatchByTag = async (
   ])
 
   const patches = data.map((p) => p.patch)
-  const galgames: GalgameCard[] = patches.map((gal) => {
-    const { favorite_count, resource_count, comment_count, ...rest } = gal
-    return {
-      ...rest,
-      uniqueId: gal.unique_id,
-      _count: toGalgameCardCount({
-        favorite_count,
-        resource_count,
-        comment_count
-      }),
-      averageRating: gal.rating_stat?.avg_overall
-        ? Math.round(gal.rating_stat.avg_overall * 10) / 10
-        : 0
-    }
-  })
+  const galgames: GalgameCard[] = patches.map(toGalgameCard)
 
   return { galgames, total }
 }

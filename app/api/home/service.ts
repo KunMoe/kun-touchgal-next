@@ -2,10 +2,7 @@ import { createHash } from 'crypto'
 import { prisma } from '~/prisma/index'
 import { delKv, getKv, setKv, setKvIfAbsent } from '~/lib/redis'
 import { HOME_CACHE_DURATION } from '~/config/cache'
-import {
-  GalgameCardSelectField,
-  toGalgameCardCount
-} from '~/constants/api/select'
+import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 import {
   buildVisibilityCacheKey,
   hasBlockedTagFilter
@@ -141,21 +138,7 @@ const queryHomeData = async (
     })
   ])
 
-  const galgames: GalgameCard[] = data.map((gal) => {
-    const { favorite_count, resource_count, comment_count, ...rest } = gal
-    return {
-      ...rest,
-      uniqueId: gal.unique_id,
-      _count: toGalgameCardCount({
-        favorite_count,
-        resource_count,
-        comment_count
-      }),
-      averageRating: gal.rating_stat?.avg_overall
-        ? Math.round(gal.rating_stat.avg_overall * 10) / 10
-        : 0
-    }
-  })
+  const galgames: GalgameCard[] = data.map(toGalgameCard)
 
   const resources: HomeResource[] = resourcesData.map((resource) => ({
     id: resource.id,
