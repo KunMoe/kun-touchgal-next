@@ -4,7 +4,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@heroui/button'
 import { ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react'
 import { createRoot, type Root } from 'react-dom/client'
-import { useMounted } from '~/hooks/useMounted'
 import { KunExternalLink } from '~/components/kun/external-link/ExternalLink'
 import { sanitizeUserHref } from '~/utils/safeUrl'
 import type { PatchComment } from '~/types/api/patch'
@@ -21,7 +20,6 @@ const DEFAULT_COLLAPSED_MAX_HEIGHT =
 export const CommentContent = ({ comment }: Props) => {
   const contentRef = useRef<HTMLDivElement>(null)
   const previousContentRef = useRef(comment.content)
-  const isMounted = useMounted()
   const [sanitizedContent, setSanitizedContent] = useState(comment.content)
   const [collapsedMaxHeight, setCollapsedMaxHeight] = useState(
     DEFAULT_COLLAPSED_MAX_HEIGHT
@@ -45,11 +43,15 @@ export const CommentContent = ({ comment }: Props) => {
   }, [comment.id, comment.isSpoiler])
 
   useEffect(() => {
-    if (!contentRef.current || !isMounted) {
+    if (!contentRef.current) {
       return
     }
 
-    const linkRoots: Root[] = []
+    const linkMounts: {
+      element: Element
+      root: HTMLDivElement
+      linkRoot: Root
+    }[] = []
     const externalLinkElements = contentRef.current.querySelectorAll(
       '[data-kun-external-link]'
     )
@@ -64,19 +66,22 @@ export const CommentContent = ({ comment }: Props) => {
       root.className = element.className
       element.replaceWith(root)
       const linkRoot = createRoot(root)
-      linkRoots.push(linkRoot)
+      linkMounts.push({ element, root, linkRoot })
       linkRoot.render(<KunExternalLink link={safeHref}>{text}</KunExternalLink>)
     })
 
     return () => {
+      // 放回占位 <a>: DOM 未重建时 effect 重跑 (StrictMode 挂载双调用、仅切换剧透标记)
+      // 要能再次找到它, 否则链接被卸载后只剩空 div
+      linkMounts.forEach(({ element, root }) => root.replaceWith(element))
       window.setTimeout(() => {
-        linkRoots.forEach((linkRoot) => linkRoot.unmount())
+        linkMounts.forEach(({ linkRoot }) => linkRoot.unmount())
       }, 0)
     }
-  }, [sanitizedContent, isMounted, isSpoilerRevealed])
+  }, [sanitizedContent, isSpoilerRevealed])
 
   useLayoutEffect(() => {
-    if (!contentRef.current || !isMounted) {
+    if (!contentRef.current) {
       return
     }
 
@@ -113,7 +118,7 @@ export const CommentContent = ({ comment }: Props) => {
       })
       mutationObserver.disconnect()
     }
-  }, [sanitizedContent, isMounted, isSpoilerRevealed])
+  }, [sanitizedContent, isSpoilerRevealed])
 
   useEffect(() => {
     if (!isOverflowing) {
