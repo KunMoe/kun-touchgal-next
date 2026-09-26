@@ -370,15 +370,6 @@ export const Rating = ({ initialRatings, initialTotal }: Props) => {
     ratings.length > 0 &&
     ratings.every((rating) => selectedRatingIds.has(rating.id))
 
-  if (!isMounted) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">评价管理</h1>
-        <KunCardSkeleton count={3} />
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">评价管理</h1>

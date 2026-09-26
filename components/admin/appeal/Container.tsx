@@ -127,15 +127,6 @@ export const Appeal = ({ initialAppeals, initialTotal }: Props) => {
     setPage(1)
   }
 
-  if (!isMounted) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">申诉管理</h1>
-        <KunCardSkeleton count={3} />
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">申诉管理</h1>

@@ -256,15 +256,6 @@ export const Report = ({ initialReports, total, title, targetType }: Props) => {
     }
   }
 
-  if (!isMounted) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">{title}</h1>
-        <KunCardSkeleton count={3} />
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">{title}</h1>

@@ -368,15 +368,6 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
     }
   }
 
-  if (!isMounted) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">AI 审核管理</h1>
-        <KunCardSkeleton count={3} />
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">AI 审核管理</h1>

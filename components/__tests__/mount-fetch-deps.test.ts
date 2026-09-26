@@ -46,3 +46,17 @@ describe('initial* 水合的列表容器, fetch effect 不得因 isMounted 翻�
     }
   })
 })
+
+// initial* 已随 SSR 下发, 渲染层再按 !isMounted 返回骨架会让列表推迟到水合 + 一次重渲染后才可见
+// (C58: 1x CPU 晚 43~61ms, 4x CPU 晚 260~376ms); isMounted 只用于跳过首屏 fetch
+const renderGatePattern = /^\s*if \(!isMounted\) \{\s*return \(/m
+
+describe('initial* 水合的列表容器, 首屏渲染不得被 isMounted 门控', () => {
+  it.each(containers)('%s 不在渲染层按 !isMounted 返回占位', (file) => {
+    const source = readFileSync(
+      fileURLToPath(new URL(file, import.meta.url)),
+      'utf-8'
+    )
+    expect(source).not.toMatch(renderGatePattern)
+  })
+})

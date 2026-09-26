@@ -369,15 +369,6 @@ export const Comment = ({ initialComments, initialTotal }: Props) => {
     comments.length > 0 &&
     comments.every((comment) => selectedCommentIds.has(comment.id))
 
-  if (!isMounted) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">评论管理</h1>
-        <KunCardSkeleton count={3} />
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">评论管理</h1>
