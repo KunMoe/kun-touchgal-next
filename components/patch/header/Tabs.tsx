@@ -14,6 +14,7 @@ import { Tab, Tabs } from '@heroui/tabs'
 import { IntroductionTab } from '~/components/patch/introduction/IntroductionTab'
 import { KunLoading } from '~/components/kun/Loading'
 import { mergePatchTabTargets, readPatchTabTargets } from './tabTargets'
+import { canRestoreResourceView } from '~/components/patch/resource/resourceView'
 import type { PatchIntroduction } from '~/types/api/patch'
 
 type PatchTabKey = 'introduction' | 'resources' | 'comments' | 'rating'
@@ -122,7 +123,15 @@ export const PatchHeaderTabs = ({
   // 首次渲染就落在资源 tab 时, 面板还只是 256px 的懒加载占位: 此时滚动会因页面
   // 不够长停在半路, 之后「占位 → spinner → 列表」又会推动已滚进视口的页脚.
   // 改为列表渲染完成后再滚; 带 resourceId 时 ResourceTabs 随后会改滚到对应卡片
-  const pendingResourceScrollRef = useRef(selected === 'resources')
+  // 同文档后退回资源 tab 时, 列表按原样还原并占好高度, 由浏览器恢复原位;
+  // 这次挂载不是深链落地, 不能再滚到 tabs
+  const [isResourceViewRestore] = useState(
+    () => selected === 'resources' && canRestoreResourceView(id)
+  )
+  const mountSearchParamsRef = useRef(searchParams)
+  const pendingResourceScrollRef = useRef(
+    selected === 'resources' && !isResourceViewRestore
+  )
 
   // 保持引用稳定, 否则每次 URL 变化都会击穿资源 tab 的 memo
   const handleResourcesLoaded = useCallback(() => {
@@ -155,6 +164,9 @@ export const PatchHeaderTabs = ({
 
     if (
       hasTabDeepLink(searchParams) &&
+      !(
+        isResourceViewRestore && searchParams === mountSearchParamsRef.current
+      ) &&
       !(nextTab === 'resources' && pendingResourceScrollRef.current)
     ) {
       requestAnimationFrame(() => {

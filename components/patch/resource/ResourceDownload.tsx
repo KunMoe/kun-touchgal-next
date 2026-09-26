@@ -7,6 +7,7 @@ import { Download } from 'lucide-react'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { ResourceLikeButton } from './ResourceLike'
 import { ResourceDownloadCard } from './DownloadCard'
+import { getResourceView } from './resourceView'
 import type { PatchResource } from '~/types/api/patch'
 
 interface Props {
@@ -16,7 +17,19 @@ interface Props {
 // 资源备注不在卡片上展示, 点击资源名进入资源详情页查看简介与评论
 export const ResourceDownload = ({ resource }: Props) => {
   const isPending = resource.status === 2 || resource.status === 3
-  const [showLinks, setShowLinks] = useState(false)
+  const [showLinks, setShowLinks] = useState(() =>
+    getResourceView().expandedIds.has(resource.id)
+  )
+
+  const toggleLinks = () => {
+    const { expandedIds } = getResourceView()
+    if (showLinks) {
+      expandedIds.delete(resource.id)
+    } else {
+      expandedIds.add(resource.id)
+    }
+    setShowLinks(!showLinks)
+  }
 
   return (
     <div className="space-y-3">
@@ -46,7 +59,7 @@ export const ResourceDownload = ({ resource }: Props) => {
             isIconOnly
             aria-label={`下载 Galgame 资源`}
             isDisabled={isPending}
-            onPress={() => setShowLinks((v) => !v)}
+            onPress={toggleLinks}
           >
             <Download className="size-4" />
           </Button>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import {
   Alert,
@@ -19,6 +19,7 @@ import { ResourceTabs } from './Tabs'
 import { KunLoading } from '~/components/kun/Loading'
 import { LazyDialogFallback } from '~/components/patch/header/LazyDialogFallback'
 import { useUserStore } from '~/store/userStore'
+import { enterResourceView, getResourceView } from './resourceView'
 import toast from 'react-hot-toast'
 import type { PatchResource } from '~/types/api/patch'
 
@@ -64,6 +65,37 @@ export const Resources = ({
   const [loading, setLoading] = useState(true)
   const [resources, setResources] = useState<PatchResource[]>([])
   const uid = useUserStore((state) => state.user.uid)
+  const [isViewRestored] = useState(() => enterResourceView(id))
+  // 后退还原时按离开前的列表高度占位, 列表 (含补丁分区里异步加载的鲲补丁) 长回
+  // 这个高度才撤掉; 否则浏览器恢复的滚动位置会被截断. 列表确实变短时兜底撤掉
+  const [reservedHeight, setReservedHeight] = useState(() =>
+    isViewRestored ? getResourceView().listHeight : null
+  )
+  const listRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const element = listRef.current
+    if (!element) {
+      return
+    }
+    const observer = new ResizeObserver(() => {
+      const height = element.offsetHeight
+      getResourceView().listHeight = height
+      setReservedHeight((current) =>
+        current !== null && height >= current ? null : current
+      )
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (loading || reservedHeight === null) {
+      return
+    }
+    const timer = window.setTimeout(() => setReservedHeight(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [loading, reservedHeight])
 
   // 用 layout effect: 先于 ResourceTabs 定位卡片的 passive effect 执行, 深链带
   // resourceId 且卡片存在时, 父组件滚到 tabs 的平滑滚动会被随后滚到卡片的那次覆盖
@@ -149,20 +181,29 @@ export const Resources = ({
         </div>
       )}
 
-      {loading ? (
-        <KunLoading hint="正在获取 Galgame 资源数据..." />
-      ) : (
-        <ResourceTabs
-          vndbId={vndbId}
-          resources={resources}
-          targetResourceId={targetResourceId}
-          targetResourceSection={targetResourceSection}
-          setEditResource={setEditResource}
-          onOpenEdit={onOpenEdit}
-          onOpenDelete={onOpenDelete}
-          setDeleteResourceId={setDeleteResourceId}
-        />
-      )}
+      <div
+        style={
+          reservedHeight !== null ? { minHeight: reservedHeight } : undefined
+        }
+      >
+        <div ref={listRef}>
+          {loading ? (
+            <KunLoading hint="正在获取 Galgame 资源数据..." />
+          ) : (
+            <ResourceTabs
+              vndbId={vndbId}
+              resources={resources}
+              targetResourceId={targetResourceId}
+              targetResourceSection={targetResourceSection}
+              isViewRestored={isViewRestored}
+              setEditResource={setEditResource}
+              onOpenEdit={onOpenEdit}
+              onOpenDelete={onOpenDelete}
+              setDeleteResourceId={setDeleteResourceId}
+            />
+          )}
+        </div>
+      </div>
 
       <Modal
         size="3xl"

@@ -37,6 +37,7 @@ import Link from 'next/link'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { cn } from '~/utils/cn'
 import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
+import { getResourceView } from './resourceView'
 
 type ResourceSection = (typeof SUPPORTED_RESOURCE_SECTION)[number]
 
@@ -54,6 +55,7 @@ interface Props {
   setDeleteResourceId: (resourceId: number) => void
   targetResourceId: number | null
   targetResourceSection: ResourceSection | null
+  isViewRestored: boolean
 }
 
 export const ResourceTabs = ({
@@ -64,12 +66,14 @@ export const ResourceTabs = ({
   onOpenDelete,
   setDeleteResourceId,
   targetResourceId,
-  targetResourceSection
+  targetResourceSection,
+  isViewRestored
 }: Props) => {
   const router = useKunNextRouter()
   const user = useUserStore((state) => state.user)
-  const [selectedSection, setSelectedSection] =
-    useState<ResourceSection>('galgame')
+  const [selectedSection, setSelectedSection] = useState(
+    () => getResourceView().section as ResourceSection
+  )
   const [highlightedResourceId, setHighlightedResourceId] = useState<
     number | null
   >(null)
@@ -79,8 +83,17 @@ export const ResourceTabs = ({
   const [kunLoaded, setKunLoaded] = useState(false)
   // 深链目标只定位一次: tab 保活后目标会一直留在 props 里, 不设防的话之后每次增删改
   // 资源或切分区, 都会把用户拽回目标分区 / 目标卡片
-  const locatedSectionTargetRef = useRef<string | null>(null)
-  const scrolledResourceIdRef = useRef<number | null>(null)
+  // 后退还原时深链目标视为已定位过, 以离开前的分区和浏览器恢复的位置为准
+  const locatedSectionTargetRef = useRef<string | null>(
+    isViewRestored ? `${targetResourceSection}:${targetResourceId}` : null
+  )
+  const scrolledResourceIdRef = useRef<number | null>(
+    isViewRestored ? targetResourceId : null
+  )
+
+  useEffect(() => {
+    getResourceView().section = selectedSection
+  }, [selectedSection])
 
   useEffect(() => {
     const targetKey = `${targetResourceSection}:${targetResourceId}`

@@ -14,12 +14,13 @@ const resourceTabSource = readSource('../../resource/ResourceTab.tsx')
 const resourcesSource = readSource('../../resource/Resource.tsx')
 
 describe('资源深链在列表渲染完成后才滚动', () => {
+  // 同文档后退还原资源视图时不滚 (R2-C12), 另见 resource-view-restore.test.ts
   it('首次落在资源 tab 时跳过水合即滚', () => {
-    expect(tabsSource).toContain(
-      "const pendingResourceScrollRef = useRef(selected === 'resources')"
+    expect(tabsSource).toMatch(
+      /const pendingResourceScrollRef = useRef\(\s*selected === 'resources' && !isResourceViewRestore\s*\)/
     )
     expect(tabsSource).toMatch(
-      /hasTabDeepLink\(searchParams\) &&\s*!\(nextTab === 'resources' && pendingResourceScrollRef\.current\)/
+      /hasTabDeepLink\(searchParams\) &&[\s\S]{0,160}?!\(nextTab === 'resources' && pendingResourceScrollRef\.current\)/
     )
   })
 
