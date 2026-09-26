@@ -76,6 +76,7 @@ export default async function Kun({ params }: Props) {
         intro={pageData.intro}
         uid={payload?.uid}
         nsfwAllowed={nsfwAllowed}
+        canRewrite={!!payload && payload.role >= 3}
       />
     </div>
   )

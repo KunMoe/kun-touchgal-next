@@ -8,18 +8,29 @@ import type { Patch } from '~/types/api/patch'
 
 interface Props {
   patch: Patch
+  // 仅 role≥3 下发; patch 上的同名字段恒为空值
+  rewrite: Pick<Patch, 'introduction' | 'tags'> | null
   released: string
   isNsfwBlocked: boolean
 }
 
 export const PatchHeaderClientEffects = ({
   patch,
+  rewrite,
   released,
   isNsfwBlocked
 }: Props) => {
   const setData = useRewritePatchStore((state) => state.setData)
+  const resetData = useRewritePatchStore((state) => state.resetData)
 
   useEffect(() => {
+    // 必须清空而不是用空值预填: PUT /edit 的 tag 是全量同步, 空数组会删光该
+    // patch 的标签; 清空后 id 为 0, 提交会被 patchUpdateSchema 拦下
+    if (!rewrite) {
+      resetData()
+      return
+    }
+
     setData({
       id: patch.id,
       uniqueId: patch.uniqueId,
@@ -38,13 +49,13 @@ export const PatchHeaderClientEffects = ({
       steamDevelopers: [],
       steamAliases: [],
       name: patch.name,
-      introduction: patch.introduction,
+      introduction: rewrite.introduction,
       alias: patch.alias,
-      tag: patch.tags,
+      tag: rewrite.tags,
       contentLimit: patch.contentLimit,
       released
     })
-  }, [patch, released, setData])
+  }, [patch, rewrite, released, setData, resetData])
 
   useEffect(() => {
     if (patch.contentLimit !== 'nsfw') {
