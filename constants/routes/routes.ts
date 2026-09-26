@@ -145,8 +145,9 @@ export const getKunPathLabel = (pathname: string): string => {
   if (isPatchPath(pathname) && !hasIgnorePath) {
     return pathname
   }
+  // 文档标题在水合时注入; SSG 与 404 下作为兜底显示, 不能是原始路径
   if (isDocPath(pathname)) {
-    return pathname
+    return '文档详情'
   }
 
   for (const key in keyLabelMap) {

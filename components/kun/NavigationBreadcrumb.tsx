@@ -55,7 +55,9 @@ export const KunNavigationBreadcrumb = () => {
       <nav aria-label="Breadcrumb" className="px-3 mx-auto sm:px-6 max-w-7xl">
         <ol className="flex flex-nowrap items-center gap-1 overflow-hidden text-sm text-foreground/60">
           {items.map((item, index) => {
-            const isCurrent = index === items.length - 1
+            // 标题未注册 (SSR / NSFW 屏蔽) 时游戏页塌缩到 Galgame, 末项不是当前页, 须保持链接
+            const isCurrent =
+              index === items.length - 1 && item.key === titleKey
 
             return (
               <li
