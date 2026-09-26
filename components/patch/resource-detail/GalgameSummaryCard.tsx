@@ -10,7 +10,10 @@ import { cn } from '~/utils/cn'
 import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
 
 // 分类 chip 最多两行, 溢出时去掉第二行末位 chip 腾位, 以省略号 chip 收尾;
-// 隐藏测量层渲染全部 chip, 显示层按测量结果截断, 宽度变化时经 ResizeObserver 重算
+// 隐藏测量层渲染全部 chip, 显示层按测量结果截断, 宽度变化时经 ResizeObserver 重算;
+// 截断要到水合才发生, SSR 首帧显示层是全量 chip, 靠 max-h-14 封顶到两行,
+// 否则移动端水合时卡片变矮、下方主列整体上移 32px/行 (CLS 0.03–0.06);
+// 56px = 2 × h-6 (Chip size="sm") + gap-2, 与 chip 尺寸耦合; 测量层不能封顶, 否则测不出溢出
 const TypeChips = ({ types }: { types: string[] }) => {
   const measureRef = useRef<HTMLDivElement>(null)
   const [visibleCount, setVisibleCount] = useState(types.length)
@@ -63,7 +66,7 @@ const TypeChips = ({ types }: { types: string[] }) => {
       >
         {types.map(renderChip)}
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex max-h-14 flex-wrap gap-2 overflow-hidden">
         {types.slice(0, visibleCount).map(renderChip)}
         {visibleCount < types.length && (
           <Chip variant="flat" color="primary" size="sm">
