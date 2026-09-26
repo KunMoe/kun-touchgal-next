@@ -31,6 +31,17 @@ describe('/[id] 改 ?tab= 不走服务端导航', () => {
     expect(handler).toContain('window.history.pushState(')
     expect(handler).not.toContain('router.push(')
   })
+
+  // 已在资源 tab 时目标地址与当前相同; pushState 不像 router.push 那样同址去重,
+  // 会多出一条同址历史记录, 用户第一次后退「没反应」
+  it('「下载」目标地址与当前相同时不 pushState', () => {
+    const handler = actionsSource.match(
+      /const handleClickDownloadNav = \(\) => \{([\s\S]*?)\n {2}\}/
+    )?.[1]
+    expect(handler).toMatch(
+      /if \(query === searchParams\.toString\(\)\) \{\s*return\s*\}[\s\S]*window\.history\.pushState\(/
+    )
+  })
 })
 
 describe('资源 tab 预热命中 dynamic 且不出 fallback', () => {

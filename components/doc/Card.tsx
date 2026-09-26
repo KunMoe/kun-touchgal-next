@@ -4,7 +4,7 @@ import { Card, CardBody, CardFooter } from '@heroui/react'
 import { ArrowRight, Calendar, Type } from 'lucide-react'
 import { Image } from '@heroui/image'
 import { KunPostMetadata } from '~/lib/mdx/types'
-import { KunTimeAgo } from '~/components/kun/TimeAgo'
+import { formatDate } from '~/utils/time'
 import Link from 'next/link'
 
 interface Props {
@@ -45,9 +45,8 @@ export const KunAboutCard = ({ post }: Props) => {
           <div className="flex flex-wrap items-center gap-2 text-xs text-default-500">
             <div className="flex items-center gap-1">
               <Calendar className="size-3.5 text-primary-400" />
-              <time>
-                <KunTimeAgo date={post.date} />
-              </time>
+              {/* /doc 是 force-static, 相对时间会停在构建时刻, 与文章页一致显示日期 */}
+              <time>{formatDate(post.date, { isShowYear: true })}</time>
             </div>
             <div className="flex items-center gap-1">
               <Type className="size-3.5 text-secondary-400" />

@@ -37,6 +37,10 @@ export const PatchHeaderActions = ({ patch }: PatchHeaderActionsProps) => {
     params.delete('commentId')
     params.delete('ratingId')
     const query = params.toString()
+    // 已在资源 tab 时地址不变; pushState 不像 router.push 那样同址去重, 会多一条历史记录
+    if (query === searchParams.toString()) {
+      return
+    }
     window.history.pushState(
       null,
       '',

@@ -162,6 +162,11 @@ export const PatchHeaderTabs = ({
       setTargets((current) => mergePatchTabTargets(current, searchParams))
     })
 
+    // 列表加载完成前就切走: 保活的资源面板之后加载完成不能再把页面拉回 tabs
+    if (nextTab !== 'resources') {
+      pendingResourceScrollRef.current = false
+    }
+
     if (
       hasTabDeepLink(searchParams) &&
       !(

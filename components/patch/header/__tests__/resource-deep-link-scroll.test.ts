@@ -24,6 +24,18 @@ describe('资源深链在列表渲染完成后才滚动', () => {
     )
   })
 
+  // 列表加载完成前切到别的 tab, 保活的资源面板随后加载完成仍会调 onLoaded,
+  // 标记不清就会把正在看讨论版 / 评价的用户拉回 tabs
+  it('选中 tab 离开资源时清掉待滚动标记', () => {
+    const effect = tabsSource.match(
+      /useEffect\(\(\) => \{\s*const nextTab = getSelectedTab\(searchParams\)([\s\S]*?)\}, \[searchParams\]\)/
+    )?.[1]
+    expect(effect).toBeDefined()
+    expect(effect).toMatch(
+      /if \(nextTab !== 'resources'\) \{\s*pendingResourceScrollRef\.current = false\s*\}/
+    )
+  })
+
   it('列表加载完成的回调一路传到 Resources', () => {
     expect(tabsSource).toContain('onLoaded={handleResourcesLoaded}')
     expect(resourceTabSource).toContain('onLoaded={onLoaded}')
