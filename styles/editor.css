@@ -88,6 +88,11 @@
   @apply m-2 inline w-32;
 }
 
+/* prosemirror-view 在行内原子节点旁插入的占位 img; 编辑器里图片按 block 排版, 不论 block 还是 inline 它都会撑出空隙 */
+.milkdown img.ProseMirror-separator {
+  @apply hidden;
+}
+
 .milkdown table {
   @apply border-default-200 my-6 w-full overflow-hidden rounded-lg border shadow-sm;
 }

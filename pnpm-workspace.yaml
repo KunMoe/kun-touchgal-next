@@ -12,7 +12,7 @@ auditConfig:
 overrides:
   hono: '>=4.12.27'
   '@hono/node-server': '>=2.0.5'
-  effect: '>=3.20.0'
+  effect: '>=3.20.0 <4'
   'eslint>ajv': '6.14.0'
   '@eslint/eslintrc>ajv': '6.14.0'
   'table>ajv': '8.18.0'
@@ -24,7 +24,7 @@ overrides:
   jws: '3.2.3'
   dompurify: '>=3.4.16'
   tar: '>=7.5.21'
-  undici: '>=8.10.2 <9'
+  undici: '>=8.12.1 <9'
   form-data: '>=4.0.6'
   valibot: '>=1.4.2'
   sharp: '>=0.35.5'
@@ -56,10 +56,8 @@ overrides:
   follow-redirects: '>=1.16.1 <2'
   vue: '>=3.5.42 <4'
   katex: '>=0.18.2 <0.19'
-  # prosemirror-model 1.25.12 起在 NodeType.create 时校验 attrs；milkdown 7.22.2 给无标题图片传 title=null，解析时整张图
-  # 被丢弃（上游 7.22.3 #2478 修复）。prosemirror-view 1.42.5 起要求 model ^1.25.12，故两者同时封顶；milkdown >=7.22.3 后去掉上界
-  prosemirror-model: '>=1.25.8 <1.25.12'
-  prosemirror-view: '>=1.42.3 <1.42.5'
+  prosemirror-model: '>=1.25.8'
+  prosemirror-view: '>=1.42.3'
   source-map-js: '>=1.2.2 <2'
   # react-aria 家族钉回 HeroUI 2.8.1 发布时（2025-07-15）的版本：caret 解析到单包壳会让同一模块出现两份实例，
   # FocusScope / OverlayContext 等全局状态随之分裂（嵌套菜单被父菜单误判失焦关闭）。升级 HeroUI 时整段删除重算
@@ -122,8 +120,8 @@ allowBuilds:
   '@prisma/engines': true
   '@tailwindcss/oxide': true
   bcrypt: true
-  core-js: true
   esbuild: true
+  plyr: false
   prisma: true
   sharp: true
   unrs-resolver: true
