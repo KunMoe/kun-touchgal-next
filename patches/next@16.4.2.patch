@@ -1,8 +1,8 @@
 diff --git a/dist/client/components/app-router.js b/dist/client/components/app-router.js
-index e6a26a1bddf9a5a86a9afd178f2382f80d881280..8868d9f7dabeb02fd72ddcdb3629222e0ec64a18 100644
+index 6b95b72c51d593d939703a671eda1016d81efd75..f4ab7b62bad586a3fc3a9bc2fe0c7c5850b727cf 100644
 --- a/dist/client/components/app-router.js
 +++ b/dist/client/components/app-router.js
-@@ -105,7 +105,7 @@ function Head({ headCacheNode }) {
+@@ -149,7 +149,7 @@ function Head({ headRenderTree }) {
      // We use `useDeferredValue` to handle switching between the prefetched and
      // final values. The second argument is returned on initial render, then it
      // re-renders with the first argument.
@@ -12,23 +12,23 @@ index e6a26a1bddf9a5a86a9afd178f2382f80d881280..8868d9f7dabeb02fd72ddcdb3629222e
  /**
   * The global router that wraps the application components.
 diff --git a/dist/client/components/layout-router.js b/dist/client/components/layout-router.js
-index 46e87784d63ce67f831b5a8491a58276b49e1cbd..5b2b209e2dbe135a97d83db71f665fc44fadabfe 100644
+index 316197c6b1e4f8fc97c410fce920c653a70ba2cb..dfb5a6fc2d4c2a5e228259b5b6eb3c4fbde4dd19 100644
 --- a/dist/client/components/layout-router.js
 +++ b/dist/client/components/layout-router.js
-@@ -378,7 +378,7 @@ function ScrollAndMaybeFocusHandler({ children, cacheNode }) {
+@@ -219,7 +219,7 @@ function ScrollHandler({ children, renderTree }) {
      // We use `useDeferredValue` to handle switching between the prefetched and
      // final values. The second argument is returned on initial render, then it
      // re-renders with the first argument.
--    const rsc = (0, _react.useDeferredValue)(cacheNode.rsc, resolvedPrefetchRsc);
-+    const rsc = (0, _react.useDeferredValue)(cacheNode.rsc, resolvedPrefetchRsc === cacheNode.rsc ? undefined : resolvedPrefetchRsc);
+-    const rsc = (0, _react.useDeferredValue)(renderTree.data.rsc, resolvedPrefetchRsc);
++    const rsc = (0, _react.useDeferredValue)(renderTree.data.rsc, resolvedPrefetchRsc === renderTree.data.rsc ? undefined : resolvedPrefetchRsc);
      // `rsc` is either a React node or a promise for a React node, except we
      // special case `null` to represent that this segment's data is missing. If
      // it's a promise, we need to unwrap it so we can determine whether or not the
 diff --git a/dist/esm/client/components/app-router.js b/dist/esm/client/components/app-router.js
-index b5620bd0fe05d0719f3dde45e7889ab8d7888bcc..f74a0f5d7953825d38bf9e8f6d385ec76b302e65 100644
+index 81248995019eb1cd83124961479b3a08e0e2c946..92e932e3fb18bb441ca95f288da988a6ee196579 100644
 --- a/dist/esm/client/components/app-router.js
 +++ b/dist/esm/client/components/app-router.js
-@@ -93,7 +93,7 @@ function Head({ headCacheNode }) {
+@@ -137,7 +137,7 @@ function Head({ headRenderTree }) {
      // We use `useDeferredValue` to handle switching between the prefetched and
      // final values. The second argument is returned on initial render, then it
      // re-renders with the first argument.
@@ -38,15 +38,15 @@ index b5620bd0fe05d0719f3dde45e7889ab8d7888bcc..f74a0f5d7953825d38bf9e8f6d385ec7
  /**
   * The global router that wraps the application components.
 diff --git a/dist/esm/client/components/layout-router.js b/dist/esm/client/components/layout-router.js
-index fadc689a52ca23d110fecd0af97a960ab0b5304c..e47865db4cd6bca0a85de43f6c282604689ec1ba 100644
+index 8fa63330cb8c8910a1323693fdabea0a9073377c..9104a01d56ece907729690df00954743df1fd36f 100644
 --- a/dist/esm/client/components/layout-router.js
 +++ b/dist/esm/client/components/layout-router.js
-@@ -351,7 +351,7 @@ function ScrollAndMaybeFocusHandler({ children, cacheNode }) {
+@@ -193,7 +193,7 @@ function ScrollHandler({ children, renderTree }) {
      // We use `useDeferredValue` to handle switching between the prefetched and
      // final values. The second argument is returned on initial render, then it
      // re-renders with the first argument.
--    const rsc = useDeferredValue(cacheNode.rsc, resolvedPrefetchRsc);
-+    const rsc = useDeferredValue(cacheNode.rsc, resolvedPrefetchRsc === cacheNode.rsc ? undefined : resolvedPrefetchRsc);
+-    const rsc = useDeferredValue(renderTree.data.rsc, resolvedPrefetchRsc);
++    const rsc = useDeferredValue(renderTree.data.rsc, resolvedPrefetchRsc === renderTree.data.rsc ? undefined : resolvedPrefetchRsc);
      // `rsc` is either a React node or a promise for a React node, except we
      // special case `null` to represent that this segment's data is missing. If
      // it's a promise, we need to unwrap it so we can determine whether or not the
