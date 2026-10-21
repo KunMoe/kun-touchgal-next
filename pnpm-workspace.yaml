@@ -3,6 +3,12 @@ publicHoistPattern:
 
 enablePrePostScripts: true
 
+auditConfig:
+  ignoreGhsas:
+    # braces <=3.0.3 深层嵌套栈溢出：上游无修复版（维护者否认该问题），仅经 micromatch 被 globby / eslint / stylelint
+    # 以仓库自有的静态 glob 调用，不接触外部输入。braces 发布修复版后删除此条并加 override
+    - GHSA-vfj7-8cjw-p6xm
+
 overrides:
   hono: '>=4.12.27'
   '@hono/node-server': '>=2.0.5'
@@ -10,21 +16,23 @@ overrides:
   'eslint>ajv': '6.14.0'
   '@eslint/eslintrc>ajv': '6.14.0'
   'table>ajv': '8.18.0'
-  fast-uri: '>=3.1.6 <4'
+  fast-uri: '>=3.1.8 <4'
   fast-xml-parser: '>=5.7.0'
   postcss: '>=8.5.18'
   fast-xml-builder: '>=1.1.7'
   '@rvf/set-get': '>=7.0.2'
   jws: '3.2.3'
-  dompurify: '>=3.4.12'
+  dompurify: '>=3.4.16'
   tar: '>=7.5.21'
   undici: '>=8.10.2 <9'
   form-data: '>=4.0.6'
   valibot: '>=1.4.2'
-  sharp: '>=0.35.4'
+  sharp: '>=0.35.5'
   colord: '>=2.9.4 <3'
   mysql2: '>=3.23.1 <4'
   'gray-matter>js-yaml': '>=3.15.2 <4'
+  # js-yaml@3 只在 bin/js-yaml.js 里用 argparse，库入口不加载；剥掉它连带去掉无修复版的 sprintf-js（GHSA-hp3w-g68c-fv3c）
+  'js-yaml@3>argparse': '-'
   '@eslint/eslintrc>js-yaml': '>=4.3.2 <5'
   'cosmiconfig>js-yaml': '>=4.3.2 <5'
   defu: '>=6.1.5'
@@ -37,12 +45,22 @@ overrides:
   'eslint-plugin-jsx-a11y>minimatch': '3.1.5'
   'eslint-plugin-react>minimatch': '3.1.5'
   '@typescript-eslint/typescript-estree>minimatch': '9.0.9'
-  'minimatch@3>brace-expansion': '1.1.18'
+  'minimatch@3>brace-expansion': '1.1.21'
+  'brace-expansion@2': '>=2.1.7 <3'
+  'brace-expansion@5': '>=5.0.12 <6'
   find-my-way: '>=9.7.0'
   'nanoid@<3.3.18': '>=3.3.18 <4'
   deepmerge-ts: '>=8.0.0'
   '@heroui/theme>tailwind-merge': '^3.7.0'
   'tailwind-variants>tailwind-merge': '^3.7.0'
+  follow-redirects: '>=1.16.1 <2'
+  vue: '>=3.5.42 <4'
+  katex: '>=0.18.2 <0.19'
+  # prosemirror-model 1.25.12 起在 NodeType.create 时校验 attrs；milkdown 7.22.2 给无标题图片传 title=null，解析时整张图
+  # 被丢弃（上游 7.22.3 #2478 修复）。prosemirror-view 1.42.5 起要求 model ^1.25.12，故两者同时封顶；milkdown >=7.22.3 后去掉上界
+  prosemirror-model: '>=1.25.8 <1.25.12'
+  prosemirror-view: '>=1.42.3 <1.42.5'
+  source-map-js: '>=1.2.2 <2'
   # react-aria 家族钉回 HeroUI 2.8.1 发布时（2025-07-15）的版本：caret 解析到单包壳会让同一模块出现两份实例，
   # FocusScope / OverlayContext 等全局状态随之分裂（嵌套菜单被父菜单误判失焦关闭）。升级 HeroUI 时整段删除重算
   '@react-aria/button': '3.13.3'
@@ -114,4 +132,4 @@ patchedDependencies:
   '@heroui/tabs@2.2.20': patches/@heroui__tabs@2.2.20.patch
   '@react-aria/i18n@3.12.10': patches/@react-aria__i18n@3.12.10.patch
   cap-widget@0.1.58: patches/cap-widget@0.1.58.patch
-  next@16.3.6: patches/next@16.3.6.patch
+  next@16.3.8: patches/next@16.3.8.patch
