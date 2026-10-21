@@ -32,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '26'
+          node-version: '26.12.1'
           cache: 'pnpm'
 
       # the postinstall hook runs `prisma generate`, which reads KUN_DATABASE_URL
