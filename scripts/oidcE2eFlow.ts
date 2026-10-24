@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'crypto'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
+import jwt from 'jsonwebtoken'
 import { prisma } from '~/prisma/index'
-import { generateKunToken } from '~/app/api/utils/jwt'
+import { deleteKunTokenSession, generateKunToken } from '~/app/api/utils/jwt'
 
 // 端到端跑一遍 Authorization Code + PKCE 流程，验证 login→consent→code→token→userinfo。
 // 运行：pnpm exec esno scripts/oidcE2eFlow.ts
@@ -10,6 +11,14 @@ const ISSUER = `${ORIGIN}/oidc`
 const CLIENT_ID = 'touchgal-test'
 const CLIENT_SECRET = 'test-secret-please-change'
 const REDIRECT_URI = 'http://127.0.0.1:8080/callback'
+
+// 脚本签发的登录会话有效期 30 天，跑完即吊销，不在 Redis 留下登录态
+let testSession: { uid: number; jti: string } | null = null
+const revokeTestSession = async () => {
+  if (testSession) {
+    await deleteKunTokenSession(testSession.uid, testSession.jti)
+  }
+}
 
 const jar = new Map<string, string>()
 const cookieHeader = () =>
@@ -37,6 +46,10 @@ const main = async () => {
     throw new Error('数据库无用户，无法测试')
   }
   const token = await generateKunToken(user.id, user.name, user.role, '30d')
+  testSession = {
+    uid: user.id,
+    jti: (jwt.decode(token) as { jti: string }).jti
+  }
   jar.set('kun-galgame-patch-moe-token', token)
   console.log('测试用户:', user)
 
@@ -85,6 +98,16 @@ const main = async () => {
 
     if (res.status === 200 && url.includes('/oidc/interaction/')) {
       const uid = url.split('/oidc/interaction/')[1].split(/[/?]/)[0]
+      // login 阶段页面只渲染 ConfirmRedirect（浏览器里硬跳转 GET confirm），
+      // 只有 consent 阶段才带 POST 表单
+      if (!/method="post"/.test(await res.text())) {
+        console.log(
+          `[${i}] 200 login 页，GET confirm uid=${uid.slice(0, 8)}...`
+        )
+        url = `${ISSUER}/interaction/${uid}/confirm`
+        method = 'GET'
+        continue
+      }
       console.log(
         `[${i}] 200 consent 页，POST 确认授权 uid=${uid.slice(0, 8)}...`
       )
@@ -148,8 +171,12 @@ const main = async () => {
 }
 
 main()
-  .then(() => process.exit(0))
-  .catch((error) => {
+  .then(async () => {
+    await revokeTestSession()
+    process.exit(0)
+  })
+  .catch(async (error) => {
     console.error('❌', error)
+    await revokeTestSession()
     process.exit(1)
   })
