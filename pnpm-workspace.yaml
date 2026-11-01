@@ -5,9 +5,15 @@ enablePrePostScripts: true
 
 auditConfig:
   ignoreGhsas:
-    # braces <=3.0.3 深层嵌套栈溢出：上游无修复版（维护者否认该问题），仅经 micromatch 被 globby / eslint / stylelint
-    # 以仓库自有的静态 glob 调用，不接触外部输入。braces 发布修复版后删除此条并加 override
-    - GHSA-vfj7-8cjw-p6xm
+    # minimatch <11.0.1 globParts 放大：受影响代码 firstPhasePreProcess 只在 optimizationLevel>=2 时执行，
+    # 3.1.5 不含该代码；10.2.6 的消费者（eslint、@eslint/config-array、@typescript-eslint/typescript-estree）均未设置该选项，
+    # 模式全部来自仓库自有 lint 配置。
+    # 11.x 删除了 makeRe 与可调用的默认导出，eslint-plugin-import / react / jsx-a11y 仍依赖 ^3 无法强升；
+    # 这些插件迁到 minimatch>=11.0.1 后删除此条并加 override
+    - GHSA-g3hv-75wg-m249
+    # deepmerge <=4.3.1 原型投毒：上游无修复版（npm 最新即 4.3.1）。唯一调用方是 @heroui/theme 的 heroui() Tailwind 插件，
+    # 构建期合并 styles/hero.ts 的静态主题配置，不接触外部输入。deepmerge 发布修复版后删除此条并加 override
+    - GHSA-gcqx-w48m-w2h4
 
 overrides:
   hono: '>=4.12.27'
@@ -40,20 +46,17 @@ overrides:
   yaml: '>=2.8.3'
   lodash: '4.18.1'
   lodash-es: '4.18.1'
-  'eslint>minimatch': '3.1.5'
   'eslint-plugin-import>minimatch': '3.1.5'
   'eslint-plugin-jsx-a11y>minimatch': '3.1.5'
   'eslint-plugin-react>minimatch': '3.1.5'
-  '@typescript-eslint/typescript-estree>minimatch': '9.0.9'
   'minimatch@3>brace-expansion': '1.1.21'
-  'brace-expansion@2': '>=2.1.7 <3'
   'brace-expansion@5': '>=5.0.12 <6'
   find-my-way: '>=9.7.0'
   'nanoid@<3.3.18': '>=3.3.18 <4'
   deepmerge-ts: '>=8.0.0'
   '@heroui/theme>tailwind-merge': '^3.7.0'
   'tailwind-variants>tailwind-merge': '^3.7.0'
-  follow-redirects: '>=1.16.1 <2'
+  follow-redirects: '>=1.16.2 <2'
   vue: '>=3.5.42 <4'
   katex: '>=0.18.2 <0.19'
   prosemirror-model: '>=1.25.8'
