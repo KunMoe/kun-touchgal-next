@@ -90,6 +90,12 @@ const buildGalgamePrimaryOrderBy = (
     return { rating_stat: { avg_overall: sortOrder } }
   }
 
+  // 无法解析的发售日期 (unknown / TBA / 空) 为 NULL, 升降序都排末尾;
+  // PG 降序默认 NULLS FIRST, 须显式声明
+  if (sortField === 'released') {
+    return { released_sort: { sort: sortOrder, nulls: 'last' } }
+  }
+
   return { [sortField]: sortOrder }
 }
 

@@ -80,6 +80,7 @@ describe('patchToSearchDoc', () => {
     dlsite_code: null,
     introduction: '**魔女**的故事',
     released: '2015-02-27',
+    released_sort: 20150227,
     content_limit: 'sfw',
     type: ['pc'],
     language: ['zh-Hans', 'ja'],
@@ -120,6 +121,7 @@ describe('patchToSearchDoc', () => {
       contentLimit: 'sfw',
       releasedYear: '2015',
       releasedMonth: '02',
+      releasedSort: 20150227,
       created: Math.floor(basePayload.created.getTime() / 1000),
       updated: Math.floor(basePayload.updated.getTime() / 1000),
       resourceUpdateTime: Math.floor(
@@ -143,7 +145,8 @@ describe('patchToSearchDoc', () => {
       company: [],
       rating_stat: null,
       introduction: '',
-      released: 'unknown'
+      released: 'unknown',
+      released_sort: null
     })
     expect(doc.alias).toEqual([])
     expect(doc.tagIds).toEqual([])
@@ -153,5 +156,6 @@ describe('patchToSearchDoc', () => {
     expect(doc.introduction).toBe('')
     expect(doc.releasedYear).toBe('unknown')
     expect(doc.releasedMonth).toBeNull()
+    expect(doc.releasedSort).toBeNull()
   })
 })

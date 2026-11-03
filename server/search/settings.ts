@@ -55,6 +55,7 @@ export const GALGAME_INDEX_SETTINGS: Settings = {
     'download',
     'favoriteCount',
     'avgRating',
+    'releasedSort',
     // 仅作排序并列时的稳定 tiebreaker
     'id'
   ],

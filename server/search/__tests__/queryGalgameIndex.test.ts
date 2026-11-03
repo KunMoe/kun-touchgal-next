@@ -42,6 +42,7 @@ const sampleDoc: GalgameSearchDoc = {
   contentLimit: 'sfw',
   releasedYear: '2020',
   releasedMonth: '06',
+  releasedSort: 20200619,
   created: Math.floor(new Date('2020-06-19T00:00:00Z').getTime() / 1000),
   updated: Math.floor(new Date('2020-06-19T00:00:00Z').getTime() / 1000),
   resourceUpdateTime: Math.floor(

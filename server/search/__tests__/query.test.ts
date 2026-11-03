@@ -23,6 +23,7 @@ describe('searchDocToGalgameCard', () => {
     contentLimit: 'sfw',
     releasedYear: '2015',
     releasedMonth: '02',
+    releasedSort: 20150227,
     created: Math.floor(new Date('2023-11-15T00:00:00Z').getTime() / 1000),
     updated: Math.floor(new Date('2024-03-10T00:00:00Z').getTime() / 1000),
     resourceUpdateTime: Math.floor(

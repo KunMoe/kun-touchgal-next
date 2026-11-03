@@ -19,6 +19,7 @@ export const PATCH_SEARCH_SELECT = {
   dlsite_code: true,
   introduction: true,
   released: true,
+  released_sort: true,
   content_limit: true,
   type: true,
   language: true,
@@ -61,6 +62,8 @@ export interface GalgameSearchDoc {
   contentLimit: string
   releasedYear: string
   releasedMonth: string | null
+  // 触发器维护的 YYYYMMDD 排序键，无法解析的日期为 null
+  releasedSort: number | null
   created: number
   // 对账脚本用于比对 PG 与索引差异的时间戳
   updated: number
@@ -148,6 +151,7 @@ export const patchToSearchDoc = async (
     contentLimit: patch.content_limit,
     releasedYear,
     releasedMonth,
+    releasedSort: patch.released_sort,
     created: Math.floor(patch.created.getTime() / 1000),
     updated: Math.floor(patch.updated.getTime() / 1000),
     resourceUpdateTime: Math.floor(patch.resource_update_time.getTime() / 1000),

@@ -8,7 +8,8 @@ const SORT_FIELDS: SortField[] = [
   'view',
   'download',
   'favorite',
-  'rating'
+  'rating',
+  'released'
 ]
 
 describe('buildGalgameOrderBy', () => {
@@ -30,4 +31,12 @@ describe('buildGalgameOrderBy', () => {
     expect(buildGalgameOrderBy('view', 'desc')[0]).toEqual({ view: 'desc' })
   })
 
+  it.each(['asc', 'desc'] as const)(
+    'released %s 排序把无法解析的发售日期 (NULL) 放到末尾',
+    (sortOrder) => {
+      expect(buildGalgameOrderBy('released', sortOrder)[0]).toEqual({
+        released_sort: { sort: sortOrder, nulls: 'last' }
+      })
+    }
+  )
 })

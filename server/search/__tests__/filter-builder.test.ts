@@ -184,6 +184,10 @@ describe('buildGalgameSearchSort', () => {
       'avgRating:asc',
       'id:desc'
     ])
+    expect(buildGalgameSearchSort('released', 'desc')).toEqual([
+      'releasedSort:desc',
+      'id:desc'
+    ])
   })
 
   it('未知字段返回空数组', () => {

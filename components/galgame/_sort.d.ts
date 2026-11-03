@@ -5,4 +5,5 @@ export type SortField =
   | 'download'
   | 'favorite'
   | 'rating'
+  | 'released'
 export type SortOrder = 'asc' | 'desc'

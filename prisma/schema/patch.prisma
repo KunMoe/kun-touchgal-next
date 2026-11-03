@@ -10,6 +10,9 @@ model patch {
   banner               String   @default("") @db.VarChar(1007)
   introduction         String   @default("") @db.VarChar(100007)
   released             String   @default("unknown") @db.VarChar(107)
+  // released 的 YYYYMMDD 排序键 (缺省月/日补 00, 无法解析为 NULL),
+  // 由触发器维护, 应用层不写, 见 migration/ensurePatchReleasedSort.ts
+  released_sort        Int?
   content_limit        String   @default("") @db.VarChar(107)
   status               Int      @default(0)
   download             Int      @default(0)

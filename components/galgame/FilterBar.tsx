@@ -65,6 +65,7 @@ interface Props extends Omit<
 const sortFieldLabelMap: Record<string, string> = {
   resource_update_time: '资源更新时间',
   created: '游戏创建时间',
+  released: '发售时间',
   rating: '评分',
   view: '浏览量',
   download: '下载量',
@@ -144,6 +145,9 @@ export const FilterBar = memo(function FilterBar({
                 </DropdownItem>
                 <DropdownItem key="created" className="text-default-700">
                   游戏创建时间
+                </DropdownItem>
+                <DropdownItem key="released" className="text-default-700">
+                  发售时间
                 </DropdownItem>
                 <DropdownItem key="rating" className="text-default-700">
                   评分

@@ -68,6 +68,14 @@ describe('searchSchema 年份 / 月份多选上限', () => {
   })
 })
 
+describe('searchSchema sortField', () => {
+  it('接受发售时间排序 released', () => {
+    expect(
+      searchSchema.safeParse({ ...baseInput, sortField: 'released' }).success
+    ).toBe(true)
+  })
+})
+
 describe('parseSearchSuggestions 建议项解析', () => {
   it('畸形 JSON 返回错误字符串而非抛错', () => {
     expect(parseSearchSuggestions('abc')).toBe('搜索条件格式错误')

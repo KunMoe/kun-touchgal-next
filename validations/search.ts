@@ -24,7 +24,8 @@ export const searchSchema = z.object({
     z.literal('rating'),
     z.literal('view'),
     z.literal('download'),
-    z.literal('favorite')
+    z.literal('favorite'),
+    z.literal('released')
   ]),
   sortOrder: z.union([z.literal('asc'), z.literal('desc')]),
   selectedYears: z

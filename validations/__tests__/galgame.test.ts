@@ -108,3 +108,16 @@ describe('galgameSchema 数字参数硬拒', () => {
     ).toBe(false)
   })
 })
+
+describe('sortField 发售时间排序', () => {
+  it('galgame / tag / company 端点接受 released', () => {
+    const input = { ...baseInput, sortField: 'released' }
+    expect(galgameSchema.safeParse(input).success).toBe(true)
+    expect(getPatchByTagSchema.safeParse({ ...input, tagId: 1 }).success).toBe(
+      true
+    )
+    expect(
+      getPatchByCompanySchema.safeParse({ ...input, companyId: 1 }).success
+    ).toBe(true)
+  })
+})

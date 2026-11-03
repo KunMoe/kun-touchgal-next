@@ -169,7 +169,8 @@ const SORT_FIELD_MAP: Record<string, string> = {
   view: 'view',
   download: 'download',
   favorite: 'favoriteCount',
-  rating: 'avgRating'
+  rating: 'avgRating',
+  released: 'releasedSort'
 }
 
 // id 恒作末位稳定 tiebreaker：并列值的相对顺序否则取决于索引内部序，
