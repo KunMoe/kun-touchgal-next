@@ -78,7 +78,7 @@ export const buildGalgameWhere = ({
   }
 }
 
-export const buildGalgameOrderBy = (
+const buildGalgamePrimaryOrderBy = (
   sortField: SortField,
   sortOrder: SortOrder
 ): Prisma.patchOrderByWithRelationInput => {
@@ -92,3 +92,13 @@ export const buildGalgameOrderBy = (
 
   return { [sortField]: sortOrder }
 }
+
+// id 恒作末位稳定 tiebreaker, 对齐 buildGalgameSearchSort:
+// ORDER BY 不唯一时 PG 对并列行的 LIMIT/OFFSET 结果不稳定, 翻页会重复/漏条
+export const buildGalgameOrderBy = (
+  sortField: SortField,
+  sortOrder: SortOrder
+): Prisma.patchOrderByWithRelationInput[] => [
+  buildGalgamePrimaryOrderBy(sortField, sortOrder),
+  { id: 'desc' }
+]

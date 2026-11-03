@@ -72,7 +72,9 @@ const legacyGetPatchByTag = async (
     minRatingCount
   } = input
   const offset = (page - 1) * limit
-  const orderBy = { patch: buildGalgameOrderBy(sortField, sortOrder) }
+  const orderBy = buildGalgameOrderBy(sortField, sortOrder).map((patch) => ({
+    patch
+  }))
   const patchWhere = {
     ...buildGalgameDateFilter(years, months),
     ...buildGalgameWhere({
