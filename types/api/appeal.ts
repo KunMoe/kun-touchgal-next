@@ -36,8 +36,6 @@ export interface AdminAppealItem {
   original: AppealPayload | null
   rejectReason: string
   user: KunUser
-  // 资源评论的资源 id (深链到资源详情页); 其余为 null
-  commentResourceId: number | null
   // 内容所属的游戏; 内容已删除时为 null
   patch: {
     uniqueId: string

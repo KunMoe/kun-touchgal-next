@@ -39,7 +39,7 @@ export const getAppeals = async (
   const [comments, ratings, resources] = await Promise.all([
     prisma.patch_comment.findMany({
       where: { id: { in: idsOf('comment') } },
-      select: { id: true, content: true, resource_id: true, patch: patchSelect }
+      select: { id: true, content: true, patch: patchSelect }
     }),
     prisma.patch_rating.findMany({
       where: { id: { in: idsOf('rating') } },
@@ -53,14 +53,12 @@ export const getAppeals = async (
 
   const originalMap = new Map<string, AppealPayload>()
   const patchMap = new Map<string, { uniqueId: string; name: string }>()
-  const commentResourceMap = new Map<number, number | null>()
   for (const comment of comments) {
     originalMap.set(`comment:${comment.id}`, { text: comment.content })
     patchMap.set(`comment:${comment.id}`, {
       uniqueId: comment.patch.unique_id,
       name: comment.patch.name
     })
-    commentResourceMap.set(comment.id, comment.resource_id)
   }
   for (const rating of ratings) {
     originalMap.set(`rating:${rating.id}`, { text: rating.short_summary })
@@ -89,10 +87,6 @@ export const getAppeals = async (
     original:
       originalMap.get(`${appeal.content_type}:${appeal.content_id}`) ?? null,
     rejectReason: appeal.task.reject_reason,
-    commentResourceId:
-      appeal.content_type === 'comment'
-        ? (commentResourceMap.get(appeal.content_id) ?? null)
-        : null,
     patch: patchMap.get(`${appeal.content_type}:${appeal.content_id}`) ?? null,
     user: appeal.user,
     created: appeal.created,

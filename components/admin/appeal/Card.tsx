@@ -14,7 +14,6 @@ import Link from 'next/link'
 import { ExternalLink } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { kunFetchPut } from '~/utils/kunFetch'
-import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { APPEAL_STATUS_MAP } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
@@ -24,19 +23,6 @@ const statusColorMap: Record<string, 'warning' | 'success' | 'danger'> = {
   pending: 'warning',
   approved: 'success',
   rejected: 'danger'
-}
-
-// comment / rating 与站内消息通知的深链格式一致 (createMentionMessage / rating like 等);
-// resource 刻意偏离站内信的 ?tab=resources 列表锚点, 直达资源详情页 —— 申诉要看的是
-// 这一条资源的完整内容, 可见性口径与列表同为 getResourceVisibilityWhere, 不会多出 404
-const contentLinkMap: Partial<
-  Record<string, (uniqueId: string, contentId: number) => string>
-> = {
-  comment: (uniqueId, contentId) =>
-    `/${uniqueId}?tab=comments&commentId=${contentId}`,
-  rating: (uniqueId, contentId) =>
-    `/${uniqueId}?tab=rating&ratingId=${contentId}`,
-  resource: (uniqueId, contentId) => `/${uniqueId}/resource/${contentId}`
 }
 
 const formatPayload = (contentType: string, payload: AppealPayload) =>
@@ -74,18 +60,8 @@ export const AppealCard = ({ appeal, onHandled }: Props) => {
     }
   }
 
-  const buildContentLink = contentLinkMap[appeal.contentType]
-  const contentLink =
-    buildContentLink && appeal.patch
-      ? // 评论深链与站内信同源 (资源评论指向资源详情页)
-        appeal.contentType === 'comment'
-        ? buildCommentLink(
-            appeal.patch.uniqueId,
-            appeal.contentId,
-            appeal.commentResourceId
-          )
-        : buildContentLink(appeal.patch.uniqueId, appeal.contentId)
-      : null
+  // 只跳游戏条目, 不带内容深链
+  const contentLink = appeal.patch ? `/${appeal.patch.uniqueId}` : null
 
   return (
     <Card>
