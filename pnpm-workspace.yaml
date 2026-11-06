@@ -21,7 +21,6 @@ overrides:
   effect: '>=3.20.0 <4'
   'eslint>ajv': '6.14.0'
   '@eslint/eslintrc>ajv': '6.14.0'
-  'table>ajv': '8.18.0'
   fast-uri: '>=3.1.8 <4'
   fast-xml-parser: '>=5.7.0'
   postcss: '>=8.5.18'
@@ -40,7 +39,6 @@ overrides:
   # js-yaml@3 只在 bin/js-yaml.js 里用 argparse，库入口不加载；剥掉它连带去掉无修复版的 sprintf-js（GHSA-hp3w-g68c-fv3c）
   'js-yaml@3>argparse': '-'
   '@eslint/eslintrc>js-yaml': '>=4.3.2 <5'
-  'cosmiconfig>js-yaml': '>=4.3.2 <5'
   defu: '>=6.1.5'
   mdast-util-to-hast: '>=13.2.1'
   yaml: '>=2.8.3'
@@ -133,4 +131,4 @@ patchedDependencies:
   '@heroui/tabs@2.2.20': patches/@heroui__tabs@2.2.20.patch
   '@react-aria/i18n@3.12.10': patches/@react-aria__i18n@3.12.10.patch
   cap-widget@0.1.58: patches/cap-widget@0.1.58.patch
-  next@16.4.3: patches/next@16.4.3.patch
+  next@16.4.5: patches/next@16.4.5.patch
