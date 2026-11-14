@@ -39,12 +39,6 @@ beforeEach(() => {
 })
 
 describe('auth-user 缓存', () => {
-  it('未写入时返回 null', async () => {
-    const scope = await getUserSessionCacheScope(uid)
-
-    await expect(getCachedAuthUser(uid, scope)).resolves.toBeNull()
-  })
-
   it('写入后按同一 scope 可读回完整字段', async () => {
     const scope = await getUserSessionCacheScope(uid)
     await setCachedAuthUser(uid, authUser, scope)

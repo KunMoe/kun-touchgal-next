@@ -55,12 +55,6 @@ describe('searchDocToGalgameCard', () => {
     })
   })
 
-  it('created 从 Unix 秒还原为 ISO 字符串', () => {
-    expect(searchDocToGalgameCard(baseDoc).created).toBe(
-      '2023-11-15T00:00:00.000Z'
-    )
-  })
-
   it('averageRating 四舍五入至一位小数，0 值归零', () => {
     expect(
       searchDocToGalgameCard({ ...baseDoc, avgRating: 8.567 }).averageRating

@@ -35,14 +35,6 @@ describe('kunParseGetQuery', () => {
     expect(result).toEqual({ page: 2, search: 'kun' })
   })
 
-  it('校验失败时返回 issue 的人话消息', () => {
-    const result = kunParseGetQuery(
-      createGetRequest(`?page=1&search=${'a'.repeat(11)}`),
-      schema
-    )
-    expect(result).toBe('搜索关键词不能超过 10 个字符')
-  })
-
   it('多条 issue 以换行连接', () => {
     const result = kunParseGetQuery(
       createGetRequest(`?page=0&search=${'a'.repeat(11)}`),

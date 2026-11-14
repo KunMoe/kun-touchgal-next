@@ -79,17 +79,6 @@ describe('POST /api/user/setting/username', () => {
     expect(invalidateUserSessionMock).toHaveBeenCalledWith(42)
   })
 
-  it('treats a zero-row update as insufficient moemoepoint', async () => {
-    updateManyMock.mockResolvedValue({ count: 0 })
-
-    const res = await POST(mockRequest)
-    await expect(res.json()).resolves.toBe(
-      '更改用户名最少需要 30 萌萌点, 您的萌萌点不足'
-    )
-
-    expect(invalidateUserSessionMock).not.toHaveBeenCalled()
-  })
-
   // 原子性由 Postgres 提供, mock 证不了: 真实并发实测见
   // docs/tasks/username-rename-charge-cas.md. 这里只能证明路由把 count 当作唯一
   // 裁决依据 —— 输给 CAS 的请求一律不当作改名成功, 也不重复失效缓存

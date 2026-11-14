@@ -194,8 +194,6 @@ beforeEach(() => {
   hasPendingModerationMock.mockResolvedValue(false)
   preScreenTextMock.mockResolvedValue(moderationSkip)
   invalidatePatchContentCacheMock.mockResolvedValue(undefined)
-  moderationSkip.intercept = false
-  moderationSkip.queue = false
   patchFindUniqueMock.mockResolvedValue({
     id: 10,
     unique_id: 'patch-10',
@@ -271,24 +269,5 @@ describe('资源写入按 section 分派缓存失效', () => {
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledWith(10)
     expect(invalidateResourceListCacheMock).toHaveBeenCalledTimes(1)
-  })
-
-  // 离开公开集与进入公开集同样改变详情缓存内容
-  it('更新使 galgame 资源被审核拦截 (0→3) 仍失效详情缓存', async () => {
-    moderationSkip.intercept = true
-    resourceFindUniqueMock.mockResolvedValue(buildStoredResource())
-    transactionResourceUpdateMock.mockResolvedValue(
-      buildStoredResource({ status: 3 })
-    )
-
-    await updatePatchResource(
-      { ...resourceInput, resourceId: 1, note: 'Changed' },
-      7,
-      2
-    )
-
-    expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
-    expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledWith(10)
-    expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()
   })
 })

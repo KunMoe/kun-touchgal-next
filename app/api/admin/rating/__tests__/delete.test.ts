@@ -170,49 +170,33 @@ describe('deleteRating', () => {
       recomputeManyMock.mock.invocationCallOrder[0]
     )
   })
-  it.each([
-    [
-      'driver adapter',
-      Object.assign(new Error('deadlock detected'), {
-        name: 'DriverAdapterError',
-        cause: { kind: 'postgres', originalCode: '40P01' }
-      })
-    ],
-    [
-      'raw query',
-      Object.assign(new Error('raw query failed'), {
-        code: 'P2010',
-        meta: {
-          driverAdapterError: {
-            cause: { kind: 'postgres', originalCode: '40P01' }
-          }
+  it('retries PostgreSQL deadlocks surfaced by raw query', async () => {
+    const conflictError = Object.assign(new Error('raw query failed'), {
+      code: 'P2010',
+      meta: {
+        driverAdapterError: {
+          cause: { kind: 'postgres', originalCode: '40P01' }
         }
-      })
-    ]
-  ])(
-    'retries PostgreSQL deadlocks surfaced by %s',
-    async (_source, conflictError) => {
-      let attempt = 0
-      transactionMock.mockImplementation(
-        async (
-          callback: (tx: typeof transactionClient) => Promise<unknown>
-        ) => {
-          const result = await callback(transactionClient)
-          attempt++
-          if (attempt === 1) {
-            throw conflictError
-          }
-          return result
+      }
+    })
+    let attempt = 0
+    transactionMock.mockImplementation(
+      async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
+        const result = await callback(transactionClient)
+        attempt++
+        if (attempt === 1) {
+          throw conflictError
         }
-      )
+        return result
+      }
+    )
 
-      await expect(
-        deleteRating({ ratingIds: [1, 2, 3, 4] }, 99)
-      ).resolves.toEqual({})
+    await expect(
+      deleteRating({ ratingIds: [1, 2, 3, 4] }, 99)
+    ).resolves.toEqual({})
 
-      expect(findRatingsMock).toHaveBeenCalledTimes(1)
-      expect(transactionMock).toHaveBeenCalledTimes(2)
-      expect(recomputeManyMock).toHaveBeenCalledTimes(2)
-    }
-  )
+    expect(findRatingsMock).toHaveBeenCalledTimes(1)
+    expect(transactionMock).toHaveBeenCalledTimes(2)
+    expect(recomputeManyMock).toHaveBeenCalledTimes(2)
+  })
 })

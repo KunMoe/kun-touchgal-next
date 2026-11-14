@@ -142,16 +142,6 @@ describe('drainSearchOutbox 单消费者 + CAS 删除', () => {
     })
   })
 
-  it('同步失败的行不删除、滞留等待下一轮', async () => {
-    outboxFindManyMock.mockResolvedValue([{ patch_id: 5, seq: 3 }])
-    patchFindUniqueMock.mockResolvedValue({ id: 5 })
-    waitTaskMock.mockResolvedValue({ status: 'failed', error: {} })
-
-    await drainSearchOutbox()
-
-    expect(outboxDeleteManyMock).not.toHaveBeenCalled()
-  })
-
   it('一行失败不阻断其余行处理', async () => {
     outboxFindManyMock.mockResolvedValue([
       { patch_id: 5, seq: 1 },

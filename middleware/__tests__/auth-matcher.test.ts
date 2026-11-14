@@ -29,16 +29,6 @@ describe('proxy matcher 与 protectedPaths 同步', () => {
       [...protectedPaths].sort()
     )
   })
-
-  // 断言力被上一条包含, 独立价值是失败时直接点名缺失项
-  it('protectedPaths 的每一项都必须被 matcher 覆盖', () => {
-    const covered = new Set(matcherPrefixes(config.matcher))
-    for (const path of protectedPaths) {
-      expect(covered.has(path), `${path} 不在 proxy.ts 的 matcher 中`).toBe(
-        true
-      )
-    }
-  })
 })
 
 // 上面的断言依赖 toProtectedPrefix 正确剥离 matcher 语法。若它退化成恒返回

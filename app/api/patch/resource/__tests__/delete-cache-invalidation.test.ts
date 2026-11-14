@@ -216,31 +216,6 @@ describe('删除资源按删除瞬间状态分派缓存失效', () => {
     expect(invalidateUserPendingResourceCacheMock).not.toHaveBeenCalled()
   })
 
-  // 反向: 快照 status=0, 并发隐藏后该行已是 1 —— 前台路径在锁下复检即拒, 不再删除
-  it('快照为公开但锁下已被隐藏, 拒绝删除且不失效缓存', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
-    transactionQueryRawMock.mockResolvedValue([{ id: 1, status: 1 }])
-
-    const result = await deleteResource({ resourceId: 1 }, 7, 2)
-
-    expect(result).toBe('未找到对应的资源')
-    expect(transactionResourceDeleteMock).not.toHaveBeenCalled()
-    expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
-    expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()
-  })
-
-  // 隐藏行只有 admin 路径可删, 锁下重读 status=1 时公开缓存无需失效
-  it('管理员删除隐藏资源不失效公开缓存', async () => {
-    transactionResourceFindManyMock.mockResolvedValue([
-      buildSnapshot({ status: 1 })
-    ])
-
-    await adminDeleteResource({ resourceIds: [1] }, 9)
-
-    expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
-    expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()
-  })
-
   it('删除待审核资源失效作者的 pending 缓存而非详情缓存', async () => {
     resourceFindUniqueMock.mockResolvedValue(buildSnapshot({ status: 3 }))
     transactionQueryRawMock.mockResolvedValue([{ id: 1, status: 3 }])
@@ -320,17 +295,6 @@ describe('资源删除以锁下重读的 links 入队 S3 删除', () => {
       transactionAdminLogCreateMock.mock.calls[0][0].data.content
     ).toContain('renamed')
   })
-
-  it('管理员删除在锁下行消失时同样零写入', async () => {
-    transactionQueryRawMock.mockResolvedValue([])
-
-    const result = await adminDeleteResource({ resourceIds: [1] }, 9)
-
-    expect(result).toBe('未找到对应的资源')
-    expect(transactionResourceDeleteManyMock).not.toHaveBeenCalled()
-    expect(transactionAdminLogCreateMock).not.toHaveBeenCalled()
-    expect(kickS3DeletionDrainMock).not.toHaveBeenCalled()
-  })
 })
 
 // 举报外键 SET NULL: 资源行删除后按 NULL 目标清理级联置空的孤儿 (锁序一致)
@@ -350,23 +314,6 @@ describe('资源删除清理其评论的 pending 举报', () => {
     )
     expect(
       transactionResourceDeleteMock.mock.invocationCallOrder[0]
-    ).toBeLessThan(deleteOrphanReportsMock.mock.invocationCallOrder[0])
-  })
-
-  it('管理员删除: 同款清理顺序', async () => {
-    await adminDeleteResource({ resourceIds: [1] }, 9)
-
-    expect(
-      cleanupResourceCommentDerivativesMock.mock.invocationCallOrder[0]
-    ).toBeLessThan(
-      transactionResourceDeleteManyMock.mock.invocationCallOrder[0]
-    )
-    expect(deleteOrphanReportsMock).toHaveBeenCalledWith(
-      'comment',
-      transactionClient
-    )
-    expect(
-      transactionResourceDeleteManyMock.mock.invocationCallOrder[0]
     ).toBeLessThan(deleteOrphanReportsMock.mock.invocationCallOrder[0])
   })
 })

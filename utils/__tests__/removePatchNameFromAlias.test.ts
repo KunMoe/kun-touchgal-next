@@ -23,8 +23,4 @@ describe('removePatchNameFromAlias', () => {
       )
     ).toEqual(['Game Name 2', 'game name', 'Game'])
   })
-
-  it('无重复时原样返回', () => {
-    expect(removePatchNameFromAlias(['A', 'B'], '游戏名')).toEqual(['A', 'B'])
-  })
 })

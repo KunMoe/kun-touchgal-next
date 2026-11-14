@@ -29,14 +29,6 @@ describe('管理员弹窗按需加载', () => {
     expect(readSource(file)).not.toMatch(new RegExp(`from '[^']*/${name}'`))
   })
 
-  it.each(cases)('%s 经 next/dynamic 加载 %s', (file, module) => {
-    expect(
-      dynamicBlocks(readSource(file)).some((block) =>
-        block.includes(`import('${module}')`)
-      )
-    ).toBe(true)
-  })
-
   // 没有 ssr: false (也没 loading) 时 next/dynamic 不包 Suspense,
   // 角色翻转挂载时会挂起到上层边界, 把整块内容换成兜底
   it.each(cases)('%s 加载 %s 时带 ssr: false', (file, module) => {

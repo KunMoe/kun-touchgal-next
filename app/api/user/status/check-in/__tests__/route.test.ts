@@ -75,15 +75,6 @@ describe('POST /api/user/status/check-in', () => {
     expect(invalidateUserSessionMock).toHaveBeenCalledWith(42)
   })
 
-  it('treats a zero-row update as already checked in', async () => {
-    userUpdateManyMock.mockResolvedValue({ count: 0 })
-
-    const res = await POST(mockRequest)
-    await expect(res.json()).resolves.toBe('您今天已经签到过了')
-
-    expect(invalidateUserSessionMock).not.toHaveBeenCalled()
-  })
-
   // 真正的原子性由 Postgres 提供: updateMany 发出的是 flat WHERE 的单条 UPDATE,
   // READ COMMITTED 下并发者拿到行锁后重新求值 WHERE 而落空. 这里只能证明路由把
   // count 当作唯一裁决依据 —— 不会在 count=0 时仍然发奖

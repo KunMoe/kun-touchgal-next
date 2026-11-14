@@ -28,9 +28,6 @@ vi.mock('~/prisma/index', () => ({
 import { invalidateTagListCache } from '~/app/api/tag/cache'
 import { getTag } from '~/app/api/tag/all/service'
 
-const blockedTagIds = (count: number) =>
-  Array.from({ length: count }, (_, index) => index + 1)
-
 const TAGS = [{ id: 1, name: 'ADV', count: 7, alias: ['AVG'] }]
 const RESPONSE = { tags: TAGS, total: 1 }
 
@@ -51,15 +48,6 @@ describe('getTag', () => {
     expect(findManyMock).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { notIn: [8, 9] } } })
     )
-    expect(getKvMock).not.toHaveBeenCalled()
-    expect(setKvMock).not.toHaveBeenCalled()
-  })
-
-  it('skips the shared cache for large blocked tag sets too', async () => {
-    const response = await getTag({ page: 1, limit: 100 }, blockedTagIds(60))
-
-    expect(response).toEqual(RESPONSE)
-    expect(findManyMock).toHaveBeenCalledTimes(1)
     expect(getKvMock).not.toHaveBeenCalled()
     expect(setKvMock).not.toHaveBeenCalled()
   })

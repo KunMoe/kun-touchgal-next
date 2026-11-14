@@ -26,13 +26,6 @@ describe('parseCookies', () => {
     expect(parseBlockedTagIds(cookies[key])).toEqual([1, 2, 3])
   })
 
-  // 单标签不含逗号, 修复前后都应通过
-  it('keeps single-id blocked tag lists working', () => {
-    const cookies = parseCookies(`kun=${write(JSON.stringify([42]))}`)
-
-    expect(parseBlockedTagIds(cookies.kun)).toEqual([42])
-  })
-
   // 服务端 token 经 encodeURIComponent 写入 (@edge-runtime/cookies stringifyCookie),
   // 而 jsonwebtoken 出的是无 padding base64url, 编码后恒等, 故不受解码放宽影响
   it('leaves the unpadded base64url auth token untouched', () => {

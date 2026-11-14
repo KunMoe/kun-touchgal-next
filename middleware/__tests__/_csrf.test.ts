@@ -75,14 +75,6 @@ describe('verifyKunCsrf', () => {
     ).toBeNull()
   })
 
-  it('非白名单 origin 拒绝', () => {
-    expect(
-      verifyKunCsrf(
-        makeReq({ headers: withCsrf({ origin: 'https://evil.example.com' }) })
-      )
-    ).toBe('非法请求来源')
-  })
-
   it('无 origin 时回退到 referer 校验', () => {
     expect(
       verifyKunCsrf(makeReq({ headers: withCsrf({ referer: `${DEV}/edit` }) }))

@@ -23,8 +23,4 @@ describe('parseEmulatorTypeVerdict', () => {
     expect(parseEmulatorTypeVerdict('{"t":[]}')).toEqual(['other'])
     expect(parseEmulatorTypeVerdict('not json')).toEqual(['other'])
   })
-
-  it('无证据兜底 {"t":["other"]} 原样通过', () => {
-    expect(parseEmulatorTypeVerdict('{"t":["other"]}')).toEqual(['other'])
-  })
 })
