@@ -48,7 +48,7 @@ pnpm test -- path/to/foo.test.ts
 pnpm typecheck               # tsc --noEmit
 pnpm lint                    # eslint . 全仓；规则只有 error / off，存量违规记在 eslint-suppressions.json
 pnpm lint:fix
-pnpm lint:prune              # 修掉存量违规后收紧基线，否则 lint 以退出码 2 失败
+pnpm lint:prune              # 修掉存量违规、删除或改名文件后收紧基线
 pnpm format                  # Prettier 写入全仓库，仅在明确需要时运行
 pnpm build                   # Next standalone；随后自动执行 postbuild
 pnpm build:sitemap
@@ -68,7 +68,7 @@ pnpm prisma:generate
 - 无 DI 容器：服务直接导入 `prisma`、Redis/S3 client。只有事务范围需要传播时才传 transaction client，不新增单实现接口或工厂。
 - 跨组件/持久化数据使用现有 Zustand store；页面局部状态继续使用 React state。服务端初始数据通过 `initial*` props 水合，避免首屏重复请求。
 - 搜索写入在数据库提交后调用现有 queue sync/remove helper；不要让 Meilisearch 可用性决定数据库写入是否成功。
-- 跨文件承重规则（如「zod 只许命名空间导入」）在 `lint/kunInvariants.mjs` 逐条登记为 `kun/inv-*`，每条带能报错的 bad 样例，由 `lint/__tests__/kunInvariants.test.ts` 执行。不要在 `eslint.config.mjs` 新增核心 `no-restricted-imports` / `no-restricted-syntax` 块：flat config 里同名规则带选项即整体替换，会静默关掉别处的禁令。新规则的存量违规要么清零，要么记入基线；`eslint-suppressions.json` 只减不增，修完跑 `pnpm lint:prune`。
+- 跨文件承重规则（如「zod 只许命名空间导入」）在 `lint/kunInvariants.mjs` 逐条登记为 `kun/inv-*`，每条带能报错的 bad 样例，由 `lint/__tests__/kunInvariants.test.ts` 执行。不要在 `eslint.config.mjs` 新增核心 `no-restricted-imports` / `no-restricted-syntax` 块：flat config 里同名规则带选项即整体替换，会静默关掉别处的禁令。新规则的存量违规要么清零，要么记入基线；`eslint-suppressions.json` 只减不增：修掉存量违规后不跑 `pnpm lint:prune`，lint 会以退出码 2 失败；基线按路径记账，删除文件后同样要跑 `pnpm lint:prune` 清掉残留条目（有测试守护），改名后旧额度不会转移到新路径，新路径上的存量要么修掉，要么用 `eslint <新路径> --suppress-rule <规则>` 重新登记。
 - 不要手改 `prisma/generated/prisma/`、`public/sitemap.xml` 或 `.next/standalone/`；修改源 schema、路由、MDX 或构建脚本后重新生成。
 
 ## Important Files

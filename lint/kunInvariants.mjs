@@ -62,19 +62,29 @@ export const KUN_INVARIANTS = [
   },
   {
     id: 'inv-store-01',
-    statement: 'zustand 的 use*Store() 必须带 selector',
-    reason: '不带 selector 会订阅整个 store, 任一字段变化都让调用组件重渲染',
+    statement:
+      'zustand 的 use*Store() 必须带 selector, 且不能是返回整个 state 的恒等 selector',
+    reason:
+      '不带 selector 或写成 (state) => state 都会订阅整个 store, 任一字段变化都让调用组件重渲染',
     removeWhen: '全仓不再使用 zustand',
     enforce: {
       kind: 'syntax',
       selectors: [
-        'CallExpression[callee.name=/^use[A-Z]\\w*Store$/][arguments.length=0]'
+        'CallExpression[callee.name=/^use[A-Z]\\w*Store$/][arguments.length=0]',
+        // 函数体是裸标识符的箭头函数: 要么原样返回参数, 要么返回与 store 无关的外部变量
+        "CallExpression[callee.name=/^use[A-Z]\\w*Store$/] > ArrowFunctionExpression[body.type='Identifier']"
       ]
     },
     examples: {
       file: 'components/kun/KunInvariantExample.tsx',
-      bad: ['const state = useUserStore()'],
-      good: ['const uid = useUserStore((state) => state.user.uid)']
+      bad: [
+        'const state = useUserStore()',
+        'const state = useUserStore((state) => state)'
+      ],
+      good: [
+        'const uid = useUserStore((state) => state.user.uid)',
+        'const [uid, name] = useUserStore(useShallow((state) => [state.user.uid, state.user.name]))'
+      ]
     }
   },
   {
@@ -167,14 +177,17 @@ export const KUN_INVARIANTS = [
 ]
 
 const formatMessage = (/** @type {KunInvariant} */ inv) =>
-  `${inv.id}${inv.aliases?.length ? ` (${inv.aliases.join(', ')})` : ''}: ${inv.statement}。理由: ${inv.reason}; 移除条件: ${inv.removeWhen}`
+  `${inv.id}${inv.aliases?.length ? `（${inv.aliases.join('、')}）` : ''}：${inv.statement}。理由：${inv.reason}；移除条件：${inv.removeWhen}`
+
+// 成员名可以是标识符, 也可以是字符串字面量 (import { 'a-b' as x })
+const nameOf = (node) => node?.name ?? node?.value
 
 const importedName = (specifier) =>
   specifier.type === 'ImportDefaultSpecifier'
     ? 'default'
     : specifier.type === 'ImportNamespaceSpecifier'
       ? '*'
-      : (specifier.imported ?? specifier.local)?.name
+      : nameOf(specifier.imported ?? specifier.local)
 
 // 只用 context.report 与 selector 两个稳定 API。import 类与核心 no-restricted-imports
 // 一样不检查 ImportExpression, 所以「只许经 import() 懒加载」可以直接表达
@@ -196,18 +209,30 @@ export const createKunInvariantRule = (inv) => ({
       const matched = enforce.sources.some((candidate) =>
         typeof candidate === 'string'
           ? candidate === source
-          : candidate.test(source)
+          : // search 不读写 lastIndex, 带 g / y 标志的正则也不会跨调用带状态
+            typeof source === 'string' && source.search(candidate) !== -1
       )
       if (!matched) {
         return
       }
-      const isTypeOnly = (node.importKind ?? node.exportKind) === 'type'
+      const specifiers = node.specifiers ?? []
+      // 整句 `import type` 与全部成员都带 type 的行内写法都会被编译器整句擦除
+      const isTypeOnly =
+        (node.importKind ?? node.exportKind) === 'type' ||
+        (specifiers.length > 0 &&
+          specifiers.every(
+            (specifier) =>
+              (specifier.importKind ?? specifier.exportKind) === 'type'
+          ))
       if (enforce.allowTypeImports && isTypeOnly) {
         return
       }
+      // 只禁部分成员时: `export * from` 会把被禁成员一并转出去, 照报;
+      // `import * as ns` 不报 —— 命名空间导入正是 C9 要求的写法
       if (
         enforce.importNames &&
-        !(node.specifiers ?? []).some((specifier) =>
+        node.type !== 'ExportAllDeclaration' &&
+        !specifiers.some((specifier) =>
           enforce.importNames.includes(importedName(specifier))
         )
       ) {

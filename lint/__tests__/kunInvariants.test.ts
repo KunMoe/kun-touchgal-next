@@ -1,7 +1,10 @@
 import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ESLint } from 'eslint'
 import { describe, expect, it } from 'vitest'
+import eslintConfig from '../../eslint.config.mjs'
 import { KUN_INVARIANTS, createKunInvariantRule } from '../kunInvariants.mjs'
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
@@ -139,11 +142,48 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
     expect(unknown).toEqual([])
   })
 
-  it('每条针对 kun/inv-* 的 eslint-disable 都带 -- 原因', () => {
+  // 任何配置块都不得把某条不变量关掉或降级, 哪怕只对一部分文件: 上面那条只查了
+  // 示例文件所在的路径, 这条查的是组合后的每一个配置对象
+  it('没有配置块把 kun/* 规则设为 error 以外的级别', () => {
+    const downgraded = (
+      eslintConfig as Array<{
+        files?: unknown
+        rules?: Record<string, unknown>
+      }>
+    ).flatMap((config) =>
+      Object.entries(config.rules ?? {})
+        .filter(([rule, value]) => {
+          const severity = Array.isArray(value) ? value[0] : value
+          return (
+            rule.startsWith('kun/') && severity !== 'error' && severity !== 2
+          )
+        })
+        .map(([rule, value]) => ({ rule, value, files: config.files }))
+    )
+    expect(downgraded).toEqual([])
+  })
+
+  // 行内指令 (eslint-disable* 与 /* eslint rule: off */) 提到 kun/inv-* 时, 原因必须
+  // 与指令写在同一行
+  it('每条针对 kun/inv-* 的行内 eslint 指令都带 -- 原因', () => {
     const withoutReason = grepRepo('kun/inv-').filter(
-      (line) => /eslint-disable/.test(line) && !/\s--\s+\S/.test(line)
+      (line) => /(\/\/|\/\*)\s*eslint\b/.test(line) && !/\s--\s+\S/.test(line)
     )
     expect(withoutReason).toEqual([])
+  })
+})
+
+// 基线按「路径 + 规则 + 条数」记账。删掉文件后 lint 不会报残留的条目, 日后同路径的
+// 新文件会白得这些额度; 所以删文件、改名之后必须跑 pnpm lint:prune
+describe('lint 抑制基线', () => {
+  it('基线里的每个路径都还存在', () => {
+    const suppressions = JSON.parse(
+      readFileSync(join(repoRoot, 'eslint-suppressions.json'), 'utf-8')
+    ) as Record<string, unknown>
+    const missing = Object.keys(suppressions).filter(
+      (file) => !existsSync(join(repoRoot, file))
+    )
+    expect(missing).toEqual([])
   })
 })
 
@@ -190,6 +230,7 @@ describe('kun 不变量规则工厂', { timeout: TIMEOUT }, () => {
     expect(await count(linter, "import { b } from '@scope/anything'")).toBe(1)
     expect(await count(linter, "export { b } from 'exact-package'")).toBe(1)
     expect(await count(linter, "export * from 'exact-package'")).toBe(1)
+    expect(await count(linter, "import 'exact-package'")).toBe(1)
     expect(await count(linter, 'export const local = 1')).toBe(0)
     expect(
       await count(linter, "export const lazy = () => import('exact-package')")
@@ -208,6 +249,13 @@ describe('kun 不变量规则工厂', { timeout: TIMEOUT }, () => {
     expect(await count(strict, typeImport)).toBe(1)
     expect(await count(lenient, typeImport)).toBe(0)
     expect(await count(lenient, "import { v } from 'exact-package'")).toBe(1)
+    // 全部成员都带 type 的行内写法同样被整句擦除; 混有值成员则不放行
+    expect(
+      await count(lenient, "import { type A, type B } from 'exact-package'")
+    ).toBe(0)
+    expect(
+      await count(lenient, "import { type A, v } from 'exact-package'")
+    ).toBe(1)
   })
 
   it('importNames 只拦指定成员', async () => {
@@ -228,6 +276,23 @@ describe('kun 不变量规则工厂', { timeout: TIMEOUT }, () => {
       0
     )
     expect(await count(linter, "import * as all from 'exact-package'")).toBe(0)
+    // 字符串字面量成员名、以及会把被禁成员一并转出去的 export *
+    expect(
+      await count(linter, "import { 'banned' as ok } from 'exact-package'")
+    ).toBe(1)
+    expect(await count(linter, "export * from 'exact-package'")).toBe(1)
+    expect(await count(linter, "export { allowed } from 'exact-package'")).toBe(
+      0
+    )
+  })
+
+  it('带 g 标志的正则来源不跨调用带状态', async () => {
+    const linter = linterFor({ kind: 'import', sources: [/^stateful-/g] })
+    const code = [1, 2, 3, 4]
+      .map((n) => `import m${n} from 'stateful-package'`)
+      .join('\n')
+
+    expect(await count(linter, code)).toBe(4)
   })
 
   it('报错信息带 id、别名、理由与移除条件', async () => {
@@ -243,7 +308,7 @@ describe('kun 不变量规则工厂', { timeout: TIMEOUT }, () => {
     )
 
     expect(report.message).toBe(
-      'inv-probe-01 (P1): statement。理由: reason; 移除条件: never'
+      'inv-probe-01（P1）：statement。理由：reason；移除条件：never'
     )
   })
 })
