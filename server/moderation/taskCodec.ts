@@ -104,8 +104,9 @@ export const encodeModerationPayload = (body: ModerationTaskBody) => {
     v: 2,
     segments: body.subject.segments,
     text: legacyPayloadText(body.subject),
-    ...('name' in body ? { name: body.name } : {}),
-    ...('bio' in body ? { bio: body.bio } : {})
+    // 附带值与各段一样要 well-formed: 一个孤立代理就会让整份载荷写不进 jsonb
+    ...('name' in body ? { name: body.name.toWellFormed() } : {}),
+    ...('bio' in body ? { bio: body.bio.toWellFormed() } : {})
   }
 }
 

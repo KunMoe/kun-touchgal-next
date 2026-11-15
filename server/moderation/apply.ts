@@ -188,6 +188,14 @@ export const applyModerationVerdict = async (
     )
   }
 
+  // 待生效的新签名只暂存在载荷里: 读不出来就无从通过。与头像一样在认领之前拒绝执行,
+  // 任务留在原状态, 否则会把用户的签名清成空串
+  if (!task.dry_run && task.content_type === 'bio' && approved && !manual) {
+    if (!text) {
+      throw new Error(MODERATION_PAYLOAD_UNREADABLE)
+    }
+  }
+
   let claimed = false
   let resourcePatchId: number | null = null
   let resourceUniqueId: string | null = null

@@ -553,6 +553,45 @@ describe('applyModerationVerdict: 载荷解码', () => {
     )
   })
 
+  // 待生效的新签名只在载荷里: 读不出来还照常通过, 会把用户的签名清成空串
+  it('签名载荷不可读时拒绝通过, 任务保持未认领', async () => {
+    await expect(
+      applyModerationVerdict({
+        task: ratingTask({
+          content_type: 'bio',
+          content_id: null,
+          patch_id: null,
+          payload: { v: 2, segments: 'broken', bio: 'new bio' }
+        }),
+        approved: true,
+        fromStatus: 'manual'
+      })
+    ).rejects.toThrow('载荷无法解析')
+
+    expect(claimMock).not.toHaveBeenCalled()
+    expect(updateUserMock).not.toHaveBeenCalled()
+  })
+
+  it('签名载荷不可读时仍可拒绝: 清审核标记, 保留原签名', async () => {
+    await expect(
+      applyModerationVerdict({
+        task: ratingTask({
+          content_type: 'bio',
+          content_id: null,
+          patch_id: null,
+          payload: { v: 2, segments: 'broken', bio: 'new bio' }
+        }),
+        approved: false,
+        fromStatus: 'manual'
+      })
+    ).resolves.toBe(true)
+
+    expect(updateUserMock).toHaveBeenCalledWith({
+      where: { id: 100 },
+      data: { bio_status: 0 }
+    })
+  })
+
   it('头像载荷不可读时拒绝通过, 任务保持未认领', async () => {
     await expect(
       applyModerationVerdict({

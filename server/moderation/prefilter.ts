@@ -6,13 +6,18 @@ import {
 } from '~/constants/moderation'
 import { stripInvisible } from '~/utils/text/unicode'
 
-// 先剥不可见字符: 零宽字符、韩文填充符之类插在违禁词中间, 页面显示与黑名单词
-// 完全一致, 不剥就能让黑名单失配
+// 黑名单匹配用的归一化。先剥不可见字符: 零宽字符、韩文填充符之类插在违禁词中间,
+// 页面显示与黑名单词完全一致, 不剥就能让黑名单失配
 export const normalizeModerationText = (text: string) =>
   stripInvisible(text).normalize('NFKC').toLowerCase().replace(/\s+/g, '')
 
-export const hashModerationText = (normalizedText: string) =>
-  createHash('sha256').update(normalizedText).digest('hex')
+// 裁决缓存键。只抹平大小写、全半角与空白, 刻意不剥不可见字符: 双向控制符会改变显示
+// 顺序 (U+202E 后面的「信微加」显示为「加微信」), 缓存键若把它们也剥掉, 先让乱序的
+// 无害文本通过并进缓存, 再发带控制符的版本就能直接命中旧裁决, 模型根本看不到
+export const hashModerationText = (text: string) =>
+  createHash('sha256')
+    .update(text.normalize('NFKC').toLowerCase().replace(/\s+/g, ''))
+    .digest('hex')
 
 // strip base64 blobs / html tags and collapse whitespace, then keep only the
 // head and tail of overlong text (spam contact info clusters at both ends)

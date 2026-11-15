@@ -1,20 +1,19 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminModerationPaginationSchema } from '~/validations/admin'
-import {
-  MODERATION_PAYLOAD_UNREADABLE,
-  decodeModerationTask
-} from '~/server/moderation/taskCodec'
+import { decodeModerationTask } from '~/server/moderation/taskCodec'
 import type { AdminModerationTask } from '~/types/api/admin'
 
-// 管理端只需要展示用的几个字段; 解不出来的任务渲染占位, 不让整页失败
+// 管理端只需要展示用的几个字段。解不出来的任务不带任何文本 (卡片显示「(无文本)」,
+// 也就没有「加入黑名单」按钮可点), 不让整页失败; 具体原因在 worker 转人工时写入
+// reject_reason
 const toAdminPayload = (task: {
   content_type: string
   payload: unknown
 }): AdminModerationTask['payload'] => {
   const body = decodeModerationTask(task)
   if (!body) {
-    return { text: `(${MODERATION_PAYLOAD_UNREADABLE})` }
+    return {}
   }
   if (body.contentType === 'avatar') {
     return {

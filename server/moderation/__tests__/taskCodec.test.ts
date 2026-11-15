@@ -49,6 +49,29 @@ describe('encodeModerationPayload', () => {
     ).toMatchObject({ v: 2, bio: '新签名', text: '新签名' })
   })
 
+  it('附带的资源名与签名里的孤立代理替换为 U+FFFD', () => {
+    expect(
+      encodeModerationPayload({
+        contentType: 'bio',
+        subject: bioSubject('a\uD83Db'),
+        bio: 'a\uD83Db'
+      })
+    ).toMatchObject({ bio: 'a\uFFFDb' })
+    expect(
+      JSON.stringify(
+        encodeModerationPayload({
+          contentType: 'resource',
+          subject: resourceSubject({
+            name: 'N\uDE00',
+            note: '',
+            modelName: ''
+          }),
+          name: 'N\uDE00'
+        })
+      )
+    ).not.toMatch(/\\ud[89a-f]/i)
+  })
+
   it('头像载荷原样落库', () => {
     expect(
       encodeModerationPayload({ contentType: 'avatar', payload: avatarPayload })

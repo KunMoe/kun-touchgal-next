@@ -128,7 +128,7 @@ export const processTextTask = async (
   }
 
   const { contentType } = body
-  const hash = hashModerationText(normalized)
+  const hash = hashModerationText(body.text)
   const cached = await getCachedVerdict(contentType, hash)
   if (cached) {
     await applyAiResult(task, {

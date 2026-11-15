@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   filterBlacklistPatterns,
+  hashModerationText,
   matchBlacklist,
   normalizeModerationText,
   prepareModerationText
@@ -103,6 +104,28 @@ describe('normalizeModerationText (黑名单与缓存键的归一化)', () => {
 
   it('剥掉不可见字符', () => {
     expect(normalizeModerationText('加\u200B微\u3164信\uFFF9')).toBe('加微信')
+  })
+})
+
+describe('hashModerationText (裁决缓存键)', () => {
+  it('只差大小写、全半角与空白的文本共用一个键', () => {
+    expect(hashModerationText('Hello  World')).toBe(
+      hashModerationText('ｈｅｌｌｏ\nworld')
+    )
+    expect(hashModerationText('Hello World')).not.toBe(
+      hashModerationText('Hello Word')
+    )
+  })
+
+  // U+202E 之后的文字从右往左显示: 「信微加」读作「加微信」。两者若共用缓存键,
+  // 先发乱序的无害版本骗过模型, 再发带控制符的版本就能直接命中旧裁决
+  it('不可见字符不被抹掉: 带双向控制符的文本有自己的键', () => {
+    expect(hashModerationText('\u202E信微加')).not.toBe(
+      hashModerationText('信微加')
+    )
+    expect(hashModerationText('加\u200B微信')).not.toBe(
+      hashModerationText('加微信')
+    )
   })
 })
 

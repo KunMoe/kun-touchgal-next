@@ -9,7 +9,7 @@ describe('stripInvisible', () => {
     ['BOM', '\uFEFF'],
     ['双向覆写 RLO', '\u202E'],
     ['INTERLINEAR ANCHOR (只属于 Cf)', '\uFFF9'],
-    ['ARABIC NUMBER SIGN (只属于 Cf)', '\u0600'],
+    ['ARABIC NUMBER SIGN (只属于 Cf, 带字形的前置连接符)', '\u0600'],
     ['HANGUL FILLER (只属于 Default_Ignorable)', '\u3164'],
     ['CGJ (只属于 Default_Ignorable)', '\u034F'],
     ['变体选择符 VS16', '\uFE0F'],

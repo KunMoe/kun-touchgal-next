@@ -140,6 +140,23 @@ describe('processTextTask: 裁决缓存', () => {
 
     expect(moderateTextMock).toHaveBeenCalledTimes(1)
   })
+
+  // 黑名单要剥不可见字符才抓得住拆词, 缓存键则不能剥: 否则带双向控制符 (显示顺序
+  // 被翻转) 的文本会直接命中乱序版本的旧裁决
+  it('缓存键保留不可见字符, 黑名单匹配照样剥掉它们', async () => {
+    await processTextTask(makeTask('comment', { text: '\u202E信微加' }), [])
+    await processTextTask(makeTask('comment', { text: '信微加' }), [])
+
+    expect(getKvMock.mock.calls[0][0]).not.toBe(getKvMock.mock.calls[1][0])
+
+    vi.clearAllMocks()
+    const task = makeTask('comment', { text: '加\u200B微信' })
+    await processTextTask(task, [{ pattern: '加微信', content_types: [] }])
+
+    expect(applyModerationVerdictMock).toHaveBeenCalledWith(
+      expect.objectContaining({ rejectCode: 'BLK' })
+    )
+  })
 })
 
 describe('processTextTask: 调用模型', () => {

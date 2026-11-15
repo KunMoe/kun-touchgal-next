@@ -156,7 +156,8 @@ describe('getModerationTasks', () => {
     })
   })
 
-  it('解不出来的载荷渲染占位, 不让整页失败', async () => {
+  // 不带 text: 卡片显示「(无文本)」, 也不会出现能把占位文字加进黑名单的按钮
+  it('解不出来的载荷不带任何文本, 不让整页失败', async () => {
     findTasksMock.mockResolvedValue([
       { ...baseTask, payload: { v: 2, segments: 'broken' } },
       { ...baseTask, id: 2, content_type: 'avatar', payload: null }
@@ -164,9 +165,6 @@ describe('getModerationTasks', () => {
 
     const { tasks } = await getModerationTasks(input)
 
-    expect(tasks.map((task) => task.payload)).toEqual([
-      { text: '(载荷无法解析)' },
-      { text: '(载荷无法解析)' }
-    ])
+    expect(tasks.map((task) => task.payload)).toEqual([{}, {}])
   })
 })
