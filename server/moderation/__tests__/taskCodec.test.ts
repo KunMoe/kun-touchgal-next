@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { prepareModerationText } from '../prefilter'
 import { bioSubject, commentSubject, resourceSubject } from '../subject'
 import { decodeModerationTask, encodeModerationPayload } from '../taskCodec'
 
@@ -13,7 +12,7 @@ const avatarPayload = {
 }
 
 describe('encodeModerationPayload', () => {
-  it('文本任务落库 v2: 原始段 + 过渡期双写的旧平铺文本', () => {
+  it('文本任务落库 v2: 只存用户提交的原始段, 不存任何派生文本', () => {
     expect(
       encodeModerationPayload({
         contentType: 'comment',
@@ -27,8 +26,7 @@ describe('encodeModerationPayload', () => {
           kind: 'markdown-comment',
           value: '看这里 <加群 987654321>'
         }
-      ],
-      text: '看这里'
+      ]
     })
   })
 
@@ -46,7 +44,11 @@ describe('encodeModerationPayload', () => {
         subject: bioSubject('新签名'),
         bio: '新签名'
       })
-    ).toMatchObject({ v: 2, bio: '新签名', text: '新签名' })
+    ).toEqual({
+      v: 2,
+      segments: [{ label: '签名', kind: 'plain', value: '新签名' }],
+      bio: '新签名'
+    })
   })
 
   it('附带的资源名与签名里的孤立代理替换为 U+FFFD', () => {
@@ -77,43 +79,6 @@ describe('encodeModerationPayload', () => {
       encodeModerationPayload({ contentType: 'avatar', payload: avatarPayload })
     ).toBe(avatarPayload)
   })
-
-  // 引入主体之前, 资源送审文本由调用点手写模板拼出。双写的 text 必须与它逐字相同,
-  // 模型输入与裁决缓存键才不变
-  it.each([
-    ['只有标题', 'Patch v1', '', ''],
-    ['标题与介绍', 'Patch v1', '第一行\n\n第二行', ''],
-    ['带模型型号', 'Patch v1', '介绍', 'GPT-4o'],
-    ['只有介绍', '', '只有介绍', ''],
-    ['只有模型型号', '', '', 'Claude'],
-    ['标题是纯空白', '  ', '介绍', ''],
-    ['含尖括号与伪 base64', '<b>标题</b>', 'data:1;base64,123 <群>', ''],
-    ['介绍超长触发头尾截断', '标题', '字'.repeat(13000), '']
-  ])('资源的双写文本与旧模板逐字相同: %s', (_name, name, note, modelName) => {
-    const legacy = prepareModerationText(
-      `标题: ${name}\n介绍: ${note}${modelName ? `\n模型型号: ${modelName}` : ''}`
-    )
-
-    expect(
-      encodeModerationPayload({
-        contentType: 'resource',
-        subject: resourceSubject({ name, note, modelName }),
-        name
-      })
-    ).toMatchObject({ text: legacy })
-  })
-
-  it.each([
-    ['评论', commentSubject('  多行\n评论 <x>  ')],
-    ['签名', bioSubject('个性 签名')]
-  ])('单段内容的双写文本就是预处理后的原文: %s', (_name, subject) => {
-    expect(
-      encodeModerationPayload({
-        contentType: subject.contentType,
-        subject
-      } as Parameters<typeof encodeModerationPayload>[0])
-    ).toMatchObject({ text: prepareModerationText(subject.segments[0].value) })
-  })
 })
 
 describe('decodeModerationTask', () => {
@@ -139,57 +104,50 @@ describe('decodeModerationTask', () => {
     expect(decode('resource', payload)).toEqual({
       contentType: 'resource',
       segments: subject.segments,
-      text: '标题: Patch v1 介绍: 介绍',
       name: 'Patch v1'
     })
   })
 
-  it('v2 缺 text (停止双写之后的任务) 时由段重算旧平铺文本', () => {
-    expect(
-      decode('resource', {
-        v: 2,
-        segments: [
-          { label: '标题', kind: 'plain', value: 'Patch v1' },
-          { label: '模型型号', kind: 'plain', value: 'GPT' }
-        ],
-        name: 'Patch v1'
-      })
-    ).toMatchObject({ text: '标题: Patch v1 介绍: 模型型号: GPT' })
+  it('过渡期任务里双写的旧平铺文本被忽略, 只认原始段', () => {
     expect(
       decode('comment', {
         v: 2,
         segments: [
           { label: '评论', kind: 'markdown-comment', value: 'a <b> c' }
-        ]
+        ],
+        text: 'a c'
       })
-    ).toMatchObject({ text: 'a c' })
+    ).toEqual({
+      contentType: 'comment',
+      segments: [{ label: '评论', kind: 'markdown-comment', value: 'a <b> c' }]
+    })
   })
 
-  it('v1 (只有平铺文本) 解码为单个 plain 段, text 原样保留', () => {
+  it('v1 (只有降噪后的平铺文本) 解码为单个 plain 段', () => {
     expect(decode('comment', { text: '旧评论' })).toEqual({
       contentType: 'comment',
-      segments: [{ label: '正文', kind: 'plain', value: '旧评论' }],
-      text: '旧评论'
+      segments: [{ label: '正文', kind: 'plain', value: '旧评论' }]
     })
-    expect(
-      decode('resource', { text: '标题: A 介绍: B', name: 'A' })
-    ).toMatchObject({ text: '标题: A 介绍: B', name: 'A' })
-    expect(decode('bio', { text: '签名', bio: '签 名' })).toMatchObject({
-      text: '签名',
+    expect(decode('resource', { text: '标题: A 介绍: B', name: 'A' })).toEqual({
+      contentType: 'resource',
+      segments: [{ label: '正文', kind: 'plain', value: '标题: A 介绍: B' }],
+      name: 'A'
+    })
+    expect(decode('bio', { text: '签名', bio: '签 名' })).toEqual({
+      contentType: 'bio',
+      segments: [{ label: '正文', kind: 'plain', value: '签名' }],
       bio: '签 名'
     })
   })
 
-  it('v1 缺 text 或为 null 时按空串处理, 与引入编解码前的 ?? 一致', () => {
+  it('v1 缺 text 或为 null 时没有任何段', () => {
     expect(decode('comment', {})).toEqual({
       contentType: 'comment',
-      segments: [],
-      text: ''
+      segments: []
     })
     expect(decode('resource', { text: null, name: null })).toEqual({
       contentType: 'resource',
-      segments: [],
-      text: ''
+      segments: []
     })
   })
 

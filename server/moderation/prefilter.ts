@@ -1,9 +1,4 @@
 import { createHash } from 'crypto'
-import {
-  MODERATION_TEXT_HEAD_LENGTH,
-  MODERATION_TEXT_MAX_LENGTH,
-  MODERATION_TEXT_TAIL_LENGTH
-} from '~/constants/moderation'
 import { stripInvisible } from '~/utils/text/unicode'
 
 // 黑名单匹配用的归一化。先剥不可见字符: 零宽字符、韩文填充符之类插在违禁词中间,
@@ -18,21 +13,6 @@ export const hashModerationText = (text: string) =>
   createHash('sha256')
     .update(text.normalize('NFKC').toLowerCase().replace(/\s+/g, ''))
     .digest('hex')
-
-// strip base64 blobs / html tags and collapse whitespace, then keep only the
-// head and tail of overlong text (spam contact info clusters at both ends)
-export const prepareModerationText = (raw: string) => {
-  const compact = raw
-    .replace(/data:[a-z0-9/+.-]+;base64,[a-z0-9+/=]+/gi, '[图片]')
-    .replace(/<[^>]{0,200}?>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  if (compact.length <= MODERATION_TEXT_MAX_LENGTH) {
-    return compact
-  }
-  return `${compact.slice(0, MODERATION_TEXT_HEAD_LENGTH)}\n…\n${compact.slice(-MODERATION_TEXT_TAIL_LENGTH)}`
-}
 
 export interface ModerationBlacklistEntry {
   pattern: string

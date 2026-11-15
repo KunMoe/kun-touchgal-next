@@ -86,7 +86,7 @@ type ChatMessageContent =
       | { type: 'image_url'; image_url: { url: string } }
     >
 
-const requestChatCompletion = async (
+export const requestChatCompletion = async (
   model: string,
   messages: Array<{ role: 'system' | 'user'; content: ChatMessageContent }>,
   reasoningEffort?: string
@@ -221,9 +221,11 @@ const requestChatCompletion = async (
   }
 }
 
+// userMessage 由 buildModerationUserMessage 生成 (server/moderation/prompt.ts),
+// 这里原样作为用户消息发出, 不再做任何包裹或拼接
 export const moderateText = async (
   contentType: Exclude<ModerationContentType, 'avatar'>,
-  text: string
+  userMessage: string
 ) => {
   const model = process.env.MODERATION_AI_TEXT_MODEL
   if (!model) {
@@ -235,7 +237,7 @@ export const moderateText = async (
     model,
     [
       { role: 'system', content: MODERATION_TEXT_SYSTEM_PROMPT[contentType] },
-      { role: 'user', content: `<content>${text}</content>` }
+      { role: 'user', content: userMessage }
     ],
     process.env.MODERATION_AI_TEXT_REASONING_EFFORT
   )

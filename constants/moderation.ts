@@ -141,11 +141,4 @@ export const MODERATION_AI_TIMEOUT_MS = 360 * 1000
 // tx (各受自身 CPU / Prisma 默认超时约束), 660s 余量足以覆盖
 export const MODERATION_S3_TIMEOUT_MS = 60 * 1000
 
-// 上限覆盖站内最长的可送审内容 (评论与资源介绍各 10007 字符, 加资源标题 300 字符与
-// 字段前缀), 因此正常内容整段送审、不做取舍. 头尾截断只作极端兜底 (未来新增字段拼接
-// 出超长文本时不至于把整个请求撑爆), 仍保留头尾而非纯截头: 引流信息惯于贴在最末
-export const MODERATION_TEXT_MAX_LENGTH = 12000
-export const MODERATION_TEXT_HEAD_LENGTH = 10000
-export const MODERATION_TEXT_TAIL_LENGTH = 2000
-
 export const MODERATION_VERDICT_CACHE_DURATION = 30 * 24 * 60 * 60

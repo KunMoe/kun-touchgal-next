@@ -17,7 +17,10 @@ import {
   MODERATION_VERDICT_CACHE_DURATION
 } from '~/constants/moderation'
 import type { ModerationTextType } from '~/constants/moderation'
-import { MODERATION_PROMPT_VERSION } from '~/server/moderation/prompt'
+import {
+  MODERATION_PROMPT_VERSION,
+  buildModerationUserMessage
+} from '~/server/moderation/prompt'
 import {
   ModerationConfigError,
   moderateImage,
@@ -43,6 +46,7 @@ import {
   MODERATION_PAYLOAD_UNREADABLE,
   decodeModerationTask
 } from '~/server/moderation/taskCodec'
+import { buildAuditView } from '~/server/moderation/view'
 import { withTaskLock } from './withTaskLock'
 
 const MODERATION_LOCK_KEY = 'moderation:worker:lock'
@@ -110,12 +114,18 @@ export const processTextTask = async (
     await markTaskManual(task.id, MODERATION_PAYLOAD_UNREADABLE)
     return
   }
-  const normalized = normalizeModerationText(body.text)
+  // 落库的是原始段; 读者看到的形态 (渲染投影 + 原文) 在这里现算, 黑名单、缓存键、
+  // 模型三者读的是同一份视图
+  const view = await buildAuditView(body)
 
-  const blacklistHit = matchBlacklist(
-    normalized,
-    filterBlacklistPatterns(blacklistEntries, task.content_type)
-  )
+  const patterns = filterBlacklistPatterns(blacklistEntries, task.content_type)
+  const blacklistHit = view
+    .flatMap((segment) =>
+      segment.source === undefined
+        ? [segment.shown]
+        : [segment.shown, segment.source]
+    )
+    .some((text) => matchBlacklist(normalizeModerationText(text), patterns))
   if (blacklistHit) {
     await applyModerationVerdict({
       task,
@@ -128,7 +138,8 @@ export const processTextTask = async (
   }
 
   const { contentType } = body
-  const hash = hashModerationText(body.text)
+  const userMessage = buildModerationUserMessage(view)
+  const hash = hashModerationText(userMessage)
   const cached = await getCachedVerdict(contentType, hash)
   if (cached) {
     await applyAiResult(task, {
@@ -140,7 +151,7 @@ export const processTextTask = async (
     return
   }
 
-  const result = await moderateText(contentType, body.text)
+  const result = await moderateText(contentType, userMessage)
   await cacheVerdict(contentType, hash, result.verdict)
   await applyAiResult(task, result)
 }

@@ -21,7 +21,16 @@ const toAdminPayload = (task: {
       archiveLink: body.payload.archiveLink
     }
   }
-  return { text: body.text, name: body.name, bio: body.bio }
+  // 展示的是用户提交的原文段, 不是任何派生文本: 管理员看到的与「加入黑名单」预填的
+  // 都是读者能看到的字符。多段时逐行带上字段名; 只有一段 (评论、评价、签名与引入
+  // 主体之前的旧任务) 时就是那段文字本身
+  const text =
+    body.segments.length === 1
+      ? body.segments[0].value
+      : body.segments
+          .map((segment) => `${segment.label}: ${segment.value}`)
+          .join('\n')
+  return { text, name: body.name, bio: body.bio }
 }
 
 export const getModerationTasks = async (

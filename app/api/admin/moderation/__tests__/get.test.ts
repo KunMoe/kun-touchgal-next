@@ -100,17 +100,37 @@ describe('getModerationTasks', () => {
     expect(tasks[1].patch).toBeNull()
   })
 
-  it('载荷经解码后只下发展示字段: 文本任务给 text / name / bio', async () => {
+  it('文本任务下发用户提交的原文: 单段就是那段文字, 多段逐行带字段名', async () => {
     findTasksMock.mockResolvedValue([
-      { ...baseTask, payload: { text: 'hello' } },
+      {
+        ...baseTask,
+        payload: {
+          v: 2,
+          segments: [
+            {
+              label: '评论',
+              kind: 'markdown-comment',
+              value: '看这里 <加群 987654321>'
+            }
+          ]
+        }
+      },
       {
         ...baseTask,
         id: 2,
         content_type: 'resource',
         payload: {
           v: 2,
-          segments: [{ label: '标题', kind: 'plain', value: 'Patch <v1>' }],
-          text: '标题: Patch 介绍:',
+          segments: [
+            { label: '标题', kind: 'plain', value: 'Patch <v1>' },
+            {
+              label: '介绍',
+              kind: 'markdown-standard',
+              value: '第一行\n第二行'
+            }
+          ],
+          // 过渡期双写的降噪文本, 不再展示
+          text: '标题: Patch 介绍: 第一行 第二行',
           name: 'Patch <v1>'
         }
       },
@@ -118,16 +138,41 @@ describe('getModerationTasks', () => {
         ...baseTask,
         id: 3,
         content_type: 'bio',
-        payload: { text: '签名', bio: '签 名' }
+        payload: {
+          v: 2,
+          segments: [{ label: '签名', kind: 'plain', value: '签 名' }],
+          bio: '签 名'
+        }
       }
     ])
 
     const { tasks } = await getModerationTasks(input)
 
     expect(tasks.map((task) => task.payload)).toEqual([
+      { text: '看这里 <加群 987654321>' },
+      { text: '标题: Patch <v1>\n介绍: 第一行\n第二行', name: 'Patch <v1>' },
+      { text: '签 名', bio: '签 名' }
+    ])
+  })
+
+  it('引入主体之前的旧任务只有降噪后的平铺文本, 原样展示', async () => {
+    findTasksMock.mockResolvedValue([
+      { ...baseTask, payload: { text: 'hello' } },
+      {
+        ...baseTask,
+        id: 2,
+        content_type: 'resource',
+        payload: { text: '标题: A 介绍: B', name: 'A' }
+      },
+      { ...baseTask, id: 3, payload: {} }
+    ])
+
+    const { tasks } = await getModerationTasks(input)
+
+    expect(tasks.map((task) => task.payload)).toEqual([
       { text: 'hello' },
-      { text: '标题: Patch 介绍:', name: 'Patch <v1>' },
-      { text: '签名', bio: '签 名' }
+      { text: '标题: A 介绍: B', name: 'A' },
+      { text: '' }
     ])
   })
 

@@ -1,6 +1,12 @@
 import type { ModerationTextType } from '~/constants/moderation'
 import type { PatchResource, PatchResourceLink } from '~/types/api/patch'
 import { stripInvisible } from '~/utils/text/unicode'
+import {
+  patchCommentCreateSchema,
+  patchRatingCreateSchema,
+  patchResourceCreateSchema
+} from '~/validations/patch'
+import { bioSchema } from '~/validations/user'
 
 // 送审主体: 「哪些对外字段送审、字段怎样变化才重审、以什么形态交给黑名单与模型」
 // 三件事共用的唯一定义。纯模块, 不得 import prisma / redis; 客户端只能 import type
@@ -26,7 +32,20 @@ export interface ModerationSubject<
 interface AuditPolicy {
   audit: SegmentKind
   label: string
+  // 该字段写入校验允许的最大长度, 送审时每段各自按它限长
+  maxLength: number
 }
+
+// 上限直接读写入校验用的 Zod schema, 不手抄数字: schema 调整时这里自动跟随,
+// 字段被改成没有长度上限的形状时启动即失败
+const maxLengthOf = (schema: { maxLength: number | null }) => {
+  if (schema.maxLength === null) {
+    throw new Error('送审字段的 schema 必须声明长度上限')
+  }
+  return schema.maxLength
+}
+
+const resourceShape = patchResourceCreateSchema.shape
 
 // audit    对外展示的自由文本, 送审
 // deferred 对外展示的自由文本, 已分类但暂不送审
@@ -40,15 +59,27 @@ type FieldPolicy =
 // 以对外 DTO 的键为准穷举分类: DTO 新增字段而不在这里分类, 编译即失败
 export const RESOURCE_FIELD_POLICY = {
   id: 'internal',
-  name: { audit: 'plain', label: '标题' },
+  name: {
+    audit: 'plain',
+    label: '标题',
+    maxLength: maxLengthOf(resourceShape.name)
+  },
   section: 'enum',
   uniqueId: 'internal',
   type: 'enum',
   language: 'enum',
-  note: { audit: 'markdown-standard', label: '介绍' },
+  note: {
+    audit: 'markdown-standard',
+    label: '介绍',
+    maxLength: maxLengthOf(resourceShape.note)
+  },
   platform: 'enum',
   emulatorType: 'enum',
-  modelName: { audit: 'plain', label: '模型型号' },
+  modelName: {
+    audit: 'plain',
+    label: '模型型号',
+    maxLength: maxLengthOf(resourceShape.modelName)
+  },
   download: 'internal',
   links: 'nested',
   likeCount: 'internal',
@@ -99,29 +130,41 @@ const toSegments = <Fields extends Record<string, string>>(
       : []
   })
 
-const singleSegment = (
-  label: string,
-  kind: SegmentKind,
-  value: string
-): SubjectSegment[] => toSegments({ value: { audit: kind, label } }, { value })
+const COMMENT_POLICY: AuditPolicy = {
+  audit: 'markdown-comment',
+  label: '评论',
+  maxLength: maxLengthOf(patchCommentCreateSchema.shape.content)
+}
+
+const RATING_POLICY: AuditPolicy = {
+  audit: 'plain',
+  label: '评价',
+  maxLength: maxLengthOf(patchRatingCreateSchema.shape.shortSummary)
+}
+
+const BIO_POLICY: AuditPolicy = {
+  audit: 'plain',
+  label: '签名',
+  maxLength: maxLengthOf(bioSchema.shape.bio)
+}
 
 export const commentSubject = (
   content: string
 ): ModerationSubject<'comment'> => ({
   contentType: 'comment',
-  segments: singleSegment('评论', 'markdown-comment', content)
+  segments: toSegments({ value: COMMENT_POLICY }, { value: content })
 })
 
 export const ratingSubject = (
   shortSummary: string
 ): ModerationSubject<'rating'> => ({
   contentType: 'rating',
-  segments: singleSegment('评价', 'plain', shortSummary)
+  segments: toSegments({ value: RATING_POLICY }, { value: shortSummary })
 })
 
 export const bioSubject = (bio: string): ModerationSubject<'bio'> => ({
   contentType: 'bio',
-  segments: singleSegment('签名', 'plain', bio)
+  segments: toSegments({ value: BIO_POLICY }, { value: bio })
 })
 
 export const resourceSubject = (
@@ -130,6 +173,30 @@ export const resourceSubject = (
   contentType: 'resource',
   segments: toSegments(RESOURCE_FIELD_POLICY, fields)
 })
+
+const auditedPolicies = (policy: Record<string, FieldPolicy>) =>
+  Object.values(policy).filter(
+    (fieldPolicy): fieldPolicy is AuditPolicy => typeof fieldPolicy !== 'string'
+  )
+
+const SEGMENT_POLICIES: Record<ModerationTextType, AuditPolicy[]> = {
+  comment: [COMMENT_POLICY],
+  rating: [RATING_POLICY],
+  bio: [BIO_POLICY],
+  resource: [
+    ...auditedPolicies(RESOURCE_FIELD_POLICY),
+    ...auditedPolicies(RESOURCE_LINK_FIELD_POLICY)
+  ]
+}
+
+// 段落库时只带标签, 上限按标签查回。查不到 (引入主体之前的旧任务只有一个「正文」段,
+// 写入时已限长) 时返回 undefined, 由调用方原样使用
+export const segmentMaxLength = (
+  contentType: ModerationTextType,
+  label: string
+) =>
+  SEGMENT_POLICIES[contentType].find((policy) => policy.label === label)
+    ?.maxLength
 
 // 没有任何读者可见的文字: 各段剥掉不可见字符并去首尾空白后皆空
 export const isSubjectEmpty = (subject: ModerationSubject) =>

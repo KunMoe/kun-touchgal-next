@@ -171,8 +171,7 @@ describe('enqueueTextModeration', () => {
               kind: 'markdown-comment',
               value: '一段需要审核的正文内容'
             }
-          ],
-          text: '一段需要审核的正文内容'
+          ]
         },
         dry_run: false
       }

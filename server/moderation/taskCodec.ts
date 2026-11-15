@@ -1,7 +1,6 @@
 import * as z from 'zod'
 import { MODERATION_TEXT_CONTENT_TYPE } from '~/constants/moderation'
 import type { ModerationTextType } from '~/constants/moderation'
-import { prepareModerationText } from './prefilter'
 import type { ModerationSubject, SubjectSegment } from './subject'
 
 // moderation_task.payload 的唯一编解码点。载荷形状由 content_type 决定, 读侧一律经
@@ -53,48 +52,34 @@ const textExtrasShape = {
   bio: z.string().nullish()
 }
 
+// v2 落库的是用户提交的原始段, 送审视图由 worker 现算。过渡期的任务还带一份双写的
+// 旧平铺文本 (text), 解码时忽略
 const textPayloadV2Schema = z.object({
   v: z.literal(2),
   segments: z.array(segmentSchema),
-  // 过渡期双写的旧平铺文本, 换封装后停止写入
-  text: z.string().nullish(),
   ...textExtrasShape
 })
 
-// v1 是引入主体之前的形状: 只有写入时预处理过的平铺文本。长期保留, 管理端要展示
-// 历史任务。v 必须缺席, 否则损坏的 v2 载荷会被当成空的 v1 静默放过
+// v1 是引入主体之前的形状: 只有写入时经正则降噪、头尾截断过的平铺文本, 原文已不可得,
+// 解码为单个 plain 段。长期保留, 管理端要展示历史任务。v 必须缺席, 否则损坏的 v2
+// 载荷会被当成空的 v1 静默放过
 const textPayloadV1Schema = z
   .object({
     v: z.undefined().optional(),
     text: z.string().nullish(),
     ...textExtrasShape
   })
-  .transform((payload) => ({
-    ...payload,
-    v: 2 as const,
-    text: payload.text ?? '',
-    segments: payload.text
-      ? [{ label: '正文', kind: 'plain' as const, value: payload.text }]
+  .transform(({ text, name, bio }) => ({
+    name,
+    bio,
+    segments: text
+      ? [{ label: '正文', kind: 'plain' as const, value: text }]
       : []
   }))
 
 const textPayloadSchema = z.union([textPayloadV2Schema, textPayloadV1Schema])
 
 export const MODERATION_PAYLOAD_UNREADABLE = '载荷无法解析'
-
-// 过渡期: 重建引入主体之前的平铺送审文本, 让模型输入与缓存键逐字不变
-const legacyModerationText = (subject: ModerationSubject) => {
-  if (subject.contentType !== 'resource') {
-    return subject.segments[0]?.value ?? ''
-  }
-  const valueOf = (label: string) =>
-    subject.segments.find((segment) => segment.label === label)?.value ?? ''
-  const modelName = valueOf('模型型号')
-  return `标题: ${valueOf('标题')}\n介绍: ${valueOf('介绍')}${modelName ? `\n模型型号: ${modelName}` : ''}`
-}
-
-const legacyPayloadText = (subject: ModerationSubject) =>
-  prepareModerationText(legacyModerationText(subject))
 
 export const encodeModerationPayload = (body: ModerationTaskBody) => {
   if (body.contentType === 'avatar') {
@@ -103,7 +88,6 @@ export const encodeModerationPayload = (body: ModerationTaskBody) => {
   return {
     v: 2,
     segments: body.subject.segments,
-    text: legacyPayloadText(body.subject),
     // 附带值与各段一样要 well-formed: 一个孤立代理就会让整份载荷写不进 jsonb
     ...('name' in body ? { name: body.name.toWellFormed() } : {}),
     ...('bio' in body ? { bio: body.bio.toWellFormed() } : {})
@@ -115,8 +99,6 @@ export type DecodedModerationTask =
   | {
       contentType: ModerationTextType
       segments: SubjectSegment[]
-      // 交给黑名单与模型的平铺文本
-      text: string
       name?: string
       bio?: string
     }
@@ -125,7 +107,7 @@ const isTextType = (contentType: string): contentType is ModerationTextType =>
   (MODERATION_TEXT_CONTENT_TYPE as readonly string[]).includes(contentType)
 
 // 解不出来时返回 null: worker 转人工, 管理列表渲染占位。对存量宽容 —— 缺 text 的
-// 旧任务按空串处理, 与引入编解码之前的 `?? ''` 一致
+// 旧任务解码为没有任何段
 export const decodeModerationTask = (task: {
   content_type: string
   payload: unknown
@@ -143,12 +125,10 @@ export const decodeModerationTask = (task: {
   if (!parsed.success) {
     return null
   }
-  const { segments, text, name, bio } = parsed.data
+  const { segments, name, bio } = parsed.data
   return {
     contentType: task.content_type,
     segments,
-    text:
-      text ?? legacyPayloadText({ contentType: task.content_type, segments }),
     ...(name != null ? { name } : {}),
     ...(bio != null ? { bio } : {})
   }

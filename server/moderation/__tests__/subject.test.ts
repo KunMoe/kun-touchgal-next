@@ -7,6 +7,7 @@ import {
   isSubjectEmpty,
   ratingSubject,
   resourceSubject,
+  segmentMaxLength,
   subjectChanged
 } from '../subject'
 import type { ModerationSubject, SubjectSegment } from '../subject'
@@ -27,18 +28,33 @@ describe('资源字段策略表', () => {
       'note',
       'modelName'
     ])
-    expect(RESOURCE_FIELD_POLICY.name).toEqual({
+    expect(RESOURCE_FIELD_POLICY.name).toMatchObject({
       audit: 'plain',
       label: '标题'
     })
-    expect(RESOURCE_FIELD_POLICY.note).toEqual({
+    expect(RESOURCE_FIELD_POLICY.note).toMatchObject({
       audit: 'markdown-standard',
       label: '介绍'
     })
-    expect(RESOURCE_FIELD_POLICY.modelName).toEqual({
+    expect(RESOURCE_FIELD_POLICY.modelName).toMatchObject({
       audit: 'plain',
       label: '模型型号'
     })
+  })
+
+  // 上限读自写入校验的 Zod schema; 这里写死数字是为了让 schema 的改动在此显形
+  it('每个送审字段的长度上限与写入校验一致', () => {
+    expect(segmentMaxLength('comment', '评论')).toBe(10007)
+    expect(segmentMaxLength('rating', '评价')).toBe(1314)
+    expect(segmentMaxLength('bio', '签名')).toBe(107)
+    expect(segmentMaxLength('resource', '标题')).toBe(300)
+    expect(segmentMaxLength('resource', '介绍')).toBe(10007)
+    expect(segmentMaxLength('resource', '模型型号')).toBe(107)
+  })
+
+  it('查不到标签 (引入主体之前的旧任务) 时没有上限', () => {
+    expect(segmentMaxLength('resource', '正文')).toBeUndefined()
+    expect(segmentMaxLength('comment', '标题')).toBeUndefined()
   })
 
   it('链接的三个自由文本字段已分类, 暂不送审', () => {
