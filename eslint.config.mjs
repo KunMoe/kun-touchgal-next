@@ -5,6 +5,7 @@ import nextCoreWebVitals from 'eslint-config-next/core-web-vitals'
 import nextTypescript from 'eslint-config-next/typescript'
 import prettierRecommended from 'eslint-plugin-prettier/recommended'
 import react from 'eslint-plugin-react'
+import { kunInvariantConfigs } from './lint/kunInvariants.mjs'
 
 const kunConfigs = defineConfig([
   // migration/backup 是已执行完毕的一次性脚本归档 (多带 @ts-nocheck), 不再维护
@@ -62,33 +63,6 @@ const kunConfigs = defineConfig([
         }
       ],
       '@typescript-eslint/no-empty-object-type': 'off',
-      // zod 根入口的 z 是整个命名空间再导出, Turbopack 无法按成员裁剪, 具名/默认导入会打进
-      // 全量 zod (含 62 个语言包, 约 90KB gz); 命名空间导入实测 32KB (C9)。
-      // 不用 no-restricted-imports 的 importNames: 它会连 import * as z 一起拦
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector:
-            "ImportDeclaration[source.value='zod'][importKind!='type'] > :matches(ImportSpecifier[imported.name='z'][importKind!='type'], ImportDefaultSpecifier)",
-          message:
-            "用 import * as z from 'zod': 具名/默认导入 z 会让 Turbopack 打进全量 zod (约 90KB gz)"
-        }
-      ],
-      // @bprogress/next 根入口顶层 import next/router 并给 PagesProgress 赋 displayName,
-      // 补 sideEffects:false 也裁不掉, 整套 Pages Router (46 模块, 约 23KB gz) 会进全站 layout 块 (C19)。
-      // 只许 @bprogress/next/app 子路径: 它的前 273 行与根入口逐字相同, useRouter 是同一个函数
-      'no-restricted-imports': [
-        'error',
-        {
-          paths: [
-            {
-              name: '@bprogress/next',
-              message:
-                "用 '@bprogress/next/app': 根入口顶层 import next/router, 会把整套 Pages Router 打进全站 layout 块 (约 23KB gz)"
-            }
-          ]
-        }
-      ],
       '@next/next/no-img-element': 'off',
       'react-hooks/exhaustive-deps': 'off',
       // eslint-plugin-react-hooks v7 新增的编译器规则, 对存量代码大面积报错, 维持升级前基线
@@ -112,6 +86,10 @@ const kunConfigs = defineConfig([
       '@typescript-eslint/no-require-imports': 'off'
     }
   },
+  // 跨文件承重不变量 (C9 zod 命名空间导入、C19 bprogress 子路径等) 在 lint/kunInvariants.mjs
+  // 逐条登记为 kun/inv-*。不要在本文件新增核心 no-restricted-imports / no-restricted-syntax
+  // 块: 同名规则带选项即整体替换, 会静默关掉别处登记的禁令
+  ...kunInvariantConfigs(),
   // 未使用的 eslint-disable 指令同样报 error: 这类报告没有 ruleId, 进不了抑制基线,
   // 出现就必须删掉
   {
