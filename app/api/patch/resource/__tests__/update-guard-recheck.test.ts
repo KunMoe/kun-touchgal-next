@@ -366,7 +366,15 @@ describe('更新资源在行锁下重算 links diff', () => {
     resourceFindUniqueMock.mockResolvedValue(
       buildSnapshot({
         links: [
-          { id: 5, storage: 's3', content: 'old-c', hash: '', s3_key: 'old-k' }
+          {
+            id: 5,
+            storage: 's3',
+            content: 'old-c',
+            hash: '',
+            s3_key: 'old-k',
+            code: '',
+            password: ''
+          }
         ]
       })
     )
@@ -422,7 +430,9 @@ describe('更新资源保留历史 s3 链接', () => {
     storage: 's3',
     content: 'legacy-c',
     hash: 'blake3-hash',
-    s3_key: ''
+    s3_key: '',
+    code: '',
+    password: ''
   }
   const legacyInputLink = {
     id: 5,

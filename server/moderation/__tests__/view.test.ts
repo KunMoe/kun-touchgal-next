@@ -54,7 +54,7 @@ describe('buildAuditView: plain 段', () => {
     expect(await buildAuditView(ratingSubject('\u200B \n'))).toEqual([])
     expect(
       await buildAuditView(
-        resourceSubject({ name: '  ', note: 'note', modelName: '' })
+        resourceSubject({ name: '  ', note: 'note', modelName: '', links: [] })
       )
     ).toEqual([{ label: '介绍', shown: 'note' }])
   })
@@ -67,16 +67,44 @@ describe('buildAuditView: plain 段', () => {
     expect(segment.shown.isWellFormed()).toBe(true)
   })
 
-  it('长文介绍排在标题与型号之后', async () => {
+  it('长文介绍排在标题、型号与各条链接之后', async () => {
     const view = await buildAuditView(
-      resourceSubject({ name: 'Patch v1', note: '说明', modelName: 'GPT-4o' })
+      resourceSubject({
+        name: 'Patch v1',
+        note: '说明',
+        modelName: 'GPT-4o',
+        links: [
+          {
+            storage: 'mega',
+            content: 'https://pan.example/s/abc',
+            code: 'abcd',
+            password: ''
+          },
+          { storage: 's3', content: 'generated', code: '', password: 'pw' }
+        ]
+      })
     )
 
-    expect(view.map((segment) => segment.label)).toEqual([
-      '标题',
-      '模型型号',
-      '介绍'
+    expect(view).toEqual([
+      { label: '标题', shown: 'Patch v1' },
+      { label: '模型型号', shown: 'GPT-4o' },
+      { label: '链接 1', shown: 'https://pan.example/s/abc' },
+      { label: '提取码 1', shown: 'abcd' },
+      { label: '解压码 2', shown: 'pw' },
+      { label: '介绍', shown: '说明' }
     ])
+  })
+
+  it('带序号的链接字段同样按写入上限截断', async () => {
+    const [, link] = await buildAuditView({
+      contentType: 'resource',
+      segments: [
+        { label: '标题', kind: 'plain', value: 'T' },
+        { label: '解压码 2', kind: 'plain', value: '密'.repeat(3000) }
+      ]
+    })
+
+    expect([...link.shown]).toHaveLength(1007)
   })
 })
 
@@ -175,7 +203,8 @@ describe('buildAuditView: markdown 段审「读者所见 + 原文」两面', () 
       resourceSubject({
         name: 'Patch v1',
         note: '下载见 [网盘](https://pan.example/s/abc)',
-        modelName: ''
+        modelName: '',
+        links: []
       })
     )
 
@@ -194,7 +223,8 @@ describe('buildAuditView: markdown 段审「读者所见 + 原文」两面', () 
       resourceSubject({
         name: 'Patch v1',
         note: '__RENDER_FAILS__ 加群 98**76**54321',
-        modelName: ''
+        modelName: '',
+        links: []
       })
     )
 

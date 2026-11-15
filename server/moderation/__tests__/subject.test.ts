@@ -57,13 +57,28 @@ describe('资源字段策略表', () => {
     expect(segmentMaxLength('comment', '标题')).toBeUndefined()
   })
 
-  it('链接的三个自由文本字段已分类, 暂不送审', () => {
-    expect(classified(RESOURCE_LINK_FIELD_POLICY, 'audit')).toEqual([])
-    expect(classified(RESOURCE_LINK_FIELD_POLICY, 'deferred')).toEqual([
+  // 链接文本、提取码、解压码向所有访客展示, 同样是自由文本 (X09-03)
+  it('链接送审链接文本、提取码、解压码, 顺序是链接在前', () => {
+    expect(classified(RESOURCE_LINK_FIELD_POLICY, 'audit')).toEqual([
+      'content',
       'code',
-      'password',
-      'content'
+      'password'
     ])
+    expect(RESOURCE_LINK_FIELD_POLICY.content).toMatchObject({
+      audit: 'plain',
+      label: '链接'
+    })
+    expect(RESOURCE_LINK_FIELD_POLICY.code).toMatchObject({ label: '提取码' })
+    expect(RESOURCE_LINK_FIELD_POLICY.password).toMatchObject({
+      label: '解压码'
+    })
+  })
+
+  it('链接字段的长度上限同样读自写入校验, 带序号的字段名也查得到', () => {
+    expect(segmentMaxLength('resource', '链接')).toBe(1007)
+    expect(segmentMaxLength('resource', '提取码')).toBe(1007)
+    expect(segmentMaxLength('resource', '解压码 10')).toBe(1007)
+    expect(segmentMaxLength('resource', '链接 3')).toBe(1007)
   })
 })
 
@@ -85,17 +100,70 @@ describe('主体构造器', () => {
 
   it('资源按策略表的顺序出段, 空串字段不出段', () => {
     expect(
-      resourceSubject({ name: 'Patch v1', note: '说明', modelName: 'GPT' })
-        .segments
+      resourceSubject({
+        name: 'Patch v1',
+        note: '说明',
+        modelName: 'GPT',
+        links: []
+      }).segments
     ).toEqual([
       { label: '标题', kind: 'plain', value: 'Patch v1' },
       { label: '介绍', kind: 'markdown-standard', value: '说明' },
       { label: '模型型号', kind: 'plain', value: 'GPT' }
     ])
     expect(
-      resourceSubject({ name: '', note: '说明', modelName: '' }).segments
+      resourceSubject({ name: '', note: '说明', modelName: '', links: [] })
+        .segments
     ).toEqual([{ label: '介绍', kind: 'markdown-standard', value: '说明' }])
     expect(commentSubject('').segments).toEqual([])
+  })
+
+  const external = {
+    storage: 'mega',
+    content: 'https://pan.example/s/abc',
+    code: '',
+    password: ''
+  }
+  const withLinks = (links: Array<typeof external>) =>
+    resourceSubject({ name: 'T', note: '', modelName: '', links }).segments
+
+  it('单条链接的字段不带序号, 空的提取码与解压码不出段', () => {
+    expect(withLinks([external])).toEqual([
+      { label: '标题', kind: 'plain', value: 'T' },
+      { label: '链接', kind: 'plain', value: 'https://pan.example/s/abc' }
+    ])
+  })
+
+  it('多条链接依次编号, 每条的提取码、解压码紧随其后', () => {
+    expect(
+      withLinks([
+        { ...external, code: 'abcd' },
+        { ...external, content: 'https://b.example', password: 'pw' }
+      ])
+    ).toEqual([
+      { label: '标题', kind: 'plain', value: 'T' },
+      { label: '链接 1', kind: 'plain', value: 'https://pan.example/s/abc' },
+      { label: '提取码 1', kind: 'plain', value: 'abcd' },
+      { label: '链接 2', kind: 'plain', value: 'https://b.example' },
+      { label: '解压码 2', kind: 'plain', value: 'pw' }
+    ])
+  })
+
+  // 站内存储的链接地址是服务端绑定上传对象时生成的, 不是用户输入; 口令仍是
+  it('站内存储 (s3) 的链接地址不送审, 提取码与解压码照常送审', () => {
+    expect(
+      withLinks([
+        {
+          storage: 's3',
+          content: 'https://cdn.example/generated',
+          code: '',
+          password: '加群获取'
+        }
+      ])
+    ).toEqual([
+      { label: '标题', kind: 'plain', value: 'T' },
+      { label: '解压码', kind: 'plain', value: '加群获取' }
+    ])
   })
 
   it('保留原始值, 不做降噪改写', () => {
@@ -115,7 +183,10 @@ describe('主体构造器', () => {
 describe('isSubjectEmpty', () => {
   it.each([
     ['没有任何段', commentSubject('')],
-    ['只有空白', resourceSubject({ name: '  ', note: '\n\t', modelName: ' ' })],
+    [
+      '只有空白',
+      resourceSubject({ name: '  ', note: '\n\t', modelName: ' ', links: [] })
+    ],
     ['只有不可见字符', bioSubject('\u200B\u3164\uFFF9\uFEFF')]
   ])('%s: 视为空', (_name, subject) => {
     expect(isSubjectEmpty(subject)).toBe(true)
@@ -123,7 +194,9 @@ describe('isSubjectEmpty', () => {
 
   it('任一段有可见文字即非空', () => {
     expect(
-      isSubjectEmpty(resourceSubject({ name: ' ', note: '', modelName: 'x' }))
+      isSubjectEmpty(
+        resourceSubject({ name: ' ', note: '', modelName: 'x', links: [] })
+      )
     ).toBe(false)
   })
 })
@@ -147,11 +220,44 @@ describe('subjectChanged', () => {
   })
 
   it('字段从空变为非空、或反过来, 都算变化', () => {
-    const before = resourceSubject({ name: 'T', note: '', modelName: '' })
-    const after = resourceSubject({ name: 'T', note: '', modelName: 'GPT' })
+    const before = resourceSubject({
+      name: 'T',
+      note: '',
+      modelName: '',
+      links: []
+    })
+    const after = resourceSubject({
+      name: 'T',
+      note: '',
+      modelName: 'GPT',
+      links: []
+    })
 
     expect(subjectChanged(before, after)).toBe(true)
     expect(subjectChanged(after, before)).toBe(true)
+  })
+
+  it('资源只改链接、提取码或解压码都算变化, 只改非送审字段不算', () => {
+    const of = (link: Record<string, string>) =>
+      resourceSubject({
+        name: 'T',
+        note: 'N',
+        modelName: '',
+        links: [
+          {
+            storage: 'mega',
+            content: 'https://a',
+            code: '',
+            password: '',
+            ...link
+          }
+        ]
+      })
+
+    expect(subjectChanged(of({}), of({ content: 'https://b' }))).toBe(true)
+    expect(subjectChanged(of({}), of({ code: 'abcd' }))).toBe(true)
+    expect(subjectChanged(of({}), of({ password: 'pw' }))).toBe(true)
+    expect(subjectChanged(of({}), of({ size: '2 GB' }))).toBe(false)
   })
 
   it('只有链接段变化时同样判为变化', () => {

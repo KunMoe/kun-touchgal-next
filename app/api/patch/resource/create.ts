@@ -68,7 +68,8 @@ export const createPatchResource = async (
         resourceSubject({
           name: input.name,
           note: input.note,
-          modelName: model_name
+          modelName: model_name,
+          links
         }),
         { userRole }
       )

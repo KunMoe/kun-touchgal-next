@@ -221,16 +221,22 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
     )
 
     expect(result).toBe('未找到该资源')
-    // 送审字段均未变更: 快照作为 previous 交给预筛, 由预筛判定不重审
-    const unchanged = resourceSubject({
-      name: 'Old name',
-      note: '',
-      modelName: ''
-    })
-    expect(planTextModerationMock).toHaveBeenCalledWith(unchanged, {
-      userRole: 3,
-      previous: unchanged
-    })
+    // 提交的送审字段与库中快照各成一个主体交给预筛, 由预筛判定是否重审
+    const fields = { name: 'Old name', note: '', modelName: '' }
+    expect(planTextModerationMock).toHaveBeenCalledWith(
+      resourceSubject({
+        ...fields,
+        links: [
+          {
+            storage: 'user',
+            content: 'https://example.com',
+            code: '',
+            password: ''
+          }
+        ]
+      }),
+      { userRole: 3, previous: resourceSubject({ ...fields, links: [] }) }
+    )
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
     expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
     expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()

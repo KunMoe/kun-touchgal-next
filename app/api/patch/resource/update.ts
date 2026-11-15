@@ -90,14 +90,16 @@ export const updatePatchResource = async (
           resourceSubject({
             name: input.name,
             note: input.note,
-            modelName: model_name
+            modelName: model_name,
+            links
           }),
           {
             userRole,
             previous: resourceSubject({
               name: resource.name,
               note: resource.note,
-              modelName: resource.model_name
+              modelName: resource.model_name,
+              links: resource.links
             })
           }
         )

@@ -34,7 +34,12 @@ describe('encodeModerationPayload', () => {
     expect(
       encodeModerationPayload({
         contentType: 'resource',
-        subject: resourceSubject({ name: 'N', note: '', modelName: '' }),
+        subject: resourceSubject({
+          name: 'N',
+          note: '',
+          modelName: '',
+          links: []
+        }),
         name: 'N'
       })
     ).toMatchObject({ v: 2, name: 'N' })
@@ -66,7 +71,8 @@ describe('encodeModerationPayload', () => {
           subject: resourceSubject({
             name: 'N\uDE00',
             note: '',
-            modelName: ''
+            modelName: '',
+            links: []
           }),
           name: 'N\uDE00'
         })
@@ -89,7 +95,8 @@ describe('decodeModerationTask', () => {
     const subject = resourceSubject({
       name: 'Patch v1',
       note: '介绍',
-      modelName: ''
+      modelName: '',
+      links: []
     })
     const payload = JSON.parse(
       JSON.stringify(

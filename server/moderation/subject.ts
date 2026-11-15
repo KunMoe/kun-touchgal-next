@@ -34,6 +34,8 @@ interface AuditPolicy {
   label: string
   // 该字段写入校验允许的最大长度, 送审时每段各自按它限长
   maxLength: number
+  // 同一行里别的字段决定它是否对外展示用户输入时使用; 缺省为总是送审
+  when?: (row: { storage: string }) => boolean
 }
 
 // 上限直接读写入校验用的 Zod schema, 不手抄数字: schema 调整时这里自动跟随,
@@ -46,15 +48,14 @@ const maxLengthOf = (schema: { maxLength: number | null }) => {
 }
 
 const resourceShape = patchResourceCreateSchema.shape
+const linkShape = resourceShape.links.element.shape
 
 // audit    对外展示的自由文本, 送审
-// deferred 对外展示的自由文本, 已分类但暂不送审
 // enum     取值受枚举或固定格式约束, 不是自由文本
 // system   系统生成
 // internal 标识、计数、状态等内部字段
 // nested   子对象, 由它自己的策略表逐字段分类
-type FieldPolicy =
-  AuditPolicy | 'deferred' | 'enum' | 'system' | 'internal' | 'nested'
+type FieldPolicy = AuditPolicy | 'enum' | 'system' | 'internal' | 'nested'
 
 // 以对外 DTO 的键为准穷举分类: DTO 新增字段而不在这里分类, 编译即失败
 export const RESOURCE_FIELD_POLICY = {
@@ -91,14 +92,30 @@ export const RESOURCE_FIELD_POLICY = {
   user: 'internal'
 } as const satisfies Record<keyof PatchResource, FieldPolicy>
 
+// 链接文本、提取码、解压码向所有访客展示 (DownloadCard), 与标题、介绍一样是自由文本。
+// 送审字段按这里的书写顺序出段: 链接在前, 它的两个口令紧随其后
 export const RESOURCE_LINK_FIELD_POLICY = {
   id: 'internal',
   storage: 'enum',
   size: 'enum',
-  code: 'deferred',
-  password: 'deferred',
   hash: 'system',
-  content: 'deferred',
+  content: {
+    audit: 'plain',
+    label: '链接',
+    maxLength: maxLengthOf(linkShape.content),
+    // 站内存储 (s3) 的链接地址由服务端在绑定上传对象时生成, 不是用户输入
+    when: (link) => link.storage !== 's3'
+  },
+  code: {
+    audit: 'plain',
+    label: '提取码',
+    maxLength: maxLengthOf(linkShape.code)
+  },
+  password: {
+    audit: 'plain',
+    label: '解压码',
+    maxLength: maxLengthOf(linkShape.password)
+  },
   sortOrder: 'internal',
   download: 'internal'
 } as const satisfies Record<keyof PatchResourceLink, FieldPolicy>
@@ -109,24 +126,40 @@ type AuditedKeys<Policy> = {
   [K in keyof Policy]: Policy[K] extends AuditPolicy ? K : never
 }[keyof Policy]
 
+// storage 不送审, 但链接地址是否为用户输入取决于它
+export type ResourceLinkSubjectFields = Record<
+  AuditedKeys<typeof RESOURCE_LINK_FIELD_POLICY>,
+  string
+> & { storage: string }
+
 export type ResourceSubjectFields = Record<
   AuditedKeys<typeof RESOURCE_FIELD_POLICY>,
   string
->
+> & { links: ResourceLinkSubjectFields[] }
 
 // 值为空串的字段不产生段; 其余一律保留原始值 (仅把孤立代理替换为 U+FFFD,
-// 否则整份载荷写不进 jsonb)
-const toSegments = <Fields extends Record<string, string>>(
+// 否则整份载荷写不进 jsonb)。labelSuffix 用来给多条链接的字段编号
+const toSegments = (
   policy: Record<string, FieldPolicy>,
-  fields: Fields
+  fields: Record<string, string>,
+  labelSuffix = ''
 ): SubjectSegment[] =>
   Object.entries(policy).flatMap(([key, fieldPolicy]) => {
     if (typeof fieldPolicy === 'string') {
       return []
     }
+    if (fieldPolicy.when && !fieldPolicy.when({ storage: fields.storage })) {
+      return []
+    }
     const value = fields[key].toWellFormed()
     return value
-      ? [{ label: fieldPolicy.label, kind: fieldPolicy.audit, value }]
+      ? [
+          {
+            label: `${fieldPolicy.label}${labelSuffix}`,
+            kind: fieldPolicy.audit,
+            value
+          }
+        ]
       : []
   })
 
@@ -167,11 +200,25 @@ export const bioSubject = (bio: string): ModerationSubject<'bio'> => ({
   segments: toSegments({ value: BIO_POLICY }, { value: bio })
 })
 
-export const resourceSubject = (
-  fields: ResourceSubjectFields
-): ModerationSubject<'resource'> => ({
+// 只有一条链接时字段名不带序号; 多条时依次为「链接 1」「提取码 1」「链接 2」…
+const linkLabelSuffix = (index: number, total: number) =>
+  total > 1 ? ` ${index + 1}` : ''
+
+export const resourceSubject = ({
+  links,
+  ...fields
+}: ResourceSubjectFields): ModerationSubject<'resource'> => ({
   contentType: 'resource',
-  segments: toSegments(RESOURCE_FIELD_POLICY, fields)
+  segments: [
+    ...toSegments(RESOURCE_FIELD_POLICY, fields),
+    ...links.flatMap((link, index) =>
+      toSegments(
+        RESOURCE_LINK_FIELD_POLICY,
+        link,
+        linkLabelSuffix(index, links.length)
+      )
+    )
+  ]
 })
 
 const auditedPolicies = (policy: Record<string, FieldPolicy>) =>
@@ -189,14 +236,17 @@ const SEGMENT_POLICIES: Record<ModerationTextType, AuditPolicy[]> = {
   ]
 }
 
-// 段落库时只带标签, 上限按标签查回。查不到 (引入主体之前的旧任务只有一个「正文」段,
-// 写入时已限长) 时返回 undefined, 由调用方原样使用
+// 段落库时只带标签, 上限按标签查回 (多条链接的字段名带序号, 查之前去掉)。查不到
+// (引入主体之前的旧任务只有一个「正文」段, 写入时已限长) 时返回 undefined, 由调用方
+// 原样使用
 export const segmentMaxLength = (
   contentType: ModerationTextType,
   label: string
-) =>
-  SEGMENT_POLICIES[contentType].find((policy) => policy.label === label)
+) => {
+  const field = label.replace(/ \d+$/, '')
+  return SEGMENT_POLICIES[contentType].find((policy) => policy.label === field)
     ?.maxLength
+}
 
 // 没有任何读者可见的文字: 各段剥掉不可见字符并去首尾空白后皆空
 export const isSubjectEmpty = (subject: ModerationSubject) =>

@@ -109,14 +109,23 @@ const loadSubject = async (task: {
     case 'resource': {
       const row = await prisma.patch_resource.findUnique({
         where: { id },
-        select: { name: true, note: true, model_name: true }
+        select: {
+          name: true,
+          note: true,
+          model_name: true,
+          links: {
+            orderBy: { sort_order: 'asc' },
+            select: { storage: true, content: true, code: true, password: true }
+          }
+        }
       })
       return (
         row &&
         resourceSubject({
           name: row.name,
           note: row.note,
-          modelName: row.model_name
+          modelName: row.model_name,
+          links: row.links
         })
       )
     }

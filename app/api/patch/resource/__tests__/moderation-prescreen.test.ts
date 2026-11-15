@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
+  bindUploadedResourceMock,
   patchFindUniqueMock,
   resourceFindUniqueMock,
   resourceCountMock,
@@ -18,6 +19,7 @@ const {
   createMessageMock,
   invalidateUnreadMock
 } = vi.hoisted(() => ({
+  bindUploadedResourceMock: vi.fn(),
   patchFindUniqueMock: vi.fn(),
   resourceFindUniqueMock: vi.fn(),
   resourceCountMock: vi.fn(),
@@ -61,7 +63,7 @@ vi.mock('~/prisma/index', () => ({
 }))
 
 vi.mock('~/app/api/patch/resource/_helper', () => ({
-  bindUploadedResource: vi.fn(),
+  bindUploadedResource: bindUploadedResourceMock,
   enqueueResourceLinkDeletions: vi.fn(),
   recalcPatchType: vi.fn()
 }))
@@ -184,9 +186,57 @@ beforeEach(() => {
 
 const createdTaskData = () => taskCreateMock.mock.calls[0][0].data
 
-describe('资源审核预筛选: 送审字段全空时直接放行', () => {
-  it('创建空标题空介绍的资源不送审、状态直接公开', async () => {
+const externalLink = resourceInput.links[0]
+const LINK_SEGMENT = {
+  label: '链接',
+  kind: 'plain',
+  value: externalLink.content
+}
+// patch_resource_link 行: 与 externalLink 对应的库中快照
+const storedExternalLink = {
+  id: 3,
+  storage: externalLink.storage,
+  content: externalLink.content,
+  code: '',
+  password: '',
+  hash: '',
+  s3_key: '',
+  size: externalLink.size,
+  sort_order: 0,
+  download: 0
+}
+
+describe('资源审核预筛选: 送审标题、介绍、模型型号与各条链接的自由文本', () => {
+  // 链接文本、提取码、解压码向所有访客展示, 与标题、介绍一样要过审 (X09-03)
+  it('只有外链、标题介绍全空的资源也要送审', async () => {
     await createPatchResource(resourceInput, 7, 2)
+
+    expect(createdTaskData().payload.segments).toEqual([LINK_SEGMENT])
+    expect(transactionResourceCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 3 })
+      })
+    )
+  })
+
+  it('只有站内存储链接、其余全空的资源没有可审文本, 直接公开', async () => {
+    bindUploadedResourceMock.mockResolvedValue({
+      downloadLink: 'https://cdn.example/file',
+      s3Key: 'patch/10/file'
+    })
+
+    await createPatchResource(
+      {
+        ...resourceInput,
+        name: '  ',
+        note: '\n',
+        links: [
+          { ...externalLink, storage: 's3', hash: 'upload-token', content: '' }
+        ]
+      },
+      7,
+      2
+    )
 
     expect(getModerationConfigMock).not.toHaveBeenCalled()
     expect(taskCreateMock).not.toHaveBeenCalled()
@@ -197,18 +247,7 @@ describe('资源审核预筛选: 送审字段全空时直接放行', () => {
     )
   })
 
-  it('创建纯空白标题介绍的资源同样直接放行', async () => {
-    await createPatchResource(
-      { ...resourceInput, name: '  ', note: '\n' },
-      7,
-      2
-    )
-
-    expect(getModerationConfigMock).not.toHaveBeenCalled()
-    expect(taskCreateMock).not.toHaveBeenCalled()
-  })
-
-  it('创建含标题的资源正常送审: 任务携带主体段与资源名, 资源进入待审核', async () => {
+  it('创建含标题的资源: 任务携带主体段与资源名, 资源进入待审核', async () => {
     await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 2)
 
     expect(createdTaskData()).toMatchObject({
@@ -219,7 +258,10 @@ describe('资源审核预筛选: 送审字段全空时直接放行', () => {
       dry_run: false,
       payload: {
         v: 2,
-        segments: [{ label: '标题', kind: 'plain', value: 'Patch v1' }],
+        segments: [
+          { label: '标题', kind: 'plain', value: 'Patch v1' },
+          LINK_SEGMENT
+        ],
         name: 'Resource'
       }
     })
@@ -251,10 +293,44 @@ describe('资源审核预筛选: 送审字段全空时直接放行', () => {
     expect(taskCreateMock.mock.calls[0][0].data.payload.segments).toEqual([
       { label: '标题', kind: 'plain', value: 'Patch v1' },
       { label: '介绍', kind: 'markdown-standard', value: '**汉化**说明' },
-      { label: '模型型号', kind: 'plain', value: 'GPT-4o' }
+      { label: '模型型号', kind: 'plain', value: 'GPT-4o' },
+      LINK_SEGMENT
     ])
     expect(taskCreateMock.mock.calls[1][0].data.payload.segments).toEqual([
-      { label: '标题', kind: 'plain', value: 'Patch v1' }
+      { label: '标题', kind: 'plain', value: 'Patch v1' },
+      LINK_SEGMENT
+    ])
+  })
+
+  it('多条链接的字段带序号; 站内存储的链接地址不是用户输入, 不送审', async () => {
+    bindUploadedResourceMock.mockResolvedValue({
+      downloadLink: 'https://cdn.example/file',
+      s3Key: 'patch/10/file'
+    })
+
+    await createPatchResource(
+      {
+        ...resourceInput,
+        links: [
+          { ...externalLink, code: 'abcd', password: '解压码 touchgal' },
+          {
+            ...externalLink,
+            storage: 's3',
+            hash: 'upload-token',
+            content: '',
+            password: '加群 987654321 获取'
+          }
+        ]
+      },
+      7,
+      2
+    )
+
+    expect(createdTaskData().payload.segments).toEqual([
+      { label: '链接 1', kind: 'plain', value: externalLink.content },
+      { label: '提取码 1', kind: 'plain', value: 'abcd' },
+      { label: '解压码 1', kind: 'plain', value: '解压码 touchgal' },
+      { label: '解压码 2', kind: 'plain', value: '加群 987654321 获取' }
     ])
   })
 
@@ -265,16 +341,53 @@ describe('资源审核预筛选: 送审字段全空时直接放行', () => {
     expect(taskCreateMock).not.toHaveBeenCalled()
   })
 
-  it('更新为空标题空介绍时不送审、不拦截', async () => {
-    resourceFindUniqueMock.mockResolvedValue(storedResource)
+  // 旧实现只比较标题、介绍、型号: 先发正常资源再把链接改成引流地址, 连任务都不建
+  it('只改链接也要重新送审, 资源转待审核', async () => {
+    resourceFindUniqueMock.mockResolvedValue({
+      ...storedResource,
+      links: [storedExternalLink]
+    })
 
-    await updatePatchResource({ ...resourceInput, resourceId: 1 }, 7, 2)
+    await updatePatchResource(
+      {
+        ...resourceInput,
+        resourceId: 1,
+        name: storedResource.name,
+        note: storedResource.note,
+        links: [{ ...externalLink, content: 'https://evil.example/join' }]
+      },
+      7,
+      2
+    )
 
-    expect(getModerationConfigMock).not.toHaveBeenCalled()
-    expect(taskCreateMock).not.toHaveBeenCalled()
-    expect(
-      transactionResourceUpdateMock.mock.calls[0][0].data.status
-    ).toBeUndefined()
+    expect(createdTaskData().payload.segments).toEqual([
+      { label: '标题', kind: 'plain', value: 'Resource' },
+      { label: '介绍', kind: 'markdown-standard', value: 'Note' },
+      { label: '链接', kind: 'plain', value: 'https://evil.example/join' }
+    ])
+    expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
+  })
+
+  it('只改提取码或解压码同样重新送审', async () => {
+    resourceFindUniqueMock.mockResolvedValue({
+      ...storedResource,
+      links: [storedExternalLink]
+    })
+
+    await updatePatchResource(
+      {
+        ...resourceInput,
+        resourceId: 1,
+        name: storedResource.name,
+        note: storedResource.note,
+        links: [{ ...externalLink, password: '付费获取解压码' }]
+      },
+      7,
+      2
+    )
+
+    expect(taskCreateMock).toHaveBeenCalledTimes(1)
+    expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
   })
 
   it('更新为非空标题时仍正常送审', async () => {
@@ -292,22 +405,29 @@ describe('资源审核预筛选: 送审字段全空时直接放行', () => {
       patch_id: 10,
       user_id: 7,
       payload: {
-        segments: [{ label: '标题', kind: 'plain', value: 'Patch v2' }],
+        segments: [
+          { label: '标题', kind: 'plain', value: 'Patch v2' },
+          LINK_SEGMENT
+        ],
         name: 'Resource'
       }
     })
     expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
   })
 
-  it('更新时送审字段与库中一致则不重审, 也不读审核配置', async () => {
-    resourceFindUniqueMock.mockResolvedValue(storedResource)
+  it('送审字段与库中一致时不重审, 也不读审核配置; 只改文件大小这类非自由文本同理', async () => {
+    resourceFindUniqueMock.mockResolvedValue({
+      ...storedResource,
+      links: [storedExternalLink]
+    })
 
     await updatePatchResource(
       {
         ...resourceInput,
         resourceId: 1,
         name: storedResource.name,
-        note: storedResource.note
+        note: storedResource.note,
+        links: [{ ...externalLink, size: '2 GB' }]
       },
       7,
       2

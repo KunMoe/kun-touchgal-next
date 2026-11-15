@@ -120,7 +120,7 @@ describe('planTextModeration', () => {
     )
     expect(
       await planTextModeration(
-        resourceSubject({ name: text, note: text, modelName: '' }),
+        resourceSubject({ name: text, note: text, modelName: '', links: [] }),
         { userRole: 1 }
       )
     ).toBe(MODERATION_SKIP)
@@ -185,7 +185,8 @@ describe('enqueueTextModeration', () => {
     const resource = resourceSubject({
       name: 'Patch v1',
       note: '汉化补丁',
-      modelName: ''
+      modelName: '',
+      links: []
     })
 
     await enqueueTextModeration(prisma, queued(resource), {
