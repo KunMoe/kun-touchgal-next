@@ -11,9 +11,9 @@ const {
   bindUploadedResourceMock,
   enqueueResourceLinkDeletionsMock,
   recalcPatchTypeMock,
-  createModerationTaskMock,
+  enqueueTextModerationMock,
   hasPendingModerationMock,
-  preScreenTextMock,
+  planTextModerationMock,
   enqueueSearchOutboxMock,
   queueSearchSyncMock,
   invalidatePatchResourceDetailCacheMock,
@@ -32,9 +32,9 @@ const {
   bindUploadedResourceMock: vi.fn(),
   enqueueResourceLinkDeletionsMock: vi.fn(),
   recalcPatchTypeMock: vi.fn(),
-  createModerationTaskMock: vi.fn(),
+  enqueueTextModerationMock: vi.fn(),
   hasPendingModerationMock: vi.fn(),
-  preScreenTextMock: vi.fn(),
+  planTextModerationMock: vi.fn(),
   enqueueSearchOutboxMock: vi.fn(),
   queueSearchSyncMock: vi.fn(),
   invalidatePatchResourceDetailCacheMock: vi.fn(),
@@ -83,9 +83,9 @@ vi.mock('~/app/api/utils/pendingResourceCache', () => ({
 
 vi.mock('~/server/moderation/submit', () => ({
   MODERATION_SKIP: { queue: false, intercept: false, dryRun: false },
-  createModerationTask: createModerationTaskMock,
+  enqueueTextModeration: enqueueTextModerationMock,
   hasPendingModeration: hasPendingModerationMock,
-  preScreenText: preScreenTextMock
+  planTextModeration: planTextModerationMock
 }))
 
 vi.mock('~/server/search/sync', () => ({
@@ -97,6 +97,7 @@ vi.mock('~/server/storage/s3Outbox', () => ({
   kickS3DeletionDrain: kickS3DeletionDrainMock
 }))
 
+import { resourceSubject } from '~/server/moderation/subject'
 import { updatePatchResource } from '~/app/api/patch/resource/update'
 
 const buildInput = (overrides: Record<string, unknown> = {}) => ({
@@ -166,6 +167,7 @@ const buildUpdated = (overrides: Record<string, unknown> = {}) => ({
 })
 
 const INTERCEPT = { queue: true, intercept: true, dryRun: false }
+const SKIP = { queue: false, intercept: false, dryRun: false }
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -191,7 +193,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
       buildSnapshot({ status: 3, section: 'patch' })
     )
     transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'patch' }])
-    preScreenTextMock.mockResolvedValue(INTERCEPT)
+    planTextModerationMock.mockResolvedValue(INTERCEPT)
     transactionResourceUpdateMock.mockResolvedValue(
       buildUpdated({ status: 3, section: 'patch' })
     )
@@ -210,7 +212,8 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
       { status: 1, section: 'galgame' }
     ])
 
-    // name/note/model 均未变更 → 不送审, 不触发拦截
+    planTextModerationMock.mockResolvedValue(SKIP)
+
     const result = await updatePatchResource(
       buildInput({ name: 'Old name' }),
       9,
@@ -218,7 +221,16 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
     )
 
     expect(result).toBe('未找到该资源')
-    expect(preScreenTextMock).not.toHaveBeenCalled()
+    // 送审字段均未变更: 快照作为 previous 交给预筛, 由预筛判定不重审
+    const unchanged = resourceSubject({
+      name: 'Old name',
+      note: '',
+      modelName: ''
+    })
+    expect(planTextModerationMock).toHaveBeenCalledWith(unchanged, {
+      userRole: 3,
+      previous: unchanged
+    })
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
     expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
     expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()
@@ -229,7 +241,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
       buildSnapshot({ section: 'patch' })
     )
     transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'patch' }])
-    preScreenTextMock.mockResolvedValue({
+    planTextModerationMock.mockResolvedValue({
       queue: true,
       intercept: false,
       dryRun: true
@@ -250,7 +262,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
     transactionQueryRawMock.mockResolvedValue([
       { status: 3, section: 'galgame' }
     ])
-    preScreenTextMock.mockResolvedValue(INTERCEPT)
+    planTextModerationMock.mockResolvedValue(INTERCEPT)
     transactionResourceUpdateMock.mockResolvedValue(buildUpdated({ status: 3 }))
 
     await updatePatchResource(buildInput(), 9, 3)
@@ -262,7 +274,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
 
   it('公开资源被拦截转待审, 失效详情缓存与 pending 缓存', async () => {
     resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
-    preScreenTextMock.mockResolvedValue(INTERCEPT)
+    planTextModerationMock.mockResolvedValue(INTERCEPT)
     transactionResourceUpdateMock.mockResolvedValue(buildUpdated({ status: 3 }))
 
     await updatePatchResource(buildInput(), 7, 1)

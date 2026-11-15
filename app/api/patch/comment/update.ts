@@ -7,11 +7,11 @@ import {
   markdownToHtmlComment
 } from '~/app/api/utils/render/markdownToHtmlComment'
 import {
-  MODERATION_SKIP,
-  createModerationTask,
+  enqueueTextModeration,
   hasPendingModeration,
-  preScreenText
+  planTextModeration
 } from '~/server/moderation/submit'
+import { commentSubject } from '~/server/moderation/subject'
 import { invalidatePatchCommentCache } from './cache'
 import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
 
@@ -55,10 +55,10 @@ export const updateComment = async (
   }
 
   // 编辑正文后必须重新送审, 否则先发正常内容再改成违规即可绕过审核
-  const moderation =
-    comment.content !== content
-      ? await preScreenText(content, userRole)
-      : MODERATION_SKIP
+  const moderation = await planTextModeration(commentSubject(content), {
+    userRole,
+    previous: commentSubject(comment.content)
+  })
 
   await prisma.$transaction(async (tx) => {
     await tx.patch_comment.update({
@@ -74,16 +74,10 @@ export const updateComment = async (
     })
 
     if (moderation.queue) {
-      await createModerationTask(
-        {
-          contentType: 'comment',
-          contentId: commentId,
-          userId: commentUserUid,
-          payload: { text: content },
-          dryRun: moderation.dryRun
-        },
-        tx
-      )
+      await enqueueTextModeration(tx, moderation, {
+        contentId: commentId,
+        userId: commentUserUid
+      })
     }
   })
 

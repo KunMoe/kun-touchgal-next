@@ -99,4 +99,74 @@ describe('getModerationTasks', () => {
     expect(tasks[0].patch).toBeNull()
     expect(tasks[1].patch).toBeNull()
   })
+
+  it('载荷经解码后只下发展示字段: 文本任务给 text / name / bio', async () => {
+    findTasksMock.mockResolvedValue([
+      { ...baseTask, payload: { text: 'hello' } },
+      {
+        ...baseTask,
+        id: 2,
+        content_type: 'resource',
+        payload: {
+          v: 2,
+          segments: [{ label: '标题', kind: 'plain', value: 'Patch <v1>' }],
+          text: '标题: Patch 介绍:',
+          name: 'Patch <v1>'
+        }
+      },
+      {
+        ...baseTask,
+        id: 3,
+        content_type: 'bio',
+        payload: { text: '签名', bio: '签 名' }
+      }
+    ])
+
+    const { tasks } = await getModerationTasks(input)
+
+    expect(tasks.map((task) => task.payload)).toEqual([
+      { text: 'hello' },
+      { text: '标题: Patch 介绍:', name: 'Patch <v1>' },
+      { text: '签名', bio: '签 名' }
+    ])
+  })
+
+  it('头像任务只下发待审与留档链接, 不带对象 key', async () => {
+    findTasksMock.mockResolvedValue([
+      {
+        ...baseTask,
+        content_type: 'avatar',
+        payload: {
+          pendingKey: 'k1',
+          pendingMiniKey: 'k2',
+          avatarKey: 'k3',
+          avatarMiniKey: 'k4',
+          avatarLink: 'https://img.example/avatar.avif',
+          pendingLink: 'https://img.example/pending.avif',
+          archiveLink: 'https://img.example/archive.avif'
+        }
+      }
+    ])
+
+    const { tasks } = await getModerationTasks(input)
+
+    expect(tasks[0].payload).toEqual({
+      pendingLink: 'https://img.example/pending.avif',
+      archiveLink: 'https://img.example/archive.avif'
+    })
+  })
+
+  it('解不出来的载荷渲染占位, 不让整页失败', async () => {
+    findTasksMock.mockResolvedValue([
+      { ...baseTask, payload: { v: 2, segments: 'broken' } },
+      { ...baseTask, id: 2, content_type: 'avatar', payload: null }
+    ])
+
+    const { tasks } = await getModerationTasks(input)
+
+    expect(tasks.map((task) => task.payload)).toEqual([
+      { text: '(载荷无法解析)' },
+      { text: '(载荷无法解析)' }
+    ])
+  })
 })

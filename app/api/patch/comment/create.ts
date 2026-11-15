@@ -11,7 +11,11 @@ import {
   COMMENT_HTML_VERSION,
   markdownToHtmlComment
 } from '~/app/api/utils/render/markdownToHtmlComment'
-import { createModerationTask, preScreenText } from '~/server/moderation/submit'
+import {
+  enqueueTextModeration,
+  planTextModeration
+} from '~/server/moderation/submit'
+import { commentSubject } from '~/server/moderation/subject'
 import { getResourceVisibilityWhere } from '~/app/api/utils/contentVisibility'
 import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { invalidatePatchCommentCache } from './cache'
@@ -80,7 +84,7 @@ export const createPatchComment = async (
         return { html: '', version: 0 }
       }
     })(),
-    preScreenText(input.content, userRole)
+    planTextModeration(commentSubject(input.content), { userRole })
   ])
   const { html: contentHtml, version: contentHtmlVersion } = contentResult
 
@@ -113,16 +117,10 @@ export const createPatchComment = async (
     })
 
     if (moderation.queue) {
-      await createModerationTask(
-        {
-          contentType: 'comment',
-          contentId: created.id,
-          userId: uid,
-          payload: { text: input.content },
-          dryRun: moderation.dryRun
-        },
-        tx
-      )
+      await enqueueTextModeration(tx, moderation, {
+        contentId: created.id,
+        userId: uid
+      })
     }
 
     return created

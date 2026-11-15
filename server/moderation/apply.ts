@@ -30,7 +30,10 @@ import {
 } from '~/constants/moderation'
 import type { ModerationContentType } from '~/constants/moderation'
 import { APPEAL_CONTENT_TYPE, APPEAL_SETTINGS_LINK } from '~/constants/appeal'
-import type { ModerationAvatarPayload, ModerationTextPayload } from './submit'
+import {
+  MODERATION_PAYLOAD_UNREADABLE,
+  decodeModerationTask
+} from './taskCodec'
 
 export interface ApplyVerdictOptions {
   task: moderation_taskModel
@@ -161,18 +164,26 @@ export const applyModerationVerdict = async (
   const taskStatus = manual ? 'manual' : approved ? 'approved' : 'rejected'
   const reason = resolveRejectReason(rejectCode, rejectReason)
 
+  // 解不出来的载荷不挡裁决本身 (否则这条任务与用户的审核中标记永远清不掉):
+  // 只有确实要用到载荷的分支才要求它可读, 其余沿用缺省值
+  const body = decodeModerationTask(task)
+  const avatar = body?.contentType === 'avatar' ? body.payload : null
+  const text = body && body.contentType !== 'avatar' ? body : null
+
   // S3 copy is idempotent, do it before claiming so that a copy failure
   // leaves the task pending and retryable; m=1 转人工时不落地, 等人工最终裁决
   if (!task.dry_run && task.content_type === 'avatar' && approved && !manual) {
-    const payload = task.payload as unknown as ModerationAvatarPayload
+    if (!avatar) {
+      throw new Error(MODERATION_PAYLOAD_UNREADABLE)
+    }
     await copyObject(
-      payload.pendingKey,
-      payload.avatarKey,
+      avatar.pendingKey,
+      avatar.avatarKey,
       AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
     )
     await copyObject(
-      payload.pendingMiniKey,
-      payload.avatarMiniKey,
+      avatar.pendingMiniKey,
+      avatar.avatarMiniKey,
       AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
     )
   }
@@ -297,11 +308,14 @@ export const applyModerationVerdict = async (
         break
       }
       case 'avatar': {
-        const payload = task.payload as unknown as ModerationAvatarPayload
         if (approved) {
+          // 通过分支在事务前已要求载荷可读 (S3 复制), 这里只为收窄类型
+          if (!avatar) {
+            throw new Error(MODERATION_PAYLOAD_UNREADABLE)
+          }
           await tx.user.update({
             where: { id: task.user_id },
-            data: { avatar: payload.avatarLink, avatar_status: 0 }
+            data: { avatar: avatar.avatarLink, avatar_status: 0 }
           })
         } else {
           // pending 头像从未落地到 user.avatar (仍是旧头像), 拒绝时仅清除审核标记,
@@ -314,11 +328,10 @@ export const applyModerationVerdict = async (
         break
       }
       case 'bio': {
-        const payload = task.payload as unknown as ModerationTextPayload
         if (approved) {
           await tx.user.update({
             where: { id: task.user_id },
-            data: { bio: payload.bio ?? '', bio_status: 0 }
+            data: { bio: text?.bio ?? '', bio_status: 0 }
           })
         } else {
           // 新签名从未落地到 user.bio (仍是旧签名), 拒绝时仅清除审核标记, 保留原签名
@@ -332,10 +345,9 @@ export const applyModerationVerdict = async (
     }
 
     if (!approved) {
-      const payload = task.payload as unknown as ModerationTextPayload
       const notice =
         task.content_type === 'resource'
-          ? MODERATION_REJECT_NOTICE.resource(payload.name ?? '')
+          ? MODERATION_REJECT_NOTICE.resource(text?.name ?? '')
           : MODERATION_REJECT_NOTICE[
               task.content_type as Exclude<ModerationContentType, 'resource'>
             ]()
@@ -403,24 +415,27 @@ export const applyModerationVerdict = async (
     await invalidateUserPendingResourceCache(task.user_id)
   }
   if (task.content_type === 'avatar') {
-    const payload = task.payload as unknown as ModerationAvatarPayload
     const imageBedUrl = process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL
     await invalidateUserSession(task.user_id)
+    // 载荷不可读时没有可清理的对象 key (此时只可能是拒绝分支)
+    if (!avatar) {
+      return true
+    }
     // approve: 新头像已复制到正式 key, 刷新 CDN; best-effort, 抛错会跳过下方
     // pending 清理且任务已非 pending 不会重试, 使暂存对象永久泄漏
     if (approved) {
       await purgeCloudflareCache([
-        `${imageBedUrl}/${payload.avatarKey}`,
-        `${imageBedUrl}/${payload.avatarMiniKey}`
+        `${imageBedUrl}/${avatar.avatarKey}`,
+        `${imageBedUrl}/${avatar.avatarMiniKey}`
       ]).catch((error) =>
         console.error('Failed to purge avatar CDN cache:', error)
       )
     }
     // pending 暂存对象无论通过与否都清理; 拒绝时用户原头像与正式 key 保持不动
-    await deleteFileFromS3(payload.pendingKey).catch((error) =>
+    await deleteFileFromS3(avatar.pendingKey).catch((error) =>
       console.error('Failed to delete pending avatar:', error)
     )
-    await deleteFileFromS3(payload.pendingMiniKey).catch((error) =>
+    await deleteFileFromS3(avatar.pendingMiniKey).catch((error) =>
       console.error('Failed to delete pending mini avatar:', error)
     )
   }

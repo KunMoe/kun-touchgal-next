@@ -16,9 +16,9 @@ const {
   recalcPatchTypeMock,
   enqueueSearchOutboxMock,
   queueSearchSyncMock,
-  preScreenTextMock,
+  planTextModerationMock,
   hasPendingModerationMock,
-  createModerationTaskMock,
+  enqueueTextModerationMock,
   invalidateResourceListCacheMock,
   invalidatePatchContentCacheMock,
   invalidateUserSessionMock,
@@ -42,9 +42,9 @@ const {
   recalcPatchTypeMock: vi.fn(),
   enqueueSearchOutboxMock: vi.fn(),
   queueSearchSyncMock: vi.fn(),
-  preScreenTextMock: vi.fn(),
+  planTextModerationMock: vi.fn(),
   hasPendingModerationMock: vi.fn(),
-  createModerationTaskMock: vi.fn(),
+  enqueueTextModerationMock: vi.fn(),
   invalidateResourceListCacheMock: vi.fn(),
   invalidatePatchContentCacheMock: vi.fn(),
   invalidateUserSessionMock: vi.fn(),
@@ -113,9 +113,9 @@ vi.mock('~/server/storage/s3Outbox', () => ({
 
 vi.mock('~/server/moderation/submit', () => ({
   MODERATION_SKIP: moderationSkip,
-  createModerationTask: createModerationTaskMock,
+  enqueueTextModeration: enqueueTextModerationMock,
   hasPendingModeration: hasPendingModerationMock,
-  preScreenText: preScreenTextMock
+  planTextModeration: planTextModerationMock
 }))
 
 vi.mock('~/app/api/utils/message', () => ({
@@ -184,7 +184,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   transactionLinkFindManyMock.mockResolvedValue([])
   hasPendingModerationMock.mockResolvedValue(false)
-  preScreenTextMock.mockResolvedValue(moderationSkip)
+  planTextModerationMock.mockResolvedValue(moderationSkip)
   invalidatePatchContentCacheMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (client: typeof transactionClient) => unknown) =>
@@ -292,7 +292,7 @@ describe('资源写入 patch 绑定', () => {
     )
 
     expect(result).toBe('未找到该资源对应的 Galgame 信息, 请确认 Galgame 存在')
-    expect(preScreenTextMock).not.toHaveBeenCalled()
+    expect(planTextModerationMock).not.toHaveBeenCalled()
     expect(bindUploadedResourceMock).not.toHaveBeenCalled()
     expect(transactionMock).not.toHaveBeenCalled()
   })

@@ -16,9 +16,10 @@ import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
 import {
   MODERATION_SKIP,
-  createModerationTask,
-  preScreenText
+  enqueueTextModeration,
+  planTextModeration
 } from '~/server/moderation/submit'
+import { resourceSubject } from '~/server/moderation/subject'
 import type { PatchResource } from '~/types/api/patch'
 
 export const createPatchResource = async (
@@ -60,12 +61,17 @@ export const createPatchResource = async (
   const needApproval = resourceCount === 0 && userRole < 3
 
   // 首个资源走既有人工审批流 (status=2), 不重复送 AI 审核;
-  // 标题与介绍均为空的资源无文本可审, 直接放行 (模型型号同为公开展示的自由文本, 一并送审)
-  const moderationText = `标题: ${input.name}\n介绍: ${input.note}${model_name ? `\n模型型号: ${model_name}` : ''}`
-  const moderation =
-    needApproval || !`${input.name}${input.note}${model_name}`.trim()
-      ? MODERATION_SKIP
-      : await preScreenText(moderationText, userRole)
+  // 送审字段由 resourceSubject 的策略表决定, 全空的资源无文本可审, 直接放行
+  const moderation = needApproval
+    ? MODERATION_SKIP
+    : await planTextModeration(
+        resourceSubject({
+          name: input.name,
+          note: input.note,
+          modelName: model_name
+        }),
+        { userRole }
+      )
 
   const preparedLinks: Array<{
     storage: string
@@ -154,20 +160,12 @@ export const createPatchResource = async (
     })
 
     if (moderation.queue) {
-      await createModerationTask(
-        {
-          contentType: 'resource',
-          contentId: newResource.id,
-          patchId,
-          userId: uid,
-          payload: {
-            text: moderationText,
-            name: newResource.name
-          },
-          dryRun: moderation.dryRun
-        },
-        prisma
-      )
+      await enqueueTextModeration(prisma, moderation, {
+        contentId: newResource.id,
+        patchId,
+        userId: uid,
+        name: newResource.name
+      })
     }
 
     await prisma.patch.update({

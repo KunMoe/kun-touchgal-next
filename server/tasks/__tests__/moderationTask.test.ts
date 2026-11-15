@@ -36,7 +36,10 @@ vi.mock(import('~/server/moderation/ai'), async (importOriginal) => ({
   moderateImage: vi.fn()
 }))
 
-import { processTextTask } from '~/server/tasks/moderationTask'
+import {
+  processAvatarTask,
+  processTextTask
+} from '~/server/tasks/moderationTask'
 
 const makeTask = (
   contentType: string,
@@ -212,5 +215,56 @@ describe('processTextTask: v1 载荷', () => {
 
     expect(getKvMock).toHaveBeenCalledWith(cacheKeyOf('comment', ''))
     expect(moderateTextMock).toHaveBeenCalledWith('comment', '')
+  })
+})
+
+describe('载荷无法解析时转人工, 不调模型', () => {
+  it.each([
+    ['载荷不是对象', 'comment', 'broken'],
+    ['v2 的段损坏', 'comment', { v: 2, segments: 'broken' }],
+    ['载荷为 null', 'resource', null]
+  ])('文本任务: %s', async (_name, contentType, payload) => {
+    const task = makeTask(
+      contentType,
+      payload as unknown as Record<string, unknown>
+    )
+
+    await processTextTask(task, [{ pattern: 'broken', content_types: [] }])
+
+    expect(markTaskManualMock).toHaveBeenCalledWith(1, '载荷无法解析')
+    expect(applyModerationVerdictMock).not.toHaveBeenCalled()
+    expect(getKvMock).not.toHaveBeenCalled()
+    expect(moderateTextMock).not.toHaveBeenCalled()
+  })
+
+  it('头像任务: 缺对象 key 时不去取图', async () => {
+    await processAvatarTask(makeTask('avatar', { pendingLink: 'only-this' }))
+
+    expect(markTaskManualMock).toHaveBeenCalledWith(1, '载荷无法解析')
+    expect(applyModerationVerdictMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('processTextTask: v2 载荷', () => {
+  it('过渡期仍把双写的平铺文本交给黑名单、缓存键与模型', async () => {
+    const task = makeTask('resource', {
+      v: 2,
+      segments: [
+        { label: '标题', kind: 'plain', value: 'Patch v1' },
+        { label: '介绍', kind: 'markdown-standard', value: '汉化\n补丁' }
+      ],
+      text: '标题: Patch v1 介绍: 汉化 补丁',
+      name: 'Patch v1'
+    })
+
+    await processTextTask(task, [])
+
+    expect(moderateTextMock).toHaveBeenCalledWith(
+      'resource',
+      '标题: Patch v1 介绍: 汉化 补丁'
+    )
+    expect(getKvMock).toHaveBeenCalledWith(
+      cacheKeyOf('resource', '标题:patchv1介绍:汉化补丁')
+    )
   })
 })

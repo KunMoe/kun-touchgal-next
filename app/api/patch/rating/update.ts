@@ -4,11 +4,11 @@ import { patchRatingUpdateSchema } from '~/validations/patch'
 import { recomputePatchRatingStat } from './stat'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import {
-  MODERATION_SKIP,
-  createModerationTask,
+  enqueueTextModeration,
   hasPendingModeration,
-  preScreenText
+  planTextModeration
 } from '~/server/moderation/submit'
+import { ratingSubject } from '~/server/moderation/subject'
 import type { KunPatchRating } from '~/types/api/galgame'
 
 export const updatePatchRating = async (
@@ -48,10 +48,10 @@ export const updatePatchRating = async (
   }
 
   // 编辑评价文本后必须重新送审, 防止先发正常内容再改成违规绕过审核
-  const moderation =
-    rating.short_summary !== shortSummary
-      ? await preScreenText(shortSummary, userRole)
-      : MODERATION_SKIP
+  const moderation = await planTextModeration(ratingSubject(shortSummary), {
+    userRole,
+    previous: ratingSubject(rating.short_summary)
+  })
 
   const data = await prisma.$transaction(async (tx) => {
     const updated = await tx.patch_rating.update({
@@ -85,17 +85,11 @@ export const updatePatchRating = async (
     })
 
     if (moderation.queue) {
-      await createModerationTask(
-        {
-          contentType: 'rating',
-          contentId: ratingId,
-          patchId: rating.patch_id,
-          userId: ratingUserUid,
-          payload: { text: shortSummary },
-          dryRun: moderation.dryRun
-        },
-        tx
-      )
+      await enqueueTextModeration(tx, moderation, {
+        contentId: ratingId,
+        patchId: rating.patch_id,
+        userId: ratingUserUid
+      })
     }
 
     await recomputePatchRatingStat(rating.patch_id, tx)

@@ -1,7 +1,29 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminModerationPaginationSchema } from '~/validations/admin'
+import {
+  MODERATION_PAYLOAD_UNREADABLE,
+  decodeModerationTask
+} from '~/server/moderation/taskCodec'
 import type { AdminModerationTask } from '~/types/api/admin'
+
+// 管理端只需要展示用的几个字段; 解不出来的任务渲染占位, 不让整页失败
+const toAdminPayload = (task: {
+  content_type: string
+  payload: unknown
+}): AdminModerationTask['payload'] => {
+  const body = decodeModerationTask(task)
+  if (!body) {
+    return { text: `(${MODERATION_PAYLOAD_UNREADABLE})` }
+  }
+  if (body.contentType === 'avatar') {
+    return {
+      pendingLink: body.payload.pendingLink,
+      archiveLink: body.payload.archiveLink
+    }
+  }
+  return { text: body.text, name: body.name, bio: body.bio }
+}
 
 export const getModerationTasks = async (
   input: z.infer<typeof adminModerationPaginationSchema>
@@ -84,7 +106,7 @@ export const getModerationTasks = async (
     status: task.status,
     rejectCode: task.reject_code,
     rejectReason: task.reject_reason,
-    payload: task.payload as AdminModerationTask['payload'],
+    payload: toAdminPayload(task),
     verdict: task.verdict,
     model: task.model,
     tokensIn: task.tokens_in,

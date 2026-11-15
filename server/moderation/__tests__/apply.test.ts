@@ -102,7 +102,8 @@ vi.mock('~/lib/s3', () => ({
 
 import { applyModerationVerdict } from '~/server/moderation/apply'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
-import { deleteFileFromS3 } from '~/lib/s3'
+import { copyObject, deleteFileFromS3 } from '~/lib/s3'
+import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { createDedupMessage, createMessage } from '~/app/api/utils/message'
 import { recalcPatchType } from '~/app/api/patch/resource/_helper'
 import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
@@ -502,5 +503,95 @@ describe('applyModerationVerdict', () => {
       },
       transactionClient
     )
+  })
+})
+
+// 载荷一律经 taskCodec 解码; v2 是引入送审主体之后的落库形状
+describe('applyModerationVerdict: 载荷解码', () => {
+  it('通过签名任务时写入 v2 载荷里暂存的新签名', async () => {
+    await applyModerationVerdict({
+      task: ratingTask({
+        content_type: 'bio',
+        content_id: null,
+        patch_id: null,
+        payload: {
+          v: 2,
+          segments: [{ label: '签名', kind: 'plain', value: 'new  bio' }],
+          text: 'new bio',
+          bio: 'new  bio'
+        }
+      }),
+      approved: true
+    })
+
+    expect(updateUserMock).toHaveBeenCalledWith({
+      where: { id: 100 },
+      data: { bio: 'new  bio', bio_status: 0 }
+    })
+  })
+
+  it('拒绝资源任务时通知里引用 v2 载荷的资源名', async () => {
+    await applyModerationVerdict({
+      task: ratingTask({
+        content_type: 'resource',
+        payload: {
+          v: 2,
+          segments: [{ label: '标题', kind: 'plain', value: 'Patch v1' }],
+          text: '标题: Patch v1 介绍:',
+          name: 'Patch v1'
+        }
+      }),
+      approved: false,
+      rejectCode: 'AD'
+    })
+
+    expect(createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: MODERATION_REJECT_NOTICE.resource('Patch v1')
+      }),
+      transactionClient
+    )
+  })
+
+  it('头像载荷不可读时拒绝通过, 任务保持未认领', async () => {
+    await expect(
+      applyModerationVerdict({
+        task: ratingTask({
+          content_type: 'avatar',
+          content_id: null,
+          patch_id: null,
+          payload: { pendingLink: 'https://img.kungal.com/only-this.avif' }
+        }),
+        approved: true
+      })
+    ).rejects.toThrow('载荷无法解析')
+
+    expect(copyObject).not.toHaveBeenCalled()
+    expect(claimMock).not.toHaveBeenCalled()
+  })
+
+  // 否则这条任务与用户的「头像审核中」标记永远清不掉
+  it('头像载荷不可读时仍可拒绝: 清审核标记, 不碰 S3', async () => {
+    await expect(
+      applyModerationVerdict({
+        task: ratingTask({
+          content_type: 'avatar',
+          content_id: null,
+          patch_id: null,
+          payload: { pendingLink: 'https://img.kungal.com/only-this.avif' }
+        }),
+        approved: false,
+        rejectCode: 'SEX',
+        fromStatus: 'manual'
+      })
+    ).resolves.toBe(true)
+
+    expect(updateUserMock).toHaveBeenCalledWith({
+      where: { id: 100 },
+      data: { avatar_status: 0 }
+    })
+    expect(invalidateUserSession).toHaveBeenCalledWith(100)
+    expect(deleteFileFromS3).not.toHaveBeenCalled()
+    expect(purgeCloudflareCache).not.toHaveBeenCalled()
   })
 })

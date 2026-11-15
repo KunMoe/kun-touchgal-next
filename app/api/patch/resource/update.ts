@@ -15,10 +15,11 @@ import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
 import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
 import {
   MODERATION_SKIP,
-  createModerationTask,
+  enqueueTextModeration,
   hasPendingModeration,
-  preScreenText
+  planTextModeration
 } from '~/server/moderation/submit'
+import { resourceSubject } from '~/server/moderation/subject'
 import type { PatchResource } from '~/types/api/patch'
 
 export const updatePatchResource = async (
@@ -79,20 +80,27 @@ export const updatePatchResource = async (
     return '未找到该资源对应的 Galgame 信息, 请确认 Galgame 存在'
   }
 
-  // 编辑标题/介绍/模型型号后必须重新送审; 待人工审批 (status=2) 的资源不送 AI;
-  // 标题与介绍均为空的资源无文本可审, 直接放行. 预筛必须先于 S3 重绑: 预筛
-  // (读审核配置) 可能因 Redis 故障抛错, 在绑定之后抛会泄漏已复制的对象
-  const textChanged =
-    resource.name !== input.name ||
-    resource.note !== input.note ||
-    resource.model_name !== model_name
-  const moderationText = `标题: ${input.name}\n介绍: ${input.note}${model_name ? `\n模型型号: ${model_name}` : ''}`
+  // 送审字段 (见 resourceSubject 的策略表) 有变化就必须重新送审; 待人工审批
+  // (status=2) 的资源不送 AI; 全空的资源无文本可审, 直接放行. 预筛必须先于 S3 重绑:
+  // 预筛 (读审核配置) 可能因 Redis 故障抛错, 在绑定之后抛会泄漏已复制的对象
   const moderation =
-    resource.status === 2 ||
-    !textChanged ||
-    !`${input.name}${input.note}${model_name}`.trim()
+    resource.status === 2
       ? MODERATION_SKIP
-      : await preScreenText(moderationText, userRole)
+      : await planTextModeration(
+          resourceSubject({
+            name: input.name,
+            note: input.note,
+            modelName: model_name
+          }),
+          {
+            userRole,
+            previous: resourceSubject({
+              name: resource.name,
+              note: resource.note,
+              modelName: resource.model_name
+            })
+          }
+        )
 
   // 阶段一 (事务外): 只完成 S3 重绑 —— copy 不进事务; 链接 diff 与删除入队推迟到
   // 行锁之下, 以锁下集合为事实源. 事务外快照与行锁之间的并发编辑是 deleteMany +
@@ -325,21 +333,13 @@ export const updatePatchResource = async (
     await enqueueResourceLinkDeletions(prisma, s3LinksToDelete)
 
     if (moderation.queue) {
-      await createModerationTask(
-        {
-          contentType: 'resource',
-          contentId: resourceId,
-          // 分组用资源真实 patch_id (与 apply 的 recalcPatchType 对齐, 防 input 篡改失准)
-          patchId: resource.patch_id,
-          userId: resource.user_id,
-          payload: {
-            text: moderationText,
-            name: newResource.name
-          },
-          dryRun: moderation.dryRun
-        },
-        prisma
-      )
+      await enqueueTextModeration(prisma, moderation, {
+        contentId: resourceId,
+        // 分组用资源真实 patch_id (与 apply 的 recalcPatchType 对齐, 防 input 篡改失准)
+        patchId: resource.patch_id,
+        userId: resource.user_id,
+        name: newResource.name
+      })
     }
 
     const resourceResponse: PatchResource = {

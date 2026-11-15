@@ -4,8 +4,8 @@ const {
   createCommentMock,
   transactionMock,
   markdownToHtmlCommentMock,
-  preScreenTextMock,
-  createModerationTaskMock,
+  planTextModerationMock,
+  enqueueTextModerationMock,
   createDedupMessageMock,
   createLinkDedupMessageMock,
   createMentionMessageMock,
@@ -17,8 +17,8 @@ const {
   createCommentMock: vi.fn(),
   transactionMock: vi.fn(),
   markdownToHtmlCommentMock: vi.fn(),
-  preScreenTextMock: vi.fn(),
-  createModerationTaskMock: vi.fn(),
+  planTextModerationMock: vi.fn(),
+  enqueueTextModerationMock: vi.fn(),
   createDedupMessageMock: vi.fn(),
   createLinkDedupMessageMock: vi.fn(),
   createMentionMessageMock: vi.fn(),
@@ -57,8 +57,8 @@ vi.mock('~/app/api/utils/render/markdownToHtmlComment', () => ({
 }))
 
 vi.mock('~/server/moderation/submit', () => ({
-  createModerationTask: createModerationTaskMock,
-  preScreenText: preScreenTextMock
+  enqueueTextModeration: enqueueTextModerationMock,
+  planTextModeration: planTextModerationMock
 }))
 
 vi.mock('~/app/api/patch/cache', () => ({
@@ -69,6 +69,7 @@ vi.mock('~/app/api/message/unread/cache', () => ({
   invalidateUnread: invalidateUnreadMock
 }))
 
+import { commentSubject } from '~/server/moderation/subject'
 import { createPatchComment } from '~/app/api/patch/comment/create'
 
 const created = new Date('2026-01-01T00:00:00.000Z')
@@ -96,12 +97,12 @@ beforeEach(() => {
   vi.clearAllMocks()
   createCommentMock.mockResolvedValue(comment)
   markdownToHtmlCommentMock.mockResolvedValue('<p>comment</p>')
-  preScreenTextMock.mockResolvedValue({
+  planTextModerationMock.mockResolvedValue({
     queue: false,
     intercept: false,
     dryRun: false
   })
-  createModerationTaskMock.mockResolvedValue(undefined)
+  enqueueTextModerationMock.mockResolvedValue(undefined)
   createMentionMessageMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
@@ -121,7 +122,10 @@ describe('createPatchComment', () => {
 
     const creation = createPatchComment(input, 7, 2)
 
-    expect(preScreenTextMock).toHaveBeenCalledWith('comment', 2)
+    expect(planTextModerationMock).toHaveBeenCalledWith(
+      commentSubject('comment'),
+      { userRole: 2 }
+    )
     expect(transactionMock).not.toHaveBeenCalled()
 
     resolveRender?.('<p>comment</p>')
@@ -171,7 +175,10 @@ describe('createPatchComment', () => {
   it('创建评论时把调用者角色透传给审核预筛', async () => {
     await createPatchComment(input, 7, 3)
 
-    expect(preScreenTextMock).toHaveBeenCalledWith('comment', 3)
+    expect(planTextModerationMock).toHaveBeenCalledWith(
+      commentSubject('comment'),
+      { userRole: 3 }
+    )
   })
 
   it('回复通知写入后失效父评论作者的未读缓存', async () => {
@@ -214,7 +221,7 @@ describe('createPatchComment', () => {
       status: 0,
       resource_id: null
     })
-    preScreenTextMock.mockResolvedValue({
+    planTextModerationMock.mockResolvedValue({
       queue: true,
       intercept: true,
       dryRun: false

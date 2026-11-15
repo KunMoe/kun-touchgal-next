@@ -4,7 +4,11 @@ import { Prisma } from '~/prisma/generated/prisma/client'
 import { patchRatingCreateSchema } from '~/validations/patch'
 import { recomputePatchRatingStat } from './stat'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
-import { createModerationTask, preScreenText } from '~/server/moderation/submit'
+import {
+  enqueueTextModeration,
+  planTextModeration
+} from '~/server/moderation/submit'
+import { ratingSubject } from '~/server/moderation/subject'
 import type { KunPatchRating } from '~/types/api/galgame'
 
 export const createPatchRating = async (
@@ -30,7 +34,9 @@ export const createPatchRating = async (
     return '您已经评价过该游戏'
   }
 
-  const moderation = await preScreenText(shortSummary, userRole)
+  const moderation = await planTextModeration(ratingSubject(shortSummary), {
+    userRole
+  })
 
   const data = await prisma
     .$transaction(async (tx) => {
@@ -62,17 +68,11 @@ export const createPatchRating = async (
       })
 
       if (moderation.queue) {
-        await createModerationTask(
-          {
-            contentType: 'rating',
-            contentId: created.id,
-            patchId,
-            userId: uid,
-            payload: { text: shortSummary },
-            dryRun: moderation.dryRun
-          },
-          tx
-        )
+        await enqueueTextModeration(tx, moderation, {
+          contentId: created.id,
+          patchId,
+          userId: uid
+        })
       }
 
       await recomputePatchRatingStat(patchId, tx)

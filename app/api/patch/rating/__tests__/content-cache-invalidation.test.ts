@@ -42,8 +42,8 @@ vi.mock('~/app/api/patch/rating/stat', () => ({
 }))
 
 vi.mock('~/server/moderation/submit', () => ({
-  createModerationTask: createTaskMock,
-  preScreenText: preScreenMock,
+  enqueueTextModeration: createTaskMock,
+  planTextModeration: preScreenMock,
   deletePendingModerationTasks: deletePendingMock
 }))
 

@@ -1,6 +1,7 @@
 import { prisma } from '~/prisma/index'
 import { getRedirectConfig } from '~/app/api/admin/setting/redirect/getRedirectConfig'
 import { getModerationConfig } from '~/server/moderation/config'
+import { decodeModerationTask } from '~/server/moderation/taskCodec'
 import { acquireKvLock, setKv } from '~/lib/redis'
 import type { UserState } from '~/store/userStore'
 
@@ -63,12 +64,15 @@ const getPendingProfileValues = async (uid: number) => {
 
   const avatarTask = pendingTasks.find((t) => t.content_type === 'avatar')
   const bioTask = pendingTasks.find((t) => t.content_type === 'bio')
-  const avatarPayload = avatarTask?.payload as { pendingLink?: string } | null
-  const bioPayload = bioTask?.payload as { bio?: string } | null
+  const avatarBody = avatarTask ? decodeModerationTask(avatarTask) : null
+  const bioBody = bioTask ? decodeModerationTask(bioTask) : null
 
   return {
-    pendingAvatar: avatarPayload?.pendingLink,
-    pendingBio: bioPayload?.bio
+    pendingAvatar:
+      avatarBody?.contentType === 'avatar'
+        ? avatarBody.payload.pendingLink
+        : undefined,
+    pendingBio: bioBody?.contentType === 'bio' ? bioBody.bio : undefined
   }
 }
 

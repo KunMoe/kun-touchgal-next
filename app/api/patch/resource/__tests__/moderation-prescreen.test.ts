@@ -11,12 +11,12 @@ const {
   transactionPatchUpdateMock,
   transactionQueryRawMock,
   transactionLinkFindManyMock,
-  preScreenTextMock,
-  hasPendingModerationMock,
-  createModerationTaskMock,
+  taskCountMock,
+  taskUpdateManyMock,
+  taskCreateMock,
+  getModerationConfigMock,
   createMessageMock,
-  invalidateUnreadMock,
-  moderationSkip
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   patchFindUniqueMock: vi.fn(),
   resourceFindUniqueMock: vi.fn(),
@@ -28,12 +28,12 @@ const {
   transactionPatchUpdateMock: vi.fn(),
   transactionQueryRawMock: vi.fn(),
   transactionLinkFindManyMock: vi.fn(),
-  preScreenTextMock: vi.fn(),
-  hasPendingModerationMock: vi.fn(),
-  createModerationTaskMock: vi.fn(),
+  taskCountMock: vi.fn(),
+  taskUpdateManyMock: vi.fn(),
+  taskCreateMock: vi.fn(),
+  getModerationConfigMock: vi.fn(),
   createMessageMock: vi.fn(),
-  invalidateUnreadMock: vi.fn(),
-  moderationSkip: { intercept: false, queue: false, dryRun: false }
+  invalidateUnreadMock: vi.fn()
 }))
 
 const transactionClient = {
@@ -42,6 +42,7 @@ const transactionClient = {
     update: transactionResourceUpdateMock
   },
   patch_resource_link: { findMany: transactionLinkFindManyMock },
+  moderation_task: { updateMany: taskUpdateManyMock, create: taskCreateMock },
   user: { update: transactionUserUpdateMock },
   patch: { update: transactionPatchUpdateMock },
   $queryRaw: transactionQueryRawMock
@@ -54,6 +55,7 @@ vi.mock('~/prisma/index', () => ({
       findUnique: resourceFindUniqueMock,
       count: resourceCountMock
     },
+    moderation_task: { count: taskCountMock },
     $transaction: transactionMock
   }
 }))
@@ -89,11 +91,10 @@ vi.mock('~/server/storage/s3Outbox', () => ({
   kickS3DeletionDrain: vi.fn()
 }))
 
-vi.mock('~/server/moderation/submit', () => ({
-  MODERATION_SKIP: moderationSkip,
-  createModerationTask: createModerationTaskMock,
-  hasPendingModeration: hasPendingModerationMock,
-  preScreenText: preScreenTextMock
+// 送审入口 (plan / enqueue) 走真实实现, 只替换它读的审核配置: 这里验证的正是
+// 「调用点交出的主体 → 是否建任务、任务里有哪些段」这一整段
+vi.mock('~/server/moderation/config', () => ({
+  getModerationConfig: getModerationConfigMock
 }))
 
 vi.mock('~/app/api/utils/message', () => ({
@@ -157,12 +158,10 @@ const storedResource = {
 beforeEach(() => {
   vi.clearAllMocks()
   transactionLinkFindManyMock.mockResolvedValue([])
-  hasPendingModerationMock.mockResolvedValue(false)
-  preScreenTextMock.mockResolvedValue({
-    intercept: true,
-    queue: true,
-    dryRun: false
-  })
+  taskCountMock.mockResolvedValue(0)
+  taskUpdateManyMock.mockResolvedValue({ count: 0 })
+  taskCreateMock.mockResolvedValue({ id: 1 })
+  getModerationConfigMock.mockResolvedValue({ enabled: true, dryRun: false })
   patchFindUniqueMock.mockResolvedValue({
     id: 10,
     unique_id: 'patch-10',
@@ -183,12 +182,14 @@ beforeEach(() => {
   transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'patch' }])
 })
 
-describe('资源审核预筛选: 标题与介绍均为空时直接放行', () => {
+const createdTaskData = () => taskCreateMock.mock.calls[0][0].data
+
+describe('资源审核预筛选: 送审字段全空时直接放行', () => {
   it('创建空标题空介绍的资源不送审、状态直接公开', async () => {
     await createPatchResource(resourceInput, 7, 2)
 
-    expect(preScreenTextMock).not.toHaveBeenCalled()
-    expect(createModerationTaskMock).not.toHaveBeenCalled()
+    expect(getModerationConfigMock).not.toHaveBeenCalled()
+    expect(taskCreateMock).not.toHaveBeenCalled()
     expect(transactionResourceCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 0 })
@@ -203,15 +204,25 @@ describe('资源审核预筛选: 标题与介绍均为空时直接放行', () =>
       2
     )
 
-    expect(preScreenTextMock).not.toHaveBeenCalled()
-    expect(createModerationTaskMock).not.toHaveBeenCalled()
+    expect(getModerationConfigMock).not.toHaveBeenCalled()
+    expect(taskCreateMock).not.toHaveBeenCalled()
   })
 
-  it('创建含标题的资源仍正常送审、角色透传给预筛', async () => {
+  it('创建含标题的资源正常送审: 任务携带主体段与资源名, 资源进入待审核', async () => {
     await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 2)
 
-    expect(preScreenTextMock).toHaveBeenCalledWith('标题: Patch v1\n介绍: ', 2)
-    expect(createModerationTaskMock).toHaveBeenCalled()
+    expect(createdTaskData()).toMatchObject({
+      content_type: 'resource',
+      content_id: 1,
+      patch_id: 10,
+      user_id: 7,
+      dry_run: false,
+      payload: {
+        v: 2,
+        segments: [{ label: '标题', kind: 'plain', value: 'Patch v1' }],
+        name: 'Resource'
+      }
+    })
     expect(transactionResourceCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 3 })
@@ -219,13 +230,48 @@ describe('资源审核预筛选: 标题与介绍均为空时直接放行', () =>
     )
   })
 
+  it('标题、介绍、模型型号各成一段; 未选 AI 类型时模型型号不落库也不送审', async () => {
+    await createPatchResource(
+      {
+        ...resourceInput,
+        name: 'Patch v1',
+        note: '**汉化**说明',
+        type: ['ai'],
+        modelName: 'GPT-4o'
+      },
+      7,
+      2
+    )
+    await createPatchResource(
+      { ...resourceInput, name: 'Patch v1', modelName: 'GPT-4o' },
+      7,
+      2
+    )
+
+    expect(taskCreateMock.mock.calls[0][0].data.payload.segments).toEqual([
+      { label: '标题', kind: 'plain', value: 'Patch v1' },
+      { label: '介绍', kind: 'markdown-standard', value: '**汉化**说明' },
+      { label: '模型型号', kind: 'plain', value: 'GPT-4o' }
+    ])
+    expect(taskCreateMock.mock.calls[1][0].data.payload.segments).toEqual([
+      { label: '标题', kind: 'plain', value: 'Patch v1' }
+    ])
+  })
+
+  it('超级管理员 (role 4) 创建资源不送审', async () => {
+    await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 4)
+
+    expect(getModerationConfigMock).not.toHaveBeenCalled()
+    expect(taskCreateMock).not.toHaveBeenCalled()
+  })
+
   it('更新为空标题空介绍时不送审、不拦截', async () => {
     resourceFindUniqueMock.mockResolvedValue(storedResource)
 
     await updatePatchResource({ ...resourceInput, resourceId: 1 }, 7, 2)
 
-    expect(preScreenTextMock).not.toHaveBeenCalled()
-    expect(createModerationTaskMock).not.toHaveBeenCalled()
+    expect(getModerationConfigMock).not.toHaveBeenCalled()
+    expect(taskCreateMock).not.toHaveBeenCalled()
     expect(
       transactionResourceUpdateMock.mock.calls[0][0].data.status
     ).toBeUndefined()
@@ -240,9 +286,38 @@ describe('资源审核预筛选: 标题与介绍均为空时直接放行', () =>
       2
     )
 
-    expect(preScreenTextMock).toHaveBeenCalledWith('标题: Patch v2\n介绍: ', 2)
-    expect(createModerationTaskMock).toHaveBeenCalled()
+    expect(createdTaskData()).toMatchObject({
+      content_type: 'resource',
+      content_id: 1,
+      patch_id: 10,
+      user_id: 7,
+      payload: {
+        segments: [{ label: '标题', kind: 'plain', value: 'Patch v2' }],
+        name: 'Resource'
+      }
+    })
     expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
+  })
+
+  it('更新时送审字段与库中一致则不重审, 也不读审核配置', async () => {
+    resourceFindUniqueMock.mockResolvedValue(storedResource)
+
+    await updatePatchResource(
+      {
+        ...resourceInput,
+        resourceId: 1,
+        name: storedResource.name,
+        note: storedResource.note
+      },
+      7,
+      2
+    )
+
+    expect(getModerationConfigMock).not.toHaveBeenCalled()
+    expect(taskCreateMock).not.toHaveBeenCalled()
+    expect(
+      transactionResourceUpdateMock.mock.calls[0][0].data.status
+    ).toBeUndefined()
   })
 })
 
@@ -253,7 +328,8 @@ describe('首个资源人工审批通知', () => {
     await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 2)
 
     // 首个资源走人工审批流, 不送 AI 审核
-    expect(preScreenTextMock).not.toHaveBeenCalled()
+    expect(getModerationConfigMock).not.toHaveBeenCalled()
+    expect(taskCreateMock).not.toHaveBeenCalled()
     expect(createMessageMock).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'system', recipient_id: 7 })
     )

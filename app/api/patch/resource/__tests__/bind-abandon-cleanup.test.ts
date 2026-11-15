@@ -17,9 +17,9 @@ const {
   recalcPatchTypeMock,
   enqueueSearchOutboxMock,
   queueSearchSyncMock,
-  preScreenTextMock,
+  planTextModerationMock,
   hasPendingModerationMock,
-  createModerationTaskMock,
+  enqueueTextModerationMock,
   invalidatePatchResourceDetailCacheMock,
   invalidateResourceListCacheMock,
   invalidatePatchContentCacheMock,
@@ -44,9 +44,9 @@ const {
   recalcPatchTypeMock: vi.fn(),
   enqueueSearchOutboxMock: vi.fn(),
   queueSearchSyncMock: vi.fn(),
-  preScreenTextMock: vi.fn(),
+  planTextModerationMock: vi.fn(),
   hasPendingModerationMock: vi.fn(),
-  createModerationTaskMock: vi.fn(),
+  enqueueTextModerationMock: vi.fn(),
   invalidatePatchResourceDetailCacheMock: vi.fn(),
   invalidateResourceListCacheMock: vi.fn(),
   invalidatePatchContentCacheMock: vi.fn(),
@@ -120,9 +120,9 @@ vi.mock('~/server/storage/s3Outbox', () => ({
 
 vi.mock('~/server/moderation/submit', () => ({
   MODERATION_SKIP: { intercept: false, queue: false, dryRun: false },
-  createModerationTask: createModerationTaskMock,
+  enqueueTextModeration: enqueueTextModerationMock,
   hasPendingModeration: hasPendingModerationMock,
-  preScreenText: preScreenTextMock
+  planTextModeration: planTextModerationMock
 }))
 
 vi.mock('~/app/api/utils/message', () => ({
@@ -222,7 +222,7 @@ beforeEach(() => {
   })
   resourceCountMock.mockResolvedValue(1)
   hasPendingModerationMock.mockResolvedValue(false)
-  preScreenTextMock.mockResolvedValue({
+  planTextModerationMock.mockResolvedValue({
     intercept: false,
     queue: false,
     dryRun: false
@@ -312,7 +312,7 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
   it('预筛在 S3 绑定之前完成, 预筛故障时尚无已绑对象可泄漏', async () => {
     resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
     bindUploadedResourceMock.mockResolvedValueOnce(BOUND_A)
-    preScreenTextMock.mockRejectedValue(new Error('redis down'))
+    planTextModerationMock.mockRejectedValue(new Error('redis down'))
 
     const input = buildUpdateInput({ links: [s3Link('token-a')] })
     await expect(updatePatchResource(input, 7, 1)).rejects.toThrow('redis down')

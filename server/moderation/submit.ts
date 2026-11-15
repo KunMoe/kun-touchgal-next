@@ -1,8 +1,14 @@
 import { prisma } from '~/prisma/index'
 import type { Prisma } from '~/prisma/generated/prisma/client'
-import type { ModerationContentType } from '~/constants/moderation'
+import type {
+  ModerationContentType,
+  ModerationTextType
+} from '~/constants/moderation'
 import { getModerationConfig } from './config'
-import { prepareModerationText } from './prefilter'
+import { isSubjectEmpty, subjectChanged } from './subject'
+import type { ModerationSubject } from './subject'
+import { encodeModerationPayload } from './taskCodec'
+import type { ModerationTaskBody, TextTaskExtras } from './taskCodec'
 
 type ModerationClient = Prisma.TransactionClient | typeof prisma
 
@@ -14,30 +20,53 @@ export interface ModerationPreScreen {
   dryRun: boolean
 }
 
-export const MODERATION_SKIP: ModerationPreScreen = {
+// 字面量类型是有意的: ModerationPlan 靠 queue 的 false / true 判别是否带主体
+export const MODERATION_SKIP = {
   queue: false,
   intercept: false,
   dryRun: false
+} as const satisfies ModerationPreScreen
+
+// 两段式入口的第一段产物。排队时带着同一份主体进入第二段 (enqueueTextModeration),
+// 调用点不再重复传文本
+export type QueuedModerationPlan<T extends ModerationTextType> = {
+  queue: true
+  intercept: boolean
+  dryRun: boolean
+  subject: ModerationSubject<T>
 }
 
-// 仅超级管理员 (role>=4) 豁免送审, 与审核后台的权限门槛一致;
-// 豁免集中在此处并靠必传的 userRole 参数强制携带角色,
-// 防止新增调用点漏加检查 (资源 create 路径曾因此漏过豁免)
-export const preScreenText = async (
-  text: string,
-  userRole: number
-): Promise<ModerationPreScreen> => {
-  if (userRole >= 4) {
+export type ModerationPlan<T extends ModerationTextType> =
+  typeof MODERATION_SKIP | QueuedModerationPlan<T>
+
+// 第一段: 在事务外、任何不可回滚的副作用 (如 S3 绑定) 之前调用 —— 读审核配置可能因
+// Redis 故障抛错; 写内容行时又需要先知道 intercept。
+// 仅超级管理员 (role>=4) 豁免送审, 与审核后台的权限门槛一致; 豁免集中在此处并靠必传的
+// userRole 强制携带角色, 防止新增调用点漏加检查 (资源 create 路径曾因此漏过豁免)。
+// previous 是编辑前的主体: 送审字段没有变化就不重审。能在本地判定的都排在读配置之前
+export const planTextModeration = async <T extends ModerationTextType>(
+  subject: ModerationSubject<T>,
+  options: { userRole: number; previous?: ModerationSubject<T> }
+): Promise<ModerationPlan<T>> => {
+  if (options.userRole >= 4) {
+    return MODERATION_SKIP
+  }
+  if (options.previous && !subjectChanged(options.previous, subject)) {
+    return MODERATION_SKIP
+  }
+  if (isSubjectEmpty(subject)) {
     return MODERATION_SKIP
   }
   const config = await getModerationConfig()
   if (!config.enabled) {
     return MODERATION_SKIP
   }
-  if (!text.trim()) {
-    return MODERATION_SKIP
+  return {
+    queue: true,
+    intercept: !config.dryRun,
+    dryRun: config.dryRun,
+    subject
   }
-  return { queue: true, intercept: !config.dryRun, dryRun: config.dryRun }
 }
 
 export const preScreenMedia = async (
@@ -52,30 +81,6 @@ export const preScreenMedia = async (
   }
   return { queue: true, intercept: !config.dryRun, dryRun: config.dryRun }
 }
-
-export interface ModerationTextPayload {
-  // compacted snapshot sent to the AI
-  text: string
-  // resource name for the rejection notice
-  name?: string
-  // exact new bio value staged until approval
-  bio?: string
-}
-
-export interface ModerationAvatarPayload {
-  pendingKey: string
-  pendingMiniKey: string
-  avatarKey: string
-  avatarMiniKey: string
-  // versioned mini avatar URL written to user.avatar on approval
-  avatarLink: string
-  // staging URL shown to the author while the review is pending
-  pendingLink: string
-  // 送审对象的永久留档 URL, 供管理队列在裁决后回看; 留档功能上线前的旧任务无此字段
-  archiveLink?: string
-}
-
-export type ModerationPayload = ModerationTextPayload | ModerationAvatarPayload
 
 // 内容存在未裁决的审核任务 (AI 审核中或等待人工) 时禁止作者再次修改,
 // 否则编辑会使送审快照与实际内容脱节, 也可绕过尚未落地的人工裁决;
@@ -116,22 +121,17 @@ export const deletePendingModerationTasks = async (
     }
   })
 
+interface ModerationTaskTarget {
+  contentId?: number
+  patchId?: number
+  userId: number
+  dryRun: boolean
+}
+
 export const createModerationTask = async (
-  input: {
-    contentType: ModerationContentType
-    contentId?: number
-    patchId?: number
-    userId: number
-    payload: ModerationPayload
-    dryRun: boolean
-  },
+  input: ModerationTaskBody & ModerationTaskTarget,
   db: ModerationClient = prisma
 ) => {
-  const payload =
-    'text' in input.payload
-      ? { ...input.payload, text: prepareModerationText(input.payload.text) }
-      : input.payload
-
   // an edit supersedes any verdict still in flight for the same content,
   // otherwise an older approval could land after this newer submission
   await db.moderation_task.updateMany({
@@ -151,8 +151,25 @@ export const createModerationTask = async (
       content_id: input.contentId ?? null,
       patch_id: input.patchId ?? null,
       user_id: input.userId,
-      payload: payload as unknown as Prisma.InputJsonValue,
+      payload: encodeModerationPayload(input) as Prisma.InputJsonValue,
       dry_run: input.dryRun
     }
   })
 }
+
+// 第二段: 在事务内拿到内容行 id 之后调用。content_type 与送审内容都取自 plan
+export const enqueueTextModeration = async <T extends ModerationTextType>(
+  db: ModerationClient,
+  plan: QueuedModerationPlan<T>,
+  target: Omit<ModerationTaskTarget, 'dryRun'> & TextTaskExtras[T]
+) =>
+  createModerationTask(
+    // T 与 TextTaskExtras[T] 的对应由本函数签名保证, 泛型下联合类型推不出这层关联
+    {
+      contentType: plan.subject.contentType,
+      subject: plan.subject,
+      ...target,
+      dryRun: plan.dryRun
+    } as ModerationTaskBody & ModerationTaskTarget,
+    db
+  )

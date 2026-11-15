@@ -39,10 +39,10 @@ import {
   normalizeModerationText
 } from '~/server/moderation/prefilter'
 import type { ModerationBlacklistEntry } from '~/server/moderation/prefilter'
-import type {
-  ModerationAvatarPayload,
-  ModerationTextPayload
-} from '~/server/moderation/submit'
+import {
+  MODERATION_PAYLOAD_UNREADABLE,
+  decodeModerationTask
+} from '~/server/moderation/taskCodec'
 import { withTaskLock } from './withTaskLock'
 
 const MODERATION_LOCK_KEY = 'moderation:worker:lock'
@@ -105,8 +105,12 @@ export const processTextTask = async (
   task: moderation_taskModel,
   blacklistEntries: ModerationBlacklistEntry[]
 ) => {
-  const payload = task.payload as unknown as ModerationTextPayload
-  const normalized = normalizeModerationText(payload.text ?? '')
+  const body = decodeModerationTask(task)
+  if (!body || body.contentType === 'avatar') {
+    await markTaskManual(task.id, MODERATION_PAYLOAD_UNREADABLE)
+    return
+  }
+  const normalized = normalizeModerationText(body.text)
 
   const blacklistHit = matchBlacklist(
     normalized,
@@ -123,7 +127,7 @@ export const processTextTask = async (
     return
   }
 
-  const contentType = task.content_type as ModerationTextType
+  const { contentType } = body
   const hash = hashModerationText(normalized)
   const cached = await getCachedVerdict(contentType, hash)
   if (cached) {
@@ -136,15 +140,19 @@ export const processTextTask = async (
     return
   }
 
-  const result = await moderateText(contentType, payload.text ?? '')
+  const result = await moderateText(contentType, body.text)
   await cacheVerdict(contentType, hash, result.verdict)
   await applyAiResult(task, result)
 }
 
-const processAvatarTask = async (task: moderation_taskModel) => {
-  const payload = task.payload as unknown as ModerationAvatarPayload
+export const processAvatarTask = async (task: moderation_taskModel) => {
+  const body = decodeModerationTask(task)
+  if (body?.contentType !== 'avatar') {
+    await markTaskManual(task.id, MODERATION_PAYLOAD_UNREADABLE)
+    return
+  }
   const buffer = await getFileFromS3(
-    payload.pendingKey,
+    body.payload.pendingKey,
     AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
   )
   // vision APIs handle jpeg far more reliably than avif

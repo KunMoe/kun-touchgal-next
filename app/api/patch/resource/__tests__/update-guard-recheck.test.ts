@@ -11,9 +11,9 @@ const {
   bindUploadedResourceMock,
   enqueueResourceLinkDeletionsMock,
   recalcPatchTypeMock,
-  createModerationTaskMock,
+  enqueueTextModerationMock,
   hasPendingModerationMock,
-  preScreenTextMock,
+  planTextModerationMock,
   enqueueSearchOutboxMock,
   queueSearchSyncMock,
   invalidatePatchResourceDetailCacheMock,
@@ -32,9 +32,9 @@ const {
   bindUploadedResourceMock: vi.fn(),
   enqueueResourceLinkDeletionsMock: vi.fn(),
   recalcPatchTypeMock: vi.fn(),
-  createModerationTaskMock: vi.fn(),
+  enqueueTextModerationMock: vi.fn(),
   hasPendingModerationMock: vi.fn(),
-  preScreenTextMock: vi.fn(),
+  planTextModerationMock: vi.fn(),
   enqueueSearchOutboxMock: vi.fn(),
   queueSearchSyncMock: vi.fn(),
   invalidatePatchResourceDetailCacheMock: vi.fn(),
@@ -83,9 +83,9 @@ vi.mock('~/app/api/utils/pendingResourceCache', () => ({
 
 vi.mock('~/server/moderation/submit', () => ({
   MODERATION_SKIP: { queue: false, intercept: false, dryRun: false },
-  createModerationTask: createModerationTaskMock,
+  enqueueTextModeration: enqueueTextModerationMock,
   hasPendingModeration: hasPendingModerationMock,
-  preScreenText: preScreenTextMock
+  planTextModeration: planTextModerationMock
 }))
 
 vi.mock('~/server/search/sync', () => ({
@@ -168,7 +168,7 @@ const INTERCEPT = { queue: true, intercept: true, dryRun: false }
 
 const expectNoWriteNoSideEffects = () => {
   expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
-  expect(createModerationTaskMock).not.toHaveBeenCalled()
+  expect(enqueueTextModerationMock).not.toHaveBeenCalled()
   expect(recalcPatchTypeMock).not.toHaveBeenCalled()
   expect(enqueueSearchOutboxMock).not.toHaveBeenCalled()
   expect(queueSearchSyncMock).not.toHaveBeenCalled()
@@ -184,7 +184,7 @@ beforeEach(() => {
   patchFindUniqueMock.mockResolvedValue({ id: 10 })
   transactionLinkFindManyMock.mockResolvedValue([])
   hasPendingModerationMock.mockResolvedValue(false)
-  preScreenTextMock.mockResolvedValue(INTERCEPT)
+  planTextModerationMock.mockResolvedValue(INTERCEPT)
   invalidatePatchContentCacheMock.mockResolvedValue(undefined)
   recalcPatchTypeMock.mockResolvedValue('patch-10')
   transactionMock.mockImplementation(

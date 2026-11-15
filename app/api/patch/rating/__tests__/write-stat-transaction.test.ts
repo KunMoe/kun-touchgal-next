@@ -8,9 +8,9 @@ const {
   updateMock,
   deleteMock,
   recomputeOneMock,
-  preScreenTextMock,
+  planTextModerationMock,
   hasPendingModerationMock,
-  createModerationTaskMock,
+  enqueueTextModerationMock,
   deletePendingModerationTasksMock,
   deleteOrphanReportsMock
 } = vi.hoisted(() => ({
@@ -20,9 +20,9 @@ const {
   updateMock: vi.fn(),
   deleteMock: vi.fn(),
   recomputeOneMock: vi.fn(),
-  preScreenTextMock: vi.fn(),
+  planTextModerationMock: vi.fn(),
   hasPendingModerationMock: vi.fn(),
-  createModerationTaskMock: vi.fn(),
+  enqueueTextModerationMock: vi.fn(),
   deletePendingModerationTasksMock: vi.fn(),
   deleteOrphanReportsMock: vi.fn()
 }))
@@ -49,9 +49,9 @@ vi.mock('~/app/api/patch/rating/stat', () => ({
 
 vi.mock('~/server/moderation/submit', () => ({
   MODERATION_SKIP: { queue: false, intercept: false, dryRun: false },
-  preScreenText: preScreenTextMock,
+  planTextModeration: planTextModerationMock,
   hasPendingModeration: hasPendingModerationMock,
-  createModerationTask: createModerationTaskMock,
+  enqueueTextModeration: enqueueTextModerationMock,
   deletePendingModerationTasks: deletePendingModerationTasksMock
 }))
 
@@ -63,6 +63,7 @@ vi.mock('~/server/report/pending', () => ({
   deleteOrphanReports: deleteOrphanReportsMock
 }))
 
+import { ratingSubject } from '~/server/moderation/subject'
 import { createPatchRating } from '~/app/api/patch/rating/create'
 import { updatePatchRating } from '~/app/api/patch/rating/update'
 import { deletePatchRating } from '~/app/api/patch/rating/delete'
@@ -107,13 +108,13 @@ beforeEach(() => {
   createMock.mockResolvedValue(rating)
   updateMock.mockResolvedValue(rating)
   deleteMock.mockResolvedValue(rating)
-  preScreenTextMock.mockResolvedValue({
+  planTextModerationMock.mockResolvedValue({
     queue: false,
     intercept: false,
     dryRun: false
   })
   hasPendingModerationMock.mockResolvedValue(false)
-  createModerationTaskMock.mockResolvedValue(undefined)
+  enqueueTextModerationMock.mockResolvedValue(undefined)
   deletePendingModerationTasksMock.mockResolvedValue(undefined)
   deleteOrphanReportsMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
@@ -165,6 +166,17 @@ describe('public patch rating write transactions', () => {
     ])
   })
 
+  it('编辑评价时把编辑前的短评作为 previous 交给预筛, 由预筛判定是否重审', async () => {
+    findUniqueMock.mockResolvedValueOnce({ ...rating, short_summary: 'before' })
+
+    await updatePatchRating(updateInput, 7, 1)
+
+    expect(planTextModerationMock).toHaveBeenCalledWith(
+      ratingSubject('summary'),
+      { userRole: 1, previous: ratingSubject('before') }
+    )
+  })
+
   it('recomputes rating stats before the delete transaction commits', async () => {
     findUniqueMock.mockResolvedValueOnce(rating)
 
@@ -201,7 +213,10 @@ describe('public patch rating write transactions', () => {
 
     await createPatchRating(createInput, 7, 3)
 
-    expect(preScreenTextMock).toHaveBeenCalledWith('summary', 3)
+    expect(planTextModerationMock).toHaveBeenCalledWith(
+      ratingSubject('summary'),
+      { userRole: 3 }
+    )
   })
 
   it('并发重复评价撞唯一约束时返回业务错误而非抛出', async () => {
