@@ -100,6 +100,10 @@ describe('normalizeModerationText (黑名单与缓存键的归一化)', () => {
   it('NFKC + 小写 + 去全部空白', () => {
     expect(normalizeModerationText('ＡＢＣ　１２３ x\n\tY')).toBe('abc123xy')
   })
+
+  it('剥掉不可见字符', () => {
+    expect(normalizeModerationText('加\u200B微\u3164信\uFFF9')).toBe('加微信')
+  })
 })
 
 describe('matchBlacklist', () => {
@@ -121,24 +125,29 @@ describe('matchBlacklist', () => {
     expect(matchBlacklist('anything', ['', '   '])).toBeNull()
   })
 
-  // 第三列: HEAD 上是否命中。只有 U+FEFF 属于 JS 的 \s 而被归一化顺带去掉;
-  // 其余不可见字符插在违禁词中间即可让黑名单失配 (P13-02)
+  // 不可见字符插在违禁词中间, 页面显示与黑名单词完全一致 (P13-02)
   it.each([
-    ['ZWSP', '\u200B', false],
-    ['ZWNJ', '\u200C', false],
-    ['ZWJ', '\u200D', false],
-    ['WJ', '\u2060', false],
-    ['SHY', '\u00AD', false],
-    ['BOM', '\uFEFF', true],
-    ['MVS', '\u180E', false],
-    ['HANGUL FILLER (Default_Ignorable, 非 Cf)', '\u3164', false],
-    ['INTERLINEAR ANCHOR (Cf, 非 Default_Ignorable)', '\uFFF9', false],
-    ['LRM', '\u200E', false],
-    ['CGJ (Default_Ignorable, 非 Cf)', '\u034F', false]
-  ])('违禁词中间插入 %s', (_name, invisible, expected) => {
+    ['ZWSP', '\u200B'],
+    ['ZWNJ', '\u200C'],
+    ['ZWJ', '\u200D'],
+    ['WJ', '\u2060'],
+    ['SHY', '\u00AD'],
+    ['BOM', '\uFEFF'],
+    ['MVS', '\u180E'],
+    ['HANGUL FILLER (Default_Ignorable, 非 Cf)', '\u3164'],
+    ['INTERLINEAR ANCHOR (Cf, 非 Default_Ignorable)', '\uFFF9'],
+    ['LRM', '\u200E'],
+    ['CGJ (Default_Ignorable, 非 Cf)', '\u034F']
+  ])('违禁词中间插入 %s 仍命中', (_name, invisible) => {
     const text = `快来加微${invisible}信abc${invisible}123哦`
 
-    expect(hit(text, '加微信abc123') !== null).toBe(expected)
+    expect(hit(text, '加微信abc123')).toBe('加微信abc123')
+  })
+
+  it('模式里的不可见字符同样被剥掉', () => {
+    expect(hit('快来加微信abc123哦', '加微\u200B信abc123')).toBe(
+      '加微\u200B信abc123'
+    )
   })
 
   it.each([

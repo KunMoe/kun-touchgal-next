@@ -4,9 +4,12 @@ import {
   MODERATION_TEXT_MAX_LENGTH,
   MODERATION_TEXT_TAIL_LENGTH
 } from '~/constants/moderation'
+import { stripInvisible } from '~/utils/text/unicode'
 
+// 先剥不可见字符: 零宽字符、韩文填充符之类插在违禁词中间, 页面显示与黑名单词
+// 完全一致, 不剥就能让黑名单失配
 export const normalizeModerationText = (text: string) =>
-  text.normalize('NFKC').toLowerCase().replace(/\s+/g, '')
+  stripInvisible(text).normalize('NFKC').toLowerCase().replace(/\s+/g, '')
 
 export const hashModerationText = (normalizedText: string) =>
   createHash('sha256').update(normalizedText).digest('hex')
