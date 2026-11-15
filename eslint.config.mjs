@@ -6,7 +6,7 @@ import nextTypescript from 'eslint-config-next/typescript'
 import prettierRecommended from 'eslint-plugin-prettier/recommended'
 import react from 'eslint-plugin-react'
 
-export default defineConfig([
+const kunConfigs = defineConfig([
   // migration/backup 是已执行完毕的一次性脚本归档 (多带 @ts-nocheck), 不再维护
   globalIgnores([
     '.next/',
@@ -111,5 +111,37 @@ export default defineConfig([
     rules: {
       '@typescript-eslint/no-require-imports': 'off'
     }
+  },
+  // 未使用的 eslint-disable 指令同样报 error: 这类报告没有 ruleId, 进不了抑制基线,
+  // 出现就必须删掉
+  {
+    linterOptions: {
+      reportUnusedDisableDirectives: 'error'
+    }
   }
 ])
+
+// 闸门二值化 (T40): 每条规则只能是 error 或 off。warn 不阻塞 CI, 存量从 241 涨到 293
+// 没有任何闸门察觉; 升为 error 后存量记入 eslint-suppressions.json 基线 (只减不增),
+// 新增即红。逐个 config 对象改写即可: 后出现的 'off' 仍然覆盖前面被升上来的 error
+const kunBinarizeSeverity = (configs) =>
+  configs.map((config) => {
+    if (!config.rules) {
+      return config
+    }
+    const rules = Object.fromEntries(
+      Object.entries(config.rules).map(([name, value]) => {
+        const severity = Array.isArray(value) ? value[0] : value
+        if (severity !== 'warn' && severity !== 1) {
+          return [name, value]
+        }
+        return [
+          name,
+          Array.isArray(value) ? ['error', ...value.slice(1)] : 'error'
+        ]
+      })
+    )
+    return { ...config, rules }
+  })
+
+export default kunBinarizeSeverity(kunConfigs)

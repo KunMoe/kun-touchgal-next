@@ -20,7 +20,6 @@ export const kunErrorHandler = <T>(
       } else {
         toast.error('发生未知错误')
       }
-      // eslint-disable-next-line no-unused-vars
     } catch (e) {
       toast.error(res)
     }
