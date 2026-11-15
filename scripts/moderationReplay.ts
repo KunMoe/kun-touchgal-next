@@ -12,6 +12,7 @@ import {
 import type { ModerationVerdict } from '~/server/moderation/ai'
 import { buildModerationUserMessage } from '~/server/moderation/prompt'
 import {
+  RESOURCE_LINK_FIELD_POLICY,
   bioSubject,
   commentSubject,
   ratingSubject,
@@ -34,6 +35,9 @@ import {
 //   pnpm moderation:replay --limit 200
 //   pnpm moderation:replay --limit 50 --types comment,resource --since 2026-10-01
 //   pnpm moderation:replay --limit 20 --dry-run     只写出两侧输入, 不调模型
+//   pnpm moderation:replay --limit 200 --without-links
+//       新侧不带链接 / 提取码 / 解压码: 旧封装从不送审这三个字段, 带上它们时
+//       「换封装」与「多审了三个字段」两种影响会混在一起; 两种方式各跑一次即可分开看
 //
 // 逐条结果写入 docs/tmp/moderation-replay/<时间>.jsonl, 终端打印分歧汇总
 
@@ -67,17 +71,28 @@ const readArgs = () => {
     concurrency: Number(valueOf('--concurrency') ?? 4),
     since: since ? new Date(since) : undefined,
     types,
-    dryRun: args.includes('--dry-run')
+    dryRun: args.includes('--dry-run'),
+    withoutLinks: args.includes('--without-links')
   }
 }
 
+const LINK_LABELS: string[] = Object.values(RESOURCE_LINK_FIELD_POLICY).flatMap(
+  (policy) => (typeof policy === 'string' ? [] : [policy.label])
+)
+// 多条链接的字段名带序号 (「链接 2」)
+const isLinkSegment = (label: string) =>
+  LINK_LABELS.includes(label.replace(/ \d+$/, ''))
+
 // 新任务的载荷里就是用户提交的原始段; 引入主体之前的旧任务只存了降噪后的文本,
 // 原文要回内容表取 (内容已删除或签名任务没有暂存值时放弃该样本)
-const loadSubject = async (task: {
-  content_type: string
-  content_id: number | null
-  payload: unknown
-}): Promise<ModerationSubject | null> => {
+const loadSubject = async (
+  task: {
+    content_type: string
+    content_id: number | null
+    payload: unknown
+  },
+  withoutLinks: boolean
+): Promise<ModerationSubject | null> => {
   const body = decodeModerationTask(task)
   if (!body || body.contentType === 'avatar') {
     return null
@@ -87,7 +102,12 @@ const loadSubject = async (task: {
     task.payload !== null &&
     'v' in task.payload
   if (isRaw) {
-    return { contentType: body.contentType, segments: body.segments }
+    return {
+      contentType: body.contentType,
+      segments: withoutLinks
+        ? body.segments.filter((segment) => !isLinkSegment(segment.label))
+        : body.segments
+    }
   }
 
   const id = task.content_id ?? 0
@@ -125,7 +145,7 @@ const loadSubject = async (task: {
           name: row.name,
           note: row.note,
           modelName: row.model_name,
-          links: row.links
+          links: withoutLinks ? [] : row.links
         })
       )
     }
@@ -162,7 +182,7 @@ const collectSamples = async (options: ReturnType<typeof readArgs>) => {
     }
     for (const task of tasks) {
       cursor = task.id
-      const subject = await loadSubject(task)
+      const subject = await loadSubject(task, options.withoutLinks)
       if (!subject || !subject.segments.length) {
         continue
       }

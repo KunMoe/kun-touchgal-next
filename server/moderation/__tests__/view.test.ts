@@ -237,7 +237,8 @@ describe('buildAuditView: markdown 段审「读者所见 + 原文」两面', () 
 
 describe('buildAuditView: 引入主体之前的旧任务', () => {
   it('单个 plain 段原样使用, 不再限长', async () => {
-    const text = '标题: A 介绍: B'
+    // 比任何字段的写入上限都长: 旧任务的文本在写入时已经限过长, 这里不能再截
+    const text = `标题: A 介绍: ${'字'.repeat(11000)}`
 
     expect(
       await buildAuditView({

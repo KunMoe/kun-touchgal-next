@@ -110,12 +110,21 @@ describe('kunHtmlToText audit: 给审核看, 读者点得到的地址都保留',
     )
   })
 
-  it('图片输出地址', async () => {
-    const html = await comment('![二维码](https://cdn.example.com/qr.png)')
+  // alt 在图片加载失败时直接显示, title 悬停可见; 原文里两者都可以写成字符实体
+  it('图片输出替代文字、悬停标题与地址', async () => {
+    const html = await comment(
+      '![&#21152;&#24494;&#20449;](https://cdn.example.com/qr.png "&#25195;&#30721;")'
+    )
 
     expect(kunHtmlToText(html, 'audit')).toBe(
-      '[图片 https://cdn.example.com/qr.png]'
+      '[图片 加微信 扫码 https://cdn.example.com/qr.png]'
     )
+    expect(
+      kunHtmlToText(
+        await comment('![](https://cdn.example.com/a.png)'),
+        'audit'
+      )
+    ).toBe('[图片 https://cdn.example.com/a.png]')
   })
 
   it('外链卡片保留文字与地址, 视频输出地址', async () => {

@@ -37,7 +37,7 @@ import {
 } from '~/server/moderation/apply'
 import {
   filterBlacklistPatterns,
-  hashModerationText,
+  hashModerationTexts,
   matchBlacklist,
   normalizeModerationText
 } from '~/server/moderation/prefilter'
@@ -139,7 +139,14 @@ export const processTextTask = async (
 
   const { contentType } = body
   const userMessage = buildModerationUserMessage(view)
-  const hash = hashModerationText(userMessage)
+  // 每段固定取 (字段名, 读者所见, 原文) 三项, 与用户消息一一对应
+  const hash = hashModerationTexts(
+    view.flatMap((segment) => [
+      segment.label,
+      segment.shown,
+      segment.source ?? ''
+    ])
+  )
   const cached = await getCachedVerdict(contentType, hash)
   if (cached) {
     await applyAiResult(task, {

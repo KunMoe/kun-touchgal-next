@@ -20,10 +20,14 @@ const TABLE_SELECTOR = {
   options: { uppercaseHeaderCells: false }
 }
 
+// alt 在图片加载失败时直接显示在页面上, title 悬停可见: 读者看得到的都要给审核看。
+// 原文里它们可以写成字符实体 (&#21152;…), 只有渲染后的属性值才是可读文字
 const formatImage: FormatCallback = (elem, _walk, builder) => {
-  const src = elem.attribs?.src
-  if (src) {
-    builder.addInline(`[图片 ${src}]`)
+  const parts = [elem.attribs?.alt, elem.attribs?.title, elem.attribs?.src]
+    .filter(Boolean)
+    .join(' ')
+  if (parts) {
+    builder.addInline(`[图片 ${parts}]`)
   }
 }
 

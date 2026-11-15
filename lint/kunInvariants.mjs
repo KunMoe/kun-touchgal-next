@@ -110,10 +110,16 @@ export const KUN_INVARIANTS = [
       'markdownToText 是按正则近似的客户端工具, 不认识指令与内嵌 HTML, 输出与读者实际看到的渲染结果不一致',
     removeWhen: 'utils/markdownToText 被删除',
     files: ['app/api/**', 'server/**', 'app/**/metadata.ts'],
-    enforce: { kind: 'import', sources: [/(^|\/)utils\/markdownToText$/] },
+    enforce: {
+      kind: 'import',
+      sources: [/(^|\/)utils\/markdownToText(\.tsx?)?$/]
+    },
     examples: {
       file: 'app/api/kunInvariantExample.ts',
-      bad: ["import { markdownToText } from '~/utils/markdownToText'"],
+      bad: [
+        "import { markdownToText } from '~/utils/markdownToText'",
+        "import { markdownToText } from '~/utils/markdownToText.tsx'"
+      ],
       good: ["import { kunHtmlToText } from '~/server/content/text'"]
     }
   },

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   filterBlacklistPatterns,
-  hashModerationText,
+  hashModerationTexts,
   matchBlacklist,
   normalizeModerationText
 } from '../prefilter'
@@ -43,24 +43,46 @@ describe('normalizeModerationText (黑名单与缓存键的归一化)', () => {
   })
 })
 
-describe('hashModerationText (裁决缓存键)', () => {
-  it('只差大小写、全半角与空白的文本共用一个键', () => {
-    expect(hashModerationText('Hello  World')).toBe(
-      hashModerationText('ｈｅｌｌｏ\nworld')
+describe('hashModerationTexts (裁决缓存键)', () => {
+  it('只差大小写、全半角与空白 (含换行) 的值共用一个键', () => {
+    expect(hashModerationTexts(['标题', 'Hello  World'])).toBe(
+      hashModerationTexts(['标题', 'ｈｅｌｌｏ\nworld'])
     )
-    expect(hashModerationText('Hello World')).not.toBe(
-      hashModerationText('Hello Word')
+    expect(hashModerationTexts(['标题', 'Hello World'])).not.toBe(
+      hashModerationTexts(['标题', 'Hello Word'])
     )
   })
 
   // U+202E 之后的文字从右往左显示: 「信微加」读作「加微信」。两者若共用缓存键,
   // 先发乱序的无害版本骗过模型, 再发带控制符的版本就能直接命中旧裁决
   it('不可见字符不被抹掉: 带双向控制符的文本有自己的键', () => {
-    expect(hashModerationText('\u202E信微加')).not.toBe(
-      hashModerationText('信微加')
+    expect(hashModerationTexts(['\u202E信微加'])).not.toBe(
+      hashModerationTexts(['信微加'])
     )
-    expect(hashModerationText('加\u200B微信')).not.toBe(
-      hashModerationText('加微信')
+    expect(hashModerationTexts(['加\u200B微信'])).not.toBe(
+      hashModerationTexts(['加微信'])
+    )
+  })
+
+  // 先序列化再归一化的话, 全角引号与花括号会被 NFKC 折成 JSON 的结构字符
+  it('值里的全角标点伪装不成另一种字段划分', () => {
+    const honest = hashModerationTexts(['标题', '某游戏', '介绍', '系列合集'])
+    const forged = hashModerationTexts([
+      '标题',
+      '某游戏＂，＂介绍＂，＂系列合集'
+    ])
+    const asciiForged = hashModerationTexts([
+      '标题',
+      '某游戏","介绍","系列合集'
+    ])
+
+    expect(forged).not.toBe(honest)
+    expect(asciiForged).not.toBe(honest)
+  })
+
+  it('同样的文字放在不同字段里是不同的键', () => {
+    expect(hashModerationTexts(['链接', 'abcd', '提取码', ''])).not.toBe(
+      hashModerationTexts(['链接', '', '提取码', 'abcd'])
     )
   })
 })
