@@ -1,6 +1,11 @@
 import { decodeNamedCharacterReference } from 'decode-named-character-reference'
 import { decodeNumericCharacterReference } from 'micromark-util-decode-numeric-character-reference'
 import type { KunSafeHtml } from '~/types/content'
+import {
+  SAFE_MEDIA_PROTOCOLS,
+  sanitizeUserHref,
+  sanitizeUserUrl
+} from '~/utils/safeUrl'
 
 const escapeHtml = (text: string): string => {
   return text
@@ -60,10 +65,24 @@ const renderInlineMarkdown = (text: string): string => {
 
     html += escapeText(rest.slice(0, match.index))
 
+    // 地址先解码实体再过协议白名单 (与发布端的净化用同一组协议): 否则 javascript: 之类
+    // 的地址会原样进 href / src, 写成 &#106;avascript: 也一样。不安全时只留下文字
     if (src !== undefined) {
-      html += `<img src="${escapeText(src)}" alt="${escapeText(alt ?? '')}" class="max-w-full rounded-lg border border-default-200 my-2" />`
+      const safeSrc = sanitizeUserUrl(
+        decodeCharacterReferences(src),
+        SAFE_MEDIA_PROTOCOLS
+      )
+      html +=
+        safeSrc === null
+          ? escapeText(alt ?? '')
+          : `<img src="${escapeHtml(safeSrc)}" alt="${escapeText(alt ?? '')}" class="max-w-full rounded-lg border border-default-200 my-2" />`
     } else if (href !== undefined) {
-      html += `<a href="${escapeText(href)}" target="_blank" rel="noopener noreferrer">${renderInlineMarkdown(linkText ?? '')}</a>`
+      const safeHref = sanitizeUserHref(decodeCharacterReferences(href))
+      const label = renderInlineMarkdown(linkText ?? '')
+      html +=
+        safeHref === null
+          ? label
+          : `<a href="${escapeHtml(safeHref)}" target="_blank" rel="noopener noreferrer">${label}</a>`
     } else if (code !== undefined) {
       // 代码 span 内服务端同样不解码实体, 此处保持 escapeHtml
       html += `<code>${escapeHtml(code)}</code>`

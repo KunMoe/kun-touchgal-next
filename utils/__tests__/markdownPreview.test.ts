@@ -59,6 +59,48 @@ describe('markdownToPreviewHtml', () => {
     ).toBe(true)
   })
 
+  // 预览与发布端用同一组协议白名单; 实体写法在解码之后才判定
+  it('不安全协议的链接只保留文字, 图片只保留替代文字', () => {
+    const cases = [
+      '[点我](javascript:alert(document.cookie))',
+      '[点我](JaVaScRiPt:location=name)',
+      '[点我](&#106;avascript:location=name)',
+      '[点我](&#x6A;avascript&colon;location=name)',
+      '[点我](  javascript:location=name)',
+      '[点我](vbscript:msgbox)',
+      '[点我](data:text/html,x)',
+      '![点我](javascript:location=name)',
+      '![点我](data:image/svg+xml,x)'
+    ]
+
+    for (const markdown of cases) {
+      const html = markdownToPreviewHtml(markdown)
+
+      expect(html, markdown).not.toMatch(/<a\b|<img\b/)
+      expect(html, markdown).not.toMatch(/(href|src)=/)
+      expect(html, markdown).toContain('点我')
+    }
+  })
+
+  it('白名单协议与相对地址照常输出, 协议名统一成小写', () => {
+    expect(markdownToPreviewHtml('[站点](HTTPS://example.com/a?b=1&c=2)')).toBe(
+      '<p><a href="https://example.com/a?b=1&amp;c=2" target="_blank" rel="noopener noreferrer">站点</a></p>'
+    )
+    expect(markdownToPreviewHtml('[磁力](magnet:?xt=urn:btih:abc)')).toContain(
+      'href="magnet:?xt=urn:btih:abc"'
+    )
+    expect(markdownToPreviewHtml('[相对](/doc/notice)')).toContain(
+      'href="/doc/notice"'
+    )
+    expect(markdownToPreviewHtml('![图](https://img.example/a.png)')).toContain(
+      '<img src="https://img.example/a.png" alt="图"'
+    )
+    // 图片只放行 http / https, 链接可用的其它协议对图片无效
+    expect(markdownToPreviewHtml('![图](magnet:?xt=urn:btih:abc)')).toBe(
+      '<p>图</p>'
+    )
+  })
+
   it('代码块内容仍被转义', () => {
     expect(markdownToPreviewHtml(`\`\`\`\n${XSS_PAYLOAD}\n\`\`\``)).toBe(
       '<pre><code>&lt;img src=x onerror=alert(1)&gt;</code></pre>'
