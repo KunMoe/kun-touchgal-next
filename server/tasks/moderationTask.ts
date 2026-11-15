@@ -101,7 +101,7 @@ const applyAiResult = async (
   })
 }
 
-const processTextTask = async (
+export const processTextTask = async (
   task: moderation_taskModel,
   blacklistEntries: ModerationBlacklistEntry[]
 ) => {
