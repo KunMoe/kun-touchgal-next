@@ -230,6 +230,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
           {
             storage: 'user',
             content: 'https://example.com',
+            size: '100MB',
             code: '',
             password: ''
           }

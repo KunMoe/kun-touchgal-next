@@ -192,6 +192,7 @@ const LINK_SEGMENT = {
   kind: 'plain',
   value: externalLink.content
 }
+const SIZE_SEGMENT = { label: '大小', kind: 'plain', value: externalLink.size }
 // patch_resource_link 行: 与 externalLink 对应的库中快照
 const storedExternalLink = {
   id: 3,
@@ -207,11 +208,14 @@ const storedExternalLink = {
 }
 
 describe('资源审核预筛选: 送审标题、介绍、模型型号与各条链接的自由文本', () => {
-  // 链接文本、提取码、解压码向所有访客展示, 与标题、介绍一样要过审 (X09-03)
+  // 链接文本、大小、提取码、解压码向所有访客展示, 与标题、介绍一样要过审 (X09-03)
   it('只有外链、标题介绍全空的资源也要送审', async () => {
     await createPatchResource(resourceInput, 7, 2)
 
-    expect(createdTaskData().payload.segments).toEqual([LINK_SEGMENT])
+    expect(createdTaskData().payload.segments).toEqual([
+      LINK_SEGMENT,
+      SIZE_SEGMENT
+    ])
     expect(transactionResourceCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 3 })
@@ -219,7 +223,9 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
     )
   })
 
-  it('只有站内存储链接、其余全空的资源没有可审文本, 直接公开', async () => {
+  // 「大小」只要求以 MB / GB 结尾, 前面写什么都行; 每条链接都有它, 所以带链接的资源
+  // 不存在「没有可审文本」的情况, 站内存储的也一样
+  it('只有站内存储链接、其余全空的资源仍要送审它的大小字段', async () => {
     bindUploadedResourceMock.mockResolvedValue({
       downloadLink: 'https://cdn.example/file',
       s3Key: 'patch/10/file'
@@ -228,21 +234,26 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
     await createPatchResource(
       {
         ...resourceInput,
-        name: '  ',
-        note: '\n',
         links: [
-          { ...externalLink, storage: 's3', hash: 'upload-token', content: '' }
+          {
+            ...externalLink,
+            storage: 's3',
+            hash: 'upload-token',
+            content: '',
+            size: '加微信 vx123456789 代充 GB'
+          }
         ]
       },
       7,
       2
     )
 
-    expect(getModerationConfigMock).not.toHaveBeenCalled()
-    expect(taskCreateMock).not.toHaveBeenCalled()
+    expect(createdTaskData().payload.segments).toEqual([
+      { label: '大小', kind: 'plain', value: '加微信 vx123456789 代充 GB' }
+    ])
     expect(transactionResourceCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: 0 })
+        data: expect.objectContaining({ status: 3 })
       })
     )
   })
@@ -260,7 +271,8 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
         v: 2,
         segments: [
           { label: '标题', kind: 'plain', value: 'Patch v1' },
-          LINK_SEGMENT
+          LINK_SEGMENT,
+          SIZE_SEGMENT
         ],
         name: 'Resource'
       }
@@ -294,11 +306,13 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
       { label: '标题', kind: 'plain', value: 'Patch v1' },
       { label: '介绍', kind: 'markdown-standard', value: '**汉化**说明' },
       { label: '模型型号', kind: 'plain', value: 'GPT-4o' },
-      LINK_SEGMENT
+      LINK_SEGMENT,
+      SIZE_SEGMENT
     ])
     expect(taskCreateMock.mock.calls[1][0].data.payload.segments).toEqual([
       { label: '标题', kind: 'plain', value: 'Patch v1' },
-      LINK_SEGMENT
+      LINK_SEGMENT,
+      SIZE_SEGMENT
     ])
   })
 
@@ -328,8 +342,10 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
 
     expect(createdTaskData().payload.segments).toEqual([
       { label: '链接 1', kind: 'plain', value: externalLink.content },
+      { ...SIZE_SEGMENT, label: '大小 1' },
       { label: '提取码 1', kind: 'plain', value: 'abcd' },
       { label: '解压码 1', kind: 'plain', value: '解压码 touchgal' },
+      { ...SIZE_SEGMENT, label: '大小 2' },
       { label: '解压码 2', kind: 'plain', value: '加群 987654321 获取' }
     ])
   })
@@ -363,12 +379,17 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
     expect(createdTaskData().payload.segments).toEqual([
       { label: '标题', kind: 'plain', value: 'Resource' },
       { label: '介绍', kind: 'markdown-standard', value: 'Note' },
-      { label: '链接', kind: 'plain', value: 'https://evil.example/join' }
+      { label: '链接', kind: 'plain', value: 'https://evil.example/join' },
+      SIZE_SEGMENT
     ])
     expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
   })
 
-  it('只改提取码或解压码同样重新送审', async () => {
+  it.each([
+    ['解压码', { password: '付费获取解压码' }],
+    ['提取码', { code: '加群拿码' }],
+    ['大小', { size: '加微信 vx123456789 代充 GB' }]
+  ])('只改%s同样重新送审', async (_name, change) => {
     resourceFindUniqueMock.mockResolvedValue({
       ...storedResource,
       links: [storedExternalLink]
@@ -380,7 +401,7 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
         resourceId: 1,
         name: storedResource.name,
         note: storedResource.note,
-        links: [{ ...externalLink, password: '付费获取解压码' }]
+        links: [{ ...externalLink, ...change }]
       },
       7,
       2
@@ -407,7 +428,8 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
       payload: {
         segments: [
           { label: '标题', kind: 'plain', value: 'Patch v2' },
-          LINK_SEGMENT
+          LINK_SEGMENT,
+          SIZE_SEGMENT
         ],
         name: 'Resource'
       }
@@ -415,7 +437,7 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
     expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
   })
 
-  it('送审字段与库中一致时不重审, 也不读审核配置; 只改文件大小这类非自由文本同理', async () => {
+  it('送审字段与库中一致时不重审, 也不读审核配置; 只换外链的存储类型这类枚举值同理', async () => {
     resourceFindUniqueMock.mockResolvedValue({
       ...storedResource,
       links: [storedExternalLink]
@@ -427,7 +449,7 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
         resourceId: 1,
         name: storedResource.name,
         note: storedResource.note,
-        links: [{ ...externalLink, size: '2 GB' }]
+        links: [{ ...externalLink, storage: 'user' }]
       },
       7,
       2

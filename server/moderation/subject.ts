@@ -92,12 +92,14 @@ export const RESOURCE_FIELD_POLICY = {
   user: 'internal'
 } as const satisfies Record<keyof PatchResource, FieldPolicy>
 
-// 链接文本、提取码、解压码向所有访客展示 (DownloadCard), 与标题、介绍一样是自由文本。
-// 送审字段按这里的书写顺序出段: 链接在前, 它的两个口令紧随其后
+// ResourceSizeRegex 是 /^.{0,107}(mb|gb)$/i: 单位之前可以是任意 107 个字符
+const RESOURCE_LINK_SIZE_MAX_LENGTH = 109
+
+// 链接文本、大小、提取码、解压码向所有访客展示 (DownloadCard), 与标题、介绍一样是
+// 自由文本。送审字段按这里的书写顺序出段: 链接在前, 它的大小与两个口令紧随其后
 export const RESOURCE_LINK_FIELD_POLICY = {
   id: 'internal',
   storage: 'enum',
-  size: 'enum',
   hash: 'system',
   content: {
     audit: 'plain',
@@ -105,6 +107,12 @@ export const RESOURCE_LINK_FIELD_POLICY = {
     maxLength: maxLengthOf(linkShape.content),
     // 站内存储 (s3) 的链接地址由服务端在绑定上传对象时生成, 不是用户输入
     when: (link) => link.storage !== 's3'
+  },
+  // 名为大小, 校验却只要求以 MB / GB 结尾: 前面写什么都行, 所以同样是自由文本
+  size: {
+    audit: 'plain',
+    label: '大小',
+    maxLength: RESOURCE_LINK_SIZE_MAX_LENGTH
   },
   code: {
     audit: 'plain',

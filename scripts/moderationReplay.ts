@@ -135,7 +135,13 @@ const loadSubject = async (
           model_name: true,
           links: {
             orderBy: { sort_order: 'asc' },
-            select: { storage: true, content: true, code: true, password: true }
+            select: {
+              storage: true,
+              content: true,
+              size: true,
+              code: true,
+              password: true
+            }
           }
         }
       })

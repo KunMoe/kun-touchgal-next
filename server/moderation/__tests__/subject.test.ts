@@ -11,6 +11,7 @@ import {
   subjectChanged
 } from '../subject'
 import type { ModerationSubject, SubjectSegment } from '../subject'
+import { patchResourceCreateSchema } from '~/validations/patch'
 
 const classified = (policy: Record<string, unknown>, kind: string) =>
   Object.entries(policy)
@@ -57,10 +58,11 @@ describe('资源字段策略表', () => {
     expect(segmentMaxLength('comment', '标题')).toBeUndefined()
   })
 
-  // 链接文本、提取码、解压码向所有访客展示, 同样是自由文本 (X09-03)
-  it('链接送审链接文本、提取码、解压码, 顺序是链接在前', () => {
+  // 链接文本、大小、提取码、解压码向所有访客展示, 同样是自由文本 (X09-03)
+  it('链接送审链接文本、大小、提取码、解压码, 顺序是链接在前', () => {
     expect(classified(RESOURCE_LINK_FIELD_POLICY, 'audit')).toEqual([
       'content',
+      'size',
       'code',
       'password'
     ])
@@ -68,6 +70,7 @@ describe('资源字段策略表', () => {
       audit: 'plain',
       label: '链接'
     })
+    expect(RESOURCE_LINK_FIELD_POLICY.size).toMatchObject({ label: '大小' })
     expect(RESOURCE_LINK_FIELD_POLICY.code).toMatchObject({ label: '提取码' })
     expect(RESOURCE_LINK_FIELD_POLICY.password).toMatchObject({
       label: '解压码'
@@ -79,6 +82,26 @@ describe('资源字段策略表', () => {
     expect(segmentMaxLength('resource', '提取码')).toBe(1007)
     expect(segmentMaxLength('resource', '解压码 10')).toBe(1007)
     expect(segmentMaxLength('resource', '链接 3')).toBe(1007)
+  })
+
+  // 「大小」只要求以 MB / GB 结尾, 前面可以是任意 107 个字符, 所以它是自由文本;
+  // 它的校验是正则而不是 max(), 上限只能写死, 由这里对着真实 schema 锁住
+  it('大小字段的上限恰好容得下校验放行的最长值', () => {
+    const linkSchema = patchResourceCreateSchema.shape.links.element
+    const link = {
+      storage: 'user',
+      hash: '',
+      content: 'https://pan.example/s/abc',
+      code: '',
+      password: ''
+    }
+    const longest = `${'加'.repeat(107)}GB`
+
+    expect(linkSchema.safeParse({ ...link, size: longest }).success).toBe(true)
+    expect(
+      linkSchema.safeParse({ ...link, size: `加${longest}` }).success
+    ).toBe(false)
+    expect(segmentMaxLength('resource', '大小')).toBe(longest.length)
   })
 })
 
@@ -119,22 +142,25 @@ describe('主体构造器', () => {
   })
 
   const external = {
-    storage: 'mega',
+    storage: 'user',
     content: 'https://pan.example/s/abc',
+    size: '1 GB',
     code: '',
     password: ''
   }
+  const SIZE = { kind: 'plain', value: '1 GB' }
   const withLinks = (links: Array<typeof external>) =>
     resourceSubject({ name: 'T', note: '', modelName: '', links }).segments
 
   it('单条链接的字段不带序号, 空的提取码与解压码不出段', () => {
     expect(withLinks([external])).toEqual([
       { label: '标题', kind: 'plain', value: 'T' },
-      { label: '链接', kind: 'plain', value: 'https://pan.example/s/abc' }
+      { label: '链接', kind: 'plain', value: 'https://pan.example/s/abc' },
+      { label: '大小', ...SIZE }
     ])
   })
 
-  it('多条链接依次编号, 每条的提取码、解压码紧随其后', () => {
+  it('多条链接依次编号, 每条的大小、提取码、解压码紧随其后', () => {
     expect(
       withLinks([
         { ...external, code: 'abcd' },
@@ -143,25 +169,29 @@ describe('主体构造器', () => {
     ).toEqual([
       { label: '标题', kind: 'plain', value: 'T' },
       { label: '链接 1', kind: 'plain', value: 'https://pan.example/s/abc' },
+      { label: '大小 1', ...SIZE },
       { label: '提取码 1', kind: 'plain', value: 'abcd' },
       { label: '链接 2', kind: 'plain', value: 'https://b.example' },
+      { label: '大小 2', ...SIZE },
       { label: '解压码 2', kind: 'plain', value: 'pw' }
     ])
   })
 
-  // 站内存储的链接地址是服务端绑定上传对象时生成的, 不是用户输入; 口令仍是
-  it('站内存储 (s3) 的链接地址不送审, 提取码与解压码照常送审', () => {
+  // 站内存储的链接地址是服务端绑定上传对象时生成的, 不是用户输入; 其余字段仍是
+  it('站内存储 (s3) 的链接地址不送审, 大小、提取码与解压码照常送审', () => {
     expect(
       withLinks([
         {
           storage: 's3',
           content: 'https://cdn.example/generated',
+          size: '加微信 vx123 代充 GB',
           code: '',
           password: '加群获取'
         }
       ])
     ).toEqual([
       { label: '标题', kind: 'plain', value: 'T' },
+      { label: '大小', kind: 'plain', value: '加微信 vx123 代充 GB' },
       { label: '解压码', kind: 'plain', value: '加群获取' }
     ])
   })
@@ -237,7 +267,7 @@ describe('subjectChanged', () => {
     expect(subjectChanged(after, before)).toBe(true)
   })
 
-  it('资源只改链接、提取码或解压码都算变化, 只改非送审字段不算', () => {
+  it('资源只改链接、大小、提取码或解压码都算变化, 只改非送审字段不算', () => {
     const of = (link: Record<string, string>) =>
       resourceSubject({
         name: 'T',
@@ -245,8 +275,9 @@ describe('subjectChanged', () => {
         modelName: '',
         links: [
           {
-            storage: 'mega',
+            storage: 'user',
             content: 'https://a',
+            size: '1 GB',
             code: '',
             password: '',
             ...link
@@ -257,7 +288,9 @@ describe('subjectChanged', () => {
     expect(subjectChanged(of({}), of({ content: 'https://b' }))).toBe(true)
     expect(subjectChanged(of({}), of({ code: 'abcd' }))).toBe(true)
     expect(subjectChanged(of({}), of({ password: 'pw' }))).toBe(true)
-    expect(subjectChanged(of({}), of({ size: '2 GB' }))).toBe(false)
+    expect(subjectChanged(of({}), of({ size: '加微信 GB' }))).toBe(true)
+    // 存储方式是枚举值: 在两种外链之间切换不改变任何送审字段
+    expect(subjectChanged(of({}), of({ storage: 'touchgal' }))).toBe(false)
   })
 
   it('只有链接段变化时同样判为变化', () => {

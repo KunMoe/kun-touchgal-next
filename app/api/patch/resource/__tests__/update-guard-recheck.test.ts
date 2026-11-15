@@ -372,6 +372,7 @@ describe('更新资源在行锁下重算 links diff', () => {
             content: 'old-c',
             hash: '',
             s3_key: 'old-k',
+            size: '100MB',
             code: '',
             password: ''
           }
@@ -431,6 +432,7 @@ describe('更新资源保留历史 s3 链接', () => {
     content: 'legacy-c',
     hash: 'blake3-hash',
     s3_key: '',
+    size: '100MB',
     code: '',
     password: ''
   }

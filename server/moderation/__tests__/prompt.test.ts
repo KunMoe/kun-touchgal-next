@@ -74,14 +74,14 @@ describe('文本审核 system prompt', () => {
     }
   )
 
-  it('资源: COL 锚定字段「标题」, 并说明链接三字段', () => {
+  it('资源: COL 锚定字段「标题」, 并说明各条链接的字段', () => {
     const prompt = MODERATION_TEXT_SYSTEM_PROMPT.resource
 
     expect(prompt).toContain('仅依据字段「标题」判定')
     expect(prompt).toContain('字段「介绍」中提及所属系列')
     expect(prompt).not.toContain('「标题:」')
     expect(prompt).not.toContain('「介绍:」')
-    for (const field of ['「链接」', '「提取码」', '「解压码」']) {
+    for (const field of ['「链接」', '「大小」', '「提取码」', '「解压码」']) {
       expect(prompt).toContain(field)
     }
   })

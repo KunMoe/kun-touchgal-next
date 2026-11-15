@@ -77,10 +77,17 @@ describe('buildAuditView: plain 段', () => {
           {
             storage: 'mega',
             content: 'https://pan.example/s/abc',
+            size: '1.5 GB',
             code: 'abcd',
             password: ''
           },
-          { storage: 's3', content: 'generated', code: '', password: 'pw' }
+          {
+            storage: 's3',
+            content: 'generated',
+            size: '700MB',
+            code: '',
+            password: 'pw'
+          }
         ]
       })
     )
@@ -89,7 +96,9 @@ describe('buildAuditView: plain 段', () => {
       { label: '标题', shown: 'Patch v1' },
       { label: '模型型号', shown: 'GPT-4o' },
       { label: '链接 1', shown: 'https://pan.example/s/abc' },
+      { label: '大小 1', shown: '1.5 GB' },
       { label: '提取码 1', shown: 'abcd' },
+      { label: '大小 2', shown: '700MB' },
       { label: '解压码 2', shown: 'pw' },
       { label: '介绍', shown: '说明' }
     ])
