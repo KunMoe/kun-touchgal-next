@@ -1,4 +1,19 @@
 {
+  "app/[id]/metadata.ts": {
+    "kun/inv-content-01": {
+      "count": 1
+    }
+  },
+  "app/[id]/resource/[resourceId]/metadata.ts": {
+    "kun/inv-content-01": {
+      "count": 1
+    }
+  },
+  "app/api/admin/comment/get.ts": {
+    "kun/inv-content-02": {
+      "count": 1
+    }
+  },
   "app/api/admin/moderation/batch/route.ts": {
     "no-console": {
       "count": 2
@@ -6,6 +21,11 @@
   },
   "app/api/admin/report/handle/batch/route.ts": {
     "no-console": {
+      "count": 1
+    }
+  },
+  "app/api/admin/report/service.ts": {
+    "kun/inv-content-01": {
       "count": 1
     }
   },
@@ -19,8 +39,23 @@
       "count": 1
     }
   },
+  "app/api/patch/comment/create.ts": {
+    "kun/inv-content-01": {
+      "count": 1
+    }
+  },
   "app/api/patch/comment/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "app/api/patch/comment/get.ts": {
+    "kun/inv-content-01": {
+      "count": 1
+    }
+  },
+  "app/api/patch/comment/update.ts": {
+    "kun/inv-content-01": {
       "count": 1
     }
   },
@@ -59,6 +94,11 @@
       "count": 1
     }
   },
+  "app/api/user/profile/comment/service.ts": {
+    "kun/inv-content-02": {
+      "count": 1
+    }
+  },
   "app/api/user/profile/favorite/folder/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -76,6 +116,11 @@
   },
   "app/api/user/setting/avatar/route.ts": {
     "no-console": {
+      "count": 1
+    }
+  },
+  "app/api/utils/createMentionMessage.ts": {
+    "kun/inv-content-02": {
       "count": 1
     }
   },
@@ -99,6 +144,11 @@
       "count": 1
     }
   },
+  "components/kun/editor/MarkdownEditor.tsx": {
+    "kun/inv-content-04": {
+      "count": 1
+    }
+  },
   "components/kun/icons/Discord.tsx": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -114,13 +164,38 @@
       "count": 1
     }
   },
+  "components/patch/comment/CommentContent.tsx": {
+    "kun/inv-content-04": {
+      "count": 1
+    }
+  },
+  "components/patch/introduction/IntroductionTab.tsx": {
+    "kun/inv-content-04": {
+      "count": 1
+    }
+  },
   "components/patch/rating/RatingModal.tsx": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
   },
+  "components/patch/resource-detail/ResourceDetail.tsx": {
+    "kun/inv-content-04": {
+      "count": 1
+    }
+  },
   "components/patch/resource/Resource.tsx": {
     "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "components/patch/resource/kun/KunResourceDownload.tsx": {
+    "kun/inv-content-04": {
+      "count": 1
+    }
+  },
+  "lib/mdx/element/KunCode.tsx": {
+    "kun/inv-content-04": {
       "count": 1
     }
   },
@@ -297,6 +372,11 @@
   "server/moderation/apply.ts": {
     "no-console": {
       "count": 3
+    }
+  },
+  "server/search/document.ts": {
+    "kun/inv-content-01": {
+      "count": 1
     }
   },
   "server/search/sync.ts": {

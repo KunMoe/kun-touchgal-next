@@ -1,5 +1,6 @@
 import { decodeNamedCharacterReference } from 'decode-named-character-reference'
 import { decodeNumericCharacterReference } from 'micromark-util-decode-numeric-character-reference'
+import type { KunSafeHtml } from '~/types/content'
 
 const escapeHtml = (text: string): string => {
   return text
@@ -105,9 +106,10 @@ const splitTableCells = (content: string): string[] => {
   return cells
 }
 
-export const markdownToPreviewHtml = (markdown: string): string => {
+// 预览器自己逐字符转义后再拼标签, 不经 rehype 管线; 它是 KunSafeHtml 的生产者之一
+export const markdownToPreviewHtml = (markdown: string): KunSafeHtml => {
   if (!markdown.trim()) {
-    return '<p class="text-default-400 italic">暂无内容</p>'
+    return '<p class="text-default-400 italic">暂无内容</p>' as KunSafeHtml
   }
 
   const lines = markdown.split('\n')
@@ -306,5 +308,5 @@ export const markdownToPreviewHtml = (markdown: string): string => {
   flushTable()
   flushList()
 
-  return result.join('\n')
+  return result.join('\n') as KunSafeHtml
 }

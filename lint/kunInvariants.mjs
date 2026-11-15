@@ -76,6 +76,93 @@ export const KUN_INVARIANTS = [
       bad: ['const state = useUserStore()'],
       good: ['const uid = useUserStore((state) => state.user.uid)']
     }
+  },
+  {
+    id: 'inv-content-01',
+    statement:
+      'html-to-text 只许在 server/content/text.ts 里导入, 其余一律用 kunHtmlToText',
+    reason:
+      '各处自配 convert 选项会让同一段 HTML 得到不同的文本 (描述与 og 曾因此不一致); 对 markdown 原文跑 HTML 转换器还会把 <…> 当标签吞掉',
+    removeWhen: '全仓不再需要 HTML → 纯文本投影',
+    ignores: ['server/content/text.ts'],
+    enforce: { kind: 'import', sources: ['html-to-text'] },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: ["import { convert } from 'html-to-text'"],
+      good: ["import { kunHtmlToText } from '~/server/content/text'"]
+    }
+  },
+  {
+    id: 'inv-content-02',
+    statement:
+      '服务端与 metadata 不得用 markdownToText 取文本, 改从已净化 HTML 经 kunHtmlToText 派生',
+    reason:
+      'markdownToText 是按正则近似的客户端工具, 不认识指令与内嵌 HTML, 输出与读者实际看到的渲染结果不一致',
+    removeWhen: 'utils/markdownToText 被删除',
+    files: ['app/api/**', 'server/**', 'app/**/metadata.ts'],
+    enforce: { kind: 'import', sources: [/(^|\/)utils\/markdownToText$/] },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: ["import { markdownToText } from '~/utils/markdownToText'"],
+      good: ["import { kunHtmlToText } from '~/server/content/text'"]
+    }
+  },
+  {
+    id: 'inv-content-03',
+    statement: '`as KunSafeHtml` 只许出现在登记的生产者文件里',
+    reason:
+      '品牌只存在于编译期, 随手断言等于把没渲染过的字符串放行到 HTML 汇点与文本投影',
+    removeWhen: 'KunSafeHtml 品牌被移除',
+    // 生产者: 三条 markdown 管线的出口、落库 HTML 读取器、编辑器预览器,
+    // 以及两处客户端净化 / 高亮 (DOMPurify、sugar-high)
+    ignores: [
+      'app/api/utils/render/markdownHtmlCache.ts',
+      'app/api/utils/render/markdownToHtmlComment.ts',
+      'app/api/patch/comment/html.ts',
+      'utils/markdownPreview.ts',
+      'components/patch/resource/kun/KunResourceDownload.tsx',
+      'lib/mdx/element/KunCode.tsx'
+    ],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        "TSAsExpression > TSTypeReference[typeName.name='KunSafeHtml']",
+        "TSTypeAssertion > TSTypeReference[typeName.name='KunSafeHtml']"
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "export const html = '<p>x</p>' as KunSafeHtml",
+        'export const cast = (raw: string) => raw as unknown as KunSafeHtml'
+      ],
+      good: [
+        'export const size = (html: KunSafeHtml) => html.length',
+        'export const load = async (): Promise<KunSafeHtml> => render()'
+      ]
+    }
+  },
+  {
+    id: 'inv-content-04',
+    statement: 'dangerouslySetInnerHTML 的值必须是 kunInnerHtml(...) 调用',
+    reason:
+      '__html 的类型在结构上什么都收; 只有 kunInnerHtml 的入参把来源收窄到 KunSafeHtml',
+    removeWhen: '全仓不再使用 dangerouslySetInnerHTML',
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        "JSXAttribute[name.name='dangerouslySetInnerHTML'] > JSXExpressionContainer > :not(CallExpression[callee.name='kunInnerHtml'])"
+      ]
+    },
+    examples: {
+      file: 'components/kun/KunInvariantExample.tsx',
+      bad: [
+        'export const A = ({ html }: { html: string }) => <div dangerouslySetInnerHTML={{ __html: html }} />'
+      ],
+      good: [
+        'export const A = ({ html }: { html: KunSafeHtml }) => <div dangerouslySetInnerHTML={kunInnerHtml(html)} />'
+      ]
+    }
   }
 ]
 

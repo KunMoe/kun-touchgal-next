@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import type { KunSafeHtml } from '~/types/content'
 import {
   MARKDOWN_HTML_CACHE_DURATION,
   MARKDOWN_HTML_CACHE_MAX_HTML_BYTES,
@@ -158,7 +159,7 @@ const writeMarkdownHtmlCache = async (
   )
 }
 
-export const renderMarkdownHtmlWithCache = async (
+const renderMarkdownHtml = async (
   variant: MarkdownHtmlCacheVariant,
   markdown: string,
   render: MarkdownHtmlRenderer,
@@ -213,3 +214,10 @@ export const renderMarkdownHtmlWithCache = async (
     inFlightRenders.delete(cacheKey)
   }
 }
+
+// KunSafeHtml 品牌从这里发出。三条返回路径都是已净化 HTML: 渲染器由本目录的三条 markdown
+// 管线提供, 都以 rehypeSanitize 收尾; 超限降级输出的是转义后的纯文本; 缓存里存的是此前
+// 同一批渲染器的产物 (Redis 回读属于隐式信任)
+export const renderMarkdownHtmlWithCache = async (
+  ...args: Parameters<typeof renderMarkdownHtml>
+): Promise<KunSafeHtml> => (await renderMarkdownHtml(...args)) as KunSafeHtml

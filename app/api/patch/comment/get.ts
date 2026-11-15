@@ -13,6 +13,7 @@ import {
   type KunViewer
 } from '~/app/api/utils/contentVisibility'
 import { withPatchCommentPageCache } from './cache'
+import { readStoredCommentHtml } from './html'
 import type { PatchComment } from '~/types/api/patch'
 
 // 共享缓存基线视角: status=0 公开可见, isLike 一律 false
@@ -257,8 +258,9 @@ const buildCommentPage = async (
   const staleRenders: { id: number; html: string; updated: Date }[] = []
   const htmlEntries = await Promise.all(
     allComments.map(async (c) => {
-      if (c.content_html_version === COMMENT_HTML_VERSION && c.content_html) {
-        return [c.id, c.content_html] as const
+      const stored = readStoredCommentHtml(c)
+      if (stored !== null) {
+        return [c.id, stored] as const
       }
       // 版本不匹配的历史评论: 回落实时渲染, 并记下待写回自愈
       const html = await markdownToHtmlComment(c.content)

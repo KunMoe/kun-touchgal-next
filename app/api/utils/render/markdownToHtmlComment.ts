@@ -11,6 +11,7 @@ import { remarkKunExternalLinks } from './remarkKunExternalLinks'
 import { renderMarkdownHtmlWithCache } from './markdownHtmlCache'
 import { markdownSanitizeSchema } from './sanitizeSchema'
 import { rehypeKunImageLoading } from './rehypeKunImageLoading'
+import type { KunSafeHtml } from '~/types/content'
 import type { Plugin } from 'unified'
 import type { Node } from 'unist'
 
@@ -50,7 +51,8 @@ const markdownCommentProcessor = unified()
 
 export const renderCommentHtml = async (markdown: string) => {
   const htmlVFile = await markdownCommentProcessor.process(markdown)
-  return String(htmlVFile)
+  // 管线以 rehypeSanitize 收尾, 输出即已净化 HTML
+  return String(htmlVFile) as KunSafeHtml
 }
 
 export const markdownToHtmlComment = async (markdown: string) => {
