@@ -86,7 +86,7 @@ type ChatMessageContent =
       | { type: 'image_url'; image_url: { url: string } }
     >
 
-export const requestChatCompletion = async (
+const requestChatCompletion = async (
   model: string,
   messages: Array<{ role: 'system' | 'user'; content: ChatMessageContent }>,
   reasoningEffort?: string
