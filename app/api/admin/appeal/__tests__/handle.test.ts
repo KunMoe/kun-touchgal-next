@@ -317,6 +317,15 @@ describe('handleAppeal approve resource links', () => {
     })
   })
 
+  it('links the approved notice to the appeal page filtered to approved appeals', async () => {
+    await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    // 申诉页默认只显示可申诉内容, 不带状态就看不到刚通过的这一条
+    expect(createMessageMock.mock.calls[0][0].link).toBe(
+      '/settings/user?tab=appeal&state=approved'
+    )
+  })
+
   it('never writes the address of an s3 link, whatever the payload carries', async () => {
     await handleAppeal({ appealId: 1, approve: true }, 99)
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { submitAppealSchema } from '~/validations/appeal'
+import { getUserAppealSchema, submitAppealSchema } from '~/validations/appeal'
 
 const link = {
   id: 21,
@@ -109,5 +109,32 @@ describe('submitAppealSchema 评论与评价', () => {
     expect(
       issuePaths({ contentType: 'rating', taskId: 3, shortSummary: '评价' })
     ).toEqual([])
+  })
+})
+
+describe('getUserAppealSchema 状态筛选', () => {
+  it('不带状态时只取可申诉的内容', () => {
+    const result = getUserAppealSchema.safeParse({ page: '1', limit: '10' })
+
+    expect(result.success && result.data.state).toBe('appealable')
+  })
+
+  it('接受全部与各个申诉状态, 拒绝其余值', () => {
+    for (const state of [
+      'all',
+      'appealable',
+      'pending',
+      'approved',
+      'rejected',
+      'unavailable'
+    ]) {
+      expect(
+        getUserAppealSchema.safeParse({ page: 1, limit: 10, state }).success
+      ).toBe(true)
+    }
+    expect(
+      getUserAppealSchema.safeParse({ page: 1, limit: 10, state: 'manual' })
+        .success
+    ).toBe(false)
   })
 })

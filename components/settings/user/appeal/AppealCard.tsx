@@ -18,7 +18,7 @@ interface Props {
   onRefresh: () => void
 }
 
-const stateChipMap: Record<
+export const stateChipMap: Record<
   UserAppealState,
   {
     label: string

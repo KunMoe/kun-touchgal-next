@@ -3,7 +3,18 @@ import { patchResourceCreateSchema } from './patch'
 
 export const getUserAppealSchema = z.object({
   page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(30)
+  limit: z.coerce.number().min(1).max(30),
+  // 各取值见 UserAppealState; 申诉页默认只列出还能申诉的内容
+  state: z
+    .enum([
+      'all',
+      'appealable',
+      'pending',
+      'approved',
+      'rejected',
+      'unavailable'
+    ])
+    .default('appealable')
 })
 
 const appealTaskIdSchema = z.coerce

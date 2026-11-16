@@ -9,6 +9,8 @@ export const APPEAL_STATUS_MAP: Record<string, string> = {
 }
 
 export const APPEAL_SETTINGS_LINK = '/settings/user?tab=appeal'
+// 申诉页默认只显示可申诉内容; 通过的申诉不在其中, 链接带上状态才能直接落到这一条
+export const APPEAL_APPROVED_LINK = `${APPEAL_SETTINGS_LINK}&state=approved`
 
 export const APPEAL_RESULT_NOTICE = {
   approved: (label: string) =>

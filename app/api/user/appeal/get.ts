@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import type { Prisma } from '~/prisma/generated/prisma/client'
 import { getUserAppealSchema } from '~/validations/appeal'
 import { APPEAL_CONTENT_TYPE } from '~/constants/appeal'
 import {
@@ -18,19 +19,73 @@ interface ContentInfo {
   original: AppealPayload
 }
 
+// 该用户全部可申诉任务的 id。可申诉 = 尚未申诉 + 内容仍处于被隐藏的状态 + 是该内容
+// 最新的一条被拒任务, 须与下方逐条推导 state 的规则保持一致。内容经 content_type +
+// content_id 多态引用, 没有外键, Prisma 的 where 表达不了这个条件, 所以按状态筛选时
+// 先用 SQL 取出 id, 再交给 where 分页与计数
+const findAppealableTaskIds = async (uid: number) => {
+  const rows = await prisma.$queryRaw<{ id: number }[]>`
+    SELECT t.id
+    FROM moderation_task t
+    WHERE t.user_id = ${uid}
+      AND t.status = 'rejected'
+      AND t.dry_run = false
+      AND NOT EXISTS (
+        SELECT 1 FROM moderation_appeal a WHERE a.task_id = t.id
+      )
+      AND CASE t.content_type
+        WHEN 'comment' THEN EXISTS (
+          SELECT 1 FROM patch_comment c
+          WHERE c.id = t.content_id AND c.status = 2
+        )
+        WHEN 'rating' THEN EXISTS (
+          SELECT 1 FROM patch_rating r
+          WHERE r.id = t.content_id AND r.status = 2
+        )
+        WHEN 'resource' THEN EXISTS (
+          SELECT 1 FROM patch_resource r
+          WHERE r.id = t.content_id AND r.status = 1
+        )
+        ELSE false
+      END
+      AND NOT EXISTS (
+        SELECT 1 FROM moderation_task newer
+        WHERE newer.content_type = t.content_type
+          AND newer.content_id = t.content_id
+          AND newer.status = 'rejected'
+          AND newer.dry_run = false
+          AND newer.id > t.id
+      )
+  `
+  return rows.map((row) => row.id)
+}
+
 // 以被拒的审核任务驱动列表, 申诉处理后仍可作为历史记录展示
 export const getUserAppeals = async (
   uid: number,
   input: z.infer<typeof getUserAppealSchema>
 ) => {
-  const { page, limit } = input
+  const { page, limit, state } = input
   const offset = (page - 1) * limit
+
+  let stateWhere: Prisma.moderation_taskWhereInput = {}
+  if (state === 'appealable' || state === 'unavailable') {
+    const appealableIds = await findAppealableTaskIds(uid)
+    stateWhere =
+      state === 'appealable'
+        ? { id: { in: appealableIds } }
+        : { appeal: null, id: { notIn: appealableIds } }
+  } else if (state !== 'all') {
+    stateWhere = { appeal: { status: state } }
+  }
+
   const where = {
     user_id: uid,
     status: 'rejected',
     dry_run: false,
     content_type: { in: [...APPEAL_CONTENT_TYPE] },
-    content_id: { not: null }
+    content_id: { not: null },
+    ...stateWhere
   }
 
   const [tasks, total] = await Promise.all([

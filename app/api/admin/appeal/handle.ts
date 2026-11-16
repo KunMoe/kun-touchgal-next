@@ -29,7 +29,7 @@ import { deletePendingAppeals } from '~/server/moderation/appeal'
 import { deleteOrphanReports } from '~/server/report/pending'
 import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
 import { getAppealEditableLinkFields } from '~/utils/appealPayload'
-import { APPEAL_RESULT_NOTICE, APPEAL_SETTINGS_LINK } from '~/constants/appeal'
+import { APPEAL_APPROVED_LINK, APPEAL_RESULT_NOTICE } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
 import type { AppealLink, AppealPayload } from '~/types/api/appeal'
 
@@ -191,7 +191,7 @@ const approveAppeal = async (
           content: APPEAL_RESULT_NOTICE.approved(
             MODERATION_CONTENT_TYPE_MAP[type]
           ),
-          link: APPEAL_SETTINGS_LINK,
+          link: APPEAL_APPROVED_LINK,
           recipient_id: appeal.user_id
         },
         tx
