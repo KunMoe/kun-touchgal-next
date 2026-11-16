@@ -4,7 +4,6 @@ import remarkFrontmatter from 'remark-frontmatter'
 import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
-import rehypePrism from 'rehype-prism-plus'
 import remarkDirective from 'remark-directive'
 import { unified } from 'unified'
 import { remarkKunExternalLinks } from './remarkKunExternalLinks'
@@ -44,7 +43,6 @@ const markdownCommentProcessor = unified()
   .use(rehypeSanitize, markdownSanitizeSchema)
   .use(remarkFrontmatter)
   .use(remarkGfm)
-  .use(rehypePrism, { ignoreMissing: true })
   .use(rehypeKunImageLoading)
   .use(rehypeStringify)
   .freeze()
