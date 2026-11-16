@@ -2,7 +2,22 @@ import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import { submitAppealSchema } from '~/validations/appeal'
-import type { AppealPayload } from '~/types/api/appeal'
+import {
+  APPEAL_LINK_SELECT,
+  getAppealModelName
+} from '~/server/moderation/appeal'
+import { getAppealEditableLinkFields } from '~/utils/appealPayload'
+import type {
+  AppealLink,
+  AppealPayload,
+  AppealResourceField
+} from '~/types/api/appeal'
+
+type SubmitAppealInput = z.infer<typeof submitAppealSchema>
+type ResourceAppealInput = Extract<
+  SubmitAppealInput,
+  { contentType: 'resource' }
+>
 
 // 校验申诉目标内容仍归属本人且处于隐藏状态
 const checkContentAppealable = async (
@@ -66,10 +81,86 @@ const lockContentForAppeal = async (
   return rows.length > 0
 }
 
-export const submitAppeal = async (
-  input: z.infer<typeof submitAppealSchema>,
-  uid: number
+// 资源申诉的链接必须与库中的链接行一一对应: 申诉只改已有链接的字段, 不增删链接。须在
+// 资源行锁下调用 (资源编辑先锁资源行再整体重建链接行)。storage 一律以库为准; 作者
+// 不可改的字段 (见 getAppealEditableLinkFields) 即使提交了也不取, 一律保留库中的值
+const buildResourceAppealLinks = async (
+  resourceId: number,
+  inputLinks: ResourceAppealInput['links'],
+  tx: Prisma.TransactionClient
 ) => {
+  const currentLinks = await tx.patch_resource_link.findMany({
+    where: { resource_id: resourceId },
+    orderBy: { sort_order: 'asc' },
+    select: APPEAL_LINK_SELECT
+  })
+  if (inputLinks.length !== currentLinks.length) {
+    throw new SubmitAppealError('资源链接已变更, 请刷新后重试')
+  }
+
+  const inputById = new Map(inputLinks.map((link) => [link.id, link]))
+  const links: AppealLink[] = []
+  for (const current of currentLinks) {
+    const submitted = inputById.get(current.id)
+    if (!submitted) {
+      throw new SubmitAppealError('资源链接已变更, 请刷新后重试')
+    }
+    const editable = getAppealEditableLinkFields(current.storage)
+    const link: AppealLink = { ...current }
+    for (const field of editable) {
+      const value = submitted[field]
+      // 可改的字段必须随请求提交; 缺了说明页面上的链接与库中的对不上
+      if (value === undefined) {
+        throw new SubmitAppealError('资源链接已变更, 请刷新后重试')
+      }
+      link[field] = value
+    }
+    if (editable.includes('content') && !link.content.trim()) {
+      throw new SubmitAppealError('请输入资源链接')
+    }
+    links.push(link)
+  }
+  return links
+}
+
+// 模型型号只在 AI 翻译补丁的申诉里可改, 且与发布 / 编辑资源时一样必填; 其余类型的资源
+// 没有这个字段, 提交了也不取。须在资源行锁下调用
+const resolveAppealModelName = async (
+  resourceId: number,
+  submitted: string | undefined,
+  tx: Prisma.TransactionClient
+) => {
+  const resource = await tx.patch_resource.findUniqueOrThrow({
+    where: { id: resourceId },
+    select: { type: true, model_name: true }
+  })
+  if (getAppealModelName(resource) === undefined) {
+    return undefined
+  }
+  if (!submitted) {
+    throw new SubmitAppealError('请填写模型型号')
+  }
+  return submitted
+}
+
+const buildResourceAppealPayload = async (
+  resourceId: number,
+  input: ResourceAppealInput,
+  tx: Prisma.TransactionClient
+): Promise<AppealPayload> => {
+  // 资源本体上送审的字段都要在这里交代去向: 策略表新增送审字段而这里没有时编译失败
+  const fields: Record<AppealResourceField, string | undefined> = {
+    name: input.name,
+    note: input.note,
+    modelName: await resolveAppealModelName(resourceId, input.modelName, tx)
+  }
+  return {
+    ...fields,
+    links: await buildResourceAppealLinks(resourceId, input.links, tx)
+  }
+}
+
+export const submitAppeal = async (input: SubmitAppealInput, uid: number) => {
   const task = await prisma.moderation_task.findUnique({
     where: { id: input.taskId },
     include: { appeal: true }
@@ -124,14 +215,6 @@ export const submitAppeal = async (
     return '该内容已有待处理的申诉'
   }
 
-  const payload: AppealPayload =
-    input.contentType === 'resource'
-      ? { name: input.name, note: input.note }
-      : {
-          text:
-            input.contentType === 'comment' ? input.content : input.shortSummary
-        }
-
   // 事务内先 FOR UPDATE 锁内容行再重校验存活, 与并发的内容删除互斥:
   // 删除先提交则此处锁到时内容已消失而拒绝; 本事务先提交则删除方在删内容后清理掉本申诉,
   // 两个方向都不会残留孤儿 pending 申诉 (task_id 唯一约束仍兜底并发重复提交)
@@ -142,6 +225,15 @@ export const submitAppeal = async (
       ) {
         throw new SubmitAppealError('内容不存在或状态已变更, 无法申诉')
       }
+      const payload: AppealPayload =
+        input.contentType === 'resource'
+          ? await buildResourceAppealPayload(contentId, input, tx)
+          : {
+              text:
+                input.contentType === 'comment'
+                  ? input.content
+                  : input.shortSummary
+            }
       await tx.moderation_appeal.create({
         data: {
           content_type: input.contentType,

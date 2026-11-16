@@ -1,17 +1,16 @@
 'use client'
 
-import { useState } from 'react'
 import { Button } from '@heroui/button'
 import { Chip } from '@heroui/chip'
-import { Input, Textarea } from '@heroui/input'
-import toast from 'react-hot-toast'
-import { kunFetchPost } from '~/utils/kunFetch'
-import { kunErrorHandler } from '~/utils/kunErrorHandler'
+import { Modal, useDisclosure } from '@heroui/modal'
+import { withUnchangedFields } from '~/utils/appealPayload'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
+import { KunAppealPayload } from '~/components/kun/AppealPayload'
 import {
   MODERATION_CONTENT_TYPE_MAP,
   MODERATION_REJECT_CODE_MAP
 } from '~/constants/moderation'
+import { AppealDialog } from './AppealDialog'
 import type { UserAppealItem, UserAppealState } from '~/types/api/appeal'
 
 interface Props {
@@ -34,41 +33,19 @@ const stateChipMap: Record<
 }
 
 export const AppealCard = ({ item, onRefresh }: Props) => {
-  const [text, setText] = useState(item.original?.text ?? '')
-  const [name, setName] = useState(item.original?.name ?? '')
-  const [note, setNote] = useState(item.original?.note ?? '')
-  const [submitting, setSubmitting] = useState(false)
+  const { isOpen, onOpen, onClose } = useDisclosure()
 
-  const isResource = item.contentType === 'resource'
-  // 申诉只能提交一次, 仅未申诉的内容可编辑; 提交后进入只读展示
+  // 申诉只能提交一次, 仅未申诉的内容可申诉; 提交后进入只读展示
   const editable = item.state === 'appealable'
   const stateChip = stateChipMap[item.state]
-
-  const handleSubmit = async () => {
-    if (!isResource && !text.trim()) {
-      toast.error('申诉内容不可为空')
-      return
-    }
-
-    const body = isResource
-      ? { contentType: 'resource', taskId: item.taskId, name, note }
+  // 弹窗的尺寸与关闭方式沿用各类型原有的编辑弹窗; 一律只能经按钮关闭, 免得误触
+  // 遮罩或 Esc 丢掉改到一半的内容
+  const modalSize =
+    item.contentType === 'resource'
+      ? '3xl'
       : item.contentType === 'comment'
-        ? { contentType: 'comment', taskId: item.taskId, content: text }
-        : { contentType: 'rating', taskId: item.taskId, shortSummary: text }
-
-    setSubmitting(true)
-    try {
-      const res = await kunFetchPost<KunResponse<{}>>('/user/appeal', body)
-      kunErrorHandler(res, () => {
-        toast.success('申诉已提交, 请等待管理员复核')
-        onRefresh()
-      })
-    } catch {
-      toast.error('提交申诉失败, 请稍后重试')
-    } finally {
-      setSubmitting(false)
-    }
-  }
+        ? '2xl'
+        : 'md'
 
   return (
     <div className="space-y-3 rounded-2xl border border-default-200/60 bg-default-50/60 p-4 dark:bg-default-100/10">
@@ -102,10 +79,11 @@ export const AppealCard = ({ item, onRefresh }: Props) => {
       {item.original ? (
         <div className="space-y-1 text-sm">
           <p className="text-default-500">原内容：</p>
-          <div className="whitespace-pre-wrap break-all rounded-lg bg-default-100 p-2 text-default-600">
-            {isResource
-              ? `标题：${item.original.name}\n介绍：${item.original.note}`
-              : item.original.text}
+          <div className="rounded-lg bg-default-100 p-2 text-default-600">
+            <KunAppealPayload
+              contentType={item.contentType}
+              payload={item.original}
+            />
           </div>
         </div>
       ) : (
@@ -113,54 +91,43 @@ export const AppealCard = ({ item, onRefresh }: Props) => {
       )}
 
       {editable && (
-        <div className="space-y-3">
-          {isResource ? (
-            <>
-              <Input
-                label="资源标题"
-                value={name}
-                onValueChange={setName}
-                maxLength={300}
-              />
-              <Textarea
-                label="资源介绍"
-                value={note}
-                onValueChange={setNote}
-                maxLength={10007}
-              />
-            </>
-          ) : (
-            <Textarea
-              label={item.contentType === 'comment' ? '评论内容' : '评价内容'}
-              value={text}
-              onValueChange={setText}
-              maxLength={item.contentType === 'comment' ? 10007 : 1314}
-            />
-          )}
-
-          <div className="flex flex-col items-end gap-2">
-            <p className="text-xs text-default-400">
-              申诉提交后不可修改，请确认内容无误后再提交。
-            </p>
-            <Button
-              color="primary"
-              size="sm"
-              onPress={handleSubmit}
-              isLoading={submitting}
-            >
-              提交申诉
+        <>
+          <div className="flex justify-end">
+            <Button color="primary" size="sm" onPress={onOpen}>
+              申诉
             </Button>
           </div>
-        </div>
+
+          <Modal
+            size={modalSize}
+            isOpen={isOpen}
+            onClose={onClose}
+            scrollBehavior={
+              item.contentType === 'resource' ? 'outside' : 'normal'
+            }
+            isDismissable={false}
+            isKeyboardDismissDisabled={true}
+          >
+            <AppealDialog
+              item={item}
+              onClose={onClose}
+              onSuccess={() => {
+                onClose()
+                onRefresh()
+              }}
+            />
+          </Modal>
+        </>
       )}
 
       {!editable && item.appeal && (
         <div className="space-y-1 text-sm">
           <p className="text-default-500">申诉提交的内容：</p>
-          <div className="whitespace-pre-wrap break-all rounded-lg bg-default-100 p-2 text-default-600">
-            {isResource
-              ? `标题：${item.appeal.payload.name}\n介绍：${item.appeal.payload.note}`
-              : item.appeal.payload.text}
+          <div className="rounded-lg bg-default-100 p-2 text-default-600">
+            <KunAppealPayload
+              contentType={item.contentType}
+              payload={withUnchangedFields(item.appeal.payload, item.original)}
+            />
           </div>
         </div>
       )}

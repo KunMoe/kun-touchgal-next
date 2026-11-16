@@ -1,6 +1,10 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminAppealPaginationSchema } from '~/validations/admin'
+import {
+  APPEAL_LINK_SELECT,
+  getAppealModelName
+} from '~/server/moderation/appeal'
 import type { AdminAppealItem, AppealPayload } from '~/types/api/appeal'
 
 export const getAppeals = async (
@@ -47,7 +51,15 @@ export const getAppeals = async (
     }),
     prisma.patch_resource.findMany({
       where: { id: { in: idsOf('resource') } },
-      select: { id: true, name: true, note: true, patch: patchSelect }
+      select: {
+        id: true,
+        name: true,
+        note: true,
+        type: true,
+        model_name: true,
+        links: { orderBy: { sort_order: 'asc' }, select: APPEAL_LINK_SELECT },
+        patch: patchSelect
+      }
     })
   ])
 
@@ -70,7 +82,9 @@ export const getAppeals = async (
   for (const resource of resources) {
     originalMap.set(`resource:${resource.id}`, {
       name: resource.name,
-      note: resource.note
+      note: resource.note,
+      modelName: getAppealModelName(resource),
+      links: resource.links
     })
     patchMap.set(`resource:${resource.id}`, {
       uniqueId: resource.patch.unique_id,

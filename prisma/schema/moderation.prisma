@@ -48,7 +48,9 @@ model moderation_appeal {
   id           Int    @id @default(autoincrement())
   content_type String @db.VarChar(107)
   content_id   Int
-  // 用户修改后待人工复核的内容: comment/rating 为 { text }, resource 为 { name, note }
+  // 用户修改后待人工复核的内容: comment/rating 为 { text }, resource 为
+  // { name, note, modelName, links } (modelName 只有 AI 翻译补丁才有; links 是各条链接的
+  // id、storage 与链接、大小、提取码、解压码; 较早的申诉没有 modelName 与 links)
   payload      Json
   status       String @default("pending") @db.VarChar(107)
   // 处理该申诉的管理员 uid

@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma, isPrismaTransactionConflict } from '~/prisma/index'
+import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { moderation_appealModel } from '~/prisma/generated/prisma/models'
 import { adminHandleAppealSchema } from '~/validations/admin'
 import {
@@ -27,12 +28,52 @@ import { deletePendingModerationTasks } from '~/server/moderation/submit'
 import { deletePendingAppeals } from '~/server/moderation/appeal'
 import { deleteOrphanReports } from '~/server/report/pending'
 import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
+import { getAppealEditableLinkFields } from '~/utils/appealPayload'
 import { APPEAL_RESULT_NOTICE, APPEAL_SETTINGS_LINK } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
-import type { AppealPayload } from '~/types/api/appeal'
+import type { AppealLink, AppealPayload } from '~/types/api/appeal'
 
 // 事务内的业务失败, 回滚后将错误消息返回给管理员
 class AppealHandleError extends Error {}
+
+// 把申诉里的链接字段写回链接行。须在资源行锁下调用 (资源编辑先锁资源行再整体重建
+// 链接行)。隐藏态的资源不可编辑, 链接行自申诉提交起本不会变; 若其间资源被取消隐藏并
+// 编辑过, 链接行已整体重建 (id 全变), 管理员复核的申诉内容对不上现有链接, 整体拒绝
+// 而不部分套用。只写作者可改的字段 (见 getAppealEditableLinkFields), 按库中的存储类型
+// 判断, 不看载荷里记的
+const applyAppealLinks = async (
+  tx: Prisma.TransactionClient,
+  resourceId: number,
+  links: AppealLink[]
+) => {
+  const currentLinks = await tx.patch_resource_link.findMany({
+    where: { resource_id: resourceId },
+    select: { id: true, storage: true }
+  })
+  const currentById = new Map(currentLinks.map((link) => [link.id, link]))
+  const matched = links.flatMap((link) => {
+    const current = currentById.get(link.id)
+    return current ? [{ link, current }] : []
+  })
+  // 先整体核对再写: 申诉里的链接由提交时的库中行生成 (id 不重复), 条数相同且每条都
+  // 找得到即两边是同一组行
+  if (links.length !== currentLinks.length || matched.length !== links.length) {
+    // 拒绝申诉会删除仍处于隐藏态的资源, 所以把不删资源的处理办法一并说明
+    throw new AppealHandleError(
+      '资源链接在申诉提交后已变更, 无法通过该申诉。如需保留该资源, 请先在下载资源管理中恢复它, 再拒绝本申诉'
+    )
+  }
+  for (const { link, current } of matched) {
+    const editable = getAppealEditableLinkFields(current.storage)
+    if (editable.length === 0) {
+      continue
+    }
+    await tx.patch_resource_link.update({
+      where: { id: link.id },
+      data: Object.fromEntries(editable.map((field) => [field, link[field]]))
+    })
+  }
+}
 
 const approveAppeal = async (
   appeal: moderation_appealModel,
@@ -117,6 +158,17 @@ const approveAppeal = async (
           }
         })
         updatedCount = updated.count
+        if (updated.count > 0 && payload.modelName !== undefined) {
+          // 模型型号只属于 AI 翻译补丁, 其余类型落库恒为空串: 以库中的类型为条件写,
+          // 不看载荷。资源行已被上面的条件写锁住
+          await tx.patch_resource.updateMany({
+            where: { id: contentId, type: { has: 'ai' } },
+            data: { model_name: payload.modelName }
+          })
+        }
+        if (updated.count > 0 && payload.links) {
+          await applyAppealLinks(tx, contentId, payload.links)
+        }
         if (updated.count > 0 && patchId !== null) {
           resourceUniqueId = await recalcPatchType(patchId, tx)
           // 事务性入队：与补丁变更原子提交，关闭崩溃丢失窗口

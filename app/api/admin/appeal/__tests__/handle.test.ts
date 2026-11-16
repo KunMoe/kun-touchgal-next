@@ -11,7 +11,9 @@ const {
   updateRatingMock,
   deleteRatingMock,
   deleteResourceMock,
+  updateResourceMock,
   txLinkFindManyMock,
+  updateLinkMock,
   deleteCommentMock,
   txFindCommentMock,
   txQueryRawMock,
@@ -25,6 +27,8 @@ const {
   invalidateContentMock,
   invalidateContentByPatchIdMock,
   invalidateCommentCacheMock,
+  invalidateResourceDetailMock,
+  invalidateResourceListMock,
   recalcTypeMock,
   enqueueOutboxMock,
   enqueueLinkDelMock,
@@ -42,7 +46,9 @@ const {
   updateRatingMock: vi.fn(),
   deleteRatingMock: vi.fn(),
   deleteResourceMock: vi.fn(),
+  updateResourceMock: vi.fn(),
   txLinkFindManyMock: vi.fn(),
+  updateLinkMock: vi.fn(),
   deleteCommentMock: vi.fn(),
   txFindCommentMock: vi.fn(),
   txQueryRawMock: vi.fn(),
@@ -56,6 +62,8 @@ const {
   invalidateContentMock: vi.fn(),
   invalidateContentByPatchIdMock: vi.fn(),
   invalidateCommentCacheMock: vi.fn(),
+  invalidateResourceDetailMock: vi.fn(),
+  invalidateResourceListMock: vi.fn(),
   recalcTypeMock: vi.fn(),
   enqueueOutboxMock: vi.fn(),
   enqueueLinkDelMock: vi.fn(),
@@ -71,9 +79,13 @@ const transactionClient = {
   moderation_appeal: { updateMany: claimAppealMock },
   patch_rating: { updateMany: updateRatingMock, deleteMany: deleteRatingMock },
   patch_resource: {
-    deleteMany: deleteResourceMock
+    deleteMany: deleteResourceMock,
+    updateMany: updateResourceMock
   },
-  patch_resource_link: { findMany: txLinkFindManyMock },
+  patch_resource_link: {
+    findMany: txLinkFindManyMock,
+    update: updateLinkMock
+  },
   patch_comment: {
     deleteMany: deleteCommentMock,
     findUnique: txFindCommentMock
@@ -121,6 +133,14 @@ vi.mock('~/app/api/patch/cache', () => ({
 
 vi.mock('~/app/api/patch/comment/cache', () => ({
   invalidatePatchCommentCache: invalidateCommentCacheMock
+}))
+
+vi.mock('~/app/api/patch/resource/cache', () => ({
+  invalidatePatchResourceDetailCache: invalidateResourceDetailMock
+}))
+
+vi.mock('~/app/api/resource/cache', () => ({
+  invalidateResourceListCache: invalidateResourceListMock
 }))
 
 vi.mock('~/app/api/patch/resource/_helper', () => ({
@@ -174,6 +194,8 @@ beforeEach(() => {
   updateRatingMock.mockResolvedValue({ count: 1 })
   deleteRatingMock.mockResolvedValue({ count: 1 })
   deleteResourceMock.mockResolvedValue({ count: 1 })
+  updateResourceMock.mockResolvedValue({ count: 1 })
+  updateLinkMock.mockResolvedValue({})
   deleteCommentMock.mockResolvedValue({ count: 1 })
   txLinkFindManyMock.mockResolvedValue([])
   txFindCommentMock.mockResolvedValue(null)
@@ -187,6 +209,8 @@ beforeEach(() => {
   invalidateContentMock.mockResolvedValue(undefined)
   invalidateContentByPatchIdMock.mockResolvedValue(undefined)
   invalidateCommentCacheMock.mockResolvedValue(undefined)
+  invalidateResourceDetailMock.mockResolvedValue(undefined)
+  invalidateResourceListMock.mockResolvedValue(undefined)
   recalcTypeMock.mockResolvedValue('unique-x')
   enqueueOutboxMock.mockResolvedValue(undefined)
   enqueueLinkDelMock.mockResolvedValue(undefined)
@@ -226,6 +250,191 @@ describe('handleAppeal approve', () => {
       'recompute',
       'transaction-commit'
     ])
+  })
+})
+
+describe('handleAppeal approve resource links', () => {
+  const resourceAppeal = {
+    ...ratingAppeal,
+    content_type: 'resource',
+    payload: {
+      name: '新标题',
+      note: '新介绍',
+      links: [
+        {
+          id: 21,
+          storage: 's3',
+          content: 'https://s3.example/payload-copy.zip',
+          size: '700 MB',
+          code: '',
+          password: 'pw-1'
+        },
+        {
+          id: 22,
+          storage: 'user',
+          content: 'https://pan.example/s/new',
+          size: '2 GB',
+          code: 'c0de',
+          password: ''
+        }
+      ]
+    }
+  }
+
+  beforeEach(() => {
+    findAppealMock.mockResolvedValue(resourceAppeal)
+    txLinkFindManyMock.mockResolvedValue([
+      { id: 21, storage: 's3' },
+      { id: 22, storage: 'user' }
+    ])
+  })
+
+  it('writes the appealed link fields back after the resource row is locked', async () => {
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toEqual({})
+    expect(updateResourceMock).toHaveBeenCalledWith({
+      where: { id: 5, status: 1 },
+      data: { name: '新标题', note: '新介绍', status: 0 }
+    })
+    // 链接行在资源行的条件写 (取得行锁) 之后才读写, 与资源编辑的加锁顺序一致
+    expect(updateResourceMock.mock.invocationCallOrder[0]).toBeLessThan(
+      txLinkFindManyMock.mock.invocationCallOrder[0]
+    )
+    expect(txLinkFindManyMock).toHaveBeenCalledWith({
+      where: { resource_id: 5 },
+      select: { id: true, storage: true }
+    })
+    expect(updateLinkMock).toHaveBeenCalledTimes(2)
+    expect(updateLinkMock).toHaveBeenCalledWith({
+      where: { id: 22 },
+      data: {
+        content: 'https://pan.example/s/new',
+        size: '2 GB',
+        code: 'c0de',
+        password: ''
+      }
+    })
+  })
+
+  it('never writes the address of an s3 link, whatever the payload carries', async () => {
+    await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    // 站内存储的地址由服务端在绑定上传对象时生成: 只写大小与两个口令
+    expect(updateLinkMock).toHaveBeenCalledWith({
+      where: { id: 21 },
+      data: { size: '700 MB', code: '', password: 'pw-1' }
+    })
+  })
+
+  it('decides by the stored storage type, not the one recorded in the payload', async () => {
+    txLinkFindManyMock.mockResolvedValue([
+      { id: 21, storage: 's3' },
+      { id: 22, storage: 's3' }
+    ])
+
+    await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(updateLinkMock).toHaveBeenCalledWith({
+      where: { id: 22 },
+      data: { size: '2 GB', code: 'c0de', password: '' }
+    })
+  })
+
+  // TouchGal 资源盘的链接只有超级管理员能写: 申诉通过时整条不动
+  it('does not write a TouchGal link row at all', async () => {
+    txLinkFindManyMock.mockResolvedValue([
+      { id: 21, storage: 's3' },
+      { id: 22, storage: 'touchgal' }
+    ])
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toEqual({})
+    expect(updateLinkMock).toHaveBeenCalledTimes(1)
+    expect(updateLinkMock.mock.calls[0][0].where).toEqual({ id: 21 })
+  })
+
+  it.each([
+    ['a link row was replaced', [{ id: 21 }, { id: 30 }]],
+    ['a link row was removed', [{ id: 21 }]],
+    ['a link row was added', [{ id: 21 }, { id: 22 }, { id: 23 }]]
+  ])('refuses to approve when %s after the appeal', async (_, rows) => {
+    txLinkFindManyMock.mockResolvedValue(
+      rows.map((row) => ({ ...row, storage: 'user' }))
+    )
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    // 管理员复核的内容对不上现有链接: 整体失败, 不部分套用, 不通知不记日志
+    // 拒绝申诉会删除仍隐藏的资源, 文案里带上不删资源的处理办法
+    expect(result).toBe(
+      '资源链接在申诉提交后已变更, 无法通过该申诉。如需保留该资源, 请先在下载资源管理中恢复它, 再拒绝本申诉'
+    )
+    expect(updateLinkMock).not.toHaveBeenCalled()
+    expect(createMessageMock).not.toHaveBeenCalled()
+    expect(createLogMock).not.toHaveBeenCalled()
+    expect(invalidateResourceDetailMock).not.toHaveBeenCalled()
+  })
+
+  it('writes the model name back only where the stored type is an AI patch', async () => {
+    findAppealMock.mockResolvedValue({
+      ...resourceAppeal,
+      payload: { ...resourceAppeal.payload, modelName: 'DeepSeek-V3' }
+    })
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toEqual({})
+    expect(updateResourceMock).toHaveBeenCalledTimes(2)
+    // 模型型号只属于 AI 翻译补丁: 以库中的类型为条件写, 不看载荷
+    expect(updateResourceMock).toHaveBeenLastCalledWith({
+      where: { id: 5, type: { has: 'ai' } },
+      data: { model_name: 'DeepSeek-V3' }
+    })
+    // 先由带状态条件的写取得资源行锁并确认仍是隐藏态
+    expect(updateResourceMock.mock.calls[0][0]).toEqual({
+      where: { id: 5, status: 1 },
+      data: { name: '新标题', note: '新介绍', status: 0 }
+    })
+  })
+
+  it('does not write the model name when the resource is no longer hidden', async () => {
+    findAppealMock.mockResolvedValue({
+      ...resourceAppeal,
+      payload: { ...resourceAppeal.payload, modelName: 'DeepSeek-V3' }
+    })
+    updateResourceMock.mockResolvedValue({ count: 0 })
+
+    await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(updateResourceMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves link rows alone for an appeal submitted before links were editable', async () => {
+    findAppealMock.mockResolvedValue({
+      ...resourceAppeal,
+      payload: { name: '新标题', note: '新介绍' }
+    })
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toEqual({})
+    expect(updateResourceMock).toHaveBeenCalledTimes(1)
+    expect(txLinkFindManyMock).not.toHaveBeenCalled()
+    expect(updateLinkMock).not.toHaveBeenCalled()
+  })
+
+  it('does not touch link rows when the resource is no longer hidden', async () => {
+    updateResourceMock.mockResolvedValue({ count: 0 })
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toBe(
+      '内容已不存在或状态已变更, 无法通过, 可拒绝该申诉以关闭'
+    )
+    expect(txLinkFindManyMock).not.toHaveBeenCalled()
+    expect(updateLinkMock).not.toHaveBeenCalled()
   })
 })
 

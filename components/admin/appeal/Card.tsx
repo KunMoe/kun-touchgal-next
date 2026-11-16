@@ -15,20 +15,17 @@ import { ExternalLink } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { kunFetchPut } from '~/utils/kunFetch'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
+import { KunAppealPayload } from '~/components/kun/AppealPayload'
+import { withUnchangedFields } from '~/utils/appealPayload'
 import { APPEAL_STATUS_MAP } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
-import type { AdminAppealItem, AppealPayload } from '~/types/api/appeal'
+import type { AdminAppealItem } from '~/types/api/appeal'
 
 const statusColorMap: Record<string, 'warning' | 'success' | 'danger'> = {
   pending: 'warning',
   approved: 'success',
   rejected: 'danger'
 }
-
-const formatPayload = (contentType: string, payload: AppealPayload) =>
-  contentType === 'resource'
-    ? `标题：${payload.name}\n介绍：${payload.note}`
-    : (payload.text ?? '')
 
 interface Props {
   appeal: AdminAppealItem
@@ -124,17 +121,25 @@ export const AppealCard = ({ appeal, onHandled }: Props) => {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <p className="text-sm text-default-500">原内容</p>
-            <p className="whitespace-pre-wrap break-all rounded-lg bg-default-100 p-2 text-sm">
-              {appeal.original
-                ? formatPayload(appeal.contentType, appeal.original)
-                : '(内容已被删除)'}
-            </p>
+            <div className="rounded-lg bg-default-100 p-2 text-sm">
+              {appeal.original ? (
+                <KunAppealPayload
+                  contentType={appeal.contentType}
+                  payload={appeal.original}
+                />
+              ) : (
+                '(内容已被删除)'
+              )}
+            </div>
           </div>
           <div className="space-y-1">
             <p className="text-sm text-default-500">申诉修改后内容</p>
-            <p className="whitespace-pre-wrap break-all rounded-lg bg-default-100 p-2 text-sm">
-              {formatPayload(appeal.contentType, appeal.payload)}
-            </p>
+            <div className="rounded-lg bg-default-100 p-2 text-sm">
+              <KunAppealPayload
+                contentType={appeal.contentType}
+                payload={withUnchangedFields(appeal.payload, appeal.original)}
+              />
+            </div>
           </div>
         </div>
 

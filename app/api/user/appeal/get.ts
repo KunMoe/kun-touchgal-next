@@ -2,6 +2,10 @@ import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { getUserAppealSchema } from '~/validations/appeal'
 import { APPEAL_CONTENT_TYPE } from '~/constants/appeal'
+import {
+  APPEAL_LINK_SELECT,
+  getAppealModelName
+} from '~/server/moderation/appeal'
 import type {
   AppealPayload,
   UserAppealItem,
@@ -70,7 +74,10 @@ export const getUserAppeals = async (
         id: true,
         name: true,
         note: true,
+        type: true,
+        model_name: true,
         status: true,
+        links: { orderBy: { sort_order: 'asc' }, select: APPEAL_LINK_SELECT },
         patch: { select: { name: true } }
       }
     }),
@@ -109,7 +116,12 @@ export const getUserAppeals = async (
     contentMap.set(`resource:${resource.id}`, {
       hidden: resource.status === 1,
       patchName: resource.patch.name,
-      original: { name: resource.name, note: resource.note }
+      original: {
+        name: resource.name,
+        note: resource.note,
+        modelName: getAppealModelName(resource),
+        links: resource.links
+      }
     })
   }
 
