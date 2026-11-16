@@ -1,5 +1,5 @@
 /* eslint-disable no-console -- 命令行工具, 进度与汇总直接打到终端 */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { prisma } from '~/prisma/index'
 import { MODERATION_TEXT_CONTENT_TYPE } from '~/constants/moderation'
@@ -38,8 +38,18 @@ import {
 //   pnpm moderation:replay --limit 200 --without-links
 //       新侧不带链接 / 提取码 / 解压码: 旧封装从不送审这三个字段, 带上它们时
 //       「换封装」与「多审了三个字段」两种影响会混在一起; 两种方式各跑一次即可分开看
+//   pnpm moderation:replay --limit 25 --concurrency 1 --shard 0/8
+//       模型端对同一个连接上的请求逐个处理 (实测 8 路并发与串行耗时相同), 进程内的并发
+//       换不来吞吐, 排在后面的请求还会白白消耗超时额度。要并行就开 n 个进程, 各取
+//       任务 id 的一个余数类; 此时 --limit 是每个进程各自的上限
+//   pnpm moderation:replay --limit 200 --types resource --max-per-note 1
+//       批量上传者会用同一份介绍发上百个资源, 「最近 200 条资源任务」可能大半是同一个
+//       模板 (实测 200 条里 134 条); 限制同一份介绍最多取几个样本, 换来更分散的样本
+//   pnpm moderation:replay --limit 200 --status rejected
+//       只取历史上被拒绝过的任务: 近期任务里违规内容不到百分之几, 按时间取样看不出
+//       新封装对「该拒的」有没有漏放
 //
-// 逐条结果写入 docs/tmp/moderation-replay/<时间>.jsonl, 终端打印分歧汇总
+// 逐条结果边跑边追加到 docs/tmp/moderation-replay/<时间>.jsonl, 终端打印分歧汇总
 
 type Outcome = 'pass' | 'reject' | 'manual' | 'error'
 
@@ -66,10 +76,29 @@ const readArgs = () => {
     throw new Error(`未知的内容类型: ${unknown.join(', ')}`)
   }
   const since = valueOf('--since')
+  const [shardIndex, shardCount] = (valueOf('--shard') ?? '0/1')
+    .split('/')
+    .map(Number)
+  if (
+    !Number.isInteger(shardIndex) ||
+    !Number.isInteger(shardCount) ||
+    shardIndex < 0 ||
+    shardIndex >= shardCount
+  ) {
+    throw new Error('--shard 的写法是 i/n, 且 0 <= i < n')
+  }
   return {
     limit: Number(valueOf('--limit') ?? 200),
     concurrency: Number(valueOf('--concurrency') ?? 4),
     since: since ? new Date(since) : undefined,
+    shardIndex,
+    shardCount,
+    maxPerNote: Number(valueOf('--max-per-note') ?? Infinity),
+    statuses: valueOf('--status')?.split(',') ?? [
+      'approved',
+      'rejected',
+      'manual'
+    ],
     types,
     dryRun: args.includes('--dry-run'),
     withoutLinks: args.includes('--without-links')
@@ -163,13 +192,14 @@ const loadSubject = async (
 const collectSamples = async (options: ReturnType<typeof readArgs>) => {
   const samples: Sample[] = []
   const seen = new Set<string>()
+  const noteCount = new Map<string, number>()
   let cursor: number | undefined
 
   while (samples.length < options.limit) {
     const tasks = await prisma.moderation_task.findMany({
       where: {
         content_type: { in: options.types },
-        status: { in: ['approved', 'rejected', 'manual'] },
+        status: { in: options.statuses },
         ...(options.since ? { created: { gte: options.since } } : {}),
         ...(cursor === undefined ? {} : { id: { lt: cursor } })
       },
@@ -188,6 +218,9 @@ const collectSamples = async (options: ReturnType<typeof readArgs>) => {
     }
     for (const task of tasks) {
       cursor = task.id
+      if (task.id % options.shardCount !== options.shardIndex) {
+        continue
+      }
       const subject = await loadSubject(task, options.withoutLinks)
       if (!subject || !subject.segments.length) {
         continue
@@ -198,6 +231,15 @@ const collectSamples = async (options: ReturnType<typeof readArgs>) => {
         continue
       }
       seen.add(key)
+      // 没写介绍的资源不算同一个模板, 它们的差别在标题与链接
+      const note = subject.segments.find((s) => s.label === '介绍')?.value
+      if (note) {
+        const count = noteCount.get(note) ?? 0
+        if (count >= options.maxPerNote) {
+          continue
+        }
+        noteCount.set(note, count + 1)
+      }
       samples.push({
         taskId: task.id,
         contentType: subject.contentType,
@@ -219,18 +261,21 @@ const judge = async (
   call: () => Promise<{ verdict: ModerationVerdict }>
 ): Promise<{
   outcome: Outcome
+  ms: number
   verdict?: ModerationVerdict
   error?: string
 }> => {
+  const started = performance.now()
+  const elapsed = () => Math.round(performance.now() - started)
   try {
     const { verdict } = await call()
-    return { outcome: outcomeOf(verdict), verdict }
+    return { outcome: outcomeOf(verdict), ms: elapsed(), verdict }
   } catch (error) {
     // 配置缺失不是某个样本的问题, 直接终止整次回放
     if (error instanceof ModerationConfigError) {
       throw error
     }
-    return { outcome: 'error', error: String(error) }
+    return { outcome: 'error', ms: elapsed(), error: String(error) }
   }
 }
 
@@ -250,9 +295,25 @@ const main = async () => {
         : `, 将调用模型 ${samples.length * 2} 次`)
   )
 
+  const directory = join(process.cwd(), 'docs', 'tmp', 'moderation-replay')
+  mkdirSync(directory, { recursive: true })
+  const file = join(
+    directory,
+    `${new Date().toISOString().replace(/[:.]/g, '-')}` +
+      (options.shardCount > 1
+        ? `-shard${options.shardIndex}of${options.shardCount}`
+        : '') +
+      `${options.dryRun ? '-dry-run' : ''}.jsonl`
+  )
+  const rows: Record<string, unknown>[] = []
+  // 跑完一条写一条: 中途被打断时已有的结果不丢, 也能按行数看进度
+  const record = (index: number, row: Record<string, unknown>) => {
+    rows[index] = row
+    appendFileSync(file, JSON.stringify(row) + '\n')
+  }
+
   const model = process.env.MODERATION_AI_TEXT_MODEL ?? ''
   const reasoningEffort = process.env.MODERATION_AI_TEXT_REASONING_EFFORT
-  const rows: Record<string, unknown>[] = []
   let cursor = 0
   const worker = async () => {
     let index: number
@@ -263,7 +324,7 @@ const main = async () => {
         await buildAuditView(sample.subject)
       )
       if (options.dryRun) {
-        rows[index] = { ...sample, oldInput, newInput }
+        record(index, { ...sample, oldInput, newInput })
         continue
       }
       const [oldSide, newSide] = await Promise.all([
@@ -282,7 +343,7 @@ const main = async () => {
         ),
         judge(() => moderateText(sample.contentType, newInput))
       ])
-      rows[index] = {
+      record(index, {
         taskId: sample.taskId,
         contentType: sample.contentType,
         recordedStatus: sample.recordedStatus,
@@ -291,7 +352,7 @@ const main = async () => {
         new: newSide,
         oldInput,
         newInput
-      }
+      })
       if ((index + 1) % 20 === 0) {
         console.log(`[replay] ${index + 1}/${samples.length}`)
       }
@@ -301,13 +362,6 @@ const main = async () => {
     Array.from({ length: Math.max(1, options.concurrency) }, worker)
   )
 
-  const directory = join(process.cwd(), 'docs', 'tmp', 'moderation-replay')
-  mkdirSync(directory, { recursive: true })
-  const file = join(
-    directory,
-    `${new Date().toISOString().replace(/[:.]/g, '-')}${options.dryRun ? '-dry-run' : ''}.jsonl`
-  )
-  writeFileSync(file, rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
   console.log(`[replay] 逐条结果: ${file}`)
   if (options.dryRun) {
     return
