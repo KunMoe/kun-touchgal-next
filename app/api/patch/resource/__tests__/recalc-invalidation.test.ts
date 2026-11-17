@@ -56,14 +56,26 @@ beforeEach(() => {
 })
 
 describe('recalcPatchType', () => {
-  it('传入事务客户端时: 取通告锁、重算聚合并返回 unique_id, 但不在事务内失效缓存 (M-04)', async () => {
+  it('传入事务客户端时: 先锁 patch 行再取通告锁、重算聚合并返回 unique_id, 但不在事务内失效缓存 (M-04)', async () => {
     const tx = makeTx('unique01')
 
     const result = await recalcPatchType(1, tx as never)
 
     expect(result).toBe('unique01')
-    // advisory lock 经 $executeRaw 取得, 随调用方事务提交/回滚释放
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1)
+    // 两把锁都经 $executeRaw 取得, 随调用方事务提交/回滚释放。patch 行在前: 调用方的
+    // 写语句可能已经让计数触发器拿到 patch 行锁, 反过来取会与它在两把锁上互等
+    expect(
+      tx.$executeRaw.mock.calls.map(([template]) =>
+        (template as string[]).join('?').replace(/\s+/g, ' ').trim()
+      )
+    ).toEqual([
+      'SELECT id FROM patch WHERE id = ANY(?::int[]) ORDER BY id FOR NO KEY UPDATE',
+      'SELECT pg_advisory_xact_lock(?::int, ?::int)'
+    ])
+    expect(tx.$executeRaw.mock.calls[0][1]).toEqual([1])
+    expect(tx.$executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      tx.patch_resource.findMany.mock.invocationCallOrder[0]
+    )
     // 事务内写聚合字段
     expect(tx.patch.update).toHaveBeenCalledWith({
       where: { id: 1 },

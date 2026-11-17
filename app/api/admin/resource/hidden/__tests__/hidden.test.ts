@@ -86,11 +86,13 @@ const shortLabels = () =>
     .map((label) =>
       label.includes('FOR UPDATE')
         ? 'lock resource'
-        : label.includes('pg_advisory_xact_lock')
-          ? 'recalc.lock'
-          : label.includes('INSERT INTO search_outbox')
-            ? 'search_outbox.enqueue'
-            : label
+        : label.includes('FROM patch WHERE')
+          ? 'lock patch'
+          : label.includes('pg_advisory_xact_lock')
+            ? 'recalc.lock'
+            : label.includes('INSERT INTO search_outbox')
+              ? 'search_outbox.enqueue'
+              : label
     )
 
 const logContent = () =>
@@ -136,12 +138,16 @@ describe('updateResourceHidden', () => {
     expect(result).toEqual({ count: 3 })
     expect(shortLabels()).toEqual([
       'lock resource',
+      // 写 status 之前一条语句升序锁住补丁 10、20 的行
+      'lock patch',
       'patch_resource.updateMany',
       'moderation_task.deleteMany',
-      // 补丁按 id 升序: 10 再 20
+      // 补丁按 id 升序: 10 再 20; 每次重算都是 patch 行 → 通告锁
+      'lock patch',
       'recalc.lock',
       'patch_resource.findMany',
       'patch.update',
+      'lock patch',
       'recalc.lock',
       'patch_resource.findMany',
       'patch.update',

@@ -75,9 +75,11 @@ export const shortResourceLabels = (rec: RecordingTransaction) =>
         ? 'lock user'
         : label.includes('FROM patch_resource') && label.includes('FOR UPDATE')
           ? 'lock resource'
-          : label.includes('pg_advisory_xact_lock')
-            ? 'recalc.lock'
-            : label.includes('INSERT INTO search_outbox')
-              ? 'search_outbox.enqueue'
-              : label
+          : label.includes('FROM patch WHERE')
+            ? 'lock patch'
+            : label.includes('pg_advisory_xact_lock')
+              ? 'recalc.lock'
+              : label.includes('INSERT INTO search_outbox')
+                ? 'search_outbox.enqueue'
+                : label
     )

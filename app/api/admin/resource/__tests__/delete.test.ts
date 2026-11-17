@@ -117,6 +117,8 @@ describe('deleteResource 批量删除', () => {
       'lock resource',
       // 锁下重读的集合 (而非入参) 是删除与派生清理的事实源
       'patch_resource.findMany',
+      // 一条语句升序锁住补丁 10、20 的行, 排在第一条写语句之前
+      'lock patch',
       'patch.findMany',
       // 评论派生清理整批一次, 且在行删除之前 (评论行尚存时)
       'patch_resource.findMany',
@@ -127,10 +129,12 @@ describe('deleteResource 批量删除', () => {
       'moderation_task.deleteMany',
       'moderation_appeal.deleteMany',
       'patch_report.deleteMany',
-      // 补丁 10、20 各重算一次
+      // 补丁 10、20 各重算一次: patch 行 → 通告锁
+      'lock patch',
       'recalc.lock',
       'patch_resource.findMany',
       'patch.update',
+      'lock patch',
       'recalc.lock',
       'patch_resource.findMany',
       'patch.update',

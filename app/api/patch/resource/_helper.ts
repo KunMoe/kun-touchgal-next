@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto'
 import { copyObject, deleteFileFromS3, headObject } from '~/lib/s3'
 import { acquireKvLock, delKv, getKv, releaseKvLock } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
+import { lockPatchRows } from '~/server/content/patchLock'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import {
   enqueueS3Deletion,
@@ -252,7 +253,11 @@ const recalcPatchTypeLocked = async (
   // pg_advisory_xact_lock: 事务级通告锁, 提交/回滚时自动释放. 使同一 patch 的
   // 「读全部可见资源 → 写 type/language/platform」原子化, 消除重叠事务 (审核重叠批次、
   // 管理员与用户并发操作) 的丢更新. 用 $executeRaw (而非 $queryRaw): pg adapter 无法
-  // 反序列化 void 返回列; ::int 显式定型以匹配 (int, int) 重载
+  // 反序列化 void 返回列; ::int 显式定型以匹配 (int, int) 重载.
+  // 取通告锁之前先锁 patch 行: 调用方若在此之前改过资源的 status / 删过公开资源, 计数
+  // 触发器已经拿到 patch 行锁; 本函数若先取通告锁、到末尾的 UPDATE 才碰 patch 行, 两条
+  // 路径就在「patch 行」与「通告锁」上反序互等. 统一成 patch 行 → 通告锁
+  await lockPatchRows(tx, [patchId])
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PATCH_TYPE_LOCK_NAMESPACE}::int, ${patchId}::int)`
 
   const resources = await tx.patch_resource.findMany({

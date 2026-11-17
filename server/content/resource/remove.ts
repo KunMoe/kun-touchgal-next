@@ -14,6 +14,7 @@ import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
 import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { recordContentChanges } from '~/server/content/changes'
 import { applyContentGuard } from '~/server/content/guard'
+import { lockPatchRows } from '~/server/content/patchLock'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { ResourceStatus } from '~/constants/contentStatus'
 import type { ContentGuard, SkippedContent } from '~/server/content/guard'
@@ -80,6 +81,8 @@ export const planResourceRemoval = async (
     current,
     options.guard
   )
+  // 删除公开资源会触发计数触发器去改 patch 行, 之后还要逐个补丁重算聚合
+  await lockPatchRows(tx, [...new Set(rows.map((row) => row.patch_id))])
   return { rows, skipped, refundPublishReward: options.refundPublishReward }
 }
 
@@ -120,8 +123,8 @@ export const executeResourceRemoval = async (
     }
   }
 
-  // 去重升序: recalcPatchType 内的 patch 级通告锁按确定的顺序获取, 两个反序的重叠批
-  // 不会互等
+  // 去重升序: recalcPatchType 内的 patch 级通告锁按确定的顺序获取, 与 plan 里预锁
+  // patch 行的顺序一致
   const patchIds = [...new Set(plan.rows.map((row) => row.patch_id))].sort(
     (a, b) => a - b
   )

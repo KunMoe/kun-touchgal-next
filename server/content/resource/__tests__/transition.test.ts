@@ -67,6 +67,9 @@ import { transitionResources } from '~/server/content/resource/transition'
 const LOCK =
   '$queryRaw: SELECT id, user_id, patch_id, status, section FROM patch_resource WHERE id = ANY(?::int[]) ORDER BY id FOR UPDATE'
 
+const PATCH_LOCK =
+  '$executeRaw: SELECT id FROM patch WHERE id = ANY(?::int[]) ORDER BY id FOR NO KEY UPDATE'
+
 const row = (
   id: number,
   status: number,
@@ -90,7 +93,9 @@ const shortLabels = () =>
         ? 'recalc.lock'
         : label.includes('INSERT INTO search_outbox')
           ? 'search_outbox.enqueue'
-          : label
+          : label === PATCH_LOCK
+            ? 'patch.lock'
+            : label
     )
 
 const transition = (
@@ -106,7 +111,7 @@ beforeEach(() => {
 describe('资源状态迁移', () => {
   // 先锁行、再对锁下实际迁移的行作废任务: 反过来的话, 作废的是事务外快照里的行,
   // 与并发的作者编辑交错时会留下「待审核却没有任何在途任务」的资源
-  it('锁行 → 写 status → 作废在途任务 (保留 dry_run) → 重算聚合 → 搜索出箱', async () => {
+  it('锁行 → 锁 patch 行 → 写 status → 作废在途任务 (保留 dry_run) → 重算聚合 → 搜索出箱', async () => {
     seed([row(1, 0)])
 
     const moved = await transition([1], {
@@ -119,8 +124,12 @@ describe('资源状态迁移', () => {
     expect(rec.attempts[0].committed).toBe(true)
     expect(shortLabels()).toEqual([
       LOCK,
+      // 写 status 会让计数触发器去改 patch 行: 先把它锁住
+      'patch.lock',
       'patch_resource.updateMany',
       'moderation_task.deleteMany',
+      // recalcPatchType: patch 行 → 通告锁 → 读公开资源 → 写补丁聚合
+      'patch.lock',
       'recalc.lock',
       'patch_resource.findMany',
       'patch.update',
@@ -191,6 +200,28 @@ describe('资源状态迁移', () => {
       .labels()
       .find((label) => label.includes('INSERT INTO search_outbox')) as string
     expect(rec.argsOf(enqueue)).toEqual([[[10, 20]]])
+  })
+
+  // 计数触发器是行级的: 不预锁的话, patch 行的加锁顺序跟着资源行走 (这里是 20 → 10),
+  // 另一批资源行不相交、补丁顺序相反的迁移会与它互等
+  it('写 status 之前一条语句按 patch id 升序锁住全部涉及的 patch 行', async () => {
+    seed([
+      row(1, 0, { patch_id: 20 }),
+      row(2, 0, { patch_id: 10 }),
+      row(3, 0, { patch_id: 20 })
+    ])
+
+    await transition([1, 2, 3], {
+      from: [0],
+      to: 1,
+      openTasks: 'cancel-keep-dry-run'
+    })
+
+    expect(rec.argsOf(PATCH_LOCK)[0]).toEqual([[10, 20]])
+    const labels = rec.labels()
+    expect(labels.indexOf(PATCH_LOCK)).toBeLessThan(
+      labels.indexOf('patch_resource.updateMany')
+    )
   })
 
   it("openTasks 为 'keep' 时不碰任务", async () => {

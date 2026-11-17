@@ -6,13 +6,14 @@ import {
 } from '~/server/search/sync'
 import { settleOpenTasks } from '~/server/content/derivatives'
 import { recordContentChanges } from '~/server/content/changes'
+import { lockPatchRows } from '~/server/content/patchLock'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { ResourceStatus } from '~/constants/contentStatus'
 import type { OpenTasksPolicy } from '~/server/content/derivatives'
 import type { KunTxContext } from '~/server/db/tx'
 
 // 资源的状态迁移。返回锁下真正发生迁移的行 (连同迁移前的状态)。
-// 锁序固定为「资源行 → 审核任务 → patch 通告锁」, 与审核裁决、删除一致
+// 锁序固定为「资源行 → patch 行 → 审核任务 → patch 通告锁」, 与审核裁决、删除一致
 export const transitionResources = async (
   ctx: KunTxContext,
   ids: number[],
@@ -44,6 +45,12 @@ export const transitionResources = async (
     return []
   }
   const movingIds = moving.map((row) => row.id)
+  // 去重升序: patch 行锁与 recalcPatchType 内的 patch 级通告锁都按这个顺序获取, 两个
+  // 批次不论资源行怎么交错都不会互等
+  const patchIds = [...new Set(moving.map((row) => row.patch_id))].sort(
+    (a, b) => a - b
+  )
+  await lockPatchRows(tx, patchIds)
 
   // 行已在锁下按 from 过滤过; where 里的 status 是双保险
   await tx.patch_resource.updateMany({
@@ -52,11 +59,7 @@ export const transitionResources = async (
   })
   await settleOpenTasks(tx, 'resource', movingIds, options.openTasks)
 
-  // 可见集变了, 补丁的 type / language / platform 聚合要重算。去重升序: recalcPatchType
-  // 内的 patch 级通告锁按确定的顺序获取, 两个反序的重叠批不会互等
-  const patchIds = [...new Set(moving.map((row) => row.patch_id))].sort(
-    (a, b) => a - b
-  )
+  // 可见集变了, 补丁的 type / language / platform 聚合要重算
   for (const patchId of patchIds) {
     const uniqueId = await recalcPatchType(patchId, tx)
     // 事务内失效会被并发读回填旧值 (M-04), 所以放到提交之后
