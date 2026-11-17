@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import 'dotenv/config'
 import { parseArgs } from 'util'
+import { kunSelectMissingTablesAndColumns } from './lib/drift'
 import { kunPlanMigrations } from './lib/migrationFiles'
 import {
   kunCheckObjectDrift,
@@ -9,6 +10,7 @@ import {
   kunCountDerivedMismatches,
   kunExportObjects,
   kunFindInvalidIndexes,
+  kunFindPendingIndexLeftovers,
   kunLoadMigrationFiles,
   kunReadLedger,
   kunRunCli
@@ -18,6 +20,9 @@ import {
 //   pnpm db:verify               迁移全部执行、无 INVALID 索引、库级对象与快照一致
 //   pnpm db:verify --phase pre   只要求 pre 迁移执行完, 不比对快照 (post 可能还没跑)
 //   pnpm db:verify --prisma      另查表、列与普通索引是否与 prisma/schema 一致
+//   pnpm db:verify --phase pre --expand
+//       还有 post 迁移待执行时用: 表结构此刻对不上是正常的 (post 负责的删列、加约束还没做),
+//       只确认 schema 里的表与列库里都已经有了
 //   pnpm db:verify --counts      另对 6 个派生列做全量对账 (全表聚合, 低峰执行)
 
 kunRunCli(async () => {
@@ -25,11 +30,15 @@ kunRunCli(async () => {
     options: {
       phase: { type: 'string', default: 'all' },
       prisma: { type: 'boolean', default: false },
+      expand: { type: 'boolean', default: false },
       counts: { type: 'boolean', default: false }
     }
   })
   if (values.phase !== 'pre' && values.phase !== 'all') {
     throw new Error('--phase 只能是 pre 或 all')
+  }
+  if (values.expand && (values.prisma || values.phase !== 'pre')) {
+    throw new Error('--expand 只与 --phase pre 连用, 且不与 --prisma 同时给')
   }
 
   let failed = 0
@@ -48,11 +57,8 @@ kunRunCli(async () => {
     { readOnly: true }
   )
   try {
-    const plan = kunPlanMigrations(
-      files,
-      await kunReadLedger(client),
-      values.phase
-    )
+    const ledger = await kunReadLedger(client)
+    const plan = kunPlanMigrations(files, ledger, values.phase)
     report(
       `迁移台账 (--phase ${values.phase})`,
       plan.ok
@@ -60,10 +66,24 @@ kunRunCli(async () => {
         : [`${plan.reason}: ${plan.detail}`]
     )
 
+    const applied = new Set(
+      ledger.filter((row) => row.kind === 'sql').map((row) => row.version)
+    )
+    const leftovers = await kunFindPendingIndexLeftovers(
+      client,
+      files.filter((file) => !applied.has(file.version))
+    )
     report(
       'INVALID 索引',
-      (await kunFindInvalidIndexes(client)).map((name) => `INVALID ${name}`)
+      (await kunFindInvalidIndexes(client))
+        .filter((name) => !leftovers.includes(name))
+        .map((name) => `INVALID ${name}`)
     )
+    for (const name of leftovers) {
+      console.log(
+        `    ${name} 是被打断的迁移留下的, 下次执行 db:migrate 时会先删掉重建`
+      )
+    }
 
     if (values.phase === 'all') {
       report(
@@ -78,6 +98,26 @@ kunRunCli(async () => {
         ...drift.unexpected.map((statement) => `白名单之外: ${statement}`),
         ...drift.stale.map((statement) => `白名单条目未再出现: ${statement}`)
       ])
+      if (drift.unexpected.length > 0) {
+        console.log(
+          '    以上是让库对齐 schema 所需的语句, 只用来说明差异, 不要照抄到生产执行'
+        )
+      }
+    }
+
+    if (values.expand) {
+      const missing = kunSelectMissingTablesAndColumns(
+        kunCheckPrismaDrift().unexpected
+      )
+      report(
+        'schema 里的表与列库里都已存在',
+        missing.map((statement) => `库里还没有: ${statement}`)
+      )
+      if (missing.length > 0) {
+        console.log(
+          '    新表与新列要由 pre 迁移建好: 漏写了迁移就补一个, 写在 post 里的挪到 pre'
+        )
+      }
     }
 
     if (values.counts) {

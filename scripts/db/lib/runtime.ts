@@ -297,6 +297,31 @@ export const kunFindInvalidIndexes = async (
   return rows.map((row) => row.name)
 }
 
+// 并发索引迁移被打断 (进程被杀、连接断开) 时, 目标索引以 INVALID 留在库里而台账没写。
+// 执行器下次运行会先删掉它再重建, 所以这类残留不算故障; 来路不明的 INVALID 索引才算
+export const kunFindPendingIndexLeftovers = async (
+  client: pg.Client,
+  pending: KunMigrationFile[]
+): Promise<string[]> => {
+  const targets = pending
+    .filter((file) => file.mode === 'notx')
+    .flatMap((file) => kunSplitSqlStatements(file.sql))
+    .map(kunNotxCreatedIndexName)
+    .filter((name) => name !== null)
+  if (targets.length === 0) {
+    return []
+  }
+  const { rows } = await client.query(
+    `SELECT quote_ident(c.relname) AS name
+     FROM unnest($1::text[]) AS target
+     JOIN pg_index i ON i.indexrelid = to_regclass(target)
+     JOIN pg_class c ON c.oid = i.indexrelid
+     WHERE NOT i.indisvalid`,
+    [targets]
+  )
+  return rows.map((row) => row.name)
+}
+
 const dropIndexIfInvalid = async (client: pg.Client, indexName: string) => {
   const { rows } = await client.query(
     'SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass($1)',

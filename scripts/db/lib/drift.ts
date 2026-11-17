@@ -101,6 +101,16 @@ export const kunDiffObjects = (
   return problems
 }
 
+// 让库对齐 schema 所需的语句里建表与加列这两类, 也就是 schema 声明了而库里还没有的表和列。
+// 新代码一启动就要用它们, 所以必须由 pre 迁移建好, 不能留给 post
+const CREATES_TABLE_OR_COLUMN_PATTERN =
+  /^CREATE\s+TABLE\b|^ALTER\s+TABLE\b[\s\S]*\bADD\s+COLUMN\b/i
+
+export const kunSelectMissingTablesAndColumns = (statements: string[]) =>
+  statements.filter((statement) =>
+    CREATES_TABLE_OR_COLUMN_PATTERN.test(statement)
+  )
+
 // stale: 白名单里已不再出现的条目。噪音消失或变形后, 留着它就成了漂移检查的盲区
 export const kunFilterPrismaDiff = (
   diffSql: string,

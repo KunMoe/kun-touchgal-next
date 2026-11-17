@@ -19,13 +19,8 @@ runCommand('pnpm install')
 // 已上线的环境不要用这个命令更新依赖: post 迁移会赶在新构建上线之前执行
 runCommand('pnpm db:migrate')
 
-// 过渡期校验只告警、不阻断, 与 deploy:build 一致
-try {
-  console.log('Running command: pnpm db:verify --prisma')
-  execSync('pnpm db:verify --prisma', { stdio: 'inherit' })
-} catch {
-  console.warn('数据库校验未通过 (过渡期只告警)，明细见上方 db:verify 的输出')
-}
+// 校验不通过就停下: 新环境的库与迁移 / 快照 / schema 对不上时不该继续往下装
+runCommand('pnpm db:verify --prisma')
 
 // 配了搜索引擎密钥才拉起 Meilisearch（幂等）；未配则保持旧的 Prisma 回退，跳过。
 // 搜索为可选特性，引擎起不来仅告警、不阻断安装（runCommand 会 exit(1)，故此处直接用 execSync）

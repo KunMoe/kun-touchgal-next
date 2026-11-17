@@ -4,7 +4,8 @@ import {
   kunDiffObjects,
   kunFilterPrismaDiff,
   kunParseSnapshot,
-  kunRenderSnapshot
+  kunRenderSnapshot,
+  kunSelectMissingTablesAndColumns
 } from '../lib/drift'
 import {
   kunNotxCreatedIndexName,
@@ -523,6 +524,29 @@ describe('kunFilterPrismaDiff', () => {
     expect(
       kunFilterPrismaDiff('-- This is an empty migration.', allowlist).stale
     ).toHaveLength(2)
+  })
+})
+
+describe('kunSelectMissingTablesAndColumns', () => {
+  it('只留下建表与加列: 新代码一启动就要用的东西', () => {
+    const createTable = 'CREATE TABLE "t" (\n    "id" SERIAL NOT NULL\n)'
+    const addColumn = 'ALTER TABLE "patch" ADD COLUMN     "foo" INTEGER'
+    // Prisma 把同一张表的改动合成一条语句, 加列可能排在删列后面
+    const dropAndAdd =
+      'ALTER TABLE "patch" DROP COLUMN "old",\nADD COLUMN     "new" TEXT'
+
+    expect(
+      kunSelectMissingTablesAndColumns([
+        createTable,
+        'ALTER TABLE "patch" DROP COLUMN "legacy"',
+        addColumn,
+        'ALTER TABLE "patch" ALTER COLUMN "name" SET NOT NULL',
+        'CREATE UNIQUE INDEX "patch_name_key" ON "patch"("name")',
+        'DROP TABLE "gone"',
+        dropAndAdd,
+        'ALTER TABLE "a" ADD CONSTRAINT "a_b_fkey" FOREIGN KEY ("b") REFERENCES "b"("id")'
+      ])
+    ).toEqual([createTable, addColumn, dropAndAdd])
   })
 })
 

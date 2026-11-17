@@ -18,6 +18,8 @@ import {
   kunConnect,
   kunConnectScratch,
   kunFindInvalidIndexes,
+  kunFindPendingIndexLeftovers,
+  kunLoadMigrationFiles,
   kunPrepareLedger,
   kunReadLedger,
   kunResetScratch,
@@ -251,6 +253,44 @@ describe.skipIf(!scratchUrl)('迁移执行器 (实库)', () => {
 
       expect(await kunFindInvalidIndexes(client)).toEqual(['u_x_key'])
     })
+
+    // 建索引的进程被杀时, 目标索引以 INVALID 留下而台账没写。它会在下次执行时被删掉重建,
+    // 校验若把它当故障, 部署就停在构建之前, 永远走不到会修好它的 post 阶段
+    it('待执行迁移要重建的 INVALID 索引被认作残留, 无关的不算', async () => {
+      await client.query(`
+        CREATE TABLE t (x int); INSERT INTO t VALUES (1), (1);
+        CREATE TABLE u (x int); INSERT INTO u VALUES (1), (1);
+      `)
+      for (const [name, table] of [
+        ['t_x_key', 't'],
+        ['u_x_key', 'u']
+      ]) {
+        await client
+          .query(`CREATE UNIQUE INDEX CONCURRENTLY ${name} ON ${table} (x)`)
+          .catch(() => {})
+      }
+      expect(await kunFindInvalidIndexes(client)).toEqual([
+        't_x_key',
+        'u_x_key'
+      ])
+
+      expect(await kunFindPendingIndexLeftovers(client, [uniqueIndex])).toEqual(
+        ['t_x_key']
+      )
+      expect(await kunFindPendingIndexLeftovers(client, [])).toEqual([])
+    })
+
+    it('目标索引完好或还不存在时不算残留', async () => {
+      await client.query('CREATE TABLE t (x int)')
+      expect(await kunFindPendingIndexLeftovers(client, [uniqueIndex])).toEqual(
+        []
+      )
+
+      await kunRunMigrations(client, [uniqueIndex], 'all')
+      expect(await kunFindPendingIndexLeftovers(client, [uniqueIndex])).toEqual(
+        []
+      )
+    })
   })
 
   describe('台账与并发', () => {
@@ -371,7 +411,8 @@ describe.skipIf(!scratchUrl)('迁移执行器 (实库)', () => {
       expect(migrateCli(['--dry-run']).stderr).toBe('')
     })
 
-    // deploy:build 靠 --dry-run 的汇总行判断有没有待执行的 post 迁移, 从而决定 push 排在哪
+    // deploy:build 靠 --dry-run 的汇总行判断有没有待执行的 post 迁移, 从而决定构建之前
+    // 做全量校验还是只查缺表缺列
     it('--dry-run 的汇总行能被部署链读出待执行的个数', async () => {
       expect(kunCountPlannedMigrations(migrateCli(['--dry-run']).stdout)).toBe(
         readdirSync(KUN_MIGRATIONS_DIR).length
@@ -383,6 +424,88 @@ describe.skipIf(!scratchUrl)('迁移执行器 (实库)', () => {
           migrateCli(['--phase', 'post', '--dry-run']).stdout
         )
       ).toBe(0)
+    })
+  })
+
+  describe('db:verify 命令', () => {
+    const verifyCli = (args: string[]) => {
+      try {
+        const stdout = execFileSync(
+          'node_modules/.bin/esno',
+          [fileURLToPath(new URL('../verify.ts', import.meta.url)), ...args],
+          {
+            stdio: 'pipe',
+            encoding: 'utf8',
+            env: { ...process.env, KUN_DATABASE_URL: scratchUrl }
+          }
+        )
+        return { stdout, stderr: '', failed: false }
+      } catch (error) {
+        const failure = error as { stdout: string; stderr: string }
+        return { stdout: failure.stdout, stderr: failure.stderr, failed: true }
+      }
+    }
+
+    // 有 post 迁移待执行时的构建前校验: 删列、加约束这类收缩此刻对不上是正常的,
+    // 但 schema 里的表与列必须已经在库里, 否则新代码一上线就读不到
+    it('--phase pre --expand 放过多出来的列, 拦下缺的列', async () => {
+      await kunRunMigrations(client, kunLoadMigrationFiles(), 'all')
+
+      await client.query('ALTER TABLE search_outbox ADD COLUMN legacy text')
+      expect(verifyCli(['--phase', 'pre', '--expand'])).toMatchObject({
+        failed: false
+      })
+      expect(verifyCli(['--prisma']).failed).toBe(true)
+
+      await client.query('ALTER TABLE admin_setting DROP COLUMN updated')
+      const missing = verifyCli(['--phase', 'pre', '--expand'])
+      expect(missing.failed).toBe(true)
+      expect(missing.stdout).toContain(
+        '库里还没有: ALTER TABLE "admin_setting"'
+      )
+      expect(missing.stdout).toContain('"updated"')
+      expect(missing.stdout).not.toContain('legacy')
+    }, 30_000)
+
+    it('不把待执行迁移要重建的 INVALID 索引算作故障, 来路不明的照报', async () => {
+      await kunRunMigrations(client, kunLoadMigrationFiles(), 'all')
+      // 把 0007 还原成「建索引时进程被杀」: 台账没写, 目标索引以 INVALID 留下
+      await client.query(`
+        DELETE FROM kun_meta.schema_migration WHERE version = '0007';
+        DROP INDEX patch_vndb_id_solo_key;
+        CREATE TABLE dup (x int); INSERT INTO dup VALUES (1), (1);
+      `)
+      await client
+        .query(
+          'CREATE UNIQUE INDEX CONCURRENTLY patch_vndb_id_solo_key ON dup (x)'
+        )
+        .catch(() => {})
+      expect(await kunFindInvalidIndexes(client)).toEqual([
+        'patch_vndb_id_solo_key'
+      ])
+
+      const leftover = verifyCli(['--phase', 'pre'])
+      expect(leftover.failed).toBe(false)
+      expect(leftover.stdout).toContain(
+        'patch_vndb_id_solo_key 是被打断的迁移留下的'
+      )
+
+      await client
+        .query('CREATE UNIQUE INDEX CONCURRENTLY dup_x_key ON dup (x)')
+        .catch(() => {})
+      const unrelated = verifyCli(['--phase', 'pre'])
+      expect(unrelated.failed).toBe(true)
+      expect(unrelated.stdout).toContain('INVALID dup_x_key')
+      expect(unrelated.stdout).not.toContain('INVALID patch_vndb_id_solo_key')
+    }, 30_000)
+
+    it('--expand 只能与 --phase pre 连用', () => {
+      const message = '--expand 只与 --phase pre 连用'
+
+      expect(verifyCli(['--expand']).stderr).toContain(message)
+      expect(
+        verifyCli(['--phase', 'pre', '--expand', '--prisma']).stderr
+      ).toContain(message)
     })
   })
 
