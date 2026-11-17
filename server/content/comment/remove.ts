@@ -3,6 +3,7 @@ import { deleteOrphanReports } from '~/server/report/pending'
 import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { recordContentChanges } from '~/server/content/changes'
 import { applyContentGuard } from '~/server/content/guard'
+import { COMMENT_STATUS } from '~/constants/contentStatus'
 import type { CommentStatus } from '~/constants/contentStatus'
 import type { ContentGuard, SkippedContent } from '~/server/content/guard'
 import type { KunTxContext } from '~/server/db/tx'
@@ -26,8 +27,9 @@ export interface CommentRemovalPlan {
   // 锁下通过守卫的根评论
   roots: CommentRow[]
   skipped: SkippedComment[]
-  // 根与它们的整棵回复子树: parent_id 外键是 ON DELETE CASCADE, 删根会带走这些行
-  subtree: Array<Omit<CommentRow, 'user_id'>>
+  // 根与它们的整棵回复子树: parent_id 外键是 ON DELETE CASCADE, 删根会带走这些行。
+  // 回复行没有加锁, 所以这里不带它们的状态: 读到之后还可能被审核裁决改掉
+  subtree: Array<Pick<CommentRow, 'id' | 'patch_id' | 'resource_id'>>
 }
 
 export const planCommentRemoval = async (
@@ -51,15 +53,15 @@ export const planCommentRemoval = async (
   // UNION 去重: 同一批里一个根是另一个根的后代时, 子树只算一次
   const subtree = await tx.$queryRaw<CommentRemovalPlan['subtree']>`
     WITH RECURSIVE subtree AS (
-      SELECT id, patch_id, resource_id, status
+      SELECT id, patch_id, resource_id
       FROM patch_comment
       WHERE id = ANY(${roots.map((row) => row.id)}::int[])
       UNION
-      SELECT pc.id, pc.patch_id, pc.resource_id, pc.status
+      SELECT pc.id, pc.patch_id, pc.resource_id
       FROM patch_comment pc
       INNER JOIN subtree s ON pc.parent_id = s.id
     )
-    SELECT id, patch_id, resource_id, status FROM subtree`
+    SELECT id, patch_id, resource_id FROM subtree`
 
   return { roots, skipped, subtree }
 }
@@ -89,6 +91,10 @@ export const executeCommentRemoval = async (
     await deleteOrphanReports('comment', tx)
   }
 
+  // 根的状态是行锁下读到的。被级联带走的回复没有加锁, 它的状态可能在子树查询之后
+  // 才由待审变为公开 (那次裁决自己失效过缓存, 随后又被读者回填); 所以回复一律按
+  // 「删除前公开」登记: 多失效一次无害, 少失效会让评论数与分页缓存陈旧到过期
+  const rootStatusById = new Map(plan.roots.map((row) => [row.id, row.status]))
   recordContentChanges(
     ctx,
     plan.subtree.map((row) => ({
@@ -96,7 +102,7 @@ export const executeCommentRemoval = async (
       id: row.id,
       patchId: row.patch_id,
       resourceId: row.resource_id,
-      before: row.status,
+      before: rootStatusById.get(row.id) ?? COMMENT_STATUS.public,
       after: null
     }))
   )

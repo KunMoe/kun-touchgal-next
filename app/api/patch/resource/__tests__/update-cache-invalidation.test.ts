@@ -290,6 +290,30 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
     expect(invalidateUserPendingResourceCacheMock).not.toHaveBeenCalled()
   })
 
+  // 内容更新 (第一条语句) 返回的行仍是公开态; 转待审核是随后单独的一条写入。响应里的
+  // status 与提交后的缓存闸门必须读后者, 且它要排在聚合重算之前 (重算只读公开资源)
+  it('被拦截时响应与缓存闸门读「转待审核」那条写入的结果, 且它先于聚合重算', async () => {
+    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
+    planTextModerationMock.mockResolvedValue(INTERCEPT)
+    transactionResourceUpdateMock
+      .mockResolvedValueOnce(buildUpdated({ status: 0 }))
+      .mockResolvedValueOnce({ status: 3 })
+
+    const result = await updateResource(buildInput(), 7, 1)
+
+    expect(result).toMatchObject({ status: 3 })
+    expect(transactionResourceUpdateMock.mock.calls[1][0]).toEqual({
+      where: { id: 1 },
+      data: { status: 3 },
+      select: { status: true }
+    })
+    expect(
+      transactionResourceUpdateMock.mock.invocationCallOrder[1]
+    ).toBeLessThan(recalcPatchTypeMock.mock.invocationCallOrder[0])
+    // 0→3: 作者的「有待审资源」标记翻真
+    expect(invalidateUserPendingResourceCacheMock).toHaveBeenCalledWith(7)
+  })
+
   it('公开资源被拦截转待审, 失效详情缓存与 pending 缓存', async () => {
     resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
     planTextModerationMock.mockResolvedValue(INTERCEPT)

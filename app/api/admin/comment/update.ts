@@ -40,7 +40,7 @@ export const updateComment = async (
   })
 
   // 后台编辑不设守卫: 隐藏、待审的评论都能改; 也不作废在途的审核任务
-  return kunTx('admin.comment.update', async (ctx) => {
+  const failure = await kunTx('admin.comment.update', async (ctx) => {
     const { row } = await editComment(ctx, commentId, {
       data: { ...prepared, edit: Date.now().toString() },
       moderation
@@ -67,6 +67,6 @@ export const updateComment = async (
         )
       }
     })
-    return {}
   })
+  return failure ?? {}
 }

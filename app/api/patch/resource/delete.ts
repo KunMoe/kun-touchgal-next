@@ -52,7 +52,7 @@ export const deleteResource = async (
           ]
         }
 
-  return kunTx('resource.delete', async (ctx) => {
+  const failure = await kunTx('resource.delete', async (ctx) => {
     // 前台删除收回发布时给作者的奖励; 其余删除入口都不收回
     const plan = await planResourceRemoval(ctx, [patchResource.id], {
       guard,
@@ -70,6 +70,6 @@ export const deleteResource = async (
       )
     }
     await executeResourceRemoval(ctx, plan)
-    return {}
   })
+  return failure ?? {}
 }

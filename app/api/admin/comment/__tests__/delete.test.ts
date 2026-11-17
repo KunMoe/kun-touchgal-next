@@ -134,6 +134,10 @@ describe('adminDeleteComment', () => {
     const result = await deleteComment({ commentIds: [11, 12] }, 99)
 
     expect(result).toEqual({ deletedIds: [11, 12] })
+    // 两条都作为根被删: 入口若传了状态守卫, 隐藏的 11 会被跳过
+    expect(rec.argsOf('patch_comment.deleteMany')).toEqual([
+      { where: { id: { in: [11, 12] } } }
+    ])
     expect(commentPageMock).not.toHaveBeenCalled()
     expect(patchContentMock).not.toHaveBeenCalled()
   })

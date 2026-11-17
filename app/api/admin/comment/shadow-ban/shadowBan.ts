@@ -37,7 +37,7 @@ export const updateCommentShadowBan = async (
     return `该评论已处于${statusLabel[status]}状态`
   }
 
-  return kunTx('admin.comment.shadowBan', async (ctx) => {
+  const failure = await kunTx('admin.comment.shadowBan', async (ctx) => {
     // 管理员的裁决是最终的, 在途的审核任务一并作废 (dry_run 评估保留)。恢复为正常时,
     // 创建时被拦截而没发出的通知由命令在提交后补发
     const [moved] = await transitionComments(ctx, [commentId], {
@@ -63,6 +63,6 @@ export const updateCommentShadowBan = async (
         content: `管理员 ${admin.name} 将用户 ${comment.user.name} 的评论 (ID: ${commentId}) 状态由 ${statusLabel[moved.from]} 修改为 ${statusLabel[status]}`
       }
     })
-    return {}
   })
+  return failure ?? {}
 }

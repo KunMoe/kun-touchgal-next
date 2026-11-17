@@ -65,8 +65,6 @@ const declinePatchResource = async (
         content: `管理员 ${admin.name} 拒绝了一条资源\n\n拒绝原因:${reason}\nGalgame 名称:${resource.patch.name}\n资源 ID:${resource.id}\n资源标题:${resource.name}\n上传用户:${resource.user.name}`
       }
     })
-
-    return {}
   })
   if (typeof result === 'string') {
     return result

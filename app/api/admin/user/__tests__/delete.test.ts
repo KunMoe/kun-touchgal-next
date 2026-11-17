@@ -423,6 +423,23 @@ describe('deleteUser', () => {
     expect(invalidateResourceDetailMock.mock.calls).toEqual([[30], [32], [70]])
   })
 
+  // 删号前清该用户带 S3 链接的资源: 逐条各开一个事务, 不合成一批。合批会让一个
+  // 长事务同时持有这个用户全部资源行的锁
+  it('该用户带 S3 链接的资源逐条删除, 每条单独一次调用', async () => {
+    findResourcesMock.mockImplementation(
+      async (query?: { where?: { links?: unknown } }) =>
+        query?.where?.links ? [{ id: 55 }, { id: 56 }, { id: 57 }] : []
+    )
+
+    await expect(deleteUser({ uid: 7 }, 99)).resolves.toEqual({})
+
+    expect(deleteResourceMock.mock.calls).toEqual([
+      [{ resourceIds: [55] }, 99],
+      [{ resourceIds: [56] }, 99],
+      [{ resourceIds: [57] }, 99]
+    ])
+  })
+
   it('retries serializable conflicts without repeating resource cleanup', async () => {
     // S3 收集返回 55; 点赞收集共用同一 findMany mock, 按 where 形状区分返回空
     findResourcesMock.mockImplementation(

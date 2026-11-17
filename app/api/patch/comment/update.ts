@@ -81,7 +81,6 @@ export const updateComment = async (
             : '未找到该评论'
       )
     }
-    return {}
   })
   if (typeof result === 'string') {
     return result

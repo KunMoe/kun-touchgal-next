@@ -29,7 +29,7 @@ export const updateRating = async (
   )
 
   // 后台编辑不设守卫: 隐藏、待审的评价都能改; 也不作废在途的审核任务
-  return kunTx('admin.rating.update', async (ctx) => {
+  const failure = await kunTx('admin.rating.update', async (ctx) => {
     const { row } = await editRating(ctx, input.ratingId, {
       data: { short_summary: input.shortSummary },
       moderation
@@ -45,7 +45,6 @@ export const updateRating = async (
         content: `管理员 ${admin.name} 更新了一条评价的简评\n原评价: ${JSON.stringify(rating)}`
       }
     })
-
-    return {}
   })
+  return failure ?? {}
 }

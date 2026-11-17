@@ -73,7 +73,7 @@ export const deleteRating = async (
 
   // 后台删除不设守卫: 隐藏、待审的评价都能删。与补丁级联删除、统计重算在锁上互等
   // 时数据库会判死锁回滚其中一方, 重放即可
-  return kunTx(
+  const failure = await kunTx(
     'admin.rating.delete',
     async (ctx) => {
       const plan = await planRatingRemoval(
@@ -97,9 +97,8 @@ export const deleteRating = async (
           )
         }
       })
-
-      return {}
     },
     { retry: 2 }
   )
+  return failure ?? {}
 }

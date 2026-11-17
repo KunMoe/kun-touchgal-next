@@ -37,7 +37,7 @@ export const updateRatingShadowBan = async (
     return `该评价已处于${statusLabel[status]}状态`
   }
 
-  return kunTx('admin.rating.shadowBan', async (ctx) => {
+  const failure = await kunTx('admin.rating.shadowBan', async (ctx) => {
     // 管理员的裁决是最终的, 在途的审核任务一并作废 (dry_run 评估保留)。评分统计由
     // 命令在同一事务里重算
     const [moved] = await transitionRatings(ctx, [ratingId], {
@@ -63,6 +63,6 @@ export const updateRatingShadowBan = async (
         content: `管理员 ${admin.name} 将用户 ${rating.user.name} 的评价 (ID: ${ratingId}) 状态由 ${statusLabel[moved.from]} 修改为 ${statusLabel[status]}`
       }
     })
-    return {}
   })
+  return failure ?? {}
 }

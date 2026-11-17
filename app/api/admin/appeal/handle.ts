@@ -175,8 +175,6 @@ const approveAppeal = async (
         content: `管理员 ${adminName} 通过了申诉 (ID: ${appeal.id}, 类型: ${type}, 内容 ID: ${contentId}, 用户 ID: ${appeal.user_id}), 内容已恢复展示`
       }
     })
-
-    return {}
   })
   if (typeof result === 'string') {
     return result
@@ -277,8 +275,6 @@ const rejectAppeal = async (
           }`
         }
       })
-
-      return {}
     },
     { retry: 2 }
   )

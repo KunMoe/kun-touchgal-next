@@ -10,6 +10,11 @@ import { isPrismaTransactionConflict } from './txErrors'
 // (曾造成「已扣分却报错」), 业务失败只能经 ctx.fail 表达
 type TxValue = object | number | boolean | bigint | null | undefined | void
 
+// 光有上面的约束挡不住最常见的写法: 成功 return {}、失败 return '消息'。字符串能赋给
+// {}, TS 把 '消息' | {} 约简成 {} 后照样通过。所以凡是「字符串也能赋给它」的返回类型
+// ({}、unknown、any) 一律拒绝; 没有值可返回的回调就不 return, 由调用方补上 {}
+type RejectStringLike<T> = string extends T ? never : T
+
 export interface KunTxContext {
   readonly tx: Prisma.TransactionClient
   // 回滚本次事务, kunTx 以 message 作为结果返回
@@ -35,7 +40,7 @@ const waitBeforeRetry = () =>
 
 export const kunTx = async <T extends TxValue>(
   name: string,
-  body: (ctx: KunTxContext) => Promise<T>,
+  body: (ctx: KunTxContext) => Promise<RejectStringLike<T>>,
   options: KunTxOptions = {}
 ): Promise<T | string> => {
   const { retry = 0, ...transactionOptions } = options

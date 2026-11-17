@@ -96,6 +96,56 @@ describe('kunTx 提交与回滚', () => {
   })
 })
 
+// 这一组在 pnpm typecheck 里生效: 每个 @ts-expect-error 下面的写法必须编译不过。
+// prisma.$transaction 的回调 return 字符串等于提交, kunTx 又会把它当失败返回给调用方
+describe('kunTx 回调的返回类型', () => {
+  it('返回字符串的回调编译不过, 没有值可返回的回调不 return', async () => {
+    const failed = Math.random() > 2
+
+    // @ts-expect-error 纯字符串
+    await kunTx('probe', async () => '错误')
+    // @ts-expect-error 模板字符串
+    await kunTx('probe', async () => `错误 ${failed}`)
+    // @ts-expect-error 字符串与非空对象混用
+    await kunTx('probe', async () => {
+      if (failed) {
+        return '错误'
+      }
+      return { count: 1 }
+    })
+    // 最容易写出来的一种: 成功 return {}、失败顺手 return 字符串。字符串能赋给 {},
+    // 二者的联合会被约简成 {}, 所以连单独的 {} 也不接受
+    // @ts-expect-error 字符串与 {} 混用
+    await kunTx('probe', async () => {
+      if (failed) {
+        return '错误'
+      }
+      return {}
+    })
+    // @ts-expect-error 单独的 {}
+    await kunTx('probe', async () => ({}))
+    // @ts-expect-error 字符串与不返回混用
+    await kunTx('probe', async () => {
+      if (failed) {
+        return '错误'
+      }
+    })
+    // @ts-expect-error any
+    await kunTx('probe', async () => JSON.parse('1'))
+
+    // 正常写法: 失败走 fail, 成功不返回或返回具体的对象
+    const none = await kunTx('probe', async ({ fail }) => {
+      if (failed) {
+        fail('错误')
+      }
+    })
+    const some = await kunTx('probe', async () => ({ count: 1 }))
+
+    expect(none ?? {}).toEqual({})
+    expect(typeof some === 'string' ? 0 : some.count).toBe(1)
+  })
+})
+
 describe('kunTx 提交后副作用', () => {
   it('提交之后才执行, 按登记顺序逐个 await', async () => {
     const order: string[] = []
@@ -108,7 +158,6 @@ describe('kunTx 提交后副作用', () => {
         order.push('b')
       })
       order.push('body')
-      return {}
     })
 
     expect(order).toEqual(['body', 'a:true', 'b'])
@@ -119,7 +168,6 @@ describe('kunTx 提交后副作用', () => {
     await kunTx('probe', async ({ afterCommit }) => {
       afterCommit('cache:1', () => calls.push('first'))
       afterCommit('cache:1', () => calls.push('second'))
-      return {}
     })
 
     expect(calls).toEqual(['first'])
@@ -209,7 +257,6 @@ describe('kunTx 冲突重试', () => {
           throw deadlock
         }
         afterCommit('fresh', fresh)
-        return {}
       },
       { retry: 1 }
     )
@@ -259,19 +306,19 @@ describe('kunTx 冲突重试', () => {
 
 describe('kunTx 事务选项', () => {
   it('没给选项时只向 $transaction 传回调', async () => {
-    await kunTx('probe', async () => ({}))
+    await kunTx('probe', async () => {})
 
     expect(rec.attempts[0].options).toBeUndefined()
   })
 
   it('只给 retry 时同样只传回调', async () => {
-    await kunTx('probe', async () => ({}), { retry: 2 })
+    await kunTx('probe', async () => {}, { retry: 2 })
 
     expect(rec.attempts[0].options).toBeUndefined()
   })
 
   it('timeout / maxWait / isolationLevel 原样透传, 不带 retry', async () => {
-    await kunTx('probe', async () => ({}), {
+    await kunTx('probe', async () => {}, {
       retry: 2,
       timeout: 60000,
       isolationLevel: 'Serializable'
@@ -289,14 +336,12 @@ describe('recordingTransaction', () => {
     await expect(
       kunTx('probe', async ({ tx }) => {
         await tx.patch_comment.findMany({ where: { id: 1 } })
-        return {}
       })
     ).rejects.toThrow('未配置读取 patch_comment.findMany')
 
     await expect(
       kunTx('probe', async ({ tx }) => {
         await tx.$queryRaw`SELECT id FROM patch_comment WHERE id = ${1} FOR UPDATE`
-        return {}
       })
     ).rejects.toThrow('未配置查询 SELECT id FROM patch_comment')
   })

@@ -45,7 +45,7 @@ import type {
 const LOCK =
   '$queryRaw: SELECT id, user_id, patch_id, resource_id, status FROM patch_comment WHERE id = ANY(?::int[]) ORDER BY id FOR UPDATE'
 const SUBTREE =
-  '$queryRaw: WITH RECURSIVE subtree AS ( SELECT id, patch_id, resource_id, status FROM patch_comment WHERE id = ANY(?::int[]) UNION SELECT pc.id, pc.patch_id, pc.resource_id, pc.status FROM patch_comment pc INNER JOIN subtree s ON pc.parent_id = s.id ) SELECT id, patch_id, resource_id, status FROM subtree'
+  '$queryRaw: WITH RECURSIVE subtree AS ( SELECT id, patch_id, resource_id FROM patch_comment WHERE id = ANY(?::int[]) UNION SELECT pc.id, pc.patch_id, pc.resource_id FROM patch_comment pc INNER JOIN subtree s ON pc.parent_id = s.id ) SELECT id, patch_id, resource_id FROM subtree'
 
 const row = (
   id: number,
@@ -262,8 +262,10 @@ describe('提交后的缓存失效由被删行的状态推导', () => {
     expect(patchContentMock).not.toHaveBeenCalled()
   })
 
-  it('隐藏的根带着公开的回复: 回复随级联消失, 两份缓存都要失效', async () => {
-    seed([row(11, 2)], [row(11, 2), row(12, 0)])
+  // 回复行没有加锁: 子树查询读到它「待审」之后, 审核裁决仍可能把它转成公开。所以被
+  // 级联带走的回复不看读到的状态, 一律按公开处理
+  it('隐藏的根带着回复: 不论读到的回复是什么状态, 两份缓存都失效', async () => {
+    seed([row(11, 2)], [row(11, 2), row(12, 1)])
 
     await remove([11], { statusIn: [2] })
 
@@ -271,10 +273,10 @@ describe('提交后的缓存失效由被删行的状态推导', () => {
     expect(patchContentMock.mock.calls).toEqual([[[10]]])
   })
 
-  it('整棵子树都不公开时不失效任何缓存', async () => {
-    seed([row(11, 2)], [row(11, 2), row(12, 1)])
+  it('没有回复的隐藏或待审评论被删: 不失效任何缓存', async () => {
+    seed([row(11, 2), row(12, 1)])
 
-    await remove([11], { statusIn: [2] })
+    await remove([11, 12])
 
     expect(commentPageMock).not.toHaveBeenCalled()
     expect(patchContentMock).not.toHaveBeenCalled()

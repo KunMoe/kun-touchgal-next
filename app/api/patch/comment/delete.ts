@@ -50,7 +50,7 @@ export const deleteComment = async (
       ? { statusIn: [COMMENT_STATUS.public], ownerUid: uid }
       : { statusIn: [COMMENT_STATUS.public, COMMENT_STATUS.pending] }
 
-  return kunTx('comment.delete', async (ctx) => {
+  const failure = await kunTx('comment.delete', async (ctx) => {
     const plan = await planCommentRemoval(ctx, [comment.id], guard)
     const [skipped] = plan.skipped
     if (skipped) {
@@ -64,6 +64,6 @@ export const deleteComment = async (
       )
     }
     await executeCommentRemoval(ctx, plan, { orphanReports: 'inline' })
-    return {}
   })
+  return failure ?? {}
 }

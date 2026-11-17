@@ -41,7 +41,7 @@ export const deletePatchRating = async (
       ? { statusIn: [RATING_STATUS.public], ownerUid: uid }
       : { statusIn: [RATING_STATUS.public, RATING_STATUS.pending] }
 
-  return kunTx('rating.delete', async (ctx) => {
+  const failure = await kunTx('rating.delete', async (ctx) => {
     const plan = await planRatingRemoval(ctx, [rating.id], guard)
     const [skipped] = plan.skipped
     if (skipped) {
@@ -55,6 +55,6 @@ export const deletePatchRating = async (
       )
     }
     await executeRatingRemoval(ctx, plan, { orphanReports: 'inline' })
-    return {}
   })
+  return failure ?? {}
 }

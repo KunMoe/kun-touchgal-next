@@ -12,6 +12,7 @@ const {
   planRatingRemovalMock,
   executeRatingRemovalMock,
   updateReportsMock,
+  closeRelatedReportsMock,
   createMessagesMock,
   invalidateUnreadMock
 } = vi.hoisted(() => ({
@@ -26,6 +27,7 @@ const {
   planRatingRemovalMock: vi.fn(),
   executeRatingRemovalMock: vi.fn(),
   updateReportsMock: vi.fn(),
+  closeRelatedReportsMock: vi.fn(),
   createMessagesMock: vi.fn(),
   invalidateUnreadMock: vi.fn()
 }))
@@ -35,6 +37,7 @@ const transactionClient = {
   patch_report: {
     findMany: findRelatedReportsMock,
     updateMany: updateReportsMock,
+    updateManyAndReturn: closeRelatedReportsMock,
     deleteMany: deleteReportsMock
   },
   user_message: { createMany: createMessagesMock }
@@ -121,6 +124,10 @@ beforeEach(() => {
   // 本条举报在认领时已转为已处理, 「同目标的其余未处理举报」里不含它
   findRelatedReportsMock.mockResolvedValue([])
   updateReportsMock.mockResolvedValue({ count: 1 })
+  // 其余举报的结案缺省全部命中: 原样返回被结案的行
+  closeRelatedReportsMock.mockImplementation(
+    async () => findRelatedReportsMock.mock.results.at(-1)?.value
+  )
   deleteReportsMock.mockResolvedValue({ count: 0 })
   createMessagesMock.mockResolvedValue({ count: 1 })
   planCommentRemovalMock.mockResolvedValue({
@@ -213,14 +220,15 @@ describe('POST /api/admin/report/handle 删除评价', () => {
       where: { status: 0, target_type: 'rating', rating_id: 5 },
       select: { id: true, sender_id: true, reason: true }
     })
-    expect(updateReportsMock.mock.calls[1][0]).toEqual({
+    expect(closeRelatedReportsMock).toHaveBeenCalledWith({
       where: { id: { in: [2] }, status: 0 },
-      data: handledData
+      data: handledData,
+      select: { sender_id: true, reason: true }
     })
     // 其余举报结案之后才清孤儿
     expectInOrder([
       executeRatingRemovalMock.mock.invocationCallOrder[0],
-      updateReportsMock.mock.invocationCallOrder[1],
+      closeRelatedReportsMock.mock.invocationCallOrder[0],
       deleteReportsMock.mock.invocationCallOrder[0]
     ])
     expect(invalidateUnreadMock.mock.calls.map((call) => call[0])).toEqual([
@@ -264,9 +272,10 @@ describe('POST /api/admin/report/handle 删除评论', () => {
       { orphanReports: 'caller' }
     )
     // 其余举报带着 status 条件结案, 不覆盖别人已写下的结案记录
-    expect(updateReportsMock.mock.calls[1][0]).toEqual({
+    expect(closeRelatedReportsMock).toHaveBeenCalledWith({
       where: { id: { in: [2] }, status: 0 },
-      data: handledData
+      data: handledData,
+      select: { sender_id: true, reason: true }
     })
     expect(deleteReportsMock).toHaveBeenCalledWith({
       where: { target_type: 'comment', status: 0, comment_id: null }
@@ -278,7 +287,7 @@ describe('POST /api/admin/report/handle 删除评论', () => {
       updateReportsMock.mock.invocationCallOrder[0],
       findRelatedReportsMock.mock.invocationCallOrder[0],
       executeCommentRemovalMock.mock.invocationCallOrder[0],
-      updateReportsMock.mock.invocationCallOrder[1],
+      closeRelatedReportsMock.mock.invocationCallOrder[0],
       deleteReportsMock.mock.invocationCallOrder[0]
     ])
     // 被处理的举报人各收一条通知: 本条举报的 7 与子树举报的 8
@@ -291,6 +300,30 @@ describe('POST /api/admin/report/handle 删除评论', () => {
       7, 8
     ])
     expect(planRatingRemovalMock).not.toHaveBeenCalled()
+  })
+
+  // A 处理根评论的举报并删除, 同时 B 处理了回复上的举报 (比如驳回)。A 收集时那条举报
+  // 还未处理, 结案时已被 B 抢先: A 不能再给它的举报人发「您的举报已处理」
+  it('does not notify the reporter of a related report someone else closed in between', async () => {
+    findRelatedReportsMock.mockResolvedValue([
+      { id: 2, sender_id: 8, reason: 'reply spam' },
+      { id: 3, sender_id: 9, reason: 'also spam' }
+    ])
+    // 只有 3 在结案时仍未处理
+    closeRelatedReportsMock.mockResolvedValue([
+      { sender_id: 9, reason: 'also spam' }
+    ])
+
+    const response = await POST(request)
+
+    await expect(response.json()).resolves.toEqual({})
+    const messageRows = createMessagesMock.mock.calls[0][0].data
+    expect(
+      messageRows.map((row: { recipient_id: number }) => row.recipient_id)
+    ).toEqual([7, 9])
+    expect(invalidateUnreadMock.mock.calls.map((call) => call[0])).toEqual([
+      7, 9
+    ])
   })
 
   it('does not lock or collect a comment subtree when rejecting a comment report', async () => {
@@ -347,5 +380,6 @@ describe('POST /api/admin/report/handle 事务外预检', () => {
     expect(findRelatedReportsMock).not.toHaveBeenCalled()
     expect(deleteReportsMock).not.toHaveBeenCalled()
     expect(updateReportsMock).toHaveBeenCalledTimes(1)
+    expect(closeRelatedReportsMock).not.toHaveBeenCalled()
   })
 })

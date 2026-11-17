@@ -116,20 +116,23 @@ export const handleReport = async (
         })
       }
 
-      if (relatedReports.length) {
-        await tx.patch_report.updateMany({
-          where: { id: { in: relatedReports.map((r) => r.id) }, status: 0 },
-          data: handled
-        })
-      }
+      // 其余举报带着 status 条件结案, 并取回真正被结案的行: 收集之后已被别的管理员
+      // 处理的举报既不覆盖, 也不再给它的举报人发一条与那次处理相矛盾的通知
+      const closedReports = relatedReports.length
+        ? await tx.patch_report.updateManyAndReturn({
+            where: { id: { in: relatedReports.map((r) => r.id) }, status: 0 },
+            data: handled,
+            select: { sender_id: true, reason: true }
+          })
+        : []
 
       // 收集与删除之间新提交的举报不在 relatedReports 里, 级联置空后滞留
-      // pending; 待 updateMany 将已收集举报转为历史后, 按 NULL 目标兜底清理
+      // pending; 待已收集的举报转为历史后, 按 NULL 目标兜底清理
       if (deleting) {
         await deleteOrphanReports(targetType, tx)
       }
 
-      const handledReports = [report, ...relatedReports]
+      const handledReports = [report, ...closedReports]
       const recipientIds = [...new Set(handledReports.map((r) => r.sender_id))]
       await tx.user_message.createMany({
         data: recipientIds.map((recipientId) => {

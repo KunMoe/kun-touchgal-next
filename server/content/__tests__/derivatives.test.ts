@@ -25,7 +25,6 @@ describe('purgeContentDerivatives', () => {
         rating: [3],
         resource: [4]
       })
-      return {}
     })
 
     expect(rec.labels()).toEqual([
@@ -88,7 +87,6 @@ describe('purgeContentDerivatives', () => {
   it('没给的内容类型不发语句', async () => {
     await kunTx('probe', async ({ tx }) => {
       await purgeContentDerivatives(tx, { rating: [3] })
-      return {}
     })
 
     expect(rec.labels()).toEqual([
