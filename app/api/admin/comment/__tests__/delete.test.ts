@@ -88,12 +88,17 @@ describe('adminDeleteComment', () => {
 
     expect(result).toEqual({ deletedIds: [11, 12] })
     expect(rec.attempts[0].committed).toBe(true)
-    // 行删除后深链无从重建, 通知清理必须在删除之前
+    // 行删除后深链无从重建, 通知清理必须在删除之前。开头四条是取锁: 根、子树 (第二遍
+    // 确认没有新回复)、patch 行
     expect(
-      rec.labels().map((label) => label.replace(/^(\$queryRaw): .*$/, '$1'))
+      rec
+        .labels()
+        .map((label) => label.replace(/^(\$queryRaw|\$executeRaw): .*$/, '$1'))
     ).toEqual([
       '$queryRaw',
       '$queryRaw',
+      '$queryRaw',
+      '$executeRaw',
       'patch_comment.findMany',
       'user_message.deleteMany',
       'user_message.deleteMany',

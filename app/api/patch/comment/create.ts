@@ -8,6 +8,7 @@ import {
 } from '~/server/moderation/submit'
 import { commentSubject } from '~/server/moderation/subject'
 import { onCommentPublished } from '~/server/content/comment/publish'
+import { kunTx } from '~/server/db/tx'
 import { getResourceVisibilityWhere } from '~/app/api/utils/contentVisibility'
 import { invalidatePatchCommentCache } from './cache'
 import { prepareCommentContent } from './html'
@@ -66,7 +67,19 @@ export const createPatchComment = async (
     return prepared
   }
 
-  const data = await prisma.$transaction(async (tx) => {
+  const data = await kunTx('comment.create', async (ctx) => {
+    const { tx } = ctx
+    if (input.parentId) {
+      // 事务外的预检之后父评论可能被删。删除命令锁着整棵回复子树 (FOR UPDATE): 这里先
+      // 取 FOR KEY SHARE, 排在删除之后就读不到行, 当场给出与预检相同的结果。不取的话
+      // 要等到 INSERT 的外键检查才失败, 调用方看到的是 500
+      const parents = await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT id FROM patch_comment WHERE id = ${input.parentId} FOR KEY SHARE`
+      if (!parents.length) {
+        ctx.fail('未找到该评论')
+      }
+    }
+
     const created = await tx.patch_comment.create({
       data: {
         ...prepared,
@@ -95,6 +108,9 @@ export const createPatchComment = async (
 
     return created
   })
+  if (typeof data === 'string') {
+    return data
+  }
 
   const newComment: Omit<PatchComment, 'user'> = {
     id: data.id,

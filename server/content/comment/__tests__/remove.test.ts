@@ -45,7 +45,9 @@ import type {
 const LOCK =
   '$queryRaw: SELECT id, user_id, patch_id, resource_id, status FROM patch_comment WHERE id = ANY(?::int[]) ORDER BY id FOR UPDATE'
 const SUBTREE =
-  '$queryRaw: WITH RECURSIVE subtree AS ( SELECT id, patch_id, resource_id FROM patch_comment WHERE id = ANY(?::int[]) UNION SELECT pc.id, pc.patch_id, pc.resource_id FROM patch_comment pc INNER JOIN subtree s ON pc.parent_id = s.id ) SELECT id, patch_id, resource_id FROM subtree'
+  '$queryRaw: WITH RECURSIVE subtree AS ( SELECT id FROM patch_comment WHERE id = ANY(?::int[]) UNION SELECT pc.id FROM patch_comment pc INNER JOIN subtree s ON pc.parent_id = s.id ) SELECT pc.id, pc.patch_id, pc.resource_id, pc.status FROM patch_comment pc WHERE pc.id IN (SELECT id FROM subtree) ORDER BY pc.id FOR UPDATE OF pc'
+const PATCH_LOCK =
+  '$executeRaw: SELECT id FROM patch WHERE id = ANY(?::int[]) ORDER BY id FOR NO KEY UPDATE'
 
 const row = (
   id: number,
@@ -53,7 +55,7 @@ const row = (
   overrides: Record<string, unknown> = {}
 ) => ({ id, user_id: 7, patch_id: 10, resource_id: null, status, ...overrides })
 
-// 锁查询回 locked, 子树查询回 subtree (缺省等于 locked)
+// 根的锁查询回 locked, 子树的「收集并加锁」回 subtree (缺省等于 locked)
 const seed = (
   locked: ReturnType<typeof row>[],
   subtree: ReturnType<typeof row>[] = locked
@@ -91,7 +93,7 @@ beforeEach(() => {
 })
 
 describe('评论删除的语句顺序', () => {
-  it('锁根行 → 收集子树 → 清通知 → 删根 → 清任务与申诉 → 清孤儿举报', async () => {
+  it('锁根行 → 锁子树 (再收集一遍确认没有新行) → 锁 patch 行 → 清通知 → 删根 → 清任务与申诉 → 清孤儿举报', async () => {
     seed([row(11)], [row(11), row(12)])
 
     const { deletedIds } = await remove([11])
@@ -101,6 +103,8 @@ describe('评论删除的语句顺序', () => {
     expect(rec.labels()).toEqual([
       LOCK,
       SUBTREE,
+      SUBTREE,
+      PATCH_LOCK,
       'patch_comment.findMany',
       'user_message.deleteMany',
       'user_message.deleteMany',
@@ -157,6 +161,71 @@ describe('评论删除的语句顺序', () => {
     expect(rec.argsOf('patch_comment.deleteMany')).toEqual([
       { where: { id: { in: [11, 21] } } }
     ])
+  })
+
+  // 没锁住的回复下面还能插进新回复, 随后被级联带走, 它的任务与通知却不在清理集合里
+  it('子树收集到稳定为止: 等锁期间才提交的新回复, 下一轮收集并锁住', async () => {
+    const rounds = [
+      [row(11), row(12)],
+      [row(11), row(12), row(13)],
+      [row(11), row(12), row(13)]
+    ]
+    seed([row(11)], [row(11), row(12), row(13)])
+    rec.onRaw(/^WITH RECURSIVE subtree/, () => rounds.shift())
+
+    const { deletedIds } = await remove([11])
+
+    expect(rec.argsOf(SUBTREE)).toEqual([[[11]], [[11]], [[11]]])
+    expect(deletedIds).toEqual([11, 12, 13])
+    expect(rec.argsOf('moderation_task.deleteMany')).toEqual([
+      {
+        where: {
+          content_type: 'comment',
+          content_id: { in: [11, 12, 13] },
+          status: { in: ['pending', 'manual'] }
+        }
+      }
+    ])
+  })
+
+  it('没有回复的根只收集一遍: 返回的行都已在根的锁里', async () => {
+    seed([row(11)])
+
+    await remove([11])
+
+    expect(rec.argsOf(SUBTREE)).toEqual([[[11]]])
+  })
+
+  // 计数触发器只在公开的补丁级评论被删时改 patch 行; 评论行全部锁完之后再锁 patch 行
+  it('patch 行只锁公开的补丁级评论所属的补丁, 排在全部评论行之后、第一条清理语句之前', async () => {
+    seed(
+      [row(11, 0, { patch_id: 30 })],
+      [
+        row(11, 0, { patch_id: 30 }),
+        row(12, 0, { patch_id: 30 }),
+        row(13, 2, { patch_id: 20 }),
+        row(14, 0, { patch_id: 10, resource_id: 5 })
+      ]
+    )
+
+    await remove([11])
+
+    expect(rec.argsOf(PATCH_LOCK)).toEqual([[[30]]])
+    const labels = rec.labels()
+    expect(labels.indexOf(PATCH_LOCK)).toBeGreaterThan(
+      labels.lastIndexOf(SUBTREE)
+    )
+    expect(labels.indexOf(PATCH_LOCK)).toBeLessThan(
+      labels.indexOf('patch_comment.findMany')
+    )
+  })
+
+  it('被删的行里没有公开的补丁级评论时不锁 patch 行', async () => {
+    seed([row(11, 2), row(12, 0, { resource_id: 5 })])
+
+    await remove([11, 12])
+
+    expect(rec.labels()).not.toContain(PATCH_LOCK)
   })
 
   // 举报处理要先把本次收集到的举报转为历史, 再由它自己清剩下的孤儿
@@ -262,15 +331,23 @@ describe('提交后的缓存失效由被删行的状态推导', () => {
     expect(patchContentMock).not.toHaveBeenCalled()
   })
 
-  // 回复行没有加锁: 子树查询读到它「待审」之后, 审核裁决仍可能把它转成公开。所以被
-  // 级联带走的回复不看读到的状态, 一律按公开处理
-  it('隐藏的根带着回复: 不论读到的回复是什么状态, 两份缓存都失效', async () => {
-    seed([row(11, 2)], [row(11, 2), row(12, 1)])
+  // 回复行与根一样在行锁下读到, 状态就是删除瞬间的状态
+  it('隐藏的根带着公开回复: 两份缓存都失效', async () => {
+    seed([row(11, 2)], [row(11, 2), row(12, 0)])
 
     await remove([11], { statusIn: [2] })
 
     expect(commentPageMock.mock.calls).toEqual([[10]])
     expect(patchContentMock.mock.calls).toEqual([[[10]]])
+  })
+
+  it('隐藏的根带着待审回复: 不失效任何缓存', async () => {
+    seed([row(11, 2)], [row(11, 2), row(12, 1)])
+
+    await remove([11], { statusIn: [2] })
+
+    expect(commentPageMock).not.toHaveBeenCalled()
+    expect(patchContentMock).not.toHaveBeenCalled()
   })
 
   it('没有回复的隐藏或待审评论被删: 不失效任何缓存', async () => {

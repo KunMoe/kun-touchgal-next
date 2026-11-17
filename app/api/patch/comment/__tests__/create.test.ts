@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   createCommentMock,
+  parentLockMock,
   transactionMock,
   renderForWriteMock,
   planTextModerationMock,
@@ -13,6 +14,7 @@ const {
   resourceFindFirstMock
 } = vi.hoisted(() => ({
   createCommentMock: vi.fn(),
+  parentLockMock: vi.fn(),
   transactionMock: vi.fn(),
   renderForWriteMock: vi.fn(),
   planTextModerationMock: vi.fn(),
@@ -25,6 +27,7 @@ const {
 }))
 
 const transactionClient = {
+  $queryRaw: parentLockMock,
   patch_comment: {
     create: createCommentMock
   }
@@ -86,6 +89,7 @@ const input = {
 beforeEach(() => {
   vi.clearAllMocks()
   createCommentMock.mockResolvedValue(comment)
+  parentLockMock.mockResolvedValue([{ id: 6 }])
   renderForWriteMock.mockResolvedValue({ html: '<p>comment</p>', version: 1 })
   planTextModerationMock.mockResolvedValue({
     queue: false,
@@ -197,6 +201,52 @@ describe('createPatchComment', () => {
     expect(onCommentPublishedMock).not.toHaveBeenCalled()
     // 待审评论照样失效缓存 (创建路径的既有行为)
     expect(invalidateCommentCacheMock).toHaveBeenCalledWith(10)
+  })
+})
+
+// 事务外的预检之后父评论可能被删。删除命令锁着整棵回复子树: 不在事务里先确认的话,
+// INSERT 的外键检查要等删除提交后才失败, 调用方看到的是 500
+describe('createPatchComment 回复时父评论的行锁', () => {
+  beforeEach(() => {
+    parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: null })
+  })
+
+  it('事务里先对父评论取 FOR KEY SHARE, 再插入', async () => {
+    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+
+    expect(parentLockMock).toHaveBeenCalledTimes(1)
+    const [template, parentId] = parentLockMock.mock.calls[0]
+    expect(template.join('?').replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT id FROM patch_comment WHERE id = ? FOR KEY SHARE'
+    )
+    expect(parentId).toBe(6)
+    expect(parentLockMock.mock.invocationCallOrder[0]).toBeLessThan(
+      createCommentMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('锁下父评论已不存在: 返回「未找到该评论」, 不插入、不送审、不发通知、不失效缓存', async () => {
+    parentLockMock.mockResolvedValue([])
+    planTextModerationMock.mockResolvedValue({
+      queue: true,
+      intercept: false,
+      dryRun: true
+    })
+
+    const result = await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+
+    expect(result).toBe('未找到该评论')
+    expect(createCommentMock).not.toHaveBeenCalled()
+    expect(enqueueTextModerationMock).not.toHaveBeenCalled()
+    expect(onCommentPublishedMock).not.toHaveBeenCalled()
+    expect(invalidateCommentCacheMock).not.toHaveBeenCalled()
+  })
+
+  it('顶层评论不取父评论的行锁', async () => {
+    await createPatchComment(input, 7, 2)
+
+    expect(parentLockMock).not.toHaveBeenCalled()
+    expect(createCommentMock).toHaveBeenCalledTimes(1)
   })
 })
 

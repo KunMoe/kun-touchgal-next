@@ -3,9 +3,11 @@ import { deleteOrphanReports } from '~/server/report/pending'
 import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { recordContentChanges } from '~/server/content/changes'
 import { applyContentGuard } from '~/server/content/guard'
+import { lockPatchRows } from '~/server/content/patchLock'
 import { COMMENT_STATUS } from '~/constants/contentStatus'
 import type { CommentStatus } from '~/constants/contentStatus'
 import type { ContentGuard, SkippedContent } from '~/server/content/guard'
+import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { KunTxContext } from '~/server/db/tx'
 
 // 评论的物理删除。两段式: plan 只加锁和读取, execute 按固定顺序清理并删除。
@@ -27,10 +29,29 @@ export interface CommentRemovalPlan {
   // 锁下通过守卫的根评论
   roots: CommentRow[]
   skipped: SkippedComment[]
-  // 根与它们的整棵回复子树: parent_id 外键是 ON DELETE CASCADE, 删根会带走这些行。
-  // 回复行没有加锁, 所以这里不带它们的状态: 读到之后还可能被审核裁决改掉
-  subtree: Array<Pick<CommentRow, 'id' | 'patch_id' | 'resource_id'>>
+  // 根与它们的整棵回复子树, 全部在行锁下读到: parent_id 外键是 ON DELETE CASCADE,
+  // 删根会带走这些行
+  subtree: Array<Pick<CommentRow, 'id' | 'patch_id' | 'resource_id' | 'status'>>
 }
+
+// 收集根的整棵回复子树并升序锁住其中每一行。UNION 去重: 同一批里一个根是另一个根的
+// 后代时, 子树只算一次。后代的 id 恒大于祖先, 升序加锁与先锁根的顺序不冲突
+const lockSubtree = (tx: Prisma.TransactionClient, rootIds: number[]) =>
+  tx.$queryRaw<CommentRemovalPlan['subtree']>`
+    WITH RECURSIVE subtree AS (
+      SELECT id
+      FROM patch_comment
+      WHERE id = ANY(${rootIds}::int[])
+      UNION
+      SELECT pc.id
+      FROM patch_comment pc
+      INNER JOIN subtree s ON pc.parent_id = s.id
+    )
+    SELECT pc.id, pc.patch_id, pc.resource_id, pc.status
+    FROM patch_comment pc
+    WHERE pc.id IN (SELECT id FROM subtree)
+    ORDER BY pc.id
+    FOR UPDATE OF pc`
 
 export const planCommentRemoval = async (
   { tx }: KunTxContext,
@@ -50,18 +71,32 @@ export const planCommentRemoval = async (
     return { roots, skipped, subtree: [] }
   }
 
-  // UNION 去重: 同一批里一个根是另一个根的后代时, 子树只算一次
-  const subtree = await tx.$queryRaw<CommentRemovalPlan['subtree']>`
-    WITH RECURSIVE subtree AS (
-      SELECT id, patch_id, resource_id
-      FROM patch_comment
-      WHERE id = ANY(${roots.map((row) => row.id)}::int[])
-      UNION
-      SELECT pc.id, pc.patch_id, pc.resource_id
-      FROM patch_comment pc
-      INNER JOIN subtree s ON pc.parent_id = s.id
+  // 回复也要锁住。没锁住的回复下面还能插进新回复 (插入只对父行取 FOR KEY SHARE),
+  // 新回复随后被级联带走, 它的审核任务与通知却不在清理集合里。一次查询的快照看不到
+  // 等锁期间才提交的新回复, 所以反复「收集并加锁」, 直到一轮下来没有新的行: 此时子树
+  // 里每一行都挡着新的子回复, 集合不会再变
+  const rootIdList = roots.map((row) => row.id)
+  const held = new Set(rootIdList)
+  let subtree = await lockSubtree(tx, rootIdList)
+  while (subtree.some((row) => !held.has(row.id))) {
+    for (const row of subtree) {
+      held.add(row.id)
+    }
+    subtree = await lockSubtree(tx, rootIdList)
+  }
+
+  // 公开的补丁级评论被删时, 计数触发器会去改 patch 行 (资源评论不计数)。评论行全部
+  // 锁完之后再锁 patch 行: 审核裁决是先锁评论行、再由触发器碰 patch 行
+  await lockPatchRows(tx, [
+    ...new Set(
+      subtree
+        .filter(
+          (row) =>
+            row.status === COMMENT_STATUS.public && row.resource_id === null
+        )
+        .map((row) => row.patch_id)
     )
-    SELECT id, patch_id, resource_id FROM subtree`
+  ])
 
   return { roots, skipped, subtree }
 }
@@ -91,10 +126,7 @@ export const executeCommentRemoval = async (
     await deleteOrphanReports('comment', tx)
   }
 
-  // 根的状态是行锁下读到的。被级联带走的回复没有加锁, 它的状态可能在子树查询之后
-  // 才由待审变为公开 (那次裁决自己失效过缓存, 随后又被读者回填); 所以回复一律按
-  // 「删除前公开」登记: 多失效一次无害, 少失效会让评论数与分页缓存陈旧到过期
-  const rootStatusById = new Map(plan.roots.map((row) => [row.id, row.status]))
+  // 根与回复的状态都是行锁下读到的, 就是删除瞬间的状态
   recordContentChanges(
     ctx,
     plan.subtree.map((row) => ({
@@ -102,7 +134,7 @@ export const executeCommentRemoval = async (
       id: row.id,
       patchId: row.patch_id,
       resourceId: row.resource_id,
-      before: rootStatusById.get(row.id) ?? COMMENT_STATUS.public,
+      before: row.status,
       after: null
     }))
   )
