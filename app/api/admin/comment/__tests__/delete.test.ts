@@ -169,6 +169,46 @@ describe('adminDeleteComment', () => {
     expect(rec.labels()).not.toContain('admin_log.create')
   })
 
+  // 两批评论的根互相落在对方的回复子树里时, 互等发生在给子树加锁的那条语句上
+  it('原生语句报出的 PostgreSQL 死锁会重放整个事务', async () => {
+    seed([row(11, 10)], [row(11, 10)], [row(11, 10), row(12, 10)])
+    const conflictError = Object.assign(new Error('raw query failed'), {
+      code: 'P2010',
+      meta: {
+        driverAdapterError: {
+          cause: { kind: 'postgres', originalCode: '40P01' }
+        }
+      }
+    })
+    let subtreeLockCalls = 0
+    rec.onRaw(/^WITH RECURSIVE subtree/, () => {
+      subtreeLockCalls++
+      if (subtreeLockCalls === 1) {
+        throw conflictError
+      }
+      return [row(11, 10), row(12, 10)]
+    })
+
+    await expect(deleteComment({ commentIds: [11] }, 99)).resolves.toEqual({
+      deletedIds: [11, 12]
+    })
+
+    // 快照只读一次, 事务重放一次; 被回滚的那次不留下审计, 也不触发缓存失效
+    expect(
+      rec.outside.filter((item) => item.label === 'patch_comment.findMany')
+    ).toHaveLength(1)
+    expect(rec.attempts.map((attempt) => attempt.committed)).toEqual([
+      false,
+      true
+    ])
+    expect(
+      rec.attempts.map((attempt) =>
+        attempt.statements.some((item) => item.label === 'admin_log.create')
+      )
+    ).toEqual([false, true])
+    expect(commentPageMock).toHaveBeenCalledTimes(1)
+  })
+
   it('事务外一条都没读到时不开事务', async () => {
     seed([])
 

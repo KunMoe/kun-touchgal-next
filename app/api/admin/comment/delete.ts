@@ -66,33 +66,38 @@ export const deleteComment = async (
     return '未找到该管理员'
   }
 
-  // 后台删除不设守卫: 隐藏、待审的评论都能删
-  return kunTx('admin.comment.delete', async (ctx) => {
-    const plan = await planCommentRemoval(
-      ctx,
-      comments.map((comment) => comment.id)
-    )
-    if (!plan.roots.length) {
-      ctx.fail('未找到对应的评论')
-    }
-    // 级联删除会带走整棵回复子树, 把实际删除的全部 id 返回给调用方
-    const { deletedIds } = await executeCommentRemoval(ctx, plan, {
-      orphanReports: 'inline'
-    })
-
-    // 审计只记锁下实际删掉的根, 不记读取之后已被别人删掉的
-    const removedRootIds = new Set(plan.roots.map((root) => root.id))
-    await ctx.tx.admin_log.create({
-      data: {
-        type: 'delete',
-        user_id: uid,
-        content: buildDeleteLogContent(
-          admin.name,
-          comments.filter((comment) => removedRootIds.has(comment.id))
-        )
+  // 后台删除不设守卫: 隐藏、待审的评论都能删。两批评论的根互相落在对方的回复子树里
+  // 时, 双方会在评论行上互等, 数据库判死锁回滚其中一方, 重放即可
+  return kunTx(
+    'admin.comment.delete',
+    async (ctx) => {
+      const plan = await planCommentRemoval(
+        ctx,
+        comments.map((comment) => comment.id)
+      )
+      if (!plan.roots.length) {
+        ctx.fail('未找到对应的评论')
       }
-    })
+      // 级联删除会带走整棵回复子树, 把实际删除的全部 id 返回给调用方
+      const { deletedIds } = await executeCommentRemoval(ctx, plan, {
+        orphanReports: 'inline'
+      })
 
-    return { deletedIds }
-  })
+      // 审计只记锁下实际删掉的根, 不记读取之后已被别人删掉的
+      const removedRootIds = new Set(plan.roots.map((root) => root.id))
+      await ctx.tx.admin_log.create({
+        data: {
+          type: 'delete',
+          user_id: uid,
+          content: buildDeleteLogContent(
+            admin.name,
+            comments.filter((comment) => removedRootIds.has(comment.id))
+          )
+        }
+      })
+
+      return { deletedIds }
+    },
+    { retry: 2 }
+  )
 }
