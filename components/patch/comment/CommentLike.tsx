@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { SetStateAction, useState } from 'react'
 import { kunFetchPut } from '~/utils/kunFetch'
 import { Button } from '@heroui/button'
 import { Tooltip } from '@heroui/tooltip'
@@ -7,17 +7,22 @@ import { useUserStore } from '~/store/userStore'
 import toast from 'react-hot-toast'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { cn } from '~/utils/cn'
+import { updateCommentLike } from './updateCommentLike'
 import type { PatchComment } from '~/types/api/patch'
 
 interface Props {
   comment: PatchComment
+  setComments: (comments: SetStateAction<PatchComment[]>) => void
   isDisabled?: boolean
 }
 
-export const CommentLikeButton = ({ comment, isDisabled }: Props) => {
+// 点赞状态不留在本地: 楼中楼翻页 / 收起会把本按钮卸载再挂载, 结果一律写回评论树
+export const CommentLikeButton = ({
+  comment,
+  setComments,
+  isDisabled
+}: Props) => {
   const user = useUserStore((state) => state.user)
-  const [liked, setLiked] = useState(comment.isLike)
-  const [likeCount, setLikeCount] = useState(comment.likeCount)
   const [loading, setLoading] = useState(false)
 
   const toggleLike = async () => {
@@ -38,8 +43,7 @@ export const CommentLikeButton = ({ comment, isDisabled }: Props) => {
 
     setLoading(false)
     kunErrorHandler(res, (value) => {
-      setLiked(value)
-      setLikeCount((prev) => (value ? prev + 1 : prev - 1))
+      setComments((prev) => updateCommentLike(prev, comment.id, value))
     })
   }
 
@@ -53,8 +57,10 @@ export const CommentLikeButton = ({ comment, isDisabled }: Props) => {
         isLoading={loading}
         onPress={toggleLike}
       >
-        <ThumbsUp className={cn('w-4 h-4', liked ? 'text-danger-500' : '')} />
-        {likeCount}
+        <ThumbsUp
+          className={cn('w-4 h-4', comment.isLike ? 'text-danger-500' : '')}
+        />
+        {comment.likeCount}
       </Button>
     </Tooltip>
   )

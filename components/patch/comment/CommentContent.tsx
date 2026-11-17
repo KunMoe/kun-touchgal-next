@@ -111,12 +111,18 @@ export const CommentContent = ({ comment }: Props) => {
     const mutationObserver = new MutationObserver(updateOverflowState)
     mutationObserver.observe(element, { childList: true, subtree: true })
 
+    // 祖先 display:none 时 (保活的隐藏 tab 面板) scrollHeight 量出来是 0; 面板重新显示后
+    // 元素尺寸从 0 变回来, 借此重测, 否则长评论只剩截断而没有展开按钮
+    const resizeObserver = new ResizeObserver(updateOverflowState)
+    resizeObserver.observe(element)
+
     return () => {
       window.cancelAnimationFrame(frameId)
       images.forEach((img) => {
         img.removeEventListener('load', updateOverflowState)
       })
       mutationObserver.disconnect()
+      resizeObserver.disconnect()
     }
   }, [sanitizedContent, isSpoilerRevealed])
 

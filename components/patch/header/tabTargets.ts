@@ -27,7 +27,7 @@ export const readPatchTabTargets = (
 }
 
 // 切 tab 会把其它 tab 的深链参数从 URL 剥掉. 保活的隐藏面板若随之拿到 null, 评论会
-// 在隐藏时重拉并重挂载 (display:none 下测高为 0, 长评论丢掉展开按钮), 评价会被整体
+// 在隐藏时重拉并重挂载 (各楼的折叠状态与没发出的回复草稿随之丢失), 评价会被整体
 // 重置. 故每组目标只会被新的深链替换, 不因剥参数而清空; 资源的分区与 id 成组替换
 export const mergePatchTabTargets = (
   current: PatchTabTargets,

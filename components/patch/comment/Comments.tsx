@@ -16,6 +16,13 @@ import { CommentLikeButton } from './CommentLike'
 import { CommentDropdown } from './CommentDropdown'
 import { removeComment } from './removeComment'
 import { CommentContent } from './CommentContent'
+import { CommentReplyPager } from './CommentReplyPager'
+import {
+  REPLY_LAST_PAGE,
+  getVisibleReplies,
+  locateReplyViews,
+  type ReplyViewMap
+} from './replyPagination'
 import { useUserStore } from '~/store/userStore'
 import { KunNull } from '~/components/kun/Null'
 import toast from 'react-hot-toast'
@@ -43,6 +50,8 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
   const [highlightedCommentId, setHighlightedCommentId] = useState<
     number | null
   >(null)
+  // 各楼的楼中楼折叠 / 回复页状态; 换页重新拉取后归零
+  const [replyViews, setReplyViews] = useState<ReplyViewMap>({})
   const user = useUserStore((state) => state.user)
   const requestIdRef = useRef(0)
   // 已定位过的深链 commentId: 同一 commentId 只定位一次, 之后翻页不再带 locate
@@ -52,6 +61,8 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
   // 已滚动定位过的深链 commentId: 同一目标只滚一次, 否则之后翻回该页、发评论或删评论
   // 都会把页面拽回目标评论 (详情页 tab 保活后目标会一直留在 props 里)
   const scrolledCommentIdRef = useRef<number | null>(null)
+  // 自己刚发出的回复: 等它随 comments 提交进 DOM 后滚到可见
+  const postedReplyIdRef = useRef<number | null>(null)
 
   const fetchComments = async (
     pageNum: number,
@@ -73,6 +84,10 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
       if (res && typeof res !== 'string') {
         setComments(res.comments)
         setTotal(res.total)
+        // 深链指向被折叠的回复时, 直接展开到它所在的回复页, 否则定位 effect 找不到元素
+        setReplyViews(
+          locateCommentId ? locateReplyViews(res.comments, locateCommentId) : {}
+        )
         if (res.currentPage !== pageNum) {
           skipNextFetchRef.current = true
           setPage(res.currentPage)
@@ -118,6 +133,12 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
 
     const targetElement = document.getElementById(`comment-${targetCommentId}`)
     if (!targetElement) {
+      // 定位请求已结束而目标仍不在 DOM (请求失败、目标已删或不属于本评论区): 就此放弃。
+      // 否则之后点赞、发评、删评改动 comments 时, 目标一旦恰好进了 DOM
+      // (用户自己翻到它所在的回复页), 页面会被突然拽过去
+      if (locatedCommentIdRef.current === targetCommentId) {
+        scrolledCommentIdRef.current = targetCommentId
+      }
       return
     }
 
@@ -136,11 +157,31 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
     return () => window.clearTimeout(timer)
   }, [highlightedCommentId])
 
+  useEffect(() => {
+    const postedReplyId = postedReplyIdRef.current
+    if (postedReplyId === null) {
+      return
+    }
+
+    postedReplyIdRef.current = null
+    document
+      .getElementById(`comment-${postedReplyId}`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [comments])
+
   const handleNewComment = async (newComment: PatchComment) => {
     if (newComment.parentId === null) {
       setComments((prev) => [newComment, ...prev])
       setTotal((prev) => prev + 1)
     } else {
+      // 新回复按时间排在楼内末尾: 展开到末页并滚到可见,
+      // 否则它会落进折叠区或别的回复页, 发完就看不到
+      const rootId = newComment.parentId
+      setReplyViews((prev) => ({
+        ...prev,
+        [rootId]: { expanded: true, page: REPLY_LAST_PAGE }
+      }))
+      postedReplyIdRef.current = newComment.id
       setComments((prev) =>
         prev.map((comment) => {
           if (comment.id === newComment.parentId) {
@@ -255,6 +296,7 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
                 <div className="flex gap-2">
                   <CommentLikeButton
                     comment={comment}
+                    setComments={setComments}
                     isDisabled={comment.status === 1}
                   />
                   <Button
@@ -282,15 +324,22 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
               {comment.reply.length > 0 && (
                 <>
                   <Divider />
-                  <div className="space-y-4 pl-4">
-                    {comment.reply.map((reply) => (
+                  <div
+                    id={`comment-replies-${comment.id}`}
+                    className="space-y-4 pl-4 scroll-mt-20"
+                  >
+                    {getVisibleReplies(
+                      comment.reply,
+                      replyViews[comment.id],
+                      replyTo?.commentId
+                    ).map((reply) => (
                       <div
                         key={reply.id}
                         id={`comment-${reply.id}`}
                         className={
                           highlightedCommentId === reply.id
-                            ? 'space-y-2 rounded-large ring-2 ring-primary ring-offset-2 ring-offset-background'
-                            : 'space-y-2'
+                            ? 'space-y-2 scroll-mt-20 rounded-large ring-2 ring-primary ring-offset-2 ring-offset-background'
+                            : 'space-y-2 scroll-mt-20'
                         }
                       >
                         <div className="flex items-start justify-between">
@@ -335,6 +384,7 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
                         <div className="flex gap-2">
                           <CommentLikeButton
                             comment={reply}
+                            setComments={setComments}
                             isDisabled={reply.status === 1}
                           />
                           <Button
@@ -379,6 +429,15 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
                       </div>
                     ))}
                   </div>
+                  <CommentReplyPager
+                    listId={`comment-replies-${comment.id}`}
+                    label={`${comment.user.name} 的评论的回复分页`}
+                    replyCount={comment.reply.length}
+                    view={replyViews[comment.id]}
+                    onChange={(view) =>
+                      setReplyViews((prev) => ({ ...prev, [comment.id]: view }))
+                    }
+                  />
                 </>
               )}
 

@@ -38,8 +38,8 @@ describe('readPatchTabTargets', () => {
   })
 })
 
-// 保活的隐藏面板拿到的目标一旦变成 null, 评论会在隐藏时重拉重挂载 (测高为 0 丢展开
-// 按钮), 评价会被整体重置. 切 tab 剥掉参数时目标必须保持不变, 且返回原对象以免
+// 保活的隐藏面板拿到的目标一旦变成 null, 评论会在隐藏时重拉重挂载 (折叠状态与回复
+// 草稿丢失), 评价会被整体重置. 切 tab 剥掉参数时目标必须保持不变, 且返回原对象以免
 // 触发多余渲染
 describe('mergePatchTabTargets', () => {
   const landed = readPatchTabTargets(
