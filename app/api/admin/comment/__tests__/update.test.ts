@@ -5,22 +5,21 @@ const {
   findCommentMock,
   findAdminMock,
   transactionMock,
-  updateCommentMock,
   createLogMock,
   renderMock,
-  invalidateCacheMock
+  planTextModerationMock,
+  editCommentMock
 } = vi.hoisted(() => ({
   findCommentMock: vi.fn(),
   findAdminMock: vi.fn(),
   transactionMock: vi.fn(),
-  updateCommentMock: vi.fn(),
   createLogMock: vi.fn(),
   renderMock: vi.fn(),
-  invalidateCacheMock: vi.fn()
+  planTextModerationMock: vi.fn(),
+  editCommentMock: vi.fn()
 }))
 
 const transactionClient = {
-  patch_comment: { update: updateCommentMock },
   admin_log: { create: createLogMock }
 }
 
@@ -36,16 +35,23 @@ vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
   renderKunMarkdownForWrite: renderMock
 }))
 
-vi.mock('~/app/api/patch/comment/cache', () => ({
-  invalidatePatchCommentCache: invalidateCacheMock
+vi.mock('~/server/moderation/submit', () => ({
+  planTextModeration: planTextModerationMock
 }))
 
+// 锁行、写入与缓存失效由编辑命令自己的测试覆盖; 这里只看后台入口怎么用它
+vi.mock('~/server/content/comment/edit', () => ({
+  editComment: editCommentMock
+}))
+
+import { commentSubject } from '~/server/moderation/subject'
 import { updateComment } from '~/app/api/admin/comment/update'
 
 const created = new Date('2026-01-01T00:00:00.000Z')
 // content 顶到列上限, content_html 远超 admin_log.content 的 VarChar(10007)
 const longContent = '评'.repeat(10007)
 const longContentHtml = `<p>${'评'.repeat(60000)}</p>`
+const SKIP = { queue: false, intercept: false, dryRun: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -64,9 +70,9 @@ beforeEach(() => {
   })
   findAdminMock.mockResolvedValue({ id: 99, name: 'admin' })
   renderMock.mockResolvedValue({ html: '<p>new</p>', version: 3 })
-  updateCommentMock.mockResolvedValue({})
+  planTextModerationMock.mockResolvedValue(SKIP)
+  editCommentMock.mockResolvedValue({ row: { id: 1 }, skipped: undefined })
   createLogMock.mockResolvedValue({})
-  invalidateCacheMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
       callback(transactionClient)
@@ -78,26 +84,61 @@ describe('updateComment', () => {
     await expect(
       updateComment(
         { commentId: 1, content: 'new content', isSpoiler: false },
-        99
+        99,
+        4
       )
     ).resolves.toEqual({})
 
-    expect(updateCommentMock).toHaveBeenCalledWith({
-      where: { id: 1 },
-      data: expect.objectContaining({
-        content: 'new content',
-        content_html: '<p>new</p>',
-        content_html_version: 3
-      })
-    })
+    // 后台编辑不设守卫: 隐藏、待审的评论都能改
+    expect(editCommentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ tx: transactionClient }),
+      1,
+      {
+        data: {
+          content: 'new content',
+          content_html: '<p>new</p>',
+          content_html_version: 3,
+          edit: expect.any(String)
+        },
+        moderation: SKIP
+      }
+    )
 
     expect(createLogMock).toHaveBeenCalledTimes(1)
     const logContent = createLogMock.mock.calls[0][0].data.content as string
     expect(logContent.length).toBeLessThanOrEqual(ADMIN_LOG_CONTENT_LIMIT)
     expect(logContent).not.toContain('content_html')
     expect(logContent).toContain(`"contentPreview":"${'评'.repeat(100)}"`)
+  })
 
-    expect(invalidateCacheMock).toHaveBeenCalledWith(10)
+  // 送审豁免只看操作者的真实角色 (超级管理员豁免), 后台入口不另开口子
+  it('以操作者的真实角色与编辑前的正文交给预筛', async () => {
+    await updateComment(
+      { commentId: 1, content: 'new content', isSpoiler: false },
+      99,
+      4
+    )
+
+    expect(planTextModerationMock).toHaveBeenCalledWith(
+      commentSubject('new content'),
+      { userRole: 4, previous: commentSubject(longContent) }
+    )
+  })
+
+  it('评论在行锁下已不存在时报未找到, 不记日志', async () => {
+    editCommentMock.mockResolvedValue({
+      row: undefined,
+      skipped: { id: 1, reason: 'gone' }
+    })
+
+    await expect(
+      updateComment(
+        { commentId: 1, content: 'new content', isSpoiler: false },
+        99,
+        4
+      )
+    ).resolves.toBe('未找到对应的评论')
+    expect(createLogMock).not.toHaveBeenCalled()
   })
 
   it('渲染不出来的正文返回错误消息, 不写库、不记日志', async () => {
@@ -106,10 +147,10 @@ describe('updateComment', () => {
     )
 
     await expect(
-      updateComment({ commentId: 1, content: 'deep', isSpoiler: false }, 99)
+      updateComment({ commentId: 1, content: 'deep', isSpoiler: false }, 99, 4)
     ).resolves.toBe('评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交')
 
     expect(transactionMock).not.toHaveBeenCalled()
-    expect(invalidateCacheMock).not.toHaveBeenCalled()
+    expect(editCommentMock).not.toHaveBeenCalled()
   })
 })

@@ -108,7 +108,22 @@ vi.mock('~/app/api/message/unread/cache', () => ({
 }))
 
 import { createPatchResource } from '~/app/api/patch/resource/create'
-import { updatePatchResource } from '~/app/api/patch/resource/update'
+import {
+  frontResourceEditGuard,
+  updatePatchResource
+} from '~/app/api/patch/resource/update'
+
+// 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫
+const updateResource = (
+  input: Parameters<typeof updatePatchResource>[0],
+  uid: number,
+  role: number
+) =>
+  updatePatchResource(
+    input,
+    { uid, role },
+    frontResourceEditGuard({ uid, role })
+  )
 
 const resourceInput = {
   patchId: 10,
@@ -364,7 +379,7 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
       links: [storedExternalLink]
     })
 
-    await updatePatchResource(
+    await updateResource(
       {
         ...resourceInput,
         resourceId: 1,
@@ -382,7 +397,15 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
       { label: '链接', kind: 'plain', value: 'https://evil.example/join' },
       SIZE_SEGMENT
     ])
-    expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
+    // 内容更新之后单独一条写入把资源转为待审核 (status 只在 server/content 里写)
+    expect(
+      transactionResourceUpdateMock.mock.calls[0][0].data
+    ).not.toHaveProperty('status')
+    expect(transactionResourceUpdateMock.mock.calls[1][0]).toEqual({
+      where: { id: 1 },
+      data: { status: 3 },
+      select: { status: true }
+    })
   })
 
   it.each([
@@ -395,7 +418,7 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
       links: [storedExternalLink]
     })
 
-    await updatePatchResource(
+    await updateResource(
       {
         ...resourceInput,
         resourceId: 1,
@@ -408,13 +431,21 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
     )
 
     expect(taskCreateMock).toHaveBeenCalledTimes(1)
-    expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
+    // 内容更新之后单独一条写入把资源转为待审核 (status 只在 server/content 里写)
+    expect(
+      transactionResourceUpdateMock.mock.calls[0][0].data
+    ).not.toHaveProperty('status')
+    expect(transactionResourceUpdateMock.mock.calls[1][0]).toEqual({
+      where: { id: 1 },
+      data: { status: 3 },
+      select: { status: true }
+    })
   })
 
   it('更新为非空标题时仍正常送审', async () => {
     resourceFindUniqueMock.mockResolvedValue(storedResource)
 
-    await updatePatchResource(
+    await updateResource(
       { ...resourceInput, resourceId: 1, name: 'Patch v2' },
       7,
       2
@@ -434,7 +465,15 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
         name: 'Resource'
       }
     })
-    expect(transactionResourceUpdateMock.mock.calls[0][0].data.status).toBe(3)
+    // 内容更新之后单独一条写入把资源转为待审核 (status 只在 server/content 里写)
+    expect(
+      transactionResourceUpdateMock.mock.calls[0][0].data
+    ).not.toHaveProperty('status')
+    expect(transactionResourceUpdateMock.mock.calls[1][0]).toEqual({
+      where: { id: 1 },
+      data: { status: 3 },
+      select: { status: true }
+    })
   })
 
   it('送审字段与库中一致时不重审, 也不读审核配置; 只换外链的存储类型这类枚举值同理', async () => {
@@ -443,7 +482,7 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
       links: [storedExternalLink]
     })
 
-    await updatePatchResource(
+    await updateResource(
       {
         ...resourceInput,
         resourceId: 1,
@@ -457,9 +496,11 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
 
     expect(getModerationConfigMock).not.toHaveBeenCalled()
     expect(taskCreateMock).not.toHaveBeenCalled()
+    // 不拦截: 只有内容更新这一条写入, 没有转待审核的那一条
+    expect(transactionResourceUpdateMock).toHaveBeenCalledTimes(1)
     expect(
-      transactionResourceUpdateMock.mock.calls[0][0].data.status
-    ).toBeUndefined()
+      transactionResourceUpdateMock.mock.calls[0][0].data
+    ).not.toHaveProperty('status')
   })
 })
 
@@ -508,7 +549,7 @@ describe('渲染不出来的资源介绍', () => {
   it('编辑时被拒, 不预筛、不绑定、不写库', async () => {
     resourceFindUniqueMock.mockResolvedValue(storedResource)
 
-    const result = await updatePatchResource(
+    const result = await updateResource(
       { ...resourceInput, resourceId: 1, note },
       7,
       2

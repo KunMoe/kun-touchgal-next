@@ -98,7 +98,22 @@ vi.mock('~/server/storage/s3Outbox', () => ({
 }))
 
 import { resourceSubject } from '~/server/moderation/subject'
-import { updatePatchResource } from '~/app/api/patch/resource/update'
+import {
+  frontResourceEditGuard,
+  updatePatchResource
+} from '~/app/api/patch/resource/update'
+
+// 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫
+const updateResource = (
+  input: Parameters<typeof updatePatchResource>[0],
+  uid: number,
+  role: number
+) =>
+  updatePatchResource(
+    input,
+    { uid, role },
+    frontResourceEditGuard({ uid, role })
+  )
 
 const buildInput = (overrides: Record<string, unknown> = {}) => ({
   resourceId: 1,
@@ -198,7 +213,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
       buildUpdated({ status: 3, section: 'patch' })
     )
 
-    await updatePatchResource(buildInput({ section: 'patch' }), 9, 3)
+    await updateResource(buildInput({ section: 'patch' }), 9, 3)
 
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
     expect(invalidateResourceListCacheMock).toHaveBeenCalledTimes(1)
@@ -214,11 +229,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
 
     planTextModerationMock.mockResolvedValue(SKIP)
 
-    const result = await updatePatchResource(
-      buildInput({ name: 'Old name' }),
-      9,
-      3
-    )
+    const result = await updateResource(buildInput({ name: 'Old name' }), 9, 3)
 
     expect(result).toBe('未找到该资源')
     // 提交的送审字段与库中快照各成一个主体交给预筛, 由预筛判定是否重审
@@ -257,7 +268,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
       buildUpdated({ section: 'patch' })
     )
 
-    await updatePatchResource(buildInput({ section: 'patch' }), 7, 1)
+    await updateResource(buildInput({ section: 'patch' }), 7, 1)
 
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
     expect(invalidateResourceListCacheMock).toHaveBeenCalledTimes(1)
@@ -272,7 +283,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
     planTextModerationMock.mockResolvedValue(INTERCEPT)
     transactionResourceUpdateMock.mockResolvedValue(buildUpdated({ status: 3 }))
 
-    await updatePatchResource(buildInput(), 9, 3)
+    await updateResource(buildInput(), 9, 3)
 
     expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
     expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()
@@ -284,7 +295,7 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
     planTextModerationMock.mockResolvedValue(INTERCEPT)
     transactionResourceUpdateMock.mockResolvedValue(buildUpdated({ status: 3 }))
 
-    await updatePatchResource(buildInput(), 7, 1)
+    await updateResource(buildInput(), 7, 1)
 
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
     expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()

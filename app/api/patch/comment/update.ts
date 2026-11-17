@@ -3,14 +3,16 @@ import { convert } from 'html-to-text'
 import { prisma } from '~/prisma/index'
 import { patchCommentUpdateSchema } from '~/validations/patch'
 import {
-  enqueueTextModeration,
   hasPendingModeration,
   planTextModeration
 } from '~/server/moderation/submit'
 import { commentSubject } from '~/server/moderation/subject'
-import { invalidatePatchCommentCache } from './cache'
+import { kunTx } from '~/server/db/tx'
+import { COMMENT_STATUS } from '~/constants/contentStatus'
+import { editComment } from '~/server/content/comment/edit'
 import { prepareCommentContent } from './html'
-import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
+import type { CommentStatus } from '~/constants/contentStatus'
+import type { ContentGuard } from '~/server/content/guard'
 
 export const updateComment = async (
   input: z.infer<typeof patchCommentUpdateSchema>,
@@ -20,13 +22,13 @@ export const updateComment = async (
   const { commentId, content, isSpoiler } = input
 
   const comment = await prisma.patch_comment.findUnique({
-    where: { id: commentId }
+    where: { id: commentId },
+    select: { id: true, user_id: true, status: true, content: true }
   })
   // 隐藏 (status=2) 的评论仅后台可管理, 前端与不存在等同
   if (!comment || comment.status === 2) {
     return '未找到该评论'
   }
-  const commentUserUid = comment.user_id
   if (comment.user_id !== uid && userRole < 3) {
     return '您没有权限更改该评论'
   }
@@ -52,32 +54,39 @@ export const updateComment = async (
     previous: commentSubject(comment.content)
   })
 
-  await prisma.$transaction(async (tx) => {
-    await tx.patch_comment.update({
-      where: { id: commentId, user_id: commentUserUid },
+  // 上面判的是事务外快照。同一组条件交给命令在行锁下再判一次: 其间被管理员隐藏的
+  // 评论不会被这次编辑写回待审核
+  const guard: ContentGuard<CommentStatus> =
+    userRole < 3
+      ? { statusIn: [COMMENT_STATUS.public], ownerUid: uid }
+      : { statusIn: [COMMENT_STATUS.public, COMMENT_STATUS.pending] }
+
+  const result = await kunTx('comment.update', async (ctx) => {
+    const { skipped } = await editComment(ctx, commentId, {
+      guard,
       data: {
         ...prepared,
         is_spoiler: isSpoiler,
-        edit: Date.now().toString(),
-        ...(moderation.intercept ? { status: 1 } : {})
-      }
+        edit: Date.now().toString()
+      },
+      moderation
     })
-
-    if (moderation.queue) {
-      await enqueueTextModeration(tx, moderation, {
-        contentId: commentId,
-        userId: commentUserUid
-      })
+    if (skipped) {
+      ctx.fail(
+        skipped.reason === 'owner'
+          ? '您没有权限更改该评论'
+          : skipped.reason === 'status' &&
+              skipped.status === COMMENT_STATUS.pending
+            ? '您发布的评论正在审核中, 暂时无法修改'
+            : '未找到该评论'
+      )
     }
+    return {}
   })
-
-  await invalidatePatchCommentCache(comment.patch_id)
-  // 仅重新送审 (status 0→1) 改 _count.comment; 普通编辑正文不影响详情缓存 (M-05)
-  if (moderation.intercept) {
-    await invalidatePatchContentCacheByPatchId(comment.patch_id).catch(
-      () => undefined
-    )
+  if (typeof result === 'string') {
+    return result
   }
+
   return {
     contentHtml: prepared.content_html,
     contentPreview: convert(prepared.content_html).trim()

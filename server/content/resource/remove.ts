@@ -13,28 +13,23 @@ import {
 import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
 import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { recordContentChanges } from '~/server/content/changes'
+import { applyContentGuard } from '~/server/content/guard'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { ResourceStatus } from '~/constants/contentStatus'
+import type { ContentGuard, SkippedContent } from '~/server/content/guard'
 import type { KunTxContext } from '~/server/db/tx'
 
 // 资源的物理删除。两段式: plan 只加锁和读取, execute 按固定顺序清理并删除。
 // 入口夹在两段之间做自己的事 (判定结果、取审计所需的数据), 并把 skipped 映射成自己的文案
 
-// 入口算好的数据形状的守卫; 命令里不出现任何角色比较。不传即不设条件 (后台删除)
-export interface ResourceRemovalGuard {
-  statusIn: readonly ResourceStatus[]
-  ownerUid?: number
-}
+export type ResourceRemovalGuard = ContentGuard<ResourceStatus>
 
 // 发布资源时给作者加了 3 萌萌点
 const PUBLISH_REWARD = 3
 
 type ResourceRow = Prisma.patch_resourceGetPayload<{ include: { links: true } }>
 
-export type SkippedResource =
-  | { id: number; reason: 'gone' }
-  | { id: number; reason: 'owner' }
-  | { id: number; reason: 'status'; status: ResourceStatus }
+export type SkippedResource = SkippedContent<ResourceStatus>
 
 export interface ResourceRemovalPlan {
   // 锁下通过守卫的资源, 连同锁下重读的链接: 删除瞬间的真实集合
@@ -80,27 +75,11 @@ export const planResourceRemoval = async (
         include: { links: true }
       })
     : []
-  const currentById = new Map(current.map((row) => [row.id, row]))
-
-  const rows: ResourceRow[] = []
-  const skipped: SkippedResource[] = []
-  const { guard } = options
-  for (const id of [...new Set(ids)].sort((a, b) => a - b)) {
-    const row = currentById.get(id)
-    const status = row?.status as ResourceStatus
-    if (!row) {
-      skipped.push({ id, reason: 'gone' })
-    } else if (
-      guard?.ownerUid !== undefined &&
-      row.user_id !== guard.ownerUid
-    ) {
-      skipped.push({ id, reason: 'owner' })
-    } else if (guard && !guard.statusIn.includes(status)) {
-      skipped.push({ id, reason: 'status', status })
-    } else {
-      rows.push(row)
-    }
-  }
+  const { passed: rows, skipped } = applyContentGuard(
+    ids,
+    current,
+    options.guard
+  )
   return { rows, skipped, refundPublishReward: options.refundPublishReward }
 }
 

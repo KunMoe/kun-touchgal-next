@@ -13,7 +13,7 @@ import {
 } from '~/validations/patch'
 import { getPatchResource } from './get'
 import { createPatchResource } from './create'
-import { updatePatchResource } from './update'
+import { frontResourceEditGuard, updatePatchResource } from './update'
 import { deleteResource } from './delete'
 import { prisma } from '~/prisma/index'
 import { acquireKvLock, releaseKvLock } from '~/lib/redis'
@@ -119,7 +119,12 @@ export const PUT = async (req: NextRequest) => {
     return NextResponse.json('仅超级管理员可使用 TouchGal 资源盘')
   }
 
-  const response = await updatePatchResource(input, payload.uid, payload.role)
+  const actor = { uid: payload.uid, role: payload.role }
+  const response = await updatePatchResource(
+    input,
+    actor,
+    frontResourceEditGuard(actor)
+  )
   return NextResponse.json(response)
 }
 

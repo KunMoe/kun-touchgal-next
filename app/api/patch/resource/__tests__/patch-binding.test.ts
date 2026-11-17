@@ -123,7 +123,22 @@ vi.mock('~/app/api/utils/message', () => ({
 }))
 
 import { createPatchResource } from '~/app/api/patch/resource/create'
-import { updatePatchResource } from '~/app/api/patch/resource/update'
+import {
+  frontResourceEditGuard,
+  updatePatchResource
+} from '~/app/api/patch/resource/update'
+
+// 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫
+const updateResource = (
+  input: Parameters<typeof updatePatchResource>[0],
+  uid: number,
+  role: number
+) =>
+  updatePatchResource(
+    input,
+    { uid, role },
+    frontResourceEditGuard({ uid, role })
+  )
 
 const resourceInput = {
   patchId: 10,
@@ -205,7 +220,7 @@ describe('资源写入 patch 绑定', () => {
       links: []
     })
 
-    const result = await updatePatchResource(
+    const result = await updateResource(
       { ...resourceInput, resourceId: 1, patchId: 20 },
       7,
       2
@@ -226,7 +241,7 @@ describe('资源写入 patch 绑定', () => {
     })
     patchFindUniqueMock.mockResolvedValue(null)
 
-    const result = await updatePatchResource(
+    const result = await updateResource(
       {
         ...resourceInput,
         resourceId: 1,
@@ -255,7 +270,7 @@ describe('资源写入 patch 绑定', () => {
     })
     patchFindUniqueMock.mockResolvedValue({ id: 10 })
 
-    await updatePatchResource({ ...resourceInput, resourceId: 1 }, 7, 2)
+    await updateResource({ ...resourceInput, resourceId: 1 }, 7, 2)
 
     expect(patchFindUniqueMock).toHaveBeenCalledWith({
       where: { id: 10 },

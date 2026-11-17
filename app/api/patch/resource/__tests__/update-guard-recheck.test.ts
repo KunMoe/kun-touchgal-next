@@ -97,7 +97,22 @@ vi.mock('~/server/storage/s3Outbox', () => ({
   kickS3DeletionDrain: kickS3DeletionDrainMock
 }))
 
-import { updatePatchResource } from '~/app/api/patch/resource/update'
+import {
+  frontResourceEditGuard,
+  updatePatchResource
+} from '~/app/api/patch/resource/update'
+
+// 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫
+const updateResource = (
+  input: Parameters<typeof updatePatchResource>[0],
+  uid: number,
+  role: number
+) =>
+  updatePatchResource(
+    input,
+    { uid, role },
+    frontResourceEditGuard({ uid, role })
+  )
 
 const buildInput = (overrides: Record<string, unknown> = {}) => ({
   resourceId: 1,
@@ -203,7 +218,7 @@ describe('更新资源在行锁下复检守卫', () => {
       { status: 1, section: 'galgame' }
     ])
 
-    const result = await updatePatchResource(buildInput(), 7, 1)
+    const result = await updateResource(buildInput(), 7, 1)
 
     expect(result).toBe('未找到该资源')
     expectNoWriteNoSideEffects()
@@ -215,7 +230,7 @@ describe('更新资源在行锁下复检守卫', () => {
       { status: 1, section: 'galgame' }
     ])
 
-    const result = await updatePatchResource(buildInput(), 9, 3)
+    const result = await updateResource(buildInput(), 9, 3)
 
     expect(result).toBe('未找到该资源')
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
@@ -227,7 +242,7 @@ describe('更新资源在行锁下复检守卫', () => {
       { status: 3, section: 'galgame' }
     ])
 
-    const result = await updatePatchResource(buildInput(), 7, 1)
+    const result = await updateResource(buildInput(), 7, 1)
 
     expect(result).toBe('您发布的资源正在审核中, 暂时无法修改')
     expectNoWriteNoSideEffects()
@@ -240,10 +255,13 @@ describe('更新资源在行锁下复检守卫', () => {
     ])
     transactionResourceUpdateMock.mockResolvedValue(buildUpdated({ status: 3 }))
 
-    const result = await updatePatchResource(buildInput(), 9, 3)
+    const result = await updateResource(buildInput(), 9, 3)
 
     expect(typeof result).not.toBe('string')
-    expect(transactionResourceUpdateMock).toHaveBeenCalledTimes(1)
+    // 内容写入照常发生 (这个文件里预筛默认拦截, 其后还有一条转待审核的写入)
+    expect(transactionResourceUpdateMock.mock.calls[0][0].data).toHaveProperty(
+      'links'
+    )
   })
 
   it('快照公开但锁下已转人工审批, 非特权作者被拒', async () => {
@@ -252,7 +270,7 @@ describe('更新资源在行锁下复检守卫', () => {
       { status: 2, section: 'galgame' }
     ])
 
-    const result = await updatePatchResource(buildInput(), 7, 1)
+    const result = await updateResource(buildInput(), 7, 1)
 
     expect(result).toBe('您发布的资源正在等待管理员审核, 暂时无法修改')
     expectNoWriteNoSideEffects()
@@ -262,7 +280,7 @@ describe('更新资源在行锁下复检守卫', () => {
     resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
     transactionQueryRawMock.mockResolvedValue([])
 
-    const result = await updatePatchResource(buildInput(), 7, 1)
+    const result = await updateResource(buildInput(), 7, 1)
 
     expect(result).toBe('未找到该资源')
     expectNoWriteNoSideEffects()
@@ -294,7 +312,7 @@ describe('更新资源在行锁下复检守卫', () => {
         }
       ]
     })
-    const result = await updatePatchResource(input, 7, 1)
+    const result = await updateResource(input, 7, 1)
 
     expect(result).toBe('未找到该资源')
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
@@ -327,7 +345,7 @@ describe('更新资源在行锁下复检守卫', () => {
         }
       ]
     })
-    const result = await updatePatchResource(input, 7, 1)
+    const result = await updateResource(input, 7, 1)
 
     expect(result).toBe('您发布的资源正在审核中, 暂时无法修改')
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
@@ -353,7 +371,7 @@ describe('更新资源在行锁下重算 links diff', () => {
     ])
     transactionResourceUpdateMock.mockResolvedValue(buildUpdated())
 
-    const result = await updatePatchResource(buildInput(), 7, 1)
+    const result = await updateResource(buildInput(), 7, 1)
 
     expect(typeof result).not.toBe('string')
     expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
@@ -411,7 +429,7 @@ describe('更新资源在行锁下重算 links diff', () => {
         }
       ]
     })
-    const result = await updatePatchResource(input, 7, 1)
+    const result = await updateResource(input, 7, 1)
 
     expect(result).toBe('该资源的链接已被修改, 请刷新后重试')
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
@@ -458,7 +476,7 @@ describe('更新资源保留历史 s3 链接', () => {
   })
 
   it('回传库中原 hash 视为保留, 不走上传绑定且原样保留 hash', async () => {
-    const result = await updatePatchResource(
+    const result = await updateResource(
       buildInput({ links: [legacyInputLink] }),
       7,
       1
@@ -489,7 +507,7 @@ describe('更新资源保留历史 s3 链接', () => {
       size: 1
     })
 
-    const result = await updatePatchResource(
+    const result = await updateResource(
       buildInput({ links: [{ ...legacyInputLink, hash: 'upload-token' }] }),
       7,
       1

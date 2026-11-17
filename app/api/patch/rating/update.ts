@@ -1,14 +1,16 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { patchRatingUpdateSchema } from '~/validations/patch'
-import { recomputePatchRatingStat } from './stat'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import {
-  enqueueTextModeration,
   hasPendingModeration,
   planTextModeration
 } from '~/server/moderation/submit'
 import { ratingSubject } from '~/server/moderation/subject'
+import { kunTx } from '~/server/db/tx'
+import { RATING_STATUS } from '~/constants/contentStatus'
+import { editRating } from '~/server/content/rating/edit'
+import type { RatingStatus } from '~/constants/contentStatus'
+import type { ContentGuard } from '~/server/content/guard'
 import type { KunPatchRating } from '~/types/api/galgame'
 
 export const updatePatchRating = async (
@@ -26,13 +28,13 @@ export const updatePatchRating = async (
   } = input
 
   const rating = await prisma.patch_rating.findUnique({
-    where: { id: ratingId }
+    where: { id: ratingId },
+    select: { id: true, user_id: true, status: true, short_summary: true }
   })
   // 隐藏 (status=2) 的评价仅后台可管理, 前端与不存在等同
   if (!rating || rating.status === 2) {
     return '评价不存在'
   }
-  const ratingUserUid = rating.user_id
   if (rating.user_id !== uid && userRole < 3) {
     return '您没有权限更新该评价'
   }
@@ -53,17 +55,39 @@ export const updatePatchRating = async (
     previous: ratingSubject(rating.short_summary)
   })
 
-  const data = await prisma.$transaction(async (tx) => {
-    const updated = await tx.patch_rating.update({
-      where: { id: ratingId, user_id: ratingUserUid },
+  // 上面判的是事务外快照。同一组条件交给命令在行锁下再判一次: 其间被管理员隐藏的
+  // 评价不会被这次编辑写回待审核
+  const guard: ContentGuard<RatingStatus> =
+    userRole < 3
+      ? { statusIn: [RATING_STATUS.public], ownerUid: uid }
+      : { statusIn: [RATING_STATUS.public, RATING_STATUS.pending] }
+
+  const data = await kunTx('rating.update', async (ctx) => {
+    const { skipped } = await editRating(ctx, ratingId, {
+      guard,
       data: {
         recommend,
         overall,
         play_status: playStatus,
         short_summary: shortSummary,
-        spoiler_level: spoilerLevel,
-        ...(moderation.intercept ? { status: 1 } : {})
+        spoiler_level: spoilerLevel
       },
+      moderation
+    })
+    if (skipped) {
+      ctx.fail(
+        skipped.reason === 'owner'
+          ? '您没有权限更新该评价'
+          : skipped.reason === 'status' &&
+              skipped.status === RATING_STATUS.pending
+            ? '您发布的评价正在审核中, 暂时无法修改'
+            : '评价不存在'
+      )
+    }
+
+    // 响应要带作者与点赞信息: 在同一事务里读回写入后的行
+    return ctx.tx.patch_rating.findUniqueOrThrow({
+      where: { id: ratingId },
       include: {
         patch: { select: { unique_id: true } },
         user: {
@@ -83,21 +107,10 @@ export const updatePatchRating = async (
         }
       }
     })
-
-    if (moderation.queue) {
-      await enqueueTextModeration(tx, moderation, {
-        contentId: ratingId,
-        patchId: rating.patch_id,
-        userId: ratingUserUid
-      })
-    }
-
-    await recomputePatchRatingStat(rating.patch_id, tx)
-    return updated
   })
-
-  // 事务提交后失效补丁详情缓存: ratingSummary 随评分统计变化 (M-05)
-  await invalidatePatchContentCache(data.patch.unique_id).catch(() => undefined)
+  if (typeof data === 'string') {
+    return data
+  }
 
   return {
     id: data.id,

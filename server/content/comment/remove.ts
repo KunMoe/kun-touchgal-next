@@ -2,17 +2,15 @@ import { cleanupCommentNotifications } from '~/app/api/patch/comment/notificatio
 import { deleteOrphanReports } from '~/server/report/pending'
 import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { recordContentChanges } from '~/server/content/changes'
+import { applyContentGuard } from '~/server/content/guard'
 import type { CommentStatus } from '~/constants/contentStatus'
+import type { ContentGuard, SkippedContent } from '~/server/content/guard'
 import type { KunTxContext } from '~/server/db/tx'
 
 // 评论的物理删除。两段式: plan 只加锁和读取, execute 按固定顺序清理并删除。
 // 入口夹在两段之间做自己的事 (认领举报、判定申诉结果), 并把 skipped 映射成自己的文案
 
-// 入口算好的数据形状的守卫; 命令里不出现任何角色比较。不传即不设条件 (后台删除)
-export interface CommentRemovalGuard {
-  statusIn: readonly CommentStatus[]
-  ownerUid?: number
-}
+export type CommentRemovalGuard = ContentGuard<CommentStatus>
 
 interface CommentRow {
   id: number
@@ -22,10 +20,7 @@ interface CommentRow {
   status: CommentStatus
 }
 
-export type SkippedComment =
-  | { id: number; reason: 'gone' }
-  | { id: number; reason: 'owner' }
-  | { id: number; reason: 'status'; status: CommentStatus }
+export type SkippedComment = SkippedContent<CommentStatus>
 
 export interface CommentRemovalPlan {
   // 锁下通过守卫的根评论
@@ -48,25 +43,7 @@ export const planCommentRemoval = async (
     WHERE id = ANY(${rootIds}::int[])
     ORDER BY id
     FOR UPDATE`
-  const lockedById = new Map(locked.map((row) => [row.id, row]))
-
-  const roots: CommentRow[] = []
-  const skipped: SkippedComment[] = []
-  for (const id of [...new Set(rootIds)].sort((a, b) => a - b)) {
-    const row = lockedById.get(id)
-    if (!row) {
-      skipped.push({ id, reason: 'gone' })
-    } else if (
-      guard?.ownerUid !== undefined &&
-      row.user_id !== guard.ownerUid
-    ) {
-      skipped.push({ id, reason: 'owner' })
-    } else if (guard && !guard.statusIn.includes(row.status)) {
-      skipped.push({ id, reason: 'status', status: row.status })
-    } else {
-      roots.push(row)
-    }
-  }
+  const { passed: roots, skipped } = applyContentGuard(rootIds, locked, guard)
   if (!roots.length) {
     return { roots, skipped, subtree: [] }
   }

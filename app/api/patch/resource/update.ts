@@ -21,12 +21,55 @@ import {
 } from '~/server/moderation/submit'
 import { resourceSubject } from '~/server/moderation/subject'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
+import { RESOURCE_STATUS } from '~/constants/contentStatus'
+import { markResourcePendingReview } from '~/server/content/resource/edit'
+import type { ResourceStatus } from '~/constants/contentStatus'
+import type { ContentGuard } from '~/server/content/guard'
 import type { PatchResource } from '~/types/api/patch'
+
+// 守卫是入口算好的数据: 允许编辑的状态, 以及是否要求作者本人。同一份守卫在事务外的
+// 快照上判一次 (快速失败), 在行锁下再判一次
+const resourceEditGuardError = (
+  row: { status: number; user_id: number },
+  guard: ContentGuard<ResourceStatus>
+) => {
+  const allowed = guard.statusIn.includes(row.status as ResourceStatus)
+  // 不在允许之列的隐藏资源与不存在等同
+  if (!allowed && row.status === RESOURCE_STATUS.hidden) {
+    return '未找到该资源'
+  }
+  if (guard.ownerUid !== undefined && row.user_id !== guard.ownerUid) {
+    return '您没有权限更改该资源'
+  }
+  if (!allowed) {
+    // status=2: 首个资源的人工审批流, 审批期间同样禁止修改
+    return row.status === RESOURCE_STATUS.awaitingApproval
+      ? '您发布的资源正在等待管理员审核, 暂时无法修改'
+      : '您发布的资源正在审核中, 暂时无法修改'
+  }
+  return null
+}
+
+// 前台入口的守卫: 作者只能改自己已上线的资源; 管理员还可以改待初审、待审核的。
+// 隐藏的资源只在后台管理, 对前台与不存在等同
+export const frontResourceEditGuard = (actor: {
+  uid: number
+  role: number
+}): ContentGuard<ResourceStatus> =>
+  actor.role < 3
+    ? { statusIn: [RESOURCE_STATUS.public], ownerUid: actor.uid }
+    : {
+        statusIn: [
+          RESOURCE_STATUS.public,
+          RESOURCE_STATUS.awaitingApproval,
+          RESOURCE_STATUS.pending
+        ]
+      }
 
 export const updatePatchResource = async (
   input: z.infer<typeof patchResourceUpdateSchema>,
-  uid: number,
-  userRole: number
+  actor: { uid: number; role: number },
+  guard: ContentGuard<ResourceStatus>
 ) => {
   const {
     resourceId,
@@ -47,26 +90,20 @@ export const updatePatchResource = async (
       }
     }
   })
-  // 隐藏 (status=1) 的资源仅后台可管理, 前端与不存在等同
-  if (!resource || resource.status === 1) {
+  if (!resource) {
     return '未找到该资源'
   }
-
-  if (resource.user_id !== uid && userRole < 3) {
-    return '您没有权限更改该资源'
+  const snapshotError = resourceEditGuardError(resource, guard)
+  if (snapshotError) {
+    return snapshotError
   }
-  if (userRole < 3) {
-    // status=2: 首个资源的人工审批流, 审批期间同样禁止修改
-    if (resource.status === 2) {
-      return '您发布的资源正在等待管理员审核, 暂时无法修改'
-    }
-    if (await hasPendingModeration('resource', { contentId: resourceId })) {
-      return '您发布的资源正在审核中, 暂时无法修改'
-    }
-    // 待审核 (status=3) 的资源禁止修改; hasPendingModeration 之外再兜底一层
-    if (resource.status === 3) {
-      return '您发布的资源正在审核中, 暂时无法修改'
-    }
+  // 不许编辑待审核资源的操作者 (作者): 有在途审核任务时同样不许改, 否则编辑会让
+  // 送审快照与实际内容脱节
+  if (
+    !guard.statusIn.includes(RESOURCE_STATUS.pending) &&
+    (await hasPendingModeration('resource', { contentId: resourceId }))
+  ) {
+    return '您发布的资源正在审核中, 暂时无法修改'
   }
 
   if (inputPatchId !== resource.patch_id) {
@@ -101,7 +138,7 @@ export const updatePatchResource = async (
             links
           }),
           {
-            userRole,
+            userRole: actor.role,
             previous: resourceSubject({
               name: resource.name,
               note: resource.note,
@@ -137,7 +174,7 @@ export const updatePatchResource = async (
       // 直传迁移前的历史 s3 链接 hash 列存 BLAKE3 校验码, 编辑表单会原样回传:
       // 与库中值相同即保留, 只有不同的非空值才是新上传的 token
       if (link.hash && link.hash !== snapshotLink?.hash) {
-        const result = await bindUploadedResource(patchId, link.hash, uid)
+        const result = await bindUploadedResource(patchId, link.hash, actor.uid)
         if (typeof result === 'string') {
           await abandonBoundResourceObjects([...boundLinks.values()], patchId)
           return result
@@ -177,15 +214,14 @@ export const updatePatchResource = async (
     // 并发任务, 无需重查 hasPendingModeration. 被拦时已重绑的新对象随本事务入队
     // 清理后再 return (return 字符串会提交事务, 与下方冲突分支同构): 此前无行
     // 变更, 提交的只有这份清理入队; abandon 兜底只覆盖事务 reject, 不覆盖此处
-    let guardError: string | null = null
-    if (!previous || previous.status === 1) {
-      guardError = '未找到该资源'
-    } else if (userRole < 3 && previous.status === 2) {
-      guardError = '您发布的资源正在等待管理员审核, 暂时无法修改'
-    } else if (userRole < 3 && previous.status === 3) {
-      guardError = '您发布的资源正在审核中, 暂时无法修改'
-    }
-    if (guardError) {
+    // 作者不会变, 锁下只需复检状态
+    const guardError = previous
+      ? resourceEditGuardError(
+          { status: previous.status, user_id: resource.user_id },
+          guard
+        )
+      : '未找到该资源'
+    if (!previous || guardError) {
       await enqueueResourceLinkDeletions(
         prisma,
         [...boundLinks.values()].map((item) => ({
@@ -195,7 +231,7 @@ export const updatePatchResource = async (
           s3Key: item.s3Key
         }))
       )
-      return guardError
+      return guardError ?? '未找到该资源'
     }
     previousStatus = previous.status
     previousSection = previous.section
@@ -305,7 +341,6 @@ export const updatePatchResource = async (
         ...resourceData,
         emulator_type,
         model_name,
-        ...(moderation.intercept ? { status: 3 } : {}),
         links: {
           deleteMany: {},
           create: preparedLinks
@@ -329,6 +364,11 @@ export const updatePatchResource = async (
         }
       }
     })
+
+    // 被审核拦截的编辑把资源转为待审核。须在重算聚合之前: 重算只读公开资源
+    const status = moderation.intercept
+      ? (await markResourcePendingReview(prisma, resourceId)).status
+      : newResource.status
 
     await prisma.patch.update({
       where: { id: patchId },
@@ -376,7 +416,7 @@ export const updatePatchResource = async (
       })),
       likeCount: 0,
       isLike: false,
-      status: newResource.status,
+      status,
       userId: newResource.user_id,
       patchId: newResource.patch_id,
       created: String(newResource.created),

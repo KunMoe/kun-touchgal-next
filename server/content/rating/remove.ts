@@ -3,17 +3,15 @@ import { recomputePatchRatingStats } from '~/app/api/patch/rating/stat'
 import { deleteOrphanReports } from '~/server/report/pending'
 import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { recordContentChanges } from '~/server/content/changes'
+import { applyContentGuard } from '~/server/content/guard'
 import type { RatingStatus } from '~/constants/contentStatus'
+import type { ContentGuard, SkippedContent } from '~/server/content/guard'
 import type { KunTxContext } from '~/server/db/tx'
 
 // 评价的物理删除。两段式: plan 只加锁和读取, execute 按固定顺序删除并清理。
 // 入口夹在两段之间做自己的事 (认领举报、判定申诉结果), 并把 skipped 映射成自己的文案
 
-// 入口算好的数据形状的守卫; 命令里不出现任何角色比较。不传即不设条件 (后台删除)
-export interface RatingRemovalGuard {
-  statusIn: readonly RatingStatus[]
-  ownerUid?: number
-}
+export type RatingRemovalGuard = ContentGuard<RatingStatus>
 
 interface RatingRow {
   id: number
@@ -22,10 +20,7 @@ interface RatingRow {
   status: RatingStatus
 }
 
-export type SkippedRating =
-  | { id: number; reason: 'gone' }
-  | { id: number; reason: 'owner' }
-  | { id: number; reason: 'status'; status: RatingStatus }
+export type SkippedRating = SkippedContent<RatingStatus>
 
 export interface RatingRemovalPlan {
   // 锁下通过守卫的评价
@@ -61,25 +56,7 @@ export const planRatingRemoval = async (
     WHERE id = ANY(${ids}::int[])
     ORDER BY id
     FOR UPDATE`
-  const lockedById = new Map(locked.map((row) => [row.id, row]))
-
-  const rows: RatingRow[] = []
-  const skipped: SkippedRating[] = []
-  for (const id of [...new Set(ids)].sort((a, b) => a - b)) {
-    const row = lockedById.get(id)
-    if (!row) {
-      skipped.push({ id, reason: 'gone' })
-    } else if (
-      guard?.ownerUid !== undefined &&
-      row.user_id !== guard.ownerUid
-    ) {
-      skipped.push({ id, reason: 'owner' })
-    } else if (guard && !guard.statusIn.includes(row.status)) {
-      skipped.push({ id, reason: 'status', status: row.status })
-    } else {
-      rows.push(row)
-    }
-  }
+  const { passed: rows, skipped } = applyContentGuard(ids, locked, guard)
   return { rows, skipped }
 }
 

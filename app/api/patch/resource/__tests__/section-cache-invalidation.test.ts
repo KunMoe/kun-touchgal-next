@@ -129,7 +129,22 @@ vi.mock('~/app/api/utils/message', () => ({
 }))
 
 import { createPatchResource } from '~/app/api/patch/resource/create'
-import { updatePatchResource } from '~/app/api/patch/resource/update'
+import {
+  frontResourceEditGuard,
+  updatePatchResource
+} from '~/app/api/patch/resource/update'
+
+// 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫
+const updateResource = (
+  input: Parameters<typeof updatePatchResource>[0],
+  uid: number,
+  role: number
+) =>
+  updatePatchResource(
+    input,
+    { uid, role },
+    frontResourceEditGuard({ uid, role })
+  )
 
 const resourceInput = {
   patchId: 10,
@@ -250,7 +265,7 @@ describe('资源写入按 section 分派缓存失效', () => {
     resourceFindUniqueMock.mockResolvedValue(buildStoredResource())
     transactionResourceUpdateMock.mockResolvedValue(buildStoredResource())
 
-    await updatePatchResource({ ...resourceInput, resourceId: 1 }, 7, 2)
+    await updateResource({ ...resourceInput, resourceId: 1 }, 7, 2)
 
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledWith(10)
@@ -264,7 +279,7 @@ describe('资源写入按 section 分派缓存失效', () => {
     transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'patch' }])
     transactionResourceUpdateMock.mockResolvedValue(buildStoredResource())
 
-    await updatePatchResource({ ...resourceInput, resourceId: 1 }, 7, 2)
+    await updateResource({ ...resourceInput, resourceId: 1 }, 7, 2)
 
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledWith(10)

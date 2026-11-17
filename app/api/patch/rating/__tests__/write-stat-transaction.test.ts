@@ -5,27 +5,22 @@ const {
   findUniqueMock,
   transactionMock,
   createMock,
-  updateMock,
   recomputeOneMock,
   planTextModerationMock,
-  hasPendingModerationMock,
   enqueueTextModerationMock
 } = vi.hoisted(() => ({
   findUniqueMock: vi.fn(),
   transactionMock: vi.fn(),
   createMock: vi.fn(),
-  updateMock: vi.fn(),
   recomputeOneMock: vi.fn(),
   planTextModerationMock: vi.fn(),
-  hasPendingModerationMock: vi.fn(),
   enqueueTextModerationMock: vi.fn()
 }))
 
 const events: string[] = []
 const transactionClient = {
   patch_rating: {
-    create: createMock,
-    update: updateMock
+    create: createMock
   }
 }
 
@@ -43,13 +38,11 @@ vi.mock('~/app/api/patch/rating/stat', () => ({
 vi.mock('~/server/moderation/submit', () => ({
   MODERATION_SKIP: { queue: false, intercept: false, dryRun: false },
   planTextModeration: planTextModerationMock,
-  hasPendingModeration: hasPendingModerationMock,
   enqueueTextModeration: enqueueTextModerationMock
 }))
 
 import { ratingSubject } from '~/server/moderation/subject'
 import { createPatchRating } from '~/app/api/patch/rating/create'
-import { updatePatchRating } from '~/app/api/patch/rating/update'
 
 const ratingInput = {
   recommend: 'yes',
@@ -59,7 +52,6 @@ const ratingInput = {
   spoilerLevel: 'none'
 }
 const createInput = { patchId: 10, ...ratingInput }
-const updateInput = { ratingId: 5, ...ratingInput }
 const created = new Date('2026-01-01T00:00:00.000Z')
 const rating = {
   id: 5,
@@ -89,13 +81,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   events.length = 0
   createMock.mockResolvedValue(rating)
-  updateMock.mockResolvedValue(rating)
   planTextModerationMock.mockResolvedValue({
     queue: false,
     intercept: false,
     dryRun: false
   })
-  hasPendingModerationMock.mockResolvedValue(false)
   enqueueTextModerationMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
@@ -131,30 +121,6 @@ describe('public patch rating write transactions', () => {
       'recompute',
       'transaction-commit'
     ])
-  })
-
-  it('recomputes rating stats before the update transaction commits', async () => {
-    findUniqueMock.mockResolvedValueOnce(rating)
-
-    await updatePatchRating(updateInput, 7, 1)
-
-    expect(recomputeOneMock).toHaveBeenCalledWith(10, transactionClient)
-    expect(events).toEqual([
-      'transaction-start',
-      'recompute',
-      'transaction-commit'
-    ])
-  })
-
-  it('编辑评价时把编辑前的短评作为 previous 交给预筛, 由预筛判定是否重审', async () => {
-    findUniqueMock.mockResolvedValueOnce({ ...rating, short_summary: 'before' })
-
-    await updatePatchRating(updateInput, 7, 1)
-
-    expect(planTextModerationMock).toHaveBeenCalledWith(
-      ratingSubject('summary'),
-      { userRole: 1, previous: ratingSubject('before') }
-    )
   })
 
   it('rolls back create when rating-stat recomputation fails', async () => {
