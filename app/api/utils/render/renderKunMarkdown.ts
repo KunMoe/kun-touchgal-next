@@ -172,9 +172,7 @@ export const renderKunMarkdown = async (
     ) {
       return failure(profile, markdown, 'too-large')
     }
-    // 不解析指令的 profile 里 `:::` 只是文本, 容器指令熔断不生效
-    const directives = KUN_MARKDOWN_PROFILES[profile].directives !== 'off'
-    if (exceedsCostFuse(markdown, { directives })) {
+    if (exceedsCostFuse(markdown)) {
       return failure(profile, markdown, 'too-deep')
     }
     return options.cache === false

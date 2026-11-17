@@ -72,6 +72,14 @@ describe('净化不变量检测器', () => {
   it.each([
     ['<script>alert(1)</script>', ['forbidden-element']],
     ['<iframe src="https://a.example"></iframe>', ['forbidden-element']],
+    [
+      '<svg><set attributeName="href" to="javascript:alert(1)"></set></svg>',
+      ['forbidden-element']
+    ],
+    [
+      '<svg><animate values="javascript:alert(1)"></animate></svg>',
+      ['forbidden-element']
+    ],
     ['<p onclick="alert(1)">a</p>', ['event-handler']],
     ['<svg ONLOAD="alert(1)"></svg>', ['event-handler']],
     ['<p style="position:fixed">a</p>', ['inline-style']],
@@ -88,6 +96,8 @@ describe('净化不变量检测器', () => {
       '<form action="https://a.example"></form>',
       ['forbidden-element', 'unsafe-url']
     ],
+    ['<img id="body" src="/a.png">', ['dom-clobbering']],
+    ['<img name="getElementById" src="/a.png">', ['dom-clobbering']],
     ['<a href="#missing">a</a>', ['fragment-target']],
     [
       '<p onclick="x" style="y"><a href="javascript:z">a</a></p>',
@@ -101,8 +111,8 @@ describe('净化不变量检测器', () => {
     '<p>文字 &#x3C;script> javascript:alert(1) onclick=</p>',
     '<a href="https://a.example/x" data-href="magnet:?xt=urn:btih:abc">a</a>',
     '<a href="/doc?a=b:c">a</a><a href="//a.example/x">b</a>',
-    '<a href="#fn-1">a</a><li id="fn-1">b</li>',
-    '<a href="#%E6%A0%87%E9%A2%98">a</a><h1 id="标题">b</h1>',
+    '<a href="#user-content-fn-1">a</a><li id="user-content-fn-1">b</li>',
+    '<a href="#user-content-%E6%A0%87%E9%A2%98">a</a><h1 id="user-content-标题">b</h1>',
     // 引号里长得像属性的文字不是属性
     '<img src="https://a.example/a.png" alt="a&#x22; onerror=&#x22;alert(1)">',
     '<img alt="<script> style=x" src="/a.png"><input disabled type="checkbox">'

@@ -1,7 +1,6 @@
 /* eslint-disable no-console */
 import { prisma } from '~/prisma/index'
 import {
-  MARKDOWN_MAX_DIRECTIVE_FENCE_LINES,
   MARKDOWN_MAX_LINE_CONTAINER_MARKERS,
   MARKDOWN_MAX_PARAGRAPH_BRACKETS,
   MARKDOWN_MAX_TREE_DEPTH,
@@ -39,7 +38,6 @@ interface SourceStats {
   rows: number
   maxBytes: number
   maxMarkers: number
-  maxDirectiveFences: number
   maxBrackets: number
   // 放行的行的 mdast 深度 → 行数
   depths: Map<number, number>
@@ -53,7 +51,6 @@ const createStats = (): SourceStats => ({
   rows: 0,
   maxBytes: 0,
   maxMarkers: 0,
-  maxDirectiveFences: 0,
   maxBrackets: 0,
   depths: new Map(),
   reasons: new Map(),
@@ -77,11 +74,6 @@ const inspect = async (
 
   const cost = measureMarkdownCost(markdown)
   stats.maxMarkers = Math.max(stats.maxMarkers, cost.maxLineContainerMarkers)
-  stats.maxDirectiveFences = Math.max(
-    stats.maxDirectiveFences,
-    cost.directiveFenceLines
-  )
-
   stats.maxBrackets = Math.max(stats.maxBrackets, cost.maxParagraphBrackets)
 
   const startedAt = performance.now()
@@ -125,9 +117,6 @@ const report = (name: string, stats: SourceStats) => {
   )
   console.log(
     `  单行容器标记 最大=${stats.maxMarkers}  (熔断 ${MARKDOWN_MAX_LINE_CONTAINER_MARKERS})`
-  )
-  console.log(
-    `  容器指令开启行 最大=${stats.maxDirectiveFences}  (熔断 ${MARKDOWN_MAX_DIRECTIVE_FENCE_LINES})`
   )
   console.log(
     `  同段方括号 最大=${stats.maxBrackets}  (熔断 ${MARKDOWN_MAX_PARAGRAPH_BRACKETS})`

@@ -183,79 +183,57 @@ describe.each(['render', 'drop', 'edit'] as const)(
       )
     })
 
-    it('注册为整行的名字写成容器, 同样按原文', () => {
-      expect(
-        outline(
-          transform(
-            ':::kun-video{src="https://a.example/v.mp4"}\n内容\n:::',
-            mode
-          )
-        )
-      ).toBe(
-        'paragraph(":::kun-video{src=\\"https://a.example/v.mp4\\"}"), paragraph("内容"), paragraph(":::")'
-      )
-    })
-
-    it('容器还原开、闭两行, 里面的内容照常解析', () => {
-      expect(outline(transform(':::note\n**内容**\n:::', mode))).toBe(
-        'paragraph(":::note"), paragraph(strong("内容")), paragraph(":::")'
-      )
-    })
-
-    it('容器的标签只出现在开栅栏那一行, 不重复成一段', () => {
-      expect(outline(transform(':::note[标题]\n内容\n:::', mode))).toBe(
-        'paragraph(":::note[标题]"), paragraph("内容"), paragraph(":::")'
-      )
-    })
-
-    it('没有收尾的容器只还原开栅栏', () => {
-      expect(outline(transform(':::spoiler\n剧透内容', mode))).toBe(
-        'paragraph(":::spoiler"), paragraph("剧透内容")'
-      )
-    })
-
-    it('比开栅栏短的冒号行是内容, 不是收尾', () => {
-      expect(outline(transform('::::outer\n内容\n\n:::', mode))).toBe(
-        'paragraph("::::outer"), paragraph("内容"), paragraph(":::")'
-      )
-      expect(outline(transform(':::a\n内容\n:::::', mode))).toBe(
-        'paragraph(":::a"), paragraph("内容"), paragraph(":::::")'
-      )
-    })
-
-    it('嵌套的容器逐层还原', () => {
-      expect(
-        outline(transform('::::outer\n:::inner\n内容\n:::\n::::', mode))
-      ).toBe(
-        'paragraph("::::outer"), paragraph(":::inner"), paragraph("内容"), paragraph(":::"), paragraph("::::")'
-      )
-    })
-
-    it('引用与列表里的指令同样还原, 收尾行不带引用前缀', () => {
-      expect(outline(transform('> :::note\n> 内容\n> :::', mode))).toBe(
-        'blockquote(paragraph(":::note"), paragraph("内容"), paragraph(":::"))'
+    it('引用与列表里的指令同样还原', () => {
+      expect(outline(transform('> ::foo{bar=1}', mode))).toBe(
+        'blockquote(paragraph("::foo{bar=1}"))'
       )
       expect(outline(transform('- ::foo{bar=1}', mode))).toBe(
         'list(listItem(paragraph("::foo{bar=1}")))'
       )
     })
-
-    it('容器里的已注册指令仍按模式处理', () => {
-      expect(
-        typesOf(
-          transform(
-            ':::note\n::kun-video{src="https://a.example/v.mp4"}\n:::',
-            mode
-          )
-        )
-      ).toEqual(
-        mode === 'drop'
-          ? ['root', 'paragraph', 'text', 'paragraph', 'text']
-          : ['root', 'paragraph', 'text', 'leafDirective', 'paragraph', 'text']
-      )
-    })
   }
 )
+
+// 没有任何短代码是容器形态。容器语法不解析, 嵌套的容器也就无从拖慢解析 ——
+// 旧管线里 2000 层 `:::名字` 要解析 5 秒, 全靠一个预先数行的熔断挡着
+describe('容器写法不是语法', () => {
+  it.each([
+    [':::note\n内容\n:::', 'paragraph(":::note\\n内容\\n:::")'],
+    [
+      ':::kun-video{src="https://a.example/v.mp4"}\n内容\n:::',
+      'paragraph(":::kun-video{src=\\"https://a.example/v.mp4\\"}\\n内容\\n:::")'
+    ],
+    ['::::outer\n:::inner\n::::', 'paragraph("::::outer\\n:::inner\\n::::")'],
+    ['> :::note\n> 内容', 'blockquote(paragraph(":::note\\n内容"))']
+  ])('%j 是一段普通文字', (markdown, expected) => {
+    expect(outline(transform(markdown))).toBe(expected)
+  })
+
+  it('名字以数字、汉字开头的容器同样不解析', () => {
+    for (const name of ['1', '注', 'ａ']) {
+      const tree = transform(`:::${name}\n`.repeat(2000))
+
+      expect(typesOf(tree)).toEqual(['root', 'paragraph', 'text'])
+    }
+  })
+
+  it('夹在容器写法之间的整行短代码照常生效', () => {
+    expect(
+      typesOf(
+        transform(
+          ':::note\n\n::kun-video{src="https://a.example/v.mp4"}\n\n:::'
+        )
+      )
+    ).toEqual([
+      'root',
+      'paragraph',
+      'text',
+      'leafDirective',
+      'paragraph',
+      'text'
+    ])
+  })
+})
 
 describe('还原出的文字与解析出的文字同等对待', () => {
   // GFM 在建树之后把裸网址变成链接。还原的文字不补这一遍的话, 同一行在编辑器里
@@ -271,6 +249,22 @@ describe('还原出的文字与解析出的文字同等对待', () => {
       outline(processor.runSync(processor.parse(markdown), markdown))
     ).toBe(
       'paragraph("::kun-link{href=\\"", link("https://a.example/x"), "\\"}")'
+    )
+  })
+})
+
+describe('切片与解析器对齐', () => {
+  // 解析器跳过文档开头的 BOM, 节点位置按去掉它之后算: 不对齐的话还原出来的那一行
+  // 会多出 BOM、少掉最后一个字符
+  it('文档开头有 BOM 时还原的原文不错位', () => {
+    expect(outline(transform('\uFEFF::foo{bar=1}'))).toBe(
+      'paragraph("::foo{bar=1}")'
+    )
+  })
+
+  it('CRLF 换行的文档照常还原', () => {
+    expect(outline(transform('前言\r\n\r\n::foo{bar=1}\r\n\r\n后记'))).toBe(
+      'paragraph("前言"), paragraph("::foo{bar=1}"), paragraph("后记")'
     )
   })
 })

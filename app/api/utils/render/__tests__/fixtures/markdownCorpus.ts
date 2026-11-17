@@ -22,6 +22,7 @@ export type KunCorpusInvariant =
   | 'event-handler'
   | 'inline-style'
   | 'unsafe-url'
+  | 'dom-clobbering'
   | 'fragment-target'
 
 // 整段输出, 或 (输出很长时) 必须包含 / 不得包含的片段
@@ -533,55 +534,31 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'directive-container',
     tags: ['directive'],
     markdown: ':::note\n内容\n:::',
-    html: {
-      comment: '<p>:::note</p>\n<p>内容</p>\n<p>:::</p>',
-      note: '<p>:::note\n内容\n:::</p>',
-      introduction: '<p>:::note</p>\n<p>内容</p>\n<p>:::</p>'
-    }
+    html: '<p>:::note\n内容\n:::</p>'
   },
   {
     id: 'directive-container-label',
     tags: ['directive'],
     markdown: ':::note[标题]\n内容\n:::',
-    html: {
-      comment: '<p>:::note[标题]</p>\n<p>内容</p>\n<p>:::</p>',
-      note: '<p>:::note[标题]\n内容\n:::</p>',
-      introduction: '<p>:::note[标题]</p>\n<p>内容</p>\n<p>:::</p>'
-    }
+    html: '<p>:::note[标题]\n内容\n:::</p>'
   },
   {
     id: 'directive-container-unclosed',
     tags: ['directive'],
     markdown: ':::spoiler\n剧透内容',
-    html: {
-      comment: '<p>:::spoiler</p>\n<p>剧透内容</p>',
-      note: '<p>:::spoiler\n剧透内容</p>',
-      introduction: '<p>:::spoiler</p>\n<p>剧透内容</p>'
-    }
+    html: '<p>:::spoiler\n剧透内容</p>'
   },
   {
     id: 'directive-container-nested',
     tags: ['directive'],
     markdown: '::::outer\n:::inner\n内容\n:::\n::::',
-    html: {
-      comment:
-        '<p>::::outer</p>\n<p>:::inner</p>\n<p>内容</p>\n<p>:::</p>\n<p>::::</p>',
-      note: '<p>::::outer\n:::inner\n内容\n:::\n::::</p>',
-      introduction:
-        '<p>::::outer</p>\n<p>:::inner</p>\n<p>内容</p>\n<p>:::</p>\n<p>::::</p>'
-    }
+    html: '<p>::::outer\n:::inner\n内容\n:::\n::::</p>'
   },
   {
     id: 'directive-container-kun-video',
     tags: ['directive'],
     markdown: ':::kun-video{src="https://a.example/v.mp4"}\n内容\n:::',
-    html: {
-      comment:
-        '<p>:::kun-video{src="<a href="https://a.example/v.mp4" data-kun-external-link="" data-href="https://a.example/v.mp4" data-text="https://a.example/v.mp4">https://a.example/v.mp4</a>"}</p>\n<p>内容</p>\n<p>:::</p>',
-      note: '<p>:::kun-video{src="<a href="https://a.example/v.mp4%22%7D" data-kun-external-link="" data-href="https://a.example/v.mp4%22%7D" data-text="https://a.example/v.mp4&#x22;}">https://a.example/v.mp4"}</a>\n内容\n:::</p>',
-      introduction:
-        '<p>:::kun-video{src="<a href="https://a.example/v.mp4" data-kun-external-link="" data-href="https://a.example/v.mp4" data-text="https://a.example/v.mp4">https://a.example/v.mp4</a>"}</p>\n<p>内容</p>\n<p>:::</p>'
-    }
+    html: '<p>:::kun-video{src="<a href="https://a.example/v.mp4%22%7D" data-kun-external-link="" data-href="https://a.example/v.mp4%22%7D" data-text="https://a.example/v.mp4&#x22;}">https://a.example/v.mp4"}</a>\n内容\n:::</p>'
   },
   {
     id: 'directive-in-blockquote',
@@ -589,14 +566,13 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     markdown:
       '> ::kun-video{src="https://a.example/v.mp4"}\n>\n> :::note\n> 内容\n> :::',
     html: {
-      comment:
-        '<blockquote>\n<p>:::note</p>\n<p>内容</p>\n<p>:::</p>\n</blockquote>',
+      comment: '<blockquote>\n<p>:::note\n内容\n:::</p>\n</blockquote>',
       note: '<blockquote>\n<p>::kun-video{src="<a href="https://a.example/v.mp4%22%7D" data-kun-external-link="" data-href="https://a.example/v.mp4%22%7D" data-text="https://a.example/v.mp4&#x22;}">https://a.example/v.mp4"}</a></p>\n<p>:::note\n内容\n:::</p>\n</blockquote>',
       introduction: {
         includes: [
           '<blockquote>\n<div data-video-player=""',
           'data-src="https://a.example/v.mp4"',
-          '</div>\n<p>:::note</p>\n<p>内容</p>\n<p>:::</p>\n</blockquote>'
+          '</div>\n<p>:::note\n内容\n:::</p>\n</blockquote>'
         ]
       }
     }
@@ -616,6 +592,12 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
         ]
       }
     }
+  },
+  {
+    id: 'directive-restored-in-tight-list',
+    tags: ['directive'],
+    markdown: '- ::foo[bar]\n  text\n- c',
+    html: '<ul>\n<li>::foo[bar]\ntext</li>\n<li>c</li>\n</ul>'
   },
   {
     id: 'directive-in-code',

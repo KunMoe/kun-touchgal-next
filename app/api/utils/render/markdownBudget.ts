@@ -6,11 +6,11 @@
 // 权威结构上限, 作用在解析后的真实 mdast 上: 约 63 层列表或 126 层引用
 export const MARKDOWN_MAX_TREE_DEPTH = 128
 
-// 以下三项只是成本熔断, 不承担正确性: 同一行的容器标记与未闭合的容器指令都会让解析
-// 耗时随嵌套深度叠加 (2001 层指令解析 5 秒), 再深会在解析期栈溢出。漏判的输入仍由
-// 结构上限与入口的 catch 兜住, 只是要先付一次解析成本
+// 以下两项只是成本熔断, 不承担正确性: 同一行的容器标记会让解析耗时随嵌套深度叠加,
+// 再深会在解析期栈溢出。漏判的输入仍由结构上限与入口的 catch 兜住, 只是要先付一次
+// 解析成本。容器指令 (`:::名字`) 曾是第三项: 指令方言不再解析它 (见
+// utils/markdown/kunDialect.ts), 那种写法现在只是普通文字, 不会嵌套
 export const MARKDOWN_MAX_LINE_CONTAINER_MARKERS = 256
-export const MARKDOWN_MAX_DIRECTIVE_FENCE_LINES = 64
 // 解析器每遇到一个 ] 都要在本段已有的内容里回找与它配对的 [, 配上的图片还要把里层
 // 重新整理一遍: 一段里的方括号一多, 耗时按平方增长 (1 万字符的嵌套图片或一串 ] 约 1 秒,
 // 而得到的树只有两层, 结构上限看不到)。真实内容里一段最多 32 个
@@ -27,7 +27,6 @@ const DASH = 45
 const DOT = 46
 const DIGIT_0 = 48
 const DIGIT_9 = 57
-const COLON = 58
 const GREATER_THAN = 62
 const BRACKET_OPEN = 91
 const BRACKET_CLOSE = 93
@@ -36,14 +35,10 @@ const BOM = 0xfeff
 
 const isBlank = (code: number) => code === SPACE || code === TAB
 const isDigit = (code: number) => code >= DIGIT_0 && code <= DIGIT_9
-const isAsciiLetter = (code: number) =>
-  (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
 
 export interface MarkdownCost {
   // 单行行首连续的容器标记 (引用 `>`、列表 `-` `*` `+` `1.`) 个数的最大值
   maxLineContainerMarkers: number
-  // 容器指令的开启行 (`:::name`) 数; 每个开启行至多让嵌套加深一层
-  directiveFenceLines: number
   // 同一段 (空行分隔) 内 `[` 个数与 `]` 个数中较大者的最大值
   maxParagraphBrackets: number
 }
@@ -59,7 +54,6 @@ export interface MarkdownCost {
 export const measureMarkdownCost = (markdown: string): MarkdownCost => {
   const length = markdown.length
   let maxLineContainerMarkers = 0
-  let directiveFenceLines = 0
   let maxParagraphBrackets = 0
   let openBrackets = 0
   let closeBrackets = 0
@@ -181,38 +175,16 @@ export const measureMarkdownCost = (markdown: string): MarkdownCost => {
     if (markers > maxLineContainerMarkers) {
       maxLineContainerMarkers = markers
     }
-
-    // 容器指令开启行: 容器标记之后 3 个以上的冒号紧跟名字 (ASCII 字母开头);
-    // 只有冒号的行是闭合围栏, 不加深嵌套
-    if (
-      markdown.charCodeAt(index) === COLON &&
-      markdown.charCodeAt(index + 1) === COLON &&
-      markdown.charCodeAt(index + 2) === COLON
-    ) {
-      let nameStart = index + 3
-      while (nameStart < end && markdown.charCodeAt(nameStart) === COLON) {
-        nameStart++
-      }
-      if (nameStart < end && isAsciiLetter(markdown.charCodeAt(nameStart))) {
-        directiveFenceLines++
-      }
-    }
   }
 
-  return { maxLineContainerMarkers, directiveFenceLines, maxParagraphBrackets }
+  return { maxLineContainerMarkers, maxParagraphBrackets }
 }
 
-// directives: 该 profile 的处理器是否解析指令; 不解析时 `:::` 只是文本
-export const exceedsCostFuse = (
-  markdown: string,
-  opts: { directives: boolean }
-): boolean => {
+export const exceedsCostFuse = (markdown: string): boolean => {
   const cost = measureMarkdownCost(markdown)
   return (
     cost.maxLineContainerMarkers > MARKDOWN_MAX_LINE_CONTAINER_MARKERS ||
-    cost.maxParagraphBrackets > MARKDOWN_MAX_PARAGRAPH_BRACKETS ||
-    (opts.directives &&
-      cost.directiveFenceLines > MARKDOWN_MAX_DIRECTIVE_FENCE_LINES)
+    cost.maxParagraphBrackets > MARKDOWN_MAX_PARAGRAPH_BRACKETS
   )
 }
 

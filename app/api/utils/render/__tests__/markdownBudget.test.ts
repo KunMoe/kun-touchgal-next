@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MARKDOWN_MAX_DIRECTIVE_FENCE_LINES,
   MARKDOWN_MAX_LINE_CONTAINER_MARKERS,
   MARKDOWN_MAX_PARAGRAPH_BRACKETS,
   exceedsCostFuse,
@@ -11,8 +10,6 @@ import {
 
 const markers = (markdown: string) =>
   measureMarkdownCost(markdown).maxLineContainerMarkers
-const fences = (markdown: string) =>
-  measureMarkdownCost(markdown).directiveFenceLines
 const brackets = (markdown: string) =>
   measureMarkdownCost(markdown).maxParagraphBrackets
 
@@ -103,34 +100,6 @@ describe('measureMarkdownCost: 单行容器标记', () => {
   })
 })
 
-describe('measureMarkdownCost: 容器指令开启行', () => {
-  it('每个开启行计一次, 闭合围栏不计', () => {
-    expect(fences(':::a\n'.repeat(2001))).toBe(2001)
-    expect(fences(':::a\nx\n:::\n\n'.repeat(40))).toBe(40)
-    expect(fences('::::note{.warn}\n内容\n::::')).toBe(1)
-  })
-
-  it('容器标记之后的开启行同样计入', () => {
-    expect(fences('> :::a\n'.repeat(1400))).toBe(1400)
-    expect(fences('- :::a\n  x')).toBe(1)
-  })
-
-  it('孤立 CR 分隔的开启行逐行计入, 围栏代码内的也计入', () => {
-    expect(fences(`x\r${':::a\r'.repeat(2000)}`)).toBe(2000)
-    expect(fences(`- a\n  \`\`\`\n${':::a\n'.repeat(1999)}`)).toBe(1999)
-    expect(fences('```\n:::a\n```')).toBe(1)
-  })
-
-  it.each([
-    ['::kun-link{href="https://a.example" text="a"}'],
-    [':::'],
-    [':::123'],
-    ['文字 :::a']
-  ])('不是容器指令开启行: %j', (markdown) => {
-    expect(fences(markdown)).toBe(0)
-  })
-})
-
 describe('measureMarkdownCost: 同段方括号个数', () => {
   // 这些输入的树都只有两三层 (结构上限看不到), 解析却要 0.5~1 秒
   it.each([
@@ -175,32 +144,22 @@ describe('measureMarkdownCost: 同段方括号个数', () => {
     ['[链接](https://a.example) '.repeat(200), 200]
   ])('日志、歌词、链接列表离上限很远: %#', (markdown, expected) => {
     expect(brackets(markdown)).toBe(expected)
-    expect(exceedsCostFuse(markdown, { directives: true })).toBe(false)
+    expect(exceedsCostFuse(markdown)).toBe(false)
   })
 })
 
 describe('exceedsCostFuse', () => {
   it('同段方括号超过上限才熔断', () => {
     const atLimit = ']'.repeat(MARKDOWN_MAX_PARAGRAPH_BRACKETS)
-    const fuse = (markdown: string) =>
-      exceedsCostFuse(markdown, { directives: false })
-    expect(fuse(atLimit)).toBe(false)
-    expect(fuse(`${atLimit}]`)).toBe(true)
-    expect(fuse(`${atLimit}\n\n${atLimit}`)).toBe(false)
+    expect(exceedsCostFuse(atLimit)).toBe(false)
+    expect(exceedsCostFuse(`${atLimit}]`)).toBe(true)
+    expect(exceedsCostFuse(`${atLimit}\n\n${atLimit}`)).toBe(false)
   })
 
   it('单行容器标记超过上限才熔断', () => {
     const atLimit = `${'- '.repeat(MARKDOWN_MAX_LINE_CONTAINER_MARKERS)}x`
-    expect(exceedsCostFuse(atLimit, { directives: false })).toBe(false)
-    expect(exceedsCostFuse(`- ${atLimit}`, { directives: false })).toBe(true)
-  })
-
-  it('容器指令只在处理器解析指令时计入', () => {
-    const atLimit = ':::a\n'.repeat(MARKDOWN_MAX_DIRECTIVE_FENCE_LINES)
-    const overLimit = `${atLimit}:::a\n`
-    expect(exceedsCostFuse(atLimit, { directives: true })).toBe(false)
-    expect(exceedsCostFuse(overLimit, { directives: true })).toBe(true)
-    expect(exceedsCostFuse(overLimit, { directives: false })).toBe(false)
+    expect(exceedsCostFuse(atLimit)).toBe(false)
+    expect(exceedsCostFuse(`- ${atLimit}`)).toBe(true)
   })
 })
 

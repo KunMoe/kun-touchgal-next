@@ -26,20 +26,21 @@ import type { Node } from 'unist'
 //   pnpm exec esno scripts/diffMarkdownDialect.ts
 //
 // 看三处:
-// (1) 「其他」必须为 0 —— 那是下面三类成因解释不了的差异, 不为 0 不要发布;
-// (2) 「行内短代码变原文」「整行指令变原文」列出的简介, 发布后会多出一行短代码的
-//     原文 (原先是卡片 / 播放器, 或什么都不显示), 由管理员逐篇改正或删掉那一行;
+// (1) 「其他」必须为 0 —— 那是下面几类成因解释不了的差异, 不为 0 不要发布;
+// (2) 「行内短代码变原文」「指令写法变原文」列出的内容, 发布后会多出短代码或指令的
+//     原文 (原先是卡片 / 播放器, 或什么都不显示)。这两类是按「文中有这种写法」
+//     认定的, 要逐篇过目, 该改的由管理员改正或删掉那一行;
 // (3) 「冒号恢复」的样本确实是被吞掉的文字回来了。
 // 「空占位短代码」不用处理: 地址没填的短代码原先输出一个空标签, 现在不输出,
 // 页面上前后都看不见。
 // 发布并回填之后这份脚本即可删除
 //
-// 归类靠三条管线, 相邻两条只差一个变量:
-//   旧 = 上线前的管线 (解析行内 / 整行 / 容器三种指令; 评论全删, 简介认不出的变空 div)
-//   中 = 旧管线只去掉行内指令的解析
-//   新 = 现在的管线 (认不出的整行 / 容器指令还原成原文)
-// 旧≠中 的差异只可能来自行内指令 (冒号恢复 / 行内短代码); 中≠新 的差异只应来自
-// 「不合格的整行或容器指令」, 该行里找不到这种指令就算「其他」
+// 归类靠四条管线, 相邻两条只差一个变量, 所以前两段差异的成因是确定的:
+//   旧   = 上线前的管线 (解析行内 / 整行 / 容器三种指令; 评论全删, 简介认不出的变空 div)
+//   中   = 旧管线只去掉行内指令的解析            → 旧≠中: 冒号恢复 / 行内短代码
+//   占位 = 「中」再去掉地址没填的整行短代码      → 中≠占位: 空占位短代码
+//   新   = 现在的管线 (只认整行短代码, 认不出的按原文; 容器写法就是普通文字)
+// 占位≠新 的差异只应来自「不合格的整行指令或容器写法」, 文中找不到就算「其他」
 
 const BATCH_SIZE = 500
 const SAMPLE_LIMIT = 20
@@ -67,16 +68,33 @@ const parseLegacyKun = (node: DirectiveNode) => {
   return attrs ? { name, attrs } : null
 }
 
-const buildLegacy = (profile: Profile, inlineDirectives: boolean) => {
+const buildLegacy = (
+  profile: Profile,
+  variant: { inlineDirectives: boolean; dropBlank?: boolean }
+) => {
   const processor = unified()
   processor.use(remarkParse).use(remarkGfm).use(remarkFrontmatter)
   processor.use(function (this: Processor) {
     const data = this.data() as Record<string, unknown[] | undefined>
     ;(data.micromarkExtensions ??= []).push(
-      inlineDirectives ? directive() : { flow: directive().flow }
+      variant.inlineDirectives ? directive() : { flow: directive().flow }
     )
     ;(data.fromMarkdownExtensions ??= []).push(directiveFromMarkdown())
   })
+  if (variant.dropBlank) {
+    processor.use(() => (tree: Node) => {
+      const walk = (node: Node & { children?: Node[] }) => {
+        if (!Array.isArray(node.children)) {
+          return
+        }
+        node.children = node.children.filter(
+          (child) => !(isDirective(child) && fateOf(child) === 'blank')
+        )
+        node.children.forEach(walk)
+      }
+      walk(tree)
+    })
+  }
 
   if (profile === 'comment') {
     processor.use(() => (tree: Node) => {
@@ -114,17 +132,16 @@ const buildLegacy = (profile: Profile, inlineDirectives: boolean) => {
   return processor.freeze()
 }
 
+const pipelinesOf = (profile: Profile) => ({
+  old: buildLegacy(profile, { inlineDirectives: true }),
+  mid: buildLegacy(profile, { inlineDirectives: false }),
+  blank: buildLegacy(profile, { inlineDirectives: false, dropBlank: true }),
+  new: getKunMarkdownProcessor(profile)
+})
+
 const PIPELINES = {
-  comment: {
-    old: buildLegacy('comment', true),
-    mid: buildLegacy('comment', false),
-    new: getKunMarkdownProcessor('comment')
-  },
-  introduction: {
-    old: buildLegacy('introduction', true),
-    mid: buildLegacy('introduction', false),
-    new: getKunMarkdownProcessor('introduction')
-  }
+  comment: pipelinesOf('comment'),
+  introduction: pipelinesOf('introduction')
 }
 
 const render = (
@@ -152,10 +169,11 @@ const directivesOf = (
 }
 
 type Category =
-  '冒号恢复' | '行内短代码变原文' | '整行指令变原文' | '空占位短代码' | '其他'
+  '冒号恢复' | '行内短代码变原文' | '指令写法变原文' | '空占位短代码' | '其他'
 
-// 新管线对一个整行 / 容器指令的处置
-const fateOf = (node: DirectiveNode) => {
+// 新管线对「中」管线解析出的一个整行 / 容器指令的处置。容器写法现在是普通文字,
+// 同样算作按原文显示
+function fateOf(node: DirectiveNode) {
   if (
     node.type === 'leafDirective' &&
     Object.hasOwn(KUN_DIRECTIVES, node.name)
@@ -185,7 +203,7 @@ const createStats = (): SourceStats => ({
   categories: {
     冒号恢复: [],
     行内短代码变原文: [],
-    整行指令变原文: [],
+    指令写法变原文: [],
     空占位短代码: [],
     其他: []
   },
@@ -239,18 +257,17 @@ const inspect = (
       )
     categories.push(inlineKun ? '行内短代码变原文' : '冒号恢复')
   }
-  if (middle !== after) {
-    // 名字没注册、写成了容器、属性填了却不合格的还原成原文; 地址没填的不再输出空标签
-    const fates = directivesOf(pipelines.mid, markdown).map(fateOf)
-    if (fates.includes('restored')) {
-      categories.push('整行指令变原文')
-    }
-    if (fates.includes('blank')) {
-      categories.push('空占位短代码')
-    }
-    if (!fates.includes('restored') && !fates.includes('blank')) {
-      categories.push('其他')
-    }
+  const blanked = render(pipelines.blank, markdown)
+  if (middle !== blanked) {
+    // 地址没填的整行短代码不再输出空标签
+    categories.push('空占位短代码')
+  }
+  if (blanked !== after) {
+    // 名字没注册、属性填了却不合格的整行指令, 以及容器写法, 现在按原文显示
+    const restored = directivesOf(pipelines.mid, markdown).some(
+      (node) => fateOf(node) === 'restored'
+    )
+    categories.push(restored ? '指令写法变原文' : '其他')
   }
 
   for (const category of categories) {

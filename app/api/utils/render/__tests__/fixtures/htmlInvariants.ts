@@ -78,8 +78,15 @@ const parseTags = (html: string): HtmlTag[] => {
   return tags
 }
 
-// 能执行脚本、嵌入外部文档或改写页面行为的元素
+// 能执行脚本、嵌入外部文档或改写页面行为的元素。SVG 的动画元素能在运行时把别的
+// 元素的 href 改成任意地址, foreignObject 能把 HTML 再嵌回来
 const FORBIDDEN_ELEMENTS = new Set([
+  'set',
+  'animate',
+  'animatetransform',
+  'animatemotion',
+  'foreignobject',
+  'use',
   'script',
   'style',
   'iframe',
@@ -144,6 +151,16 @@ const decodeFragment = (fragment: string) => {
   }
 }
 
+// id / name 会在 document 与 window 上生成同名属性, 用户能起名字就能顶掉页面脚本
+// 要用的全局变量。管线放行它们时必须加前缀
+const CLOBBER_PREFIX = 'user-content-'
+
+const hasClobberingName = (tag: HtmlTag) =>
+  ['id', 'name'].some((name) => {
+    const value = tag.attributes.get(name)
+    return value !== undefined && !value.startsWith(CLOBBER_PREFIX)
+  })
+
 // 页内链接要能在同一份输出里找到对应的 id。语料里的 # 链接都是管线自己生成的
 // (脚注的引用与回链); 以后加入用户手写 #片段 的语料时, 要给这一条开例外
 const hasDanglingFragment = (tags: HtmlTag[]) => {
@@ -184,6 +201,9 @@ export const findInvariantViolations = (html: string): KunCorpusInvariant[] => {
   }
   if (tags.some(hasUnsafeUrl)) {
     violations.push('unsafe-url')
+  }
+  if (tags.some(hasClobberingName)) {
+    violations.push('dom-clobbering')
   }
   if (hasDanglingFragment(tags)) {
     violations.push('fragment-target')
