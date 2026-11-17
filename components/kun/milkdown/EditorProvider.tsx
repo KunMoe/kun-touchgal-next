@@ -20,7 +20,7 @@ import {
   usePluginViewFactory
 } from '@prosemirror-adapter/react'
 
-import { remarkDirective } from './plugins/components/remarkDirective'
+import { kunDirectives } from './plugins/components/kunDirectives'
 import { KunMilkdownPluginsMenu } from './plugins/Menu'
 import {
   kunUploader,
@@ -29,13 +29,11 @@ import {
 import {
   insertKunVideoCommand,
   kunVideoNodeViewOptions,
-  kunVideoRemarkDirective,
   videoInputRule,
   videoNode
 } from './plugins/components/video/videoPlugin'
 import {
   insertKunLinkCommand,
-  kunImageRemarkDirective,
   kunLinkInputRule,
   kunLinkNode,
   kunLinkNodeViewOptions
@@ -156,10 +154,9 @@ export const EditorProvider = ({
       .use(trailing)
       .use(upload)
       .use(automd)
-      .use([remarkDirective].flat())
+      .use([kunDirectives].flat())
       .use(
         [
-          kunVideoRemarkDirective,
           videoNode,
           $view(videoNode, () => nodeViewFactory(kunVideoNodeViewOptions)),
           insertKunVideoCommand,
@@ -168,7 +165,6 @@ export const EditorProvider = ({
       )
       .use(
         [
-          kunImageRemarkDirective,
           insertKunLinkCommand,
           kunLinkInputRule,
           kunLinkNode,

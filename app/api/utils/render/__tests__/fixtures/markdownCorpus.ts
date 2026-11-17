@@ -45,9 +45,6 @@ export interface KunCorpusEntry {
   }
 }
 
-const DIALECT_PENDING =
-  'T02 S3: 未注册、形态不符或属性校验失败的指令应按原文显示, 不该消失或变成空 div'
-
 export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
   // ---- XSS 载荷: 净化边界。危险地址被摘掉属性, 原始 HTML 整段不输出 ----
   {
@@ -176,34 +173,25 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'xss-kun-link-javascript',
     tags: ['xss', 'directive'],
     markdown: '::kun-link{href="javascript:alert(1)" text="x"}',
-    html: {
-      comment: '',
-      note: '<p>::kun-link{href="javascript:alert(1)" text="x"}</p>',
-      introduction: '<div></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+    html: '<p>::kun-link{href="javascript:alert(1)" text="x"}</p>'
   },
   {
     id: 'xss-kun-video-javascript',
     tags: ['xss', 'directive'],
     markdown: '::kun-video{src="javascript:alert(1)"}',
-    html: {
-      comment: '',
-      note: '<p>::kun-video{src="javascript:alert(1)"}</p>',
-      introduction: '<div></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+    html: '<p>::kun-video{src="javascript:alert(1)"}</p>'
   },
   {
     id: 'xss-kun-video-data-uri',
     tags: ['xss', 'directive'],
     markdown: '::kun-video{src="data:text/html,<script>alert(1)</script>"}',
     html: {
-      comment: '',
+      comment:
+        '<p>::kun-video{src="data:text/html,&#x3C;script>alert(1)&#x3C;/script>"}</p>',
       note: '<p>::kun-video{src="data:text/html,alert(1)"}</p>',
-      introduction: '<div></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+      introduction:
+        '<p>::kun-video{src="data:text/html,&#x3C;script>alert(1)&#x3C;/script>"}</p>'
+    }
   },
   {
     id: 'xss-kun-link-text-html',
@@ -246,103 +234,37 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'colon-time',
     tags: ['colon', 'plain'],
     markdown: '发售时间 10:30 开始',
-    html: {
-      comment: '<p>发售时间 10 开始</p>',
-      note: '<p>发售时间 10:30 开始</p>',
-      introduction: '<p>发售时间 10<div></div> 开始</p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p>发售时间 10:30 开始</p>',
-        introduction: '<p>发售时间 10:30 开始</p>'
-      }
-    }
+    html: '<p>发售时间 10:30 开始</p>'
   },
   {
     id: 'colon-note',
     tags: ['colon', 'plain'],
     markdown: '注:这个补丁很好',
-    html: {
-      comment: '<p>注</p>',
-      note: '<p>注:这个补丁很好</p>',
-      introduction: '<p>注<div></div></p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p>注:这个补丁很好</p>',
-        introduction: '<p>注:这个补丁很好</p>'
-      }
-    }
+    html: '<p>注:这个补丁很好</p>'
   },
   {
     id: 'colon-latin',
     tags: ['colon', 'plain'],
     markdown: 'Re:Zero 是一部作品',
-    html: {
-      comment: '<p>Re 是一部作品</p>',
-      note: '<p>Re:Zero 是一部作品</p>',
-      introduction: '<p>Re<div></div> 是一部作品</p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p>Re:Zero 是一部作品</p>',
-        introduction: '<p>Re:Zero 是一部作品</p>'
-      }
-    }
+    html: '<p>Re:Zero 是一部作品</p>'
   },
   {
     id: 'colon-cv',
     tags: ['colon', 'plain'],
     markdown: '主角 CV:花澤香菜',
-    html: {
-      comment: '<p>主角 CV</p>',
-      note: '<p>主角 CV:花澤香菜</p>',
-      introduction: '<p>主角 CV<div></div></p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p>主角 CV:花澤香菜</p>',
-        introduction: '<p>主角 CV:花澤香菜</p>'
-      }
-    }
+    html: '<p>主角 CV:花澤香菜</p>'
   },
   {
     id: 'colon-ratio',
     tags: ['colon', 'plain'],
     markdown: '比例 16:9 屏幕',
-    html: {
-      comment: '<p>比例 16 屏幕</p>',
-      note: '<p>比例 16:9 屏幕</p>',
-      introduction: '<p>比例 16<div></div> 屏幕</p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p>比例 16:9 屏幕</p>',
-        introduction: '<p>比例 16:9 屏幕</p>'
-      }
-    }
+    html: '<p>比例 16:9 屏幕</p>'
   },
   {
     id: 'colon-magnet-text',
     tags: ['colon', 'plain'],
     markdown: 'magnet:?xt=urn:btih:5d3fab0c1e',
-    html: {
-      comment: '<p>magnet:?xt=urn:btih</p>',
-      note: '<p>magnet:?xt=urn:btih:5d3fab0c1e</p>',
-      introduction: '<p>magnet:?xt=urn:btih<div></div></p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p>magnet:?xt=urn:btih:5d3fab0c1e</p>',
-        introduction: '<p>magnet:?xt=urn:btih:5d3fab0c1e</p>'
-      }
-    }
+    html: '<p>magnet:?xt=urn:btih:5d3fab0c1e</p>'
   },
   {
     id: 'colon-shortcode',
@@ -366,111 +288,37 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'colon-attributes',
     tags: ['colon'],
     markdown: '比例 16:9{.wide} 屏幕',
-    html: {
-      comment: '<p>比例 16 屏幕</p>',
-      note: '<p>比例 16:9{.wide} 屏幕</p>',
-      introduction: '<p>比例 16<div></div> 屏幕</p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p>比例 16:9{.wide} 屏幕</p>',
-        introduction: '<p>比例 16:9{.wide} 屏幕</p>'
-      }
-    }
+    html: '<p>比例 16:9{.wide} 屏幕</p>'
   },
   {
     id: 'colon-label',
     tags: ['colon'],
     markdown: 'a:b[**c**] d',
-    html: {
-      comment: '<p>a d</p>',
-      note: '<p>a:b[<strong>c</strong>] d</p>',
-      introduction: '<p>a<div><strong>c</strong></div> d</p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p>a:b[<strong>c</strong>] d</p>',
-        introduction: '<p>a:b[<strong>c</strong>] d</p>'
-      }
-    }
+    html: '<p>a:b[<strong>c</strong>] d</p>'
   },
   {
     id: 'colon-label-link',
     tags: ['colon'],
     markdown: 'Re:Zero[1](https://x.example/a) 后文',
-    html: {
-      comment:
-        '<p>Re(<a href="https://x.example/a" data-kun-external-link="" data-href="https://x.example/a" data-text="https://x.example/a">https://x.example/a</a>) 后文</p>',
-      note: '<p>Re:Zero<a href="https://x.example/a" data-kun-external-link="" data-href="https://x.example/a" data-text="1">1</a> 后文</p>',
-      introduction:
-        '<p>Re<div>1</div>(<a href="https://x.example/a" data-kun-external-link="" data-href="https://x.example/a" data-text="https://x.example/a">https://x.example/a</a>) 后文</p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment:
-          '<p>Re:Zero<a href="https://x.example/a" data-kun-external-link="" data-href="https://x.example/a" data-text="1">1</a> 后文</p>',
-        introduction:
-          '<p>Re:Zero<a href="https://x.example/a" data-kun-external-link="" data-href="https://x.example/a" data-text="1">1</a> 后文</p>'
-      }
-    }
+    html: '<p>Re:Zero<a href="https://x.example/a" data-kun-external-link="" data-href="https://x.example/a" data-text="1">1</a> 后文</p>'
   },
   {
     id: 'colon-in-strong',
     tags: ['colon'],
     markdown: '**Re:Zero** 粗体',
-    html: {
-      comment: '<p><strong>Re</strong> 粗体</p>',
-      note: '<p><strong>Re:Zero</strong> 粗体</p>',
-      introduction: '<p><strong>Re<div></div></strong> 粗体</p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p><strong>Re:Zero</strong> 粗体</p>',
-        introduction: '<p><strong>Re:Zero</strong> 粗体</p>'
-      }
-    }
+    html: '<p><strong>Re:Zero</strong> 粗体</p>'
   },
   {
     id: 'colon-before-strong',
     tags: ['colon'],
     markdown: 'CV:花澤香菜**粗体**',
-    html: {
-      comment: '<p>CV<strong>粗体</strong></p>',
-      note: '<p>CV:花澤香菜<strong>粗体</strong></p>',
-      introduction: '<p>CV<div></div><strong>粗体</strong></p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment: '<p>CV:花澤香菜<strong>粗体</strong></p>',
-        introduction: '<p>CV:花澤香菜<strong>粗体</strong></p>'
-      }
-    }
+    html: '<p>CV:花澤香菜<strong>粗体</strong></p>'
   },
   {
     id: 'colon-in-link-text',
     tags: ['colon'],
     markdown: '[Re:Zero](https://example.com/re)',
-    html: {
-      comment:
-        '<p><a href="https://example.com/re" data-kun-external-link="" data-href="https://example.com/re" data-text="Re">Re</a></p>',
-      note: '<p><a href="https://example.com/re" data-kun-external-link="" data-href="https://example.com/re" data-text="Re:Zero">Re:Zero</a></p>',
-      introduction:
-        '<p><a href="https://example.com/re" data-kun-external-link="" data-href="https://example.com/re" data-text="Re">Re<div></div></a></p>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment:
-          '<p><a href="https://example.com/re" data-kun-external-link="" data-href="https://example.com/re" data-text="Re:Zero">Re:Zero</a></p>',
-        introduction:
-          '<p><a href="https://example.com/re" data-kun-external-link="" data-href="https://example.com/re" data-text="Re:Zero">Re:Zero</a></p>'
-      }
-    }
+    html: '<p><a href="https://example.com/re" data-kun-external-link="" data-href="https://example.com/re" data-text="Re:Zero">Re:Zero</a></p>'
   },
   {
     id: 'colon-in-url',
@@ -489,22 +337,7 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     tags: ['colon'],
     markdown:
       '# CV:花澤香菜\n\n- 16:9\n\n> 注:说明\n\n| a:b |\n| --- |\n| c:d |',
-    html: {
-      comment:
-        '<h1>CV</h1>\n<ul>\n<li>16</li>\n</ul>\n<blockquote>\n<p>注</p>\n</blockquote>\n<table>\n<thead>\n<tr>\n<th>a</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>c</td>\n</tr>\n</tbody>\n</table>',
-      note: '<h1>CV:花澤香菜</h1>\n<ul>\n<li>16:9</li>\n</ul>\n<blockquote>\n<p>注:说明</p>\n</blockquote>\n<table>\n<thead>\n<tr>\n<th>a:b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>c:d</td>\n</tr>\n</tbody>\n</table>',
-      introduction:
-        '<h1>CV<div></div></h1>\n<ul>\n<li>16<div></div></li>\n</ul>\n<blockquote>\n<p>注<div></div></p>\n</blockquote>\n<table>\n<thead>\n<tr>\n<th>a<div></div></th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>c<div></div></td>\n</tr>\n</tbody>\n</table>'
-    },
-    knownBad: {
-      defect: 'P11-01',
-      want: {
-        comment:
-          '<h1>CV:花澤香菜</h1>\n<ul>\n<li>16:9</li>\n</ul>\n<blockquote>\n<p>注:说明</p>\n</blockquote>\n<table>\n<thead>\n<tr>\n<th>a:b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>c:d</td>\n</tr>\n</tbody>\n</table>',
-        introduction:
-          '<h1>CV:花澤香菜</h1>\n<ul>\n<li>16:9</li>\n</ul>\n<blockquote>\n<p>注:说明</p>\n</blockquote>\n<table>\n<thead>\n<tr>\n<th>a:b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>c:d</td>\n</tr>\n</tbody>\n</table>'
-      }
-    }
+    html: '<h1>CV:花澤香菜</h1>\n<ul>\n<li>16:9</li>\n</ul>\n<blockquote>\n<p>注:说明</p>\n</blockquote>\n<table>\n<thead>\n<tr>\n<th>a:b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>c:d</td>\n</tr>\n</tbody>\n</table>'
   },
 
   // ---- 指令 ----
@@ -578,11 +411,33 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     tags: ['directive'],
     markdown: '::kun-link{href="https://a.example"}',
     html: {
-      comment: '',
+      comment:
+        '<p>::kun-link{href="<a href="https://a.example" data-kun-external-link="" data-href="https://a.example" data-text="https://a.example">https://a.example</a>"}</p>',
       note: '<p>::kun-link{href="<a href="https://a.example%22%7D" data-kun-external-link="" data-href="https://a.example%22%7D" data-text="https://a.example&#x22;}">https://a.example"}</a></p>',
-      introduction: '<div></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+      introduction:
+        '<p>::kun-link{href="<a href="https://a.example" data-kun-external-link="" data-href="https://a.example" data-text="https://a.example">https://a.example</a>"}</p>'
+    }
+  },
+  {
+    id: 'directive-link-blank',
+    tags: ['directive'],
+    markdown:
+      '## 支持正版\n\n::kun-link{href="" text="点我前往购买, 游戏官网可能需要代理打开"}',
+    html: {
+      comment: '<h2>支持正版</h2>',
+      note: '<h2>支持正版</h2>\n<p>::kun-link{href="" text="点我前往购买, 游戏官网可能需要代理打开"}</p>',
+      introduction: '<h2>支持正版</h2>'
+    }
+  },
+  {
+    id: 'directive-video-blank',
+    tags: ['directive'],
+    markdown: '前言\n\n::kun-video{src=""}\n\n后记',
+    html: {
+      comment: '<p>前言</p>\n<p>后记</p>',
+      note: '<p>前言</p>\n<p>::kun-video{src=""}</p>\n<p>后记</p>',
+      introduction: '<p>前言</p>\n<p>后记</p>'
+    }
   },
   {
     id: 'directive-video-unquoted',
@@ -633,43 +488,24 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     tags: ['directive'],
     markdown: '::KUN-VIDEO{src="https://a.example/v.mp4"}',
     html: {
-      comment: '',
+      comment:
+        '<p>::KUN-VIDEO{src="<a href="https://a.example/v.mp4" data-kun-external-link="" data-href="https://a.example/v.mp4" data-text="https://a.example/v.mp4">https://a.example/v.mp4</a>"}</p>',
       note: '<p>::KUN-VIDEO{src="<a href="https://a.example/v.mp4%22%7D" data-kun-external-link="" data-href="https://a.example/v.mp4%22%7D" data-text="https://a.example/v.mp4&#x22;}">https://a.example/v.mp4"}</a></p>',
-      introduction: '<div></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+      introduction:
+        '<p>::KUN-VIDEO{src="<a href="https://a.example/v.mp4" data-kun-external-link="" data-href="https://a.example/v.mp4" data-text="https://a.example/v.mp4">https://a.example/v.mp4</a>"}</p>'
+    }
   },
   {
     id: 'directive-inline-kun-link',
     tags: ['directive'],
     markdown: '前文 :kun-link{href="https://a.example" text="t"} 后文',
-    html: {
-      comment: '<p>前文  后文</p>',
-      note: '<p>前文 :kun-link{href="<a href="https://a.example" data-kun-external-link="" data-href="https://a.example" data-text="https://a.example">https://a.example</a>" text="t"} 后文</p>',
-      introduction: {
-        includes: [
-          '<p>前文 <div data-kun-link=""',
-          '<a href="https://a.example"'
-        ]
-      }
-    },
-    knownBad: { defect: DIALECT_PENDING }
+    html: '<p>前文 :kun-link{href="<a href="https://a.example" data-kun-external-link="" data-href="https://a.example" data-text="https://a.example">https://a.example</a>" text="t"} 后文</p>'
   },
   {
     id: 'directive-inline-kun-video',
     tags: ['directive'],
     markdown: '前文 :kun-video{src="https://a.example/v.mp4"} 后文',
-    html: {
-      comment: '<p>前文  后文</p>',
-      note: '<p>前文 :kun-video{src="<a href="https://a.example/v.mp4%22%7D" data-kun-external-link="" data-href="https://a.example/v.mp4%22%7D" data-text="https://a.example/v.mp4&#x22;}">https://a.example/v.mp4"}</a> 后文</p>',
-      introduction: {
-        includes: [
-          '<p>前文 <div data-video-player=""',
-          'data-src="https://a.example/v.mp4"'
-        ]
-      }
-    },
-    knownBad: { defect: DIALECT_PENDING }
+    html: '<p>前文 :kun-video{src="<a href="https://a.example/v.mp4%22%7D" data-kun-external-link="" data-href="https://a.example/v.mp4%22%7D" data-text="https://a.example/v.mp4&#x22;}">https://a.example/v.mp4"}</a> 后文</p>'
   },
   {
     id: 'directive-midline-double-colon',
@@ -681,83 +517,71 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'directive-unknown-leaf',
     tags: ['directive'],
     markdown: '::foo{bar=1}',
-    html: {
-      comment: '',
-      note: '<p>::foo{bar=1}</p>',
-      introduction: '<div></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+    html: '<p>::foo{bar=1}</p>'
   },
   {
     id: 'directive-unknown-leaf-label',
     tags: ['directive'],
     markdown: '::foo[标签 **粗体**]{bar=1}',
     html: {
-      comment: '',
+      comment: '<p>::foo[标签 **粗体**]{bar=1}</p>',
       note: '<p>::foo[标签 <strong>粗体</strong>]{bar=1}</p>',
-      introduction: '<div>标签 <strong>粗体</strong></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+      introduction: '<p>::foo[标签 **粗体**]{bar=1}</p>'
+    }
   },
   {
     id: 'directive-container',
     tags: ['directive'],
     markdown: ':::note\n内容\n:::',
     html: {
-      comment: '',
+      comment: '<p>:::note</p>\n<p>内容</p>\n<p>:::</p>',
       note: '<p>:::note\n内容\n:::</p>',
-      introduction: '<div><p>内容</p></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+      introduction: '<p>:::note</p>\n<p>内容</p>\n<p>:::</p>'
+    }
   },
   {
     id: 'directive-container-label',
     tags: ['directive'],
     markdown: ':::note[标题]\n内容\n:::',
     html: {
-      comment: '',
+      comment: '<p>:::note[标题]</p>\n<p>内容</p>\n<p>:::</p>',
       note: '<p>:::note[标题]\n内容\n:::</p>',
-      introduction: '<div><p>标题</p><p>内容</p></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+      introduction: '<p>:::note[标题]</p>\n<p>内容</p>\n<p>:::</p>'
+    }
   },
   {
     id: 'directive-container-unclosed',
     tags: ['directive'],
     markdown: ':::spoiler\n剧透内容',
     html: {
-      comment: '',
+      comment: '<p>:::spoiler</p>\n<p>剧透内容</p>',
       note: '<p>:::spoiler\n剧透内容</p>',
-      introduction: '<div><p>剧透内容</p></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+      introduction: '<p>:::spoiler</p>\n<p>剧透内容</p>'
+    }
   },
   {
     id: 'directive-container-nested',
     tags: ['directive'],
     markdown: '::::outer\n:::inner\n内容\n:::\n::::',
     html: {
-      comment: '',
+      comment:
+        '<p>::::outer</p>\n<p>:::inner</p>\n<p>内容</p>\n<p>:::</p>\n<p>::::</p>',
       note: '<p>::::outer\n:::inner\n内容\n:::\n::::</p>',
-      introduction: '<div><div><p>内容</p></div></div>'
-    },
-    knownBad: { defect: DIALECT_PENDING }
+      introduction:
+        '<p>::::outer</p>\n<p>:::inner</p>\n<p>内容</p>\n<p>:::</p>\n<p>::::</p>'
+    }
   },
   {
     id: 'directive-container-kun-video',
     tags: ['directive'],
     markdown: ':::kun-video{src="https://a.example/v.mp4"}\n内容\n:::',
     html: {
-      comment: '',
+      comment:
+        '<p>:::kun-video{src="<a href="https://a.example/v.mp4" data-kun-external-link="" data-href="https://a.example/v.mp4" data-text="https://a.example/v.mp4">https://a.example/v.mp4</a>"}</p>\n<p>内容</p>\n<p>:::</p>',
       note: '<p>:::kun-video{src="<a href="https://a.example/v.mp4%22%7D" data-kun-external-link="" data-href="https://a.example/v.mp4%22%7D" data-text="https://a.example/v.mp4&#x22;}">https://a.example/v.mp4"}</a>\n内容\n:::</p>',
-      introduction: {
-        includes: [
-          '<div data-video-player=""',
-          'data-src="https://a.example/v.mp4"'
-        ]
-      }
-    },
-    knownBad: { defect: DIALECT_PENDING }
+      introduction:
+        '<p>:::kun-video{src="<a href="https://a.example/v.mp4" data-kun-external-link="" data-href="https://a.example/v.mp4" data-text="https://a.example/v.mp4">https://a.example/v.mp4</a>"}</p>\n<p>内容</p>\n<p>:::</p>'
+    }
   },
   {
     id: 'directive-in-blockquote',
@@ -765,29 +589,33 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     markdown:
       '> ::kun-video{src="https://a.example/v.mp4"}\n>\n> :::note\n> 内容\n> :::',
     html: {
-      comment: '<blockquote>\n</blockquote>',
+      comment:
+        '<blockquote>\n<p>:::note</p>\n<p>内容</p>\n<p>:::</p>\n</blockquote>',
       note: '<blockquote>\n<p>::kun-video{src="<a href="https://a.example/v.mp4%22%7D" data-kun-external-link="" data-href="https://a.example/v.mp4%22%7D" data-text="https://a.example/v.mp4&#x22;}">https://a.example/v.mp4"}</a></p>\n<p>:::note\n内容\n:::</p>\n</blockquote>',
       introduction: {
         includes: [
           '<blockquote>\n<div data-video-player=""',
-          'data-src="https://a.example/v.mp4"'
+          'data-src="https://a.example/v.mp4"',
+          '</div>\n<p>:::note</p>\n<p>内容</p>\n<p>:::</p>\n</blockquote>'
         ]
       }
-    },
-    knownBad: { defect: DIALECT_PENDING }
+    }
   },
   {
     id: 'directive-in-list',
     tags: ['directive'],
     markdown: '- ::foo\n- ::kun-link{href="https://a.example" text="t"}',
     html: {
-      comment: '<ul>\n<li></li>\n<li></li>\n</ul>',
+      comment: '<ul>\n<li>::foo</li>\n<li></li>\n</ul>',
       note: '<ul>\n<li>::foo</li>\n<li>::kun-link{href="<a href="https://a.example" data-kun-external-link="" data-href="https://a.example" data-text="https://a.example">https://a.example</a>" text="t"}</li>\n</ul>',
       introduction: {
-        includes: ['<div data-kun-link=""', '<a href="https://a.example"']
+        includes: [
+          '<ul>\n<li>::foo</li>\n<li>',
+          '<div data-kun-link=""',
+          '<a href="https://a.example"'
+        ]
       }
-    },
-    knownBad: { defect: DIALECT_PENDING }
+    }
   },
   {
     id: 'directive-in-code',

@@ -99,7 +99,8 @@ const renderUncached = async (
     if (treeDepthExceeds(tree, MARKDOWN_MAX_TREE_DEPTH)) {
       return failure(profile, markdown, 'too-deep')
     }
-    const hast = await processor.run(tree)
+    // 原文一并交给 run: 指令方言靠它把未注册的指令还原成原文
+    const hast = await processor.run(tree, markdown)
     // 每个 profile 的处理器都经过 rehypeSanitize, 输出即已净化 HTML
     const html = processor.stringify(hast) as KunSafeHtml
     return { ok: true, html, version: KUN_MARKDOWN_PROFILES[profile].version }

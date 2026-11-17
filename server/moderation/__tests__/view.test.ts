@@ -119,11 +119,12 @@ describe('buildAuditView: markdown 段审「读者所见 + 原文」两面', () 
   // X09-02: 旧实现按字符集把它整段替换成「[图片]」
   it('伪装成 base64 的数字串不再被替换成占位, 黑名单命中', async () => {
     const markdown = '好东西都在这 data:1;base64,987654321'
-    const { shown, source } = await viewOfComment(markdown)
 
-    expect(shown).toContain('987654321')
-    expect(shown).not.toContain('[图片]')
-    expect(source).toBe(markdown)
+    // 读者看到的就是原文: 冒号后面的字不再被渲染吞掉, 两面相同, 只送一面
+    expect(await viewOfComment(markdown)).toEqual({
+      label: '评论',
+      shown: markdown
+    })
     expect(await blacklistHits(markdown, '987654321')).toBe(true)
   })
 
@@ -169,10 +170,21 @@ describe('buildAuditView: markdown 段审「读者所见 + 原文」两面', () 
   })
 
   it.each([
-    ['容器指令', ':::note\n加群987654321\n:::'],
-    ['叶子指令', '::kun-x[加群987654321]'],
+    ['短代码', '::kun-link{href="https://t.me/x" text="加群987654321"}'],
     ['HTML 块', '<div>\n加群987654321\n</div>']
   ])('%s渲染为空时只送原文', async (_name, markdown) => {
+    expect(await viewOfComment(markdown)).toEqual({
+      label: '评论',
+      shown: markdown
+    })
+    expect(await blacklistHits(markdown, '987654321')).toBe(true)
+  })
+
+  // 认不出的指令按原文显示: 读者看到的与原文相同, 同样只送一面
+  it.each([
+    ['容器写法', ':::note\n加群987654321\n:::'],
+    ['没注册的名字', '::kun-x[加群987654321]']
+  ])('认不出的指令 (%s) 原样可见, 黑名单命中', async (_name, markdown) => {
     expect(await viewOfComment(markdown)).toEqual({
       label: '评论',
       shown: markdown

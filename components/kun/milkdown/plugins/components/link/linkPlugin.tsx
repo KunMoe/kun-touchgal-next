@@ -1,21 +1,22 @@
 'use client'
 
-import { $command, $inputRule, $node, $remark } from '@milkdown/utils'
+import { $command, $inputRule, $node } from '@milkdown/utils'
 import { Node } from '@milkdown/prose/model'
 import { InputRule } from '@milkdown/prose/inputrules'
 import {
   useNodeViewContext,
   type ReactNodeViewUserOptions
 } from '@prosemirror-adapter/react'
-import directive from 'remark-directive'
+import {
+  parseKunLinkAttrs,
+  readKunDirective
+} from '~/utils/markdown/kunDialect'
 import { KunLink } from './KunLink'
 
 interface InsertKunLinkCommandPayload {
   href: string
   text: string
 }
-
-export const kunImageRemarkDirective = $remark('kun-link', () => directive)
 
 // leaf 节点, 理由同 videoPlugin.tsx 的 videoNode
 export const kunLinkNode = $node('kun-link', () => ({
@@ -30,10 +31,11 @@ export const kunLinkNode = $node('kun-link', () => ({
   parseDOM: [
     {
       tag: 'div[data-kun-link]',
-      getAttrs: (dom) => ({
-        href: dom.getAttribute('data-href'),
-        text: dom.getAttribute('data-text')
-      })
+      getAttrs: (dom) =>
+        parseKunLinkAttrs({
+          href: dom.getAttribute('data-href'),
+          text: dom.getAttribute('data-text')
+        }) ?? false
     }
   ],
   // 只服务剪贴板 / 拖拽的 HTML 序列化, 编辑器内的实际渲染走下方 nodeView
@@ -45,14 +47,11 @@ export const kunLinkNode = $node('kun-link', () => ({
       'data-text': node.attrs.text
     }
   ],
+  // 只认方言插件标记过的节点, 理由同 videoPlugin.tsx
   parseMarkdown: {
-    match: (node) => node.name === 'kun-link',
+    match: (node) => readKunDirective(node, 'kun-link') !== null,
     runner: (state, node, type) => {
-      const { href, text } = node.attributes as InsertKunLinkCommandPayload
-      state.addNode(type, {
-        href,
-        text
-      })
+      state.addNode(type, readKunDirective(node, 'kun-link') ?? undefined)
     }
   },
   toMarkdown: {
@@ -81,10 +80,15 @@ export const insertKunLinkCommand = $command(
   (ctx) =>
     (payload: InsertKunLinkCommandPayload = { href: '', text: '' }) =>
     (state, dispatch) => {
+      // 发布端不认的链接不建节点, 理由同 videoPlugin.tsx
+      const attrs = parseKunLinkAttrs({
+        href: payload.href,
+        text: payload.text
+      })
+      if (!attrs) return false
       if (!dispatch) return true
 
-      const { href = '', text = '' } = payload
-      const node = kunLinkNode.type(ctx).create({ href, text })
+      const node = kunLinkNode.type(ctx).create(attrs)
 
       if (!node) return true
 
@@ -101,12 +105,13 @@ export const kunLinkInputRule = $inputRule(
       (state, match, start, end) => {
         const [matched, text = '', href = ''] = match
         const { tr } = state
+        const attrs = matched ? parseKunLinkAttrs({ href, text }) : null
 
-        if (matched) {
+        if (attrs) {
           return tr.replaceWith(
             start - 1,
             end,
-            kunLinkNode.type(ctx).create({ href, text })
+            kunLinkNode.type(ctx).create(attrs)
           )
         }
         return null

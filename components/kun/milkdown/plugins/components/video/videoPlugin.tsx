@@ -1,6 +1,6 @@
 'use client'
 
-import { $command, $inputRule, $node, $remark } from '@milkdown/utils'
+import { $command, $inputRule, $node } from '@milkdown/utils'
 import { Node } from '@milkdown/prose/model'
 import { InputRule } from '@milkdown/prose/inputrules'
 import {
@@ -8,9 +8,10 @@ import {
   type ReactNodeViewUserOptions
 } from '@prosemirror-adapter/react'
 import dynamic from 'next/dynamic'
-import directive from 'remark-directive'
-
-export const kunVideoRemarkDirective = $remark('kun-video', () => directive)
+import {
+  parseKunVideoAttrs,
+  readKunDirective
+} from '~/utils/markdown/kunDialect'
 
 const KunPlyr = dynamic(() => import('./Plyr').then((mod) => mod.KunPlyr), {
   ssr: false
@@ -32,9 +33,8 @@ export const videoNode = $node('kun-video', () => ({
   parseDOM: [
     {
       tag: 'div[data-video-player]',
-      getAttrs: (dom) => ({
-        src: dom.getAttribute('data-src')
-      })
+      getAttrs: (dom) =>
+        parseKunVideoAttrs({ src: dom.getAttribute('data-src') }) ?? false
     }
   ],
   // 只服务剪贴板 / 拖拽的 HTML 序列化, 编辑器内的实际渲染走下方 nodeView
@@ -42,10 +42,11 @@ export const videoNode = $node('kun-video', () => ({
     'div',
     { 'data-video-player': '', 'data-src': node.attrs.src }
   ],
+  // 只认方言插件标记过的节点: 属性已按发布端的同一份规则校验
   parseMarkdown: {
-    match: (node) => node.name === 'kun-video',
+    match: (node) => readKunDirective(node, 'kun-video') !== null,
     runner: (state, node, type) => {
-      state.addNode(type, { src: (node.attributes as { src: string }).src })
+      state.addNode(type, readKunDirective(node, 'kun-video') ?? undefined)
     }
   },
   toMarkdown: {
@@ -85,11 +86,15 @@ export const insertKunVideoCommand = $command(
   (ctx) =>
     (payload: InsertKunVideoCommandPayload = { src: '' }) =>
     (state, dispatch) => {
+      // 发布端不认的地址不建节点: 否则编辑器里是播放器, 发布后却是一行原文
+      const attrs = parseKunVideoAttrs({ src: payload.src })
+      if (!attrs) {
+        return false
+      }
       if (!dispatch) {
         return true
       }
-      const { src = '' } = payload
-      const node = videoNode.type(ctx).create({ src })
+      const node = videoNode.type(ctx).create(attrs)
       if (!node) {
         return true
       }
@@ -107,11 +112,12 @@ export const videoInputRule = $inputRule(
       (state, match, start, end) => {
         const [matched, src = ''] = match
         const { tr } = state
-        if (matched) {
+        const attrs = matched ? parseKunVideoAttrs({ src }) : null
+        if (attrs) {
           return tr.replaceWith(
             start - 1,
             end,
-            videoNode.type(ctx).create({ src })
+            videoNode.type(ctx).create(attrs)
           )
         }
         return null

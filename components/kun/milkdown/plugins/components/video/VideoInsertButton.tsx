@@ -10,6 +10,7 @@ import {
   Tooltip
 } from '@heroui/react'
 import { Video } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { insertKunVideoCommand } from './videoPlugin'
 import type { CmdKey } from '@milkdown/core'
 
@@ -22,7 +23,10 @@ export const VideoInsertButton = ({ call }: VideoInsertButtonProps) => {
   const [isOpen, setIsOpen] = useState(false)
 
   const handleVideoInsert = () => {
-    call(insertKunVideoCommand.key, { src: link })
+    if (call(insertKunVideoCommand.key, { src: link }) === false) {
+      toast.error('视频地址无效, 仅支持 http / https 链接')
+      return
+    }
     setLink('')
     setIsOpen(false)
   }

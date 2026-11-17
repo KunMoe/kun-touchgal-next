@@ -1,19 +1,19 @@
 import rehypeSanitize from 'rehype-sanitize'
 import rehypeStringify from 'rehype-stringify'
-import remarkDirective from 'remark-directive'
 import remarkFrontmatter from 'remark-frontmatter'
 import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
 import { unified } from 'unified'
+import { remarkKunDirectives } from '~/utils/markdown/kunDialect'
 import { KUN_MARKDOWN_PROFILES } from './profiles'
 import { rehypeKunImageLoading } from './rehypeKunImageLoading'
 import { remarkKunExternalLinks } from './remarkKunExternalLinks'
 import { remarkKunLink } from './remarkKunLink'
 import { remarkKunVideo } from './remarkKunVideo'
 import { remarkKunWrapImage } from './remarkKunWrapImage'
-import type { Plugin, Processor } from 'unified'
-import type { Node, Parent } from 'unist'
+import type { Processor } from 'unified'
+import type { Parent } from 'unist'
 import type { KunMarkdownProfile, KunMarkdownProfileSpec } from './profiles'
 
 // 条件装配的插件链推不出各阶段的树类型, 这里只声明到「带 children 的根节点」:
@@ -26,24 +26,6 @@ export type KunMarkdownProcessor = Processor<
   string
 >
 
-const isDirectiveNode = (type: string) =>
-  type === 'containerDirective' ||
-  type === 'leafDirective' ||
-  type === 'textDirective'
-
-const remarkDropDirectives: Plugin<[], Node> = () => {
-  const walk = (node: any) => {
-    if (!node || !Array.isArray(node.children)) {
-      return
-    }
-    node.children = node.children.filter(
-      (child: any) => !isDirectiveNode(child.type)
-    )
-    node.children.forEach(walk)
-  }
-  return (tree) => walk(tree)
-}
-
 // 各 profile 的处理器只在这里组装, 阶段顺序对所有 profile 相同
 const createProcessor = (
   profile: KunMarkdownProfileSpec
@@ -53,13 +35,10 @@ const createProcessor = (
   // 语法
   processor.use(remarkParse).use(remarkGfm).use(remarkFrontmatter)
   if (profile.directives !== 'off') {
-    processor.use(remarkDirective)
+    processor.use(remarkKunDirectives, { mode: profile.directives })
   }
 
   // markdown 树上的变换
-  if (profile.directives === 'drop') {
-    processor.use(remarkDropDirectives)
-  }
   if (profile.directives === 'render') {
     processor.use(remarkKunVideo).use(remarkKunLink)
   }

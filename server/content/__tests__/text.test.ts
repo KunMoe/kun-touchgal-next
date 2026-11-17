@@ -147,11 +147,18 @@ describe('kunHtmlToText audit: 给审核看, 读者点得到的地址都保留',
 
   // 这些内容渲染后不可见, 但原文会出现在通知与个人主页里 —— 所以审核不能只看投影
   it.each([
-    ['容器指令', ':::note\n加群987654321\n:::'],
+    ['短代码', '::kun-link{href="https://t.me/x" text="加群987654321"}'],
     ['HTML 块', '<div>\n加群987654321\n</div>'],
     ['HTML 注释', '<!-- 加群 987654321 -->']
   ])('评论里的%s渲染为空, 投影也为空', async (_name, markdown) => {
     expect(kunHtmlToText(await comment(markdown), 'audit')).toBe('')
+  })
+
+  // 认不出的指令不再被吞掉: 按原文显示, 投影里也就有它
+  it('评论里认不出的指令按原文可见', async () => {
+    const html = await comment(':::note\n加群987654321\n:::')
+
+    expect(kunHtmlToText(html, 'audit')).toBe(':::note 加群987654321 :::')
   })
 })
 

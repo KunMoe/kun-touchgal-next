@@ -202,7 +202,7 @@ export const measureMarkdownCost = (markdown: string): MarkdownCost => {
   return { maxLineContainerMarkers, directiveFenceLines, maxParagraphBrackets }
 }
 
-// directives: 该 profile 的处理器是否加载了 remark-directive; 没加载时 `:::` 只是文本
+// directives: 该 profile 的处理器是否解析指令; 不解析时 `:::` 只是文本
 export const exceedsCostFuse = (
   markdown: string,
   opts: { directives: boolean }

@@ -195,7 +195,7 @@ describe('exceedsCostFuse', () => {
     expect(exceedsCostFuse(`- ${atLimit}`, { directives: false })).toBe(true)
   })
 
-  it('容器指令只在处理器加载了 remark-directive 时计入', () => {
+  it('容器指令只在处理器解析指令时计入', () => {
     const atLimit = ':::a\n'.repeat(MARKDOWN_MAX_DIRECTIVE_FENCE_LINES)
     const overLimit = `${atLimit}:::a\n`
     expect(exceedsCostFuse(atLimit, { directives: true })).toBe(false)

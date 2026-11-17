@@ -1,5 +1,5 @@
 import { visit } from 'unist-util-visit'
-import { sanitizeUserHref } from '~/utils/safeUrl'
+import { readKunDirective } from '~/utils/markdown/kunDialect'
 import type { Plugin } from 'unified'
 import type { Node } from 'unist'
 
@@ -15,24 +15,10 @@ const getLinkLabel = (href: string) => {
 export const remarkKunLink: Plugin<[], Node> = () => {
   return (tree) => {
     visit(tree, (node: any) => {
-      if (
-        node.type === 'containerDirective' ||
-        node.type === 'leafDirective' ||
-        node.type === 'textDirective'
-      ) {
-        if (node.name !== 'kun-link') return
-
-        const data = node.data || (node.data = {})
-        const attributes = node.attributes || {}
-        const href =
-          typeof attributes.href === 'string'
-            ? sanitizeUserHref(attributes.href)
-            : null
-        const text = typeof attributes.text === 'string' ? attributes.text : ''
-
-        if (!href || !text) {
-          return
-        }
+      const attrs = readKunDirective(node, 'kun-link')
+      if (attrs) {
+        const { href, text } = attrs
+        const data = node.data
 
         data.hName = 'div'
         data.hProperties = {

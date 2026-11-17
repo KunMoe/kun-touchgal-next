@@ -22,7 +22,7 @@ export interface KunMarkdownProfileSpec {
 
 export const KUN_MARKDOWN_PROFILES = {
   comment: {
-    version: 2,
+    version: 3,
     directives: 'drop',
     wrapScreenshots: false,
     schema: markdownSanitizeSchema
@@ -36,7 +36,7 @@ export const KUN_MARKDOWN_PROFILES = {
   },
   // 游戏简介
   introduction: {
-    version: 11,
+    version: 12,
     directives: 'render',
     wrapScreenshots: true,
     schema: markdownExtendSanitizeSchema

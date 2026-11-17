@@ -10,6 +10,7 @@ import {
   Tooltip
 } from '@heroui/react'
 import { Link2 } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { insertKunLinkCommand } from './linkPlugin'
 import type { CmdKey } from '@milkdown/core'
 
@@ -23,7 +24,10 @@ export const LinkInsertButton = ({ call }: LinkInsertButtonProps) => {
   const [isOpen, setIsOpen] = useState(false)
 
   const handleLinkInsert = () => {
-    call(insertKunLinkCommand.key, { href: link, text })
+    if (call(insertKunLinkCommand.key, { href: link, text }) === false) {
+      toast.error('链接地址无效或协议不受支持')
+      return
+    }
     setLink('')
     setText('')
     setIsOpen(false)
