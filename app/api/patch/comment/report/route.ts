@@ -4,6 +4,7 @@ import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { createPatchCommentReportSchema } from '~/validations/patch'
 import { prisma } from '~/prisma'
+import { Prisma } from '~/prisma/generated/prisma/client'
 
 const createReport = async (
   input: z.infer<typeof createPatchCommentReportSchema>,
@@ -48,16 +49,28 @@ const createReport = async (
     return '您已经举报过该评论，请等待管理员处理'
   }
 
-  await prisma.patch_report.create({
-    data: {
-      target_type: 'comment',
-      reason: input.content,
-      sender_id: uid,
-      reported_user_id: comment.user_id,
-      patch_id: comment.patch_id,
-      comment_id: comment.id
+  try {
+    await prisma.patch_report.create({
+      data: {
+        target_type: 'comment',
+        reason: input.content,
+        sender_id: uid,
+        reported_user_id: comment.user_id,
+        patch_id: comment.patch_id,
+        comment_id: comment.id
+      }
+    })
+  } catch (error) {
+    // 外键命中 = 评论在预检之后被删。删除命令锁着根评论与整棵回复子树, 这次插入要等
+    // 它提交, 随后撞外键; 与预检的「评论不存在」同样处理
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2003'
+    ) {
+      return '评论不存在'
     }
-  })
+    throw error
+  }
 
   return {}
 }

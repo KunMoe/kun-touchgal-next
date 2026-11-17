@@ -15,6 +15,20 @@ import { prepareCommentContent } from './html'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import type { PatchComment } from '~/types/api/patch'
 
+// 待审核 (status=1) 的评论不可回复; 隐藏 (status=2) 的评论前端不可见, 与不存在等同
+const replyParentError = (parent: { status: number } | null | undefined) => {
+  if (!parent) {
+    return '未找到该评论'
+  }
+  if (parent.status === 1) {
+    return '该评论正在审核中, 暂时无法回复'
+  }
+  if (parent.status !== 0) {
+    return '未找到该评论'
+  }
+  return null
+}
+
 export const createPatchComment = async (
   input: z.infer<typeof patchCommentCreateSchema>,
   uid: number,
@@ -28,15 +42,9 @@ export const createPatchComment = async (
       where: { id: input.parentId, patch_id: input.patchId },
       select: { status: true, resource_id: true }
     })
-    if (!parentComment) {
-      return '未找到该评论'
-    }
-    // 待审核 (status=1) 的评论不可回复; 隐藏 (status=2) 的评论前端不可见, 与不存在等同
-    if (parentComment.status === 1) {
-      return '该评论正在审核中, 暂时无法回复'
-    }
-    if (parentComment.status !== 0) {
-      return '未找到该评论'
+    const parentError = replyParentError(parentComment)
+    if (parentError) {
+      return parentError
     }
   }
 
@@ -69,14 +77,26 @@ export const createPatchComment = async (
 
   const data = await kunTx('comment.create', async (ctx) => {
     const { tx } = ctx
+    // 事务外的预检之后, 资源或父评论可能被删、被隐藏。删除与隐藏的命令锁着这些行
+    // (FOR UPDATE): 插入之前先取 FOR KEY SHARE, 排在它们之后就读到提交后的结果, 当场
+    // 给出与预检相同的提示; 不取的话要等 INSERT 的外键检查才失败, 调用方看到的是 500。
+    // 顺序与级联删除一致 (资源 → 补丁 → 评论): 先锁父评论的话, 删资源的事务锁着资源行
+    // 去级联删评论, 这里锁着评论行去等资源行, 两边互等
+    if (resourceId) {
+      const resources = await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT id FROM patch_resource WHERE id = ${resourceId} FOR KEY SHARE`
+      if (!resources.length) {
+        ctx.fail('未找到该资源')
+      }
+    }
     if (input.parentId) {
-      // 事务外的预检之后父评论可能被删。删除命令锁着整棵回复子树 (FOR UPDATE): 这里先
-      // 取 FOR KEY SHARE, 排在删除之后就读不到行, 当场给出与预检相同的结果。不取的话
-      // 要等到 INSERT 的外键检查才失败, 调用方看到的是 500
-      const parents = await tx.$queryRaw<Array<{ id: number }>>`
-        SELECT id FROM patch_comment WHERE id = ${input.parentId} FOR KEY SHARE`
-      if (!parents.length) {
-        ctx.fail('未找到该评论')
+      // 补丁被整体删除时父评论随之消失, 由下面的父评论检查给出结果
+      await tx.$executeRaw`SELECT id FROM patch WHERE id = ${input.patchId} FOR KEY SHARE`
+      const [parent] = await tx.$queryRaw<Array<{ status: number }>>`
+        SELECT status FROM patch_comment WHERE id = ${input.parentId} FOR KEY SHARE`
+      const parentError = replyParentError(parent)
+      if (parentError) {
+        ctx.fail(parentError)
       }
     }
 

@@ -35,7 +35,9 @@ export interface CommentRemovalPlan {
 }
 
 // 收集根的整棵回复子树并升序锁住其中每一行。UNION 去重: 同一批里一个根是另一个根的
-// 后代时, 子树只算一次。后代的 id 恒大于祖先, 升序加锁与先锁根的顺序不冲突
+// 后代时, 子树只算一次。
+// 根先锁、子树后锁, 所以加锁顺序不是全局升序: 两个批次的根互为对方子树里的行时
+// (一批删 A 与它的孙评论, 另一批删夹在中间的那条) 仍会互等, 由数据库判死锁回滚其一
 const lockSubtree = (tx: Prisma.TransactionClient, rootIds: number[]) =>
   tx.$queryRaw<CommentRemovalPlan['subtree']>`
     WITH RECURSIVE subtree AS (

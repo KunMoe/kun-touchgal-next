@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   createCommentMock,
-  parentLockMock,
+  lockMock,
   transactionMock,
   renderForWriteMock,
   planTextModerationMock,
@@ -14,7 +14,7 @@ const {
   resourceFindFirstMock
 } = vi.hoisted(() => ({
   createCommentMock: vi.fn(),
-  parentLockMock: vi.fn(),
+  lockMock: vi.fn(),
   transactionMock: vi.fn(),
   renderForWriteMock: vi.fn(),
   planTextModerationMock: vi.fn(),
@@ -27,10 +27,17 @@ const {
 }))
 
 const transactionClient = {
-  $queryRaw: parentLockMock,
+  $queryRaw: lockMock,
+  $executeRaw: lockMock,
   patch_comment: {
     create: createCommentMock
   }
+}
+
+// 事务里各条取锁语句读到的行, 按表区分
+const locked: { resource: unknown[]; parent: unknown[] } = {
+  resource: [],
+  parent: []
 }
 
 vi.mock('~/prisma/index', () => ({
@@ -89,7 +96,16 @@ const input = {
 beforeEach(() => {
   vi.clearAllMocks()
   createCommentMock.mockResolvedValue(comment)
-  parentLockMock.mockResolvedValue([{ id: 6 }])
+  locked.resource = [{ id: 5 }]
+  locked.parent = [{ status: 0 }]
+  lockMock.mockImplementation(async (template: string[]) => {
+    const sql = template.join('?')
+    return sql.includes('FROM patch_resource')
+      ? locked.resource
+      : sql.includes('FROM patch_comment')
+        ? locked.parent
+        : [{ id: 10 }]
+  })
   renderForWriteMock.mockResolvedValue({ html: '<p>comment</p>', version: 1 })
   planTextModerationMock.mockResolvedValue({
     queue: false,
@@ -204,49 +220,92 @@ describe('createPatchComment', () => {
   })
 })
 
-// 事务外的预检之后父评论可能被删。删除命令锁着整棵回复子树: 不在事务里先确认的话,
-// INSERT 的外键检查要等删除提交后才失败, 调用方看到的是 500
-describe('createPatchComment 回复时父评论的行锁', () => {
+// 事务外的预检之后, 资源或父评论可能被删、被隐藏。删除命令锁着这些行: 不在事务里
+// 先确认的话, INSERT 的外键检查要等删除提交后才失败, 调用方看到的是 500
+describe('createPatchComment 事务内的行锁', () => {
+  const lockSql = () =>
+    lockMock.mock.calls.map(([template]) =>
+      (template as string[]).join('?').replace(/\s+/g, ' ').trim()
+    )
+  const RESOURCE_LOCK =
+    'SELECT id FROM patch_resource WHERE id = ? FOR KEY SHARE'
+  const PATCH_LOCK = 'SELECT id FROM patch WHERE id = ? FOR KEY SHARE'
+  const PARENT_LOCK =
+    'SELECT status FROM patch_comment WHERE id = ? FOR KEY SHARE'
+
   beforeEach(() => {
     parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: null })
+    resourceFindFirstMock.mockResolvedValue({ id: 5 })
   })
 
-  it('事务里先对父评论取 FOR KEY SHARE, 再插入', async () => {
+  it('回复: 先锁补丁行、再锁父评论, 然后才插入', async () => {
     await createPatchComment({ ...input, parentId: 6 }, 7, 2)
 
-    expect(parentLockMock).toHaveBeenCalledTimes(1)
-    const [template, parentId] = parentLockMock.mock.calls[0]
-    expect(template.join('?').replace(/\s+/g, ' ').trim()).toBe(
-      'SELECT id FROM patch_comment WHERE id = ? FOR KEY SHARE'
-    )
-    expect(parentId).toBe(6)
-    expect(parentLockMock.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(lockSql()).toEqual([PATCH_LOCK, PARENT_LOCK])
+    expect(lockMock.mock.calls.map((call) => call[1])).toEqual([10, 6])
+    expect(lockMock.mock.invocationCallOrder[1]).toBeLessThan(
       createCommentMock.mock.invocationCallOrder[0]
     )
   })
 
-  it('锁下父评论已不存在: 返回「未找到该评论」, 不插入、不送审、不发通知、不失效缓存', async () => {
-    parentLockMock.mockResolvedValue([])
-    planTextModerationMock.mockResolvedValue({
-      queue: true,
-      intercept: false,
-      dryRun: true
-    })
+  // 与级联删除同向 (资源 → 补丁 → 评论): 先锁父评论的话, 删资源的事务锁着资源行去
+  // 级联删评论, 这里锁着评论行去等资源行, 两边互等
+  it('回复资源评论区的评论: 资源行最先, 然后补丁行、父评论', async () => {
+    parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: 5 })
+
+    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+
+    expect(lockSql()).toEqual([RESOURCE_LOCK, PATCH_LOCK, PARENT_LOCK])
+    expect(lockMock.mock.calls.map((call) => call[1])).toEqual([5, 10, 6])
+  })
+
+  it('资源的一级评论只锁资源行', async () => {
+    await createPatchComment({ ...input, resourceId: 5 }, 7, 2)
+
+    expect(lockSql()).toEqual([RESOURCE_LOCK])
+    expect(createCommentMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('补丁的一级评论不取任何行锁', async () => {
+    await createPatchComment(input, 7, 2)
+
+    expect(lockMock).not.toHaveBeenCalled()
+    expect(createCommentMock).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['已不存在', [], '未找到该评论'],
+    ['转为待审核', [{ status: 1 }], '该评论正在审核中, 暂时无法回复'],
+    ['已被隐藏', [{ status: 2 }], '未找到该评论']
+  ])(
+    '锁下父评论%s: 返回与预检相同的提示, 不插入、不送审、不发通知、不失效缓存',
+    async (_label, parentRows, message) => {
+      locked.parent = parentRows
+      planTextModerationMock.mockResolvedValue({
+        queue: true,
+        intercept: false,
+        dryRun: true
+      })
+
+      const result = await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+
+      expect(result).toBe(message)
+      expect(createCommentMock).not.toHaveBeenCalled()
+      expect(enqueueTextModerationMock).not.toHaveBeenCalled()
+      expect(onCommentPublishedMock).not.toHaveBeenCalled()
+      expect(invalidateCommentCacheMock).not.toHaveBeenCalled()
+    }
+  )
+
+  it('锁下资源已不存在: 返回「未找到该资源」, 不再去锁评论', async () => {
+    parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: 5 })
+    locked.resource = []
 
     const result = await createPatchComment({ ...input, parentId: 6 }, 7, 2)
 
-    expect(result).toBe('未找到该评论')
+    expect(result).toBe('未找到该资源')
+    expect(lockSql()).toEqual([RESOURCE_LOCK])
     expect(createCommentMock).not.toHaveBeenCalled()
-    expect(enqueueTextModerationMock).not.toHaveBeenCalled()
-    expect(onCommentPublishedMock).not.toHaveBeenCalled()
-    expect(invalidateCommentCacheMock).not.toHaveBeenCalled()
-  })
-
-  it('顶层评论不取父评论的行锁', async () => {
-    await createPatchComment(input, 7, 2)
-
-    expect(parentLockMock).not.toHaveBeenCalled()
-    expect(createCommentMock).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -220,6 +220,15 @@ describe('评论删除的语句顺序', () => {
     )
   })
 
+  // 根是隐藏的 (申诉驳回只删隐藏态), 它下面的公开回复被级联删除时照样触发计数触发器
+  it('patch 行按整棵子树判定, 不只看根: 隐藏的根带着公开回复时也要锁', async () => {
+    seed([row(11, 2)], [row(11, 2), row(12, 0)])
+
+    await remove([11], { statusIn: [2] })
+
+    expect(rec.argsOf(PATCH_LOCK)).toEqual([[[10]]])
+  })
+
   it('被删的行里没有公开的补丁级评论时不锁 patch 行', async () => {
     seed([row(11, 2), row(12, 0, { resource_id: 5 })])
 
