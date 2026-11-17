@@ -19,10 +19,39 @@
  *   ignores?: string[],
  *   enforce:
  *     | { kind: 'import', sources: (string | RegExp)[], importNames?: string[], allowTypeImports?: boolean }
- *     | { kind: 'syntax', selectors: string[] },
+ *     | { kind: 'syntax', selectors: string[], strings?: RegExp[] },
  *   examples: { file: string, bad: string[], good: string[] }
  * }} KunInvariant
  */
+// syntax 类的 strings: 字符串字面量与模板字符串命中任一正则即报。模板字符串按「各段文本用占位符
+// $1 接起来」的整串匹配, 一句 SQL 被插值切成几段时关键字与列名仍在同一串里; 选择器只能逐段匹配
+
+// inv-content-05/06 共用。三张内容表的 Prisma delegate 名, user 上的同名关系字段与 _count 计数也叫这个名字
+const CONTENT_DELEGATE = '/^patch_(comment|rating|resource)$/'
+const CONTENT_UPDATE_METHODS = 'update|updateMany|updateManyAndReturn|upsert'
+
+// delegate 一旦离开 `<obj>.<delegate>.<method>(...)` 的形状 (解构、别名、计算属性访问、当参数传走、
+// 把方法取下来另调), 调用点上就没有方法名, 按方法名写的选择器看不到。所以直接报引用本身, 读也算。
+// 只放行两种父节点: 被调用的非计算成员; methods 以外的非计算成员 (findMany、count …, 取值不调用也行,
+// 如测试里的 vi.mocked(tx.patch_comment.findMany))。_count.patch_resource 是关系计数, 不是 delegate
+const detachedContentDelegate = (methods) => [
+  `MemberExpression[computed=true]:matches([property.value=${CONTENT_DELEGATE}], [property.quasis.0.value.cooked=${CONTENT_DELEGATE}])`,
+  `ObjectPattern > Property:matches([key.name=${CONTENT_DELEGATE}], [key.value=${CONTENT_DELEGATE}])`,
+  `MemberExpression[computed=false][property.name=${CONTENT_DELEGATE}]:not([object.property.name='_count'], [object.name='_count'], CallExpression > MemberExpression.callee[computed=false] > MemberExpression.object, MemberExpression[computed=false][property.name!=/^(${methods})$/] > MemberExpression.object)`
+]
+
+// raw SQL 里的三张内容表: 可带 schema 前缀与双引号; 表名后不得紧挨标识符字符, 不误伤
+// patch_rating_stat、patch_resource_link 这类同前缀的表
+const CONTENT_TABLE = String.raw`(?:"?\w+"?\.)?"?patch_(?:comment|rating|resource)\b"?`
+// SET 列表到 WHERE / RETURNING 为止: 只在条件或返回列里出现的 status 不算写
+const SET_STATUS = String.raw`SET\b(?:(?!\b(?:WHERE|RETURNING)\b)[\s\S])*?\bstatus\b`
+
+// update* 的写入体在 data, upsert 的在 update。upsert 的 create 与 create() 一样是插入时的初始状态
+// (评论、评价、资源的创建入口都在 server/content 之外写初始 status), 不归本条管
+const CONTENT_UPDATE = `CallExpression[callee.property.name=/^(${CONTENT_UPDATE_METHODS})$/][callee.object.property.name=${CONTENT_DELEGATE}]`
+const PAYLOAD_KEY =
+  ':matches([key.name=/^(data|update)$/], [key.value=/^(data|update)$/])'
+const PAYLOAD = `${CONTENT_UPDATE} > ObjectExpression > Property${PAYLOAD_KEY} > ObjectExpression`
 
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
@@ -191,18 +220,45 @@ export const KUN_INVARIANTS = [
     enforce: {
       kind: 'syntax',
       selectors: [
-        'CallExpression[callee.property.name=/^(delete|deleteMany)$/][callee.object.property.name=/^patch_(comment|rating|resource)$/]'
+        `CallExpression[callee.property.name=/^(delete|deleteMany)$/][callee.object.property.name=${CONTENT_DELEGATE}]`,
+        ...detachedContentDelegate('delete|deleteMany')
+      ],
+      strings: [
+        new RegExp(
+          String.raw`\bDELETE\s+FROM\s+(?:ONLY\s+)?${CONTENT_TABLE}`,
+          'i'
+        ),
+        // 表清单只由标识符、引号、点、逗号与空白组成
+        new RegExp(String.raw`\bTRUNCATE\s[\w\s".,]*?${CONTENT_TABLE}`, 'i')
       ]
     },
     examples: {
       file: 'app/api/kunInvariantExample.ts',
       bad: [
         'export const run = (tx: any) => tx.patch_comment.deleteMany({ where: { id: 1 } })',
-        'export const run = (prisma: any) => prisma.patch_resource.delete({ where: { id: 1 } })'
+        'export const run = (prisma: any) => prisma.patch_resource.delete({ where: { id: 1 } })',
+        'export const run = (tx: any) => { const { patch_comment } = tx; return patch_comment.deleteMany({ where: { id: 1 } }) }',
+        "export const run = (tx: any) => { const { ['patch_resource']: resources } = tx; return resources.deleteMany({ where: { id: 1 } }) }",
+        'export const run = (tx: any) => { const comments = tx.patch_comment; return comments.delete({ where: { id: 1 } }) }',
+        "export const run = (tx: any) => tx['patch_comment'].delete({ where: { id: 1 } })",
+        'export const run = (tx: any) => tx[`patch_rating`].deleteMany({ where: { id: 1 } })',
+        'export const run = (tx: any) => purgeAll(tx.patch_resource)',
+        "export const run = (tx: any) => tx.patch_comment['delete']({ where: { id: 1 } })",
+        'export const run = (tx: any) => { const remove = tx.patch_comment.delete; return remove({ where: { id: 1 } }) }',
+        'export const run = (tx: any, id: number) => tx.$executeRaw`DELETE FROM patch_comment WHERE id = ${id}`',
+        'export const run = (tx: any, id: number) => tx.$executeRawUnsafe(\'delete from only "public"."patch_resource" where id = $1\', id)',
+        'export const run = (tx: any) => tx.$executeRaw`TRUNCATE patch_report, patch_rating`'
       ],
       good: [
         'export const run = (tx: any) => tx.patch_report.deleteMany({ where: { id: 1 } })',
-        'export const run = (tx: any) => tx.patch_rating.findMany({ where: { id: 1 } })'
+        'export const run = (tx: any) => tx.patch_rating.findMany({ where: { id: 1 } })',
+        'export const pick = (tx: any) => [tx.patch_comment.findMany, tx.patch_resource.count]',
+        'export const count = (user: any, { _count }: any) => user._count.patch_resource + user.sender?._count.patch_comment + _count.patch_rating',
+        'export const run = (tx: any) => { const { patch_report } = tx; return patch_report.deleteMany({ where: { id: 1 } }) }',
+        'export const run = (tx: any, id: number) => tx.$queryRaw`SELECT id FROM patch_comment WHERE id = ${id} FOR UPDATE`',
+        'export const run = (tx: any, id: number) => tx.$executeRaw`DELETE FROM patch_resource_link WHERE resource_id = ${id}`',
+        "export const run = (tx: any, id: number) => tx.$executeRawUnsafe('DELETE FROM patch_rating_like WHERE patch_rating_id = $1', id)",
+        "export const message = '正文过长, truncate 后再写回 patch_comment'"
       ]
     }
   },
@@ -215,21 +271,78 @@ export const KUN_INVARIANTS = [
     removeWhen: '内容状态不再由应用层写入',
     files: ['app/**/*.ts', 'server/**/*.ts', 'migration/**/*.ts'],
     ignores: ['server/content/**'],
+    // 写入体必须让 status 键字面可见: 实参与写入体都是行内对象字面量, 不许计算键; 展开只许展开两支都是
+    // 对象字面量的三元, 被展开的字面量里不再嵌套展开或计算键
     enforce: {
       kind: 'syntax',
       selectors: [
-        "CallExpression[callee.property.name=/^(update|updateMany|updateManyAndReturn|upsert)$/][callee.object.property.name=/^patch_(comment|rating|resource)$/] Property[key.name='data'] Property[key.name='status']"
+        `${PAYLOAD} Property:matches([key.name='status'], [key.value='status'])`,
+        `${CONTENT_UPDATE}:not([arguments.0.type='ObjectExpression'])`,
+        `${CONTENT_UPDATE} > ObjectExpression > :matches(SpreadElement, Property[computed=true])`,
+        `${CONTENT_UPDATE} > ObjectExpression > Property${PAYLOAD_KEY}:not([value.type='ObjectExpression'])`,
+        `${PAYLOAD} > Property[computed=true]`,
+        `${PAYLOAD} > SpreadElement:not([argument.type='ConditionalExpression'][argument.consequent.type='ObjectExpression'][argument.alternate.type='ObjectExpression'])`,
+        `${PAYLOAD} > SpreadElement ObjectExpression > :matches(SpreadElement, Property[computed=true])`,
+        ...detachedContentDelegate(CONTENT_UPDATE_METHODS)
+      ],
+      strings: [
+        new RegExp(
+          String.raw`\bUPDATE\s+(?:ONLY\s+)?${CONTENT_TABLE}(?:\s+(?:AS\s+)?\w+)?\s+${SET_STATUS}`,
+          'i'
+        ),
+        new RegExp(
+          String.raw`\bINSERT\s+INTO\s+${CONTENT_TABLE}[\s\S]*?\bDO\s+UPDATE\s+${SET_STATUS}`,
+          'i'
+        )
       ]
     },
     examples: {
       file: 'app/api/kunInvariantExample.ts',
       bad: [
         'export const run = (tx: any) => tx.patch_rating.update({ where: { id: 1 }, data: { status: 2 } })',
-        'export const run = (tx: any, intercept: boolean) => tx.patch_comment.updateMany({ where: { id: 1 }, data: { ...(intercept ? { status: 1 } : {}) } })'
+        'export const run = (tx: any, intercept: boolean) => tx.patch_comment.updateMany({ where: { id: 1 }, data: { ...(intercept ? { status: 1 } : {}) } })',
+        'export const run = (tx: any) => { const { patch_rating } = tx; return patch_rating.update({ where: { id: 1 }, data: { status: 2 } }) }',
+        'export const run = (tx: any) => { const ratings = tx.patch_rating; return ratings.updateMany({ where: { id: 1 }, data: { status: 2 } }) }',
+        "export const run = (tx: any) => tx['patch_comment'].update({ where: { id: 1 }, data: { status: 2 } })",
+        'export const run = (tx: any) => { const write = tx.patch_comment.update; return write({ where: { id: 1 }, data: { status: 2 } }) }',
+        'export const run = (tx: any) => transitionAll(tx.patch_resource, 1)',
+        'export const run = (tx: any) => { const data = { status: 2 }; return tx.patch_comment.update({ where: { id: 1 }, data }) }',
+        'export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1 }, data: buildData() })',
+        'export const run = (tx: any, args: any) => tx.patch_rating.updateMany(args)',
+        'export const run = (tx: any, rest: any) => tx.patch_resource.update({ where: { id: 1 }, ...rest })',
+        'export const run = (tx: any, key: string) => tx.patch_resource.update({ where: { id: 1 }, [key]: { status: 1 } })',
+        'export const run = (tx: any, fields: any) => tx.patch_comment.update({ where: { id: 1 }, data: { ...fields } })',
+        'export const run = (tx: any, fields: any, flag: boolean) => tx.patch_comment.update({ where: { id: 1 }, data: { ...(flag ? fields : {}) } })',
+        "export const run = (tx: any, fields: any, flag: boolean) => tx.patch_comment.update({ where: { id: 1 }, data: { ...(flag ? { content: 'x' } : fields) } })",
+        'export const run = (tx: any, fields: any, flag: boolean) => tx.patch_comment.update({ where: { id: 1 }, data: { ...(flag ? { ...fields } : {}) } })',
+        'export const run = (tx: any, key: string, flag: boolean) => tx.patch_comment.update({ where: { id: 1 }, data: { ...(flag ? { [key]: 2 } : {}) } })',
+        'export const run = (tx: any, key: string) => tx.patch_comment.update({ where: { id: 1 }, data: { [key]: 2 } })',
+        "export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1 }, data: { 'status': 2 } })",
+        "export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1 }, 'data': { status: 2 } })",
+        "export const run = (tx: any) => tx.patch_resource.upsert({ where: { id: 1 }, create: { name: 'x' }, update: { status: 1 } })",
+        "export const run = (tx: any, patch: any) => tx.patch_resource.upsert({ where: { id: 1 }, create: { name: 'x' }, update: patch })",
+        'export const run = (tx: any, s: number, id: number) => tx.$executeRaw`UPDATE patch_comment SET status = ${s} WHERE id = ${id}`',
+        'export const run = (tx: any, n: string, s: number, id: number) => tx.$executeRaw`UPDATE patch_resource SET name = ${n}, status = ${s} WHERE id = ${id}`',
+        'export const run = (tx: any, s: number, id: number) => tx.$executeRawUnsafe(\'update only "patch_rating" as r set "status" = $1 where r.id = $2\', s, id)',
+        'export const run = (id: number) => Prisma.sql`INSERT INTO patch_comment (id, status) VALUES (${id}, 1) ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status`'
       ],
       good: [
         "export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1, status: 0 }, data: { content: 'x' } })",
-        'export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { status: 2 } })'
+        'export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { status: 2 } })',
+        'export const run = (tx: any) => tx.patch_resource.update({ where: { id: 1 }, data: { download: { increment: 1 } } })',
+        'export const run = (tx: any, content: string) => tx.patch_comment.update({ where: { id: 1 }, data: { content, edited: true } })',
+        'export const run = (tx: any, t: string[], p?: string[]) => tx.patch_resource.updateMany({ where: { id: 1 }, data: { type: { set: t }, ...(p ? { platform: { set: p } } : {}) } })',
+        "export const run = (tx: any) => tx.patch_resource.upsert({ where: { id: 1 }, create: { name: 'x', status: 0 }, update: { name: 'x' } })",
+        'export const run = (tx: any, prepared: any) => tx.patch_comment.create({ data: { ...prepared, status: 1 } })',
+        'export const pick = (tx: any) => [tx.patch_comment.findMany, tx.patch_resource.count]',
+        'export const count = (user: any, { _count }: any) => user._count.patch_resource + user.sender?._count.patch_comment + _count.patch_rating',
+        'export const run = (tx: any, c: string, id: number) => tx.$executeRaw`UPDATE patch_comment SET content = ${c} WHERE id = ${id} AND status = 0`',
+        'export const run = (tx: any, id: number) => tx.$executeRaw`UPDATE patch_resource SET download = download + 1 WHERE id = ${id}`',
+        'export const run = (tx: any, p: string, id: number) => tx.$executeRaw`UPDATE patch_rating SET play_status = ${p} WHERE id = ${id}`',
+        'export const run = (tx: any, c: string, id: number) => tx.$executeRaw`INSERT INTO patch_comment (id, content) VALUES (${id}, ${c}) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content RETURNING id, status`',
+        'export const run = (tx: any, id: number) => tx.$queryRaw`SELECT status FROM patch_resource WHERE id = ${id} FOR UPDATE`',
+        'export const run = (tx: any, id: number) => tx.$executeRaw`INSERT INTO patch_rating_stat (patch_id, count) VALUES (${id}, 1) ON CONFLICT (patch_id) DO UPDATE SET count = EXCLUDED.count`',
+        'export const run = (tx: any, s: number, id: number) => tx.$executeRaw`UPDATE patch_rating_like SET status = ${s} WHERE id = ${id}`'
       ]
     }
   }
@@ -258,9 +371,27 @@ export const createKunInvariantRule = (inv) => ({
     const report = (node) => context.report({ node, message })
     const { enforce } = inv
     if (enforce.kind === 'syntax') {
-      return Object.fromEntries(
+      const handlers = Object.fromEntries(
         enforce.selectors.map((selector) => [selector, report])
       )
+      if (enforce.strings) {
+        // 键写成 :matches(...), 不会与 selectors 里同名的 'Literal' 之类互相覆盖
+        handlers[':matches(Literal, TemplateLiteral)'] = (node) => {
+          const text =
+            node.type === 'TemplateLiteral'
+              ? node.quasis
+                  .map((quasi) => quasi.value.cooked ?? quasi.value.raw)
+                  .join('$1')
+              : node.value
+          if (
+            typeof text === 'string' &&
+            enforce.strings.some((pattern) => text.search(pattern) !== -1)
+          ) {
+            report(node)
+          }
+        }
+      }
+      return handlers
     }
 
     const check = (node) => {

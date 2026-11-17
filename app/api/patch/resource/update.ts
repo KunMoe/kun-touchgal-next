@@ -337,8 +337,15 @@ export const updatePatchResource = async (
 
     const newResource = await prisma.patch_resource.update({
       where: { id: resourceId },
+      // 逐字段列出, 不展开 resourceData: 校验结构以后新增的字段不会不经意落库
+      // (kun/inv-content-06 要求 status 键在写入体里字面可见)
       data: {
-        ...resourceData,
+        section: resourceData.section,
+        name: resourceData.name,
+        note: resourceData.note,
+        type: resourceData.type,
+        language: resourceData.language,
+        platform: resourceData.platform,
         emulator_type,
         model_name,
         links: {

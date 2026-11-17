@@ -295,6 +295,39 @@ describe('kun 不变量规则工厂', { timeout: TIMEOUT }, () => {
     expect(await count(linter, code)).toBe(4)
   })
 
+  // 模板字符串按插值换成 $1 后的整串匹配: 被插值切开的一句 SQL 不会漏掉后半句
+  it('syntax 类的 strings 匹配字符串字面量与整个模板字符串', async () => {
+    const linter = linterFor({
+      kind: 'syntax',
+      selectors: [],
+      strings: [/SET a = \$1, b\b/g]
+    })
+
+    expect(await count(linter, "export const q = 'SET a = $1, b = 2'")).toBe(1)
+    expect(
+      await count(
+        linter,
+        'export const q = (x: number) => `SET a = ${x}, b = 2`'
+      )
+    ).toBe(1)
+    expect(
+      await count(
+        linter,
+        'export const q = (x: number) => sql`SET a = ${x}, b = 2`'
+      )
+    ).toBe(1)
+    expect(
+      await count(linter, 'export const q = (x: number) => `SET a = ${x}`')
+    ).toBe(0)
+    // 带 g 标志的正则不跨节点带状态
+    expect(
+      await count(
+        linter,
+        "export const p = 'SET a = $1, b'\nexport const q = 'SET a = $1, b'"
+      )
+    ).toBe(2)
+  })
+
   it('报错信息带 id、别名、理由与移除条件', async () => {
     const linter = linterFor({
       kind: 'syntax',

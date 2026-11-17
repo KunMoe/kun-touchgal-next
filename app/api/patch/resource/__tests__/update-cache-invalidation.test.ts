@@ -326,3 +326,42 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
     expect(invalidateUserPendingResourceCacheMock).toHaveBeenCalledWith(7)
   })
 })
+
+// 写入体逐字段列出校验结构里的字段。展开整个输入的话, 以后新增的字段 (比如 status)
+// 会不经意落库, 绕过「status 只在 server/content 的命令里写」(kun/inv-content-06)
+describe('资源编辑写入的字段', () => {
+  it('只写列出的字段、联动字段与链接; 输入里多出来的键不落库', async () => {
+    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
+    planTextModerationMock.mockResolvedValue(SKIP)
+    transactionResourceUpdateMock.mockResolvedValue(buildUpdated())
+
+    await updateResource(
+      buildInput({ note: '备注', status: 2, download: 999 }),
+      7,
+      1
+    )
+
+    const { data } = transactionResourceUpdateMock.mock.calls[0][0]
+    expect(Object.keys(data).sort()).toEqual([
+      'emulator_type',
+      'language',
+      'links',
+      'model_name',
+      'name',
+      'note',
+      'platform',
+      'section',
+      'type'
+    ])
+    expect(data).toMatchObject({
+      section: 'galgame',
+      name: 'New name',
+      note: '备注',
+      type: ['manual'],
+      language: ['zh-Hans'],
+      platform: ['windows'],
+      emulator_type: [],
+      model_name: ''
+    })
+  })
+})
