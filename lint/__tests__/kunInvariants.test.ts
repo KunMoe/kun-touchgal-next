@@ -1,11 +1,15 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ESLint } from 'eslint'
 import { describe, expect, it } from 'vitest'
 import eslintConfig from '../../eslint.config.mjs'
-import { KUN_INVARIANTS, createKunInvariantRule } from '../kunInvariants.mjs'
+import {
+  CONTENT_RELATION_FIELDS,
+  KUN_INVARIANTS,
+  createKunInvariantRule
+} from '../kunInvariants.mjs'
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
 const SELF = 'lint/__tests__/kunInvariants.test.ts'
@@ -88,6 +92,57 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
     async ({ id, examples }) => {
       const config = await eslint.calculateConfigForFile(examples.file)
       expect(config.rules[`kun/${id}`]?.[0]).toBe(2)
+    }
+  )
+
+  // inv-content-05/06 按字段名认嵌套写: 名单须等于 schema 里指向三张内容表的关系字段名,
+  // 且这些名字不能在别的模型上指向别的表 (否则同名的非内容关系会被误报, 或得另想办法区分)
+  it('内容表关系字段名单与 prisma/schema 一致且无歧义', () => {
+    const schemaDir = join(repoRoot, 'prisma/schema')
+    const schema = readdirSync(schemaDir)
+      .filter((file) => file.endsWith('.prisma'))
+      .map((file) => readFileSync(join(schemaDir, file), 'utf-8'))
+      .join('\n')
+    const fields = [...schema.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)]
+      .flatMap(([, model, body]) =>
+        body.split('\n').map((line) => {
+          const match = line.split('//')[0].match(/^\s*(\w+)\s+(\w+)/)
+          return match ? { model, name: match[1], type: match[2] } : null
+        })
+      )
+      .filter((field) => field !== null)
+    const content = new Set(['patch_comment', 'patch_rating', 'patch_resource'])
+    const names = [
+      ...new Set(
+        fields.filter((field) => content.has(field.type)).map((f) => f.name)
+      )
+    ].sort()
+
+    expect(names).toEqual([...CONTENT_RELATION_FIELDS].sort())
+    expect(
+      fields
+        .filter(
+          (field) => names.includes(field.name) && !content.has(field.type)
+        )
+        .map((field) => `${field.model}.${field.name}: ${field.type}`)
+    ).toEqual([])
+  })
+
+  // 测试做不了生产写入, 却常要 mock / 断言这些方法; 示例路径不在 __tests__ 下, 上面照常执行
+  it.each(['inv-content-05', 'inv-content-06'])(
+    '%s 不管 __tests__ 下的文件',
+    async (id) => {
+      const inv = KUN_INVARIANTS.find((item) => item.id === id)
+      expect(inv?.examples.file).not.toContain('__tests__')
+      for (const bad of inv?.examples.bad ?? []) {
+        const reports = await reportsOf(
+          eslint,
+          bad,
+          'app/api/__tests__/kunInvariantExample.test.ts',
+          `kun/${id}`
+        )
+        expect(reports, bad).toEqual([])
+      }
     }
   )
 

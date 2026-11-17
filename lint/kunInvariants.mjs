@@ -29,29 +29,72 @@
 // inv-content-05/06 共用。三张内容表的 Prisma delegate 名, user 上的同名关系字段与 _count 计数也叫这个名字
 const CONTENT_DELEGATE = '/^patch_(comment|rating|resource)$/'
 const CONTENT_UPDATE_METHODS = 'update|updateMany|updateManyAndReturn|upsert'
+// 键名按标识符或字符串字面量认 (prettier 会去掉多余的引号, 带引号的键只在 prettier-ignore 下出现);
+// 用在不拦计算键的位置时, 连模板字符串计算键 ([`patch_comment`]) 一起认
+const keyIs = (re) => `:matches([key.name=${re}], [key.value=${re}])`
+const keyOrTemplateIs = (re) =>
+  `:matches([key.name=${re}], [key.value=${re}], [key.quasis.0.value.cooked=${re}])`
 
 // delegate 一旦离开 `<obj>.<delegate>.<method>(...)` 的形状 (解构、别名、计算属性访问、当参数传走、
 // 把方法取下来另调), 调用点上就没有方法名, 按方法名写的选择器看不到。所以直接报引用本身, 读也算。
-// 只放行两种父节点: 被调用的非计算成员; methods 以外的非计算成员 (findMany、count …, 取值不调用也行,
-// 如测试里的 vi.mocked(tx.patch_comment.findMany))。_count.patch_resource 是关系计数, 不是 delegate
+// 只放行几种父节点: 被调用的非计算成员; methods 以外的非计算成员 (findMany、count …, 取值不调用也行);
+// for…of 的右侧 (delegate 不可迭代, 只可能是 user.patch_resource 这类已加载的关系数组)。
+// _count.patch_resource 与从 _count 里解构出来的都是关系计数, 不是 delegate
 const detachedContentDelegate = (methods) => [
   `MemberExpression[computed=true]:matches([property.value=${CONTENT_DELEGATE}], [property.quasis.0.value.cooked=${CONTENT_DELEGATE}])`,
-  `ObjectPattern > Property:matches([key.name=${CONTENT_DELEGATE}], [key.value=${CONTENT_DELEGATE}])`,
-  `MemberExpression[computed=false][property.name=${CONTENT_DELEGATE}]:not([object.property.name='_count'], [object.name='_count'], CallExpression > MemberExpression.callee[computed=false] > MemberExpression.object, MemberExpression[computed=false][property.name!=/^(${methods})$/] > MemberExpression.object)`
+  `ObjectPattern > Property${keyOrTemplateIs(CONTENT_DELEGATE)}:not(VariableDeclarator:matches([init.property.name='_count'], [init.name='_count']) > ObjectPattern > Property, Property[key.name='_count'] > ObjectPattern > Property)`,
+  `MemberExpression[computed=false][property.name=${CONTENT_DELEGATE}]:not([object.property.name='_count'], [object.name='_count'], ForOfStatement > MemberExpression.right, CallExpression > MemberExpression.callee[computed=false] > MemberExpression.object, MemberExpression[computed=false][property.name!=/^(${methods})$/] > MemberExpression.object)`
 ]
 
 // raw SQL 里的三张内容表: 可带 schema 前缀与双引号; 表名后不得紧挨标识符字符, 不误伤
 // patch_rating_stat、patch_resource_link 这类同前缀的表
 const CONTENT_TABLE = String.raw`(?:"?\w+"?\.)?"?patch_(?:comment|rating|resource)\b"?`
-// SET 列表到 WHERE / RETURNING 为止: 只在条件或返回列里出现的 status 不算写
-const SET_STATUS = String.raw`SET\b(?:(?!\b(?:WHERE|RETURNING)\b)[\s\S])*?\bstatus\b`
+// SET 列表到 WHERE / RETURNING 为止: 只在条件或返回列里出现的 status 不算写。单引号字符串整段跳过, 且引号
+// 只能这样成对消耗: SET note = 'where' 不会提前截断, 也拼不出跨过 WHERE 的假配对 ('a' WHERE b = 'c')
+const SET_STATUS = String.raw`SET\b(?:'[^']*'|(?!\b(?:WHERE|RETURNING)\b)[^'])*?\bstatus\b`
+
+// 行内对象字面量; 外面包一层 TS 的 as / satisfies 也算 (只有类型, 运行时就是这个字面量), 包着别的表达式不算
+const NOT_INLINE_VALUE =
+  ":not([value.type='ObjectExpression'], [value.type=/^TS(As|Satisfies)Expression$/][value.expression.type='ObjectExpression'])"
+const inlineObjectOf = (slot) =>
+  `:matches(${slot} > ObjectExpression, ${slot} > :matches(TSAsExpression, TSSatisfiesExpression) > ObjectExpression)`
 
 // update* 的写入体在 data, upsert 的在 update。upsert 的 create 与 create() 一样是插入时的初始状态
 // (评论、评价、资源的创建入口都在 server/content 之外写初始 status), 不归本条管
 const CONTENT_UPDATE = `CallExpression[callee.property.name=/^(${CONTENT_UPDATE_METHODS})$/][callee.object.property.name=${CONTENT_DELEGATE}]`
-const PAYLOAD_KEY =
-  ':matches([key.name=/^(data|update)$/], [key.value=/^(data|update)$/])'
-const PAYLOAD = `${CONTENT_UPDATE} > ObjectExpression > Property${PAYLOAD_KEY} > ObjectExpression`
+const PAYLOAD_KEY = keyIs('/^(data|update)$/')
+const STATUS_KEY = keyIs('/^status$/')
+const PAYLOAD_SLOT = `${CONTENT_UPDATE} > ObjectExpression > Property${PAYLOAD_KEY}`
+const PAYLOAD = inlineObjectOf(PAYLOAD_SLOT)
+// 写入体里这些键下面是过滤条件 (where、deleteMany 的参数) 或只能插入的写入体 (create、createMany),
+// 其中的 status 与关系字段都不是对已有行的修改。只认 scope 以内的这些键
+const outsideFilterOrInsert = (scope) =>
+  `:not(${scope} Property${keyIs('/^(where|deleteMany|create|createMany)$/')} *)`
+
+// 嵌套写: 任意 delegate 的 update / upsert 写入体里, 指向三张内容表的关系字段 (由 prisma/schema 推出,
+// 这些字段名在 schema 里没有指向别的表的同名字段)。下挂 delete / deleteMany 是物理删除 (05),
+// 下挂 update / updateMany / upsert 能改 status (06)。create 不收: 插入的写入体只接受 create / connect 类操作。
+// 关系字段出现在非内容表的写入体里时没有别的检查拦计算键, 所以连模板字符串键也认
+// lint/__tests__ 按 prisma/schema 核对这份清单: 新增或改名的关系字段会让测试变红
+export const CONTENT_RELATION_FIELDS = [
+  'comment',
+  'parent',
+  'patch_comment',
+  'patch_rating',
+  'patch_resource',
+  'rating',
+  'reply',
+  'resource'
+]
+const CONTENT_RELATION = `/^(${CONTENT_RELATION_FIELDS.join('|')})$/`
+const WRITE_ROOT = `CallExpression[callee.property.name=/^(update|upsert)$/] > ObjectExpression > Property${PAYLOAD_KEY}`
+const RELATION_WRITE = `${WRITE_ROOT} Property${keyOrTemplateIs(CONTENT_RELATION)}${outsideFilterOrInsert(WRITE_ROOT)}`
+// 关系字段的值必须是行内对象字面量且操作名字面可见, 否则藏得住 deleteMany / updateMany
+const hiddenRelationWrite = [
+  `${RELATION_WRITE}:not([value.type='ObjectExpression'])`,
+  `${RELATION_WRITE} > ObjectExpression > :matches(SpreadElement, Property[computed=true])`
+]
+const NESTED_UPDATE = `${RELATION_WRITE} > ObjectExpression > Property${keyIs('/^(update|updateMany|upsert)$/')}`
 
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
@@ -216,12 +259,15 @@ export const KUN_INVARIANTS = [
       '删除要在行锁下复检状态, 并按固定顺序清理通知、审核任务、申诉、孤儿举报与出箱; 入口各写一份时曾反复漏步 (举报与申诉删评论不清通知, 申诉驳回删资源不清评论派生物)',
     removeWhen: '三张内容表的删除改由数据库外键与触发器完整承载',
     files: ['app/**/*.ts', 'server/**/*.ts', 'migration/**/*.ts'],
-    ignores: ['server/content/**'],
+    // 测试做不了生产写入, 却常要 mock / 断言这些方法 (vi.spyOn(prisma.patch_comment, …))
+    ignores: ['server/content/**', '**/__tests__/**'],
     enforce: {
       kind: 'syntax',
       selectors: [
         `CallExpression[callee.property.name=/^(delete|deleteMany)$/][callee.object.property.name=${CONTENT_DELEGATE}]`,
-        ...detachedContentDelegate('delete|deleteMany')
+        ...detachedContentDelegate('delete|deleteMany'),
+        `${RELATION_WRITE} > ObjectExpression > Property${keyIs('/^(delete|deleteMany)$/')}`,
+        ...hiddenRelationWrite
       ],
       strings: [
         new RegExp(
@@ -239,6 +285,7 @@ export const KUN_INVARIANTS = [
         'export const run = (prisma: any) => prisma.patch_resource.delete({ where: { id: 1 } })',
         'export const run = (tx: any) => { const { patch_comment } = tx; return patch_comment.deleteMany({ where: { id: 1 } }) }',
         "export const run = (tx: any) => { const { ['patch_resource']: resources } = tx; return resources.deleteMany({ where: { id: 1 } }) }",
+        'export const run = (tx: any) => { const { [`patch_comment`]: comments } = tx; return comments.deleteMany({ where: { id: 1 } }) }',
         'export const run = (tx: any) => { const comments = tx.patch_comment; return comments.delete({ where: { id: 1 } }) }',
         "export const run = (tx: any) => tx['patch_comment'].delete({ where: { id: 1 } })",
         'export const run = (tx: any) => tx[`patch_rating`].deleteMany({ where: { id: 1 } })',
@@ -247,7 +294,21 @@ export const KUN_INVARIANTS = [
         'export const run = (tx: any) => { const remove = tx.patch_comment.delete; return remove({ where: { id: 1 } }) }',
         'export const run = (tx: any, id: number) => tx.$executeRaw`DELETE FROM patch_comment WHERE id = ${id}`',
         'export const run = (tx: any, id: number) => tx.$executeRawUnsafe(\'delete from only "public"."patch_resource" where id = $1\', id)',
-        'export const run = (tx: any) => tx.$executeRaw`TRUNCATE patch_report, patch_rating`'
+        'export const run = (tx: any) => tx.$executeRaw`TRUNCATE patch_report, patch_rating`',
+        'export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { deleteMany: {} } } })',
+        'export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1 }, data: { reply: { deleteMany: {} } } })',
+        'export const run = (tx: any) => tx.patch_report.update({ where: { id: 1 }, data: { comment: { delete: true } } })',
+        'export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1 }, data: { parent: { delete: true } } })',
+        'export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { patch_comment: { deleteMany: {} } } })',
+        'export const steps = (tx: any) => ({ create: () => tx.patch.update({ where: { id: 1 }, data: { comment: { deleteMany: {} } } }) })',
+        "export const run = (tx: any) => tx.user.upsert({ where: { id: 1 }, create: { name: 'x' }, update: { patch_rating: { deleteMany: { patch_id: 1 } } } })",
+        'export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { resource: { update: { where: { id: 2 }, data: { comment: { deleteMany: {} } } } } } })',
+        "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { ['resource']: { deleteMany: {} } } })",
+        'export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { [`rating`]: { deleteMany: {} } } })',
+        "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { 'deleteMany': {} } } })",
+        'export const run = (tx: any, ops: any) => tx.patch.update({ where: { id: 1 }, data: { comment: ops } })',
+        'export const run = (tx: any, ops: any) => tx.patch.update({ where: { id: 1 }, data: { rating: { ...ops } } })',
+        'export const run = (tx: any, op: string) => tx.patch.update({ where: { id: 1 }, data: { rating: { [op]: {} } } })'
       ],
       good: [
         'export const run = (tx: any) => tx.patch_report.deleteMany({ where: { id: 1 } })',
@@ -258,7 +319,15 @@ export const KUN_INVARIANTS = [
         'export const run = (tx: any, id: number) => tx.$queryRaw`SELECT id FROM patch_comment WHERE id = ${id} FOR UPDATE`',
         'export const run = (tx: any, id: number) => tx.$executeRaw`DELETE FROM patch_resource_link WHERE resource_id = ${id}`',
         "export const run = (tx: any, id: number) => tx.$executeRawUnsafe('DELETE FROM patch_rating_like WHERE patch_rating_id = $1', id)",
-        "export const message = '正文过长, truncate 后再写回 patch_comment'"
+        "export const message = '正文过长, truncate 后再写回 patch_comment'",
+        'export const run = (user: any, p: any) => { for (const r of user.patch_resource) r.id; const { patch_comment } = p._count; const { patch_rating } = _count; const { _count: { patch_resource } } = user; return patch_comment + patch_rating + patch_resource }',
+        'export const run = (tx: any, links: any[]) => tx.patch_resource.update({ where: { id: 1 }, data: { links: { deleteMany: {}, create: links } } })',
+        'export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { tag: { deleteMany: {} }, alias: { deleteMany: {} }, company: { deleteMany: {} } } })',
+        'export const run = (tx: any) => tx.patch_report.update({ where: { id: 1 }, data: { comment: { disconnect: true }, rating: { connect: { id: 2 } } } })',
+        'export const run = (tx: any, f: any) => tx.user.update({ where: { id: 1 }, data: { patch_resource_like: { deleteMany: { resource: f } } } })',
+        'export const run = (tx: any, f: any, now: Date) => tx.user.update({ where: { id: 1 }, data: { patch_resource_like: { updateMany: { where: { resource: f }, data: { created: now } } } } })',
+        "export const run = (tx: any, target: any) => tx.patch.update({ where: { id: 1 }, data: { report: { create: { content: 'x', comment: target } } } })",
+        "export const run = (tx: any, ops: any) => tx.patch.create({ data: { name: 'x', comment: ops } })"
       ]
     }
   },
@@ -270,20 +339,28 @@ export const KUN_INVARIANTS = [
       '状态迁移要先锁行、只对锁下实际迁移的行作废审核任务并重算聚合; 入口直接写 status 时出现过守卫读事务外快照、作废集合与迁移集合不一致',
     removeWhen: '内容状态不再由应用层写入',
     files: ['app/**/*.ts', 'server/**/*.ts', 'migration/**/*.ts'],
-    ignores: ['server/content/**'],
-    // 写入体必须让 status 键字面可见: 实参与写入体都是行内对象字面量, 不许计算键; 展开只许展开两支都是
-    // 对象字面量的三元, 被展开的字面量里不再嵌套展开或计算键
+    // 测试做不了生产写入, 却常要 mock / 断言这些方法 (vi.spyOn(prisma.patch_comment, …))
+    ignores: ['server/content/**', '**/__tests__/**'],
+    // 写入体必须让 status 键字面可见: 实参与写入体都是行内对象字面量 (写入体可包一层 as / satisfies),
+    // 不许计算键; 展开只许展开两支都是对象字面量的三元, 被展开的字面量里不再嵌套展开或计算键。
+    // 嵌套的 update / updateMany / upsert 更严: 写入体里不许任何展开与计算键, 数组形式的每一项都得是字面量
     enforce: {
       kind: 'syntax',
       selectors: [
-        `${PAYLOAD} Property:matches([key.name='status'], [key.value='status'])`,
+        `${PAYLOAD} Property${STATUS_KEY}${outsideFilterOrInsert(PAYLOAD)}`,
         `${CONTENT_UPDATE}:not([arguments.0.type='ObjectExpression'])`,
         `${CONTENT_UPDATE} > ObjectExpression > :matches(SpreadElement, Property[computed=true])`,
-        `${CONTENT_UPDATE} > ObjectExpression > Property${PAYLOAD_KEY}:not([value.type='ObjectExpression'])`,
+        `${PAYLOAD_SLOT}${NOT_INLINE_VALUE}`,
         `${PAYLOAD} > Property[computed=true]`,
         `${PAYLOAD} > SpreadElement:not([argument.type='ConditionalExpression'][argument.consequent.type='ObjectExpression'][argument.alternate.type='ObjectExpression'])`,
         `${PAYLOAD} > SpreadElement ObjectExpression > :matches(SpreadElement, Property[computed=true])`,
-        ...detachedContentDelegate(CONTENT_UPDATE_METHODS)
+        ...detachedContentDelegate(CONTENT_UPDATE_METHODS),
+        ...hiddenRelationWrite,
+        `${NESTED_UPDATE}:not([value.type='ObjectExpression'], [value.type='ArrayExpression'])`,
+        `${NESTED_UPDATE} > ArrayExpression > :not(ObjectExpression)`,
+        `:matches(${NESTED_UPDATE} > ObjectExpression, ${NESTED_UPDATE} > ArrayExpression > ObjectExpression) > Property${PAYLOAD_KEY}${NOT_INLINE_VALUE}`,
+        `${NESTED_UPDATE} Property${STATUS_KEY}${outsideFilterOrInsert(NESTED_UPDATE)}`,
+        `${NESTED_UPDATE} ObjectExpression > :matches(SpreadElement, Property[computed=true])${outsideFilterOrInsert(NESTED_UPDATE)}`
       ],
       strings: [
         new RegExp(
@@ -324,7 +401,23 @@ export const KUN_INVARIANTS = [
         'export const run = (tx: any, s: number, id: number) => tx.$executeRaw`UPDATE patch_comment SET status = ${s} WHERE id = ${id}`',
         'export const run = (tx: any, n: string, s: number, id: number) => tx.$executeRaw`UPDATE patch_resource SET name = ${n}, status = ${s} WHERE id = ${id}`',
         'export const run = (tx: any, s: number, id: number) => tx.$executeRawUnsafe(\'update only "patch_rating" as r set "status" = $1 where r.id = $2\', s, id)',
-        'export const run = (id: number) => Prisma.sql`INSERT INTO patch_comment (id, status) VALUES (${id}, 1) ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status`'
+        'export const run = (id: number) => Prisma.sql`INSERT INTO patch_comment (id, status) VALUES (${id}, 1) ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status`',
+        "export const run = (tx: any, s: number, id: number) => tx.$executeRaw`UPDATE patch_comment SET content = 'where', status = ${s} WHERE id = ${id}`",
+        'export const run = (tx: any, fields: any) => tx.patch_comment.update({ where: { id: 1 }, data: fields satisfies object })',
+        'export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1 }, data: { status: 2 } satisfies object })',
+        'export const steps = (tx: any) => ({ where: () => tx.patch_comment.update({ where: { id: 1 }, data: { status: 2 } }) })',
+        'export const run = (tx: any, fields: any) => tx.patch_comment.update({ where: { id: 1 }, data: { ...fields } as object })',
+        'export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { patch_resource: { updateMany: { where: {}, data: { status: 1 } } } } })',
+        'export const run = (tx: any) => tx.patch_report.update({ where: { id: 1 }, data: { comment: { update: { status: 2 } } } })',
+        'export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { rating: { updateMany: [{ where: { id: 2 }, data: { status: 2 } }] } } })',
+        "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { resource: { upsert: { where: { id: 2 }, create: { name: 'x' }, update: { status: 1 } } } } })",
+        'export const run = (tx: any, ops: any) => tx.patch.update({ where: { id: 1 }, data: { resource: ops } })',
+        'export const run = (tx: any, args: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { updateMany: args } } })',
+        'export const run = (tx: any, args: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { updateMany: [args] } } })',
+        'export const run = (tx: any, fields: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { update: { where: { id: 2 }, data: fields } } } })',
+        'export const run = (tx: any, fields: any) => tx.patch.update({ where: { id: 1 }, data: { rating: { updateMany: [{ where: { id: 2 }, data: fields }] } } })',
+        'export const run = (tx: any, fields: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { update: { where: { id: 2 }, data: { ...fields } } } } })',
+        'export const run = (tx: any, key: string) => tx.patch.update({ where: { id: 1 }, data: { comment: { update: { where: { id: 2 }, data: { [key]: 2 } } } } })'
       ],
       good: [
         "export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1, status: 0 }, data: { content: 'x' } })",
@@ -342,7 +435,20 @@ export const KUN_INVARIANTS = [
         'export const run = (tx: any, c: string, id: number) => tx.$executeRaw`INSERT INTO patch_comment (id, content) VALUES (${id}, ${c}) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content RETURNING id, status`',
         'export const run = (tx: any, id: number) => tx.$queryRaw`SELECT status FROM patch_resource WHERE id = ${id} FOR UPDATE`',
         'export const run = (tx: any, id: number) => tx.$executeRaw`INSERT INTO patch_rating_stat (patch_id, count) VALUES (${id}, 1) ON CONFLICT (patch_id) DO UPDATE SET count = EXCLUDED.count`',
-        'export const run = (tx: any, s: number, id: number) => tx.$executeRaw`UPDATE patch_rating_like SET status = ${s} WHERE id = ${id}`'
+        'export const run = (tx: any, s: number, id: number) => tx.$executeRaw`UPDATE patch_rating_like SET status = ${s} WHERE id = ${id}`',
+        "export const run = (tx: any, id: number) => tx.$executeRaw`UPDATE patch_comment SET content = 'a' WHERE note = 'b' AND status = 0 AND id = ${id}`",
+        "export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1 }, data: { content: 'x' } satisfies object })",
+        "export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1 }, data: { content: 'x' } as object })",
+        "export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1 }, data: { reply: { create: { content: 'x', status: 1 } } } })",
+        'export const run = (user: any, p: any) => { for (const r of user.patch_resource) r.id; const { patch_comment } = p._count; const { patch_rating } = _count; const { _count: { patch_resource } } = user; return patch_comment + patch_rating + patch_resource }',
+        'export const run = (tx: any, links: any[]) => tx.patch_resource.update({ where: { id: 1 }, data: { links: { deleteMany: {}, create: links } } })',
+        "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { updateMany: { where: { status: 0 }, data: { content: 'x' } } } } })",
+        "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { rating: { updateMany: [{ where: { id: 2 }, data: { short_summary: 'x' } }] } } })",
+        "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { resource: { upsert: { where: { id: 2 }, create: { name: 'x', status: 0 }, update: { name: 'x' } } } } })",
+        "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { update: { where: { id: 2 }, data: { reply: { createMany: { data: [{ content: 'x', status: 1 }] } } } } } } })",
+        'export const run = (tx: any, reply: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { update: { where: { id: 2 }, data: { reply: { create: { ...reply } } } } } } })',
+        "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { update: { where: { id: 2 }, data: { content: 'x' } satisfies object } } } })",
+        'export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { patch_comment_like: { updateMany: { where: { id: 2 }, data: { status: 1 } } } } })'
       ]
     }
   }
