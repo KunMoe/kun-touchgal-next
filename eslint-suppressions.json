@@ -9,8 +9,26 @@
       "count": 1
     }
   },
+  "app/api/admin/appeal/handle.ts": {
+    "kun/inv-content-05": {
+      "count": 3
+    },
+    "kun/inv-content-06": {
+      "count": 3
+    }
+  },
+  "app/api/admin/comment/delete.ts": {
+    "kun/inv-content-05": {
+      "count": 1
+    }
+  },
   "app/api/admin/comment/get.ts": {
     "kun/inv-content-02": {
+      "count": 1
+    }
+  },
+  "app/api/admin/comment/shadow-ban/shadowBan.ts": {
+    "kun/inv-content-06": {
       "count": 1
     }
   },
@@ -19,13 +37,48 @@
       "count": 2
     }
   },
+  "app/api/admin/rating/delete.ts": {
+    "kun/inv-content-05": {
+      "count": 1
+    }
+  },
+  "app/api/admin/rating/shadow-ban/shadowBan.ts": {
+    "kun/inv-content-06": {
+      "count": 1
+    }
+  },
   "app/api/admin/report/handle/batch/route.ts": {
     "no-console": {
       "count": 1
     }
   },
+  "app/api/admin/report/handle/service.ts": {
+    "kun/inv-content-05": {
+      "count": 2
+    }
+  },
   "app/api/admin/report/service.ts": {
     "kun/inv-content-01": {
+      "count": 1
+    }
+  },
+  "app/api/admin/resource-apply/approve/route.ts": {
+    "kun/inv-content-06": {
+      "count": 1
+    }
+  },
+  "app/api/admin/resource-apply/decline/route.ts": {
+    "kun/inv-content-05": {
+      "count": 1
+    }
+  },
+  "app/api/admin/resource/delete.ts": {
+    "kun/inv-content-05": {
+      "count": 1
+    }
+  },
+  "app/api/admin/resource/hidden/hidden.ts": {
+    "kun/inv-content-06": {
       "count": 1
     }
   },
@@ -47,6 +100,9 @@
   "app/api/patch/comment/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
+    },
+    "kun/inv-content-05": {
+      "count": 1
     }
   },
   "app/api/patch/comment/get.ts": {
@@ -56,6 +112,9 @@
   },
   "app/api/patch/comment/update.ts": {
     "kun/inv-content-01": {
+      "count": 1
+    },
+    "kun/inv-content-06": {
       "count": 1
     }
   },
@@ -82,15 +141,31 @@
   "app/api/patch/rating/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
+    },
+    "kun/inv-content-05": {
+      "count": 1
+    }
+  },
+  "app/api/patch/rating/update.ts": {
+    "kun/inv-content-06": {
+      "count": 1
     }
   },
   "app/api/patch/resource/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
+    },
+    "kun/inv-content-05": {
+      "count": 1
     }
   },
   "app/api/patch/resource/get.ts": {
     "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "app/api/patch/resource/update.ts": {
+    "kun/inv-content-06": {
       "count": 1
     }
   },
@@ -215,11 +290,17 @@
     }
   },
   "migration/migrateCommunityGalgameResourceTaxonomy.ts": {
+    "kun/inv-content-05": {
+      "count": 1
+    },
     "no-console": {
       "count": 21
     }
   },
   "migration/migrateCommunityPatchResourceTaxonomy.ts": {
+    "kun/inv-content-05": {
+      "count": 1
+    },
     "no-console": {
       "count": 23
     }
@@ -340,6 +421,9 @@
     }
   },
   "server/moderation/apply.ts": {
+    "kun/inv-content-06": {
+      "count": 3
+    },
     "no-console": {
       "count": 3
     }

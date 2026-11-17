@@ -178,6 +178,60 @@ export const KUN_INVARIANTS = [
         'export const A = ({ html }: { html: KunSafeHtml }) => <div dangerouslySetInnerHTML={kunInnerHtml(html)} />'
       ]
     }
+  },
+  {
+    id: 'inv-content-05',
+    statement:
+      '评论、评价、资源三张内容表的物理删除只许出现在 server/content/** 的命令里',
+    reason:
+      '删除要在行锁下复检状态, 并按固定顺序清理通知、审核任务、申诉、孤儿举报与出箱; 入口各写一份时曾反复漏步 (举报与申诉删评论不清通知, 申诉驳回删资源不清评论派生物)',
+    removeWhen: '三张内容表的删除改由数据库外键与触发器完整承载',
+    files: ['app/**/*.ts', 'server/**/*.ts', 'migration/**/*.ts'],
+    ignores: ['server/content/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        'CallExpression[callee.property.name=/^(delete|deleteMany)$/][callee.object.property.name=/^patch_(comment|rating|resource)$/]'
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        'export const run = (tx: any) => tx.patch_comment.deleteMany({ where: { id: 1 } })',
+        'export const run = (prisma: any) => prisma.patch_resource.delete({ where: { id: 1 } })'
+      ],
+      good: [
+        'export const run = (tx: any) => tx.patch_report.deleteMany({ where: { id: 1 } })',
+        'export const run = (tx: any) => tx.patch_rating.findMany({ where: { id: 1 } })'
+      ]
+    }
+  },
+  {
+    id: 'inv-content-06',
+    statement:
+      '评论、评价、资源三张内容表的 status 写入只许出现在 server/content/** 的命令里',
+    reason:
+      '状态迁移要先锁行、只对锁下实际迁移的行作废审核任务并重算聚合; 入口直接写 status 时出现过守卫读事务外快照、作废集合与迁移集合不一致',
+    removeWhen: '内容状态不再由应用层写入',
+    files: ['app/**/*.ts', 'server/**/*.ts', 'migration/**/*.ts'],
+    ignores: ['server/content/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        "CallExpression[callee.property.name=/^(update|updateMany|updateManyAndReturn|upsert)$/][callee.object.property.name=/^patch_(comment|rating|resource)$/] Property[key.name='data'] Property[key.name='status']"
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        'export const run = (tx: any) => tx.patch_rating.update({ where: { id: 1 }, data: { status: 2 } })',
+        'export const run = (tx: any, intercept: boolean) => tx.patch_comment.updateMany({ where: { id: 1 }, data: { ...(intercept ? { status: 1 } : {}) } })'
+      ],
+      good: [
+        "export const run = (tx: any) => tx.patch_comment.update({ where: { id: 1, status: 0 }, data: { content: 'x' } })",
+        'export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { status: 2 } })'
+      ]
+    }
   }
 ]
 
