@@ -4,6 +4,8 @@ import { adminUpdateCommentShadowBanSchema } from '~/validations/admin'
 import { deletePendingModerationTasks } from '~/server/moderation/submit'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
+import { onCommentPublished } from '~/server/content/comment/publish'
+import { COMMENT_STATUS } from '~/constants/contentStatus'
 
 const statusLabel: Record<number, string> = {
   0: '正常',
@@ -64,5 +66,10 @@ export const updateCommentShadowBan = async (
   await invalidatePatchContentCacheByPatchId(comment.patch_id).catch(
     () => undefined
   )
+  // 恢复为正常: 这条评论可能从未公开过 (创建即被拦截, 随后被拒或被隐藏), 当时没发的
+  // 通知在这里补上; 已经发过的由去重挡住
+  if (status === COMMENT_STATUS.public) {
+    await onCommentPublished(commentId)
+  }
   return {}
 }

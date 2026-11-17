@@ -1,13 +1,7 @@
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import type { moderation_taskModel } from '~/prisma/generated/prisma/models'
-import {
-  createDedupMessage,
-  createLinkDedupMessage,
-  createMessage
-} from '~/app/api/utils/message'
-import { createMentionMessage } from '~/app/api/utils/createMentionMessage'
-import { buildCommentLink } from '~/utils/patch/buildCommentLink'
+import { createMessage } from '~/app/api/utils/message'
 import { recomputePatchRatingStat } from '~/app/api/patch/rating/stat'
 import { recalcPatchType } from '~/app/api/patch/resource/_helper'
 import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
@@ -21,6 +15,7 @@ import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
 import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
+import { onCommentPublished } from '~/server/content/comment/publish'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
 import { copyObject, deleteFileFromS3 } from '~/lib/s3'
 import {
@@ -74,68 +69,6 @@ export const requeueModerationTask = async (taskId: number) =>
       reject_reason: ''
     }
   })
-
-// 创建时被拦截而未发送的通知, 在评论对他人可见后补发
-// (文案须与 comment/create.ts 逐字一致以保 createDedupMessage 去重命中)
-export const sendDeferredCommentNotifications = async (commentId: number) => {
-  const comment = await prisma.patch_comment.findUnique({
-    where: { id: commentId },
-    include: {
-      patch: { select: { name: true, unique_id: true } },
-      user: { select: { name: true } },
-      parent: { select: { user_id: true, content: true } },
-      resource: { select: { user_id: true } }
-    }
-  })
-  if (!comment) {
-    return
-  }
-  if (comment.parent && comment.parent.user_id !== comment.user_id) {
-    await createDedupMessage({
-      type: 'comment',
-      content: `回复了您的评论：${comment.parent.content.slice(0, 107)}`,
-      sender_id: comment.user_id,
-      recipient_id: comment.parent.user_id,
-      link: buildCommentLink(
-        comment.patch.unique_id,
-        comment.id,
-        comment.resource_id
-      )
-    })
-    // 自动提交后失效收件人未读缓存 (L-01); 去重命中时多一次 DEL 无害
-    await invalidateUnread(comment.parent.user_id).catch(() => undefined)
-  }
-  // 资源的一级评论通知资源上传者 (自评自己上传的资源不通知);
-  // link 维度去重: 评论编辑重审通过后 content 会变, 不能进去重键
-  if (
-    !comment.parent_id &&
-    comment.resource_id &&
-    comment.resource &&
-    comment.resource.user_id !== comment.user_id
-  ) {
-    await createLinkDedupMessage({
-      type: 'comment',
-      content: `评论了您发布的资源：${comment.content.slice(0, 107)}`,
-      sender_id: comment.user_id,
-      recipient_id: comment.resource.user_id,
-      link: buildCommentLink(
-        comment.patch.unique_id,
-        comment.id,
-        comment.resource_id
-      )
-    })
-    await invalidateUnread(comment.resource.user_id).catch(() => undefined)
-  }
-  await createMentionMessage(
-    comment.patch.unique_id,
-    comment.patch.name,
-    comment.id,
-    comment.user_id,
-    comment.user.name,
-    comment.content,
-    comment.resource_id
-  )
-}
 
 const resolveRejectReason = (rejectCode?: string, rejectReason?: string) =>
   rejectReason ||
@@ -393,7 +326,6 @@ export const applyModerationVerdict = async (
     await invalidateUnread(task.user_id).catch(() => undefined)
   }
   if (commentApproved) {
-    await sendDeferredCommentNotifications(task.content_id ?? 0)
     if (commentPatchId !== null) {
       await invalidatePatchCommentCache(commentPatchId)
       // 评论通过 (1→0) 进入公开基线改 _count.comment, 失效补丁详情缓存 (M-05);
@@ -404,6 +336,8 @@ export const applyModerationVerdict = async (
         )
       }
     }
+    // 缓存先、通知后: 创建时被拦截而没发出的通知, 在评论对他人可见后补发
+    await onCommentPublished(task.content_id ?? 0)
   }
   // 评价审核落定 (1→0/2) 改 ratingSummary, 失效补丁详情缓存 (M-05)
   if (ratingPatchId !== null) {

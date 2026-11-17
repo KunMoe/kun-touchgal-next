@@ -8,6 +8,7 @@ const {
   findRatingMock,
   updateRatingMock,
   updateCommentMock,
+  findCommentMock,
   findResourceMock,
   updateResourceMock,
   updateUserMock,
@@ -20,6 +21,7 @@ const {
   findRatingMock: vi.fn(),
   updateRatingMock: vi.fn(),
   updateCommentMock: vi.fn(),
+  findCommentMock: vi.fn(),
   findResourceMock: vi.fn(),
   updateResourceMock: vi.fn(),
   updateUserMock: vi.fn(),
@@ -31,7 +33,10 @@ const transactionClient = {
   $executeRaw: executeRawMock,
   moderation_task: { updateMany: claimMock },
   patch_rating: { findUnique: findRatingMock, update: updateRatingMock },
-  patch_comment: { updateMany: updateCommentMock },
+  patch_comment: {
+    updateMany: updateCommentMock,
+    findUnique: findCommentMock
+  },
   patch_resource: { findUnique: findResourceMock, update: updateResourceMock },
   user: { update: updateUserMock }
 }
@@ -43,13 +48,11 @@ vi.mock('~/prisma/index', () => ({
 }))
 
 vi.mock('~/app/api/utils/message', () => ({
-  createDedupMessage: vi.fn(),
-  createLinkDedupMessage: vi.fn(),
   createMessage: vi.fn()
 }))
 
-vi.mock('~/app/api/utils/createMentionMessage', () => ({
-  createMentionMessage: vi.fn()
+vi.mock('~/server/content/comment/publish', () => ({
+  onCommentPublished: vi.fn()
 }))
 
 vi.mock('~/app/api/patch/rating/stat', () => ({
@@ -104,7 +107,8 @@ import { applyModerationVerdict } from '~/server/moderation/apply'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
 import { copyObject, deleteFileFromS3 } from '~/lib/s3'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
-import { createDedupMessage, createMessage } from '~/app/api/utils/message'
+import { createMessage } from '~/app/api/utils/message'
+import { onCommentPublished } from '~/server/content/comment/publish'
 import { recalcPatchType } from '~/app/api/patch/resource/_helper'
 import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
 import { invalidateResourceListCache } from '~/app/api/resource/cache'
@@ -157,6 +161,7 @@ beforeEach(() => {
   findRatingMock.mockResolvedValue({ patch_id: 10, status: 1 })
   updateRatingMock.mockResolvedValue({})
   updateCommentMock.mockResolvedValue({ count: 1 })
+  findCommentMock.mockResolvedValue({ patch_id: 10, resource_id: null })
   findResourceMock.mockResolvedValue({ patch_id: 10, status: 3 })
   updateResourceMock.mockResolvedValue({})
   updateUserMock.mockResolvedValue({})
@@ -376,7 +381,7 @@ describe('applyModerationVerdict', () => {
       transactionClient
     )
     // 被拒评论不进公开基线: 既不补发创建时被拦下的通知, 也不失效评论缓存
-    expect(createDedupMessage).not.toHaveBeenCalled()
+    expect(onCommentPublished).not.toHaveBeenCalled()
     expect(invalidatePatchCommentCache).not.toHaveBeenCalled()
     // 驳回通知写入后, 作者未读缓存在提交后失效 (L-01)
     expect(invalidateUnreadMock).toHaveBeenCalledWith(100)
@@ -385,6 +390,46 @@ describe('applyModerationVerdict', () => {
       'transaction-commit',
       'invalidate-unread:100'
     ])
+  })
+
+  it('publishes the approved comment after both caches are invalidated', async () => {
+    await expect(
+      applyModerationVerdict({
+        task: ratingTask({ content_type: 'comment', content_id: 7 }),
+        approved: true
+      })
+    ).resolves.toBe(true)
+
+    expect(updateCommentMock).toHaveBeenCalledWith({
+      where: { id: 7, status: 1 },
+      data: { status: 0 }
+    })
+    expect(invalidatePatchCommentCache).toHaveBeenCalledWith(10)
+    expect(invalidatePatchContentCacheByPatchId).toHaveBeenCalledWith(10)
+    // 创建时被拦下的通知在这里补发; 排在缓存失效之后, 通知出问题不连累缓存
+    expect(onCommentPublished).toHaveBeenCalledWith(7)
+    const published = vi.mocked(onCommentPublished).mock.invocationCallOrder[0]
+    expect(
+      vi.mocked(invalidatePatchCommentCache).mock.invocationCallOrder[0]
+    ).toBeLessThan(published)
+    expect(
+      vi.mocked(invalidatePatchContentCacheByPatchId).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(published)
+  })
+
+  it('does not publish when the comment already left the pending state', async () => {
+    updateCommentMock.mockResolvedValue({ count: 0 })
+
+    await expect(
+      applyModerationVerdict({
+        task: ratingTask({ content_type: 'comment', content_id: 7 }),
+        approved: true
+      })
+    ).resolves.toBe(true)
+
+    expect(onCommentPublished).not.toHaveBeenCalled()
+    expect(invalidatePatchCommentCache).not.toHaveBeenCalled()
   })
 
   it('falls back to the reject code label when the verdict carries no reason', async () => {

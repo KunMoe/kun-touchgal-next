@@ -6,7 +6,7 @@ import { adminHandleAppealSchema } from '~/validations/admin'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import { createMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
-import { sendDeferredCommentNotifications } from '~/server/moderation/apply'
+import { onCommentPublished } from '~/server/content/comment/publish'
 import { recomputePatchRatingStat } from '~/app/api/patch/rating/stat'
 import {
   recalcPatchType,
@@ -222,11 +222,8 @@ const approveAppeal = async (
   await invalidateUnread(appeal.user_id).catch(() => undefined)
 
   // 事务提交后的副作用, 与 AI 审核通过路径保持一致
-  if (type === 'comment') {
-    await sendDeferredCommentNotifications(contentId)
-    if (patchId !== null) {
-      await invalidatePatchCommentCache(patchId)
-    }
+  if (type === 'comment' && patchId !== null) {
+    await invalidatePatchCommentCache(patchId)
   }
   if (type === 'resource') {
     if (patchId !== null) {
@@ -246,6 +243,10 @@ const approveAppeal = async (
   // comment 恢复 (2→0) 改 _count.comment, rating 恢复改 ratingSummary, 失效详情缓存 (M-05)
   if ((type === 'comment' || type === 'rating') && patchId !== null) {
     await invalidatePatchContentCacheByPatchId(patchId).catch(() => undefined)
+  }
+  // 缓存先、通知后: 创建时被拦截而没发出的通知, 在评论恢复公开后补发
+  if (type === 'comment') {
+    await onCommentPublished(contentId)
   }
 
   return {}

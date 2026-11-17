@@ -3,21 +3,15 @@ import { convert } from 'html-to-text'
 import { prisma } from '~/prisma/index'
 import { patchCommentCreateSchema } from '~/validations/patch'
 import {
-  createDedupMessage,
-  createLinkDedupMessage
-} from '~/app/api/utils/message'
-import { createMentionMessage } from '~/app/api/utils/createMentionMessage'
-import {
   enqueueTextModeration,
   planTextModeration
 } from '~/server/moderation/submit'
 import { commentSubject } from '~/server/moderation/subject'
+import { onCommentPublished } from '~/server/content/comment/publish'
 import { getResourceVisibilityWhere } from '~/app/api/utils/contentVisibility'
-import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { invalidatePatchCommentCache } from './cache'
 import { prepareCommentContent } from './html'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
-import { invalidateUnread } from '~/app/api/message/unread/cache'
 import type { PatchComment } from '~/types/api/patch'
 
 export const createPatchComment = async (
@@ -25,17 +19,13 @@ export const createPatchComment = async (
   uid: number,
   userRole: number
 ) => {
-  let parentComment: {
-    user_id: number
-    content: string
-    status: number
-    resource_id: number | null
-  } | null = null
+  let parentComment: { status: number; resource_id: number | null } | null =
+    null
   if (input.parentId) {
     // patch_id 同查: 防跨补丁回复造出 patch_id 与 resource_id 互相矛盾的评论
     parentComment = await prisma.patch_comment.findFirst({
       where: { id: input.parentId, patch_id: input.patchId },
-      select: { user_id: true, content: true, status: true, resource_id: true }
+      select: { status: true, resource_id: true }
     })
     if (!parentComment) {
       return '未找到该评论'
@@ -54,7 +44,6 @@ export const createPatchComment = async (
     ? (parentComment?.resource_id ?? null)
     : (input.resourceId ?? null)
   // 顶层与回复都校验资源属于该 patch 且对评论者可见 (资源被隐藏后评论区随之关闭)
-  let resourceUploaderUid: number | null = null
   if (resourceId) {
     const resource = await prisma.patch_resource.findFirst({
       where: {
@@ -62,12 +51,11 @@ export const createPatchComment = async (
         patch_id: input.patchId,
         ...getResourceVisibilityWhere({ uid, role: userRole })
       },
-      select: { user_id: true }
+      select: { id: true }
     })
     if (!resource) {
       return '未找到该资源'
     }
-    resourceUploaderUid = resource.user_id
   }
 
   const [prepared, moderation] = await Promise.all([
@@ -92,13 +80,7 @@ export const createPatchComment = async (
       include: {
         patch: {
           select: {
-            name: true,
             unique_id: true
-          }
-        },
-        user: {
-          select: {
-            name: true
           }
         }
       }
@@ -113,49 +95,6 @@ export const createPatchComment = async (
 
     return created
   })
-
-  // 拦截时通知由 apply.ts 在审核通过后补发 (文案须与该处逐字一致以保去重命中);
-  // 通知在事务外自动提交, 紧随其后失效收件人未读缓存即为提交后失效 (L-01)
-  if (!moderation.intercept) {
-    if (parentComment && parentComment.user_id !== uid) {
-      await createDedupMessage({
-        type: 'comment',
-        content: `回复了您的评论：${parentComment.content.slice(0, 107)}`,
-        sender_id: uid,
-        recipient_id: parentComment.user_id,
-        link: buildCommentLink(data.patch.unique_id, data.id, resourceId)
-      })
-      await invalidateUnread(parentComment.user_id).catch(() => undefined)
-    }
-
-    // 资源的一级评论通知资源上传者 (自评自己上传的资源不通知);
-    // link 维度去重: 评论编辑重审通过后 content 会变, 不能进去重键
-    if (
-      !input.parentId &&
-      resourceId &&
-      resourceUploaderUid !== null &&
-      resourceUploaderUid !== uid
-    ) {
-      await createLinkDedupMessage({
-        type: 'comment',
-        content: `评论了您发布的资源：${input.content.slice(0, 107)}`,
-        sender_id: uid,
-        recipient_id: resourceUploaderUid,
-        link: buildCommentLink(data.patch.unique_id, data.id, resourceId)
-      })
-      await invalidateUnread(resourceUploaderUid).catch(() => undefined)
-    }
-
-    await createMentionMessage(
-      data.patch.unique_id,
-      data.patch.name,
-      data.id,
-      uid,
-      data.user.name,
-      input.content,
-      resourceId
-    )
-  }
 
   const newComment: Omit<PatchComment, 'user'> = {
     id: data.id,
@@ -182,6 +121,12 @@ export const createPatchComment = async (
     await invalidatePatchContentCache(data.patch.unique_id).catch(
       () => undefined
     )
+  }
+
+  // 缓存先、通知后。被审核拦截的评论不发通知, 等它对他人可见时
+  // (审核通过 / 申诉通过 / 管理员恢复) 再由同一个入口补发
+  if (!moderation.intercept) {
+    await onCommentPublished(data.id)
   }
 
   return newComment

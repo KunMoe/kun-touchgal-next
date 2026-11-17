@@ -8,6 +8,7 @@ import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
 import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
 import { invalidateResourceListCache } from '~/app/api/resource/cache'
 import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
+import { onCommentPublished } from '~/server/content/comment/publish'
 import type {
   CommentStatus,
   RatingStatus,
@@ -58,6 +59,8 @@ const ascending = (ids: Set<number>) => [...ids].sort((a, b) => a - b)
 //   资源列表缓存     同上, 且 section 为 patch (列表只列这一类)
 //   作者待审标记缓存 资源进出待初审 / 待审核
 // 守卫删除只匹配隐藏或待审的行, 按上面的规则自然不触发公开缓存的失效。
+// 评论由非公开变为公开时, 另登记一次通知补发 (创建时被审核拦截而没发的那些),
+// 排在全部缓存失效之后。
 // 资源变化引起的补丁聚合 (type / language / platform) 失效跟随 recalcPatchType, 由执行
 // 重算的命令自己登记, 不在这里
 export const recordContentChanges = (
@@ -65,6 +68,7 @@ export const recordContentChanges = (
   changes: ContentChange[]
 ) => {
   const commentPagePatchIds = new Set<number>()
+  const publishedCommentIds: number[] = []
   const patchContentPatchIds = new Set<number>()
   const resourceDetailPatchIds = new Set<number>()
   const pendingOwnerIds = new Set<number>()
@@ -80,6 +84,9 @@ export const recordContentChanges = (
         }
         if (change.resourceId === null && wasPublic !== isPublic) {
           patchContentPatchIds.add(change.patchId)
+        }
+        if (!wasPublic && isPublic) {
+          publishedCommentIds.push(change.id)
         }
         break
       }
@@ -139,6 +146,11 @@ export const recordContentChanges = (
   if (pendingOwners.length) {
     ctx.afterCommit(`pendingResource:${pendingOwners.join(',')}`, () =>
       Promise.all(pendingOwners.map(invalidateUserPendingResourceCache))
+    )
+  }
+  for (const commentId of publishedCommentIds) {
+    ctx.afterCommit(`commentPublished:${commentId}`, () =>
+      onCommentPublished(commentId)
     )
   }
 }

@@ -5,13 +5,15 @@ const {
   patchContentMock,
   resourceDetailMock,
   resourceListMock,
-  pendingResourceMock
+  pendingResourceMock,
+  onCommentPublishedMock
 } = vi.hoisted(() => ({
   commentPageMock: vi.fn(),
   patchContentMock: vi.fn(),
   resourceDetailMock: vi.fn(),
   resourceListMock: vi.fn(),
-  pendingResourceMock: vi.fn()
+  pendingResourceMock: vi.fn(),
+  onCommentPublishedMock: vi.fn()
 }))
 
 vi.mock('~/app/api/patch/comment/cache', () => ({
@@ -28,6 +30,9 @@ vi.mock('~/app/api/resource/cache', () => ({
 }))
 vi.mock('~/app/api/utils/pendingResourceCache', () => ({
   invalidateUserPendingResourceCache: pendingResourceMock
+}))
+vi.mock('~/server/content/comment/publish', () => ({
+  onCommentPublished: onCommentPublishedMock
 }))
 
 import { recordContentChanges } from '~/server/content/changes'
@@ -120,6 +125,35 @@ describe('评论变化 → 评论分页缓存与补丁详情缓存', () => {
 
     expect(commentPageMock).toHaveBeenCalledTimes(1)
     expect(patchContentMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('评论由非公开变为公开 → 补发通知', () => {
+  it.each([
+    ['待审通过', comment(1, 0), true],
+    ['隐藏恢复', comment(2, 0), true],
+    // 已经公开的评论不重复触发; 离开公开集与删除都不发通知
+    ['公开评论改正文', comment(0, 0), false],
+    ['公开评论被隐藏', comment(0, 2), false],
+    ['公开评论被删', comment(0, null), false],
+    ['待审被拒', comment(1, 2), false]
+  ])('%s', async (_name, change, published) => {
+    await flush([change])
+
+    expect(onCommentPublishedMock.mock.calls).toEqual(published ? [[1]] : [])
+  })
+
+  it('通知排在缓存失效之后', async () => {
+    const keys = await flush([comment(1, 0)])
+
+    expect(keys).toEqual([
+      'commentPage:10',
+      'patchContent:10',
+      'commentPublished:1'
+    ])
+    const published = onCommentPublishedMock.mock.invocationCallOrder[0]
+    expect(commentPageMock.mock.invocationCallOrder[0]).toBeLessThan(published)
+    expect(patchContentMock.mock.invocationCallOrder[0]).toBeLessThan(published)
   })
 })
 

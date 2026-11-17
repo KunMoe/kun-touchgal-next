@@ -19,7 +19,7 @@ const {
   txFindCommentMock,
   txQueryRawMock,
   renderForWriteMock,
-  sendDeferredNotificationsMock,
+  onCommentPublishedMock,
   createMessageMock,
   createLogMock,
   recomputeOneMock,
@@ -56,7 +56,7 @@ const {
   updateCommentMock: vi.fn(),
   txFindCommentMock: vi.fn(),
   renderForWriteMock: vi.fn(),
-  sendDeferredNotificationsMock: vi.fn(),
+  onCommentPublishedMock: vi.fn(),
   txQueryRawMock: vi.fn(),
   createMessageMock: vi.fn(),
   createLogMock: vi.fn(),
@@ -121,8 +121,8 @@ vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
   renderKunMarkdownForWrite: renderForWriteMock
 }))
 
-vi.mock('~/server/moderation/apply', () => ({
-  sendDeferredCommentNotifications: sendDeferredNotificationsMock
+vi.mock('~/server/content/comment/publish', () => ({
+  onCommentPublished: onCommentPublishedMock
 }))
 
 vi.mock('~/app/api/patch/rating/stat', () => ({
@@ -214,7 +214,7 @@ beforeEach(() => {
   deleteCommentMock.mockResolvedValue({ count: 1 })
   updateCommentMock.mockResolvedValue({ count: 1 })
   renderForWriteMock.mockResolvedValue({ html: '<p>ok</p>', version: 2 })
-  sendDeferredNotificationsMock.mockResolvedValue(undefined)
+  onCommentPublishedMock.mockResolvedValue(undefined)
   txLinkFindManyMock.mockResolvedValue([])
   txFindCommentMock.mockResolvedValue(null)
   txQueryRawMock.mockResolvedValue([{ status: 2 }])
@@ -297,7 +297,15 @@ describe('handleAppeal approve comment', () => {
         status: 0
       }
     })
-    expect(sendDeferredNotificationsMock).toHaveBeenCalledWith(5)
+    expect(onCommentPublishedMock).toHaveBeenCalledWith(5)
+    // 缓存先、通知后: 通知出问题不该连累缓存失效
+    const notified = onCommentPublishedMock.mock.invocationCallOrder[0]
+    expect(invalidateCommentCacheMock.mock.invocationCallOrder[0]).toBeLessThan(
+      notified
+    )
+    expect(
+      invalidateContentByPatchIdMock.mock.invocationCallOrder[0]
+    ).toBeLessThan(notified)
   })
 
   // 提交入口已拒收渲染不出来的正文; 这里兜住在那之前提交的申诉。管理员改不了申诉

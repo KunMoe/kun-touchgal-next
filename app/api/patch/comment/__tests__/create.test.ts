@@ -6,11 +6,9 @@ const {
   renderForWriteMock,
   planTextModerationMock,
   enqueueTextModerationMock,
-  createDedupMessageMock,
-  createLinkDedupMessageMock,
-  createMentionMessageMock,
+  onCommentPublishedMock,
+  invalidateCommentCacheMock,
   invalidateContentMock,
-  invalidateUnreadMock,
   parentFindFirstMock,
   resourceFindFirstMock
 } = vi.hoisted(() => ({
@@ -19,11 +17,9 @@ const {
   renderForWriteMock: vi.fn(),
   planTextModerationMock: vi.fn(),
   enqueueTextModerationMock: vi.fn(),
-  createDedupMessageMock: vi.fn(),
-  createLinkDedupMessageMock: vi.fn(),
-  createMentionMessageMock: vi.fn(),
+  onCommentPublishedMock: vi.fn(async () => undefined),
+  invalidateCommentCacheMock: vi.fn(async () => undefined),
   invalidateContentMock: vi.fn(async () => undefined),
-  invalidateUnreadMock: vi.fn(async () => undefined),
   parentFindFirstMock: vi.fn(),
   resourceFindFirstMock: vi.fn()
 }))
@@ -42,13 +38,12 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/message', () => ({
-  createDedupMessage: createDedupMessageMock,
-  createLinkDedupMessage: createLinkDedupMessageMock
+vi.mock('~/server/content/comment/publish', () => ({
+  onCommentPublished: onCommentPublishedMock
 }))
 
-vi.mock('~/app/api/utils/createMentionMessage', () => ({
-  createMentionMessage: createMentionMessageMock
+vi.mock('~/app/api/patch/comment/cache', () => ({
+  invalidatePatchCommentCache: invalidateCommentCacheMock
 }))
 
 vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
@@ -62,10 +57,6 @@ vi.mock('~/server/moderation/submit', () => ({
 
 vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCache: invalidateContentMock
-}))
-
-vi.mock('~/app/api/message/unread/cache', () => ({
-  invalidateUnread: invalidateUnreadMock
 }))
 
 import { commentSubject } from '~/server/moderation/subject'
@@ -102,7 +93,6 @@ beforeEach(() => {
     dryRun: false
   })
   enqueueTextModerationMock.mockResolvedValue(undefined)
-  createMentionMessageMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
       callback(transactionClient)
@@ -161,7 +151,7 @@ describe('createPatchComment', () => {
     )
     expect(renderForWriteMock).toHaveBeenCalledWith('comment', 'comment')
     expect(transactionMock).not.toHaveBeenCalled()
-    expect(createMentionMessageMock).not.toHaveBeenCalled()
+    expect(onCommentPublishedMock).not.toHaveBeenCalled()
     expect(invalidateContentMock).not.toHaveBeenCalled()
   })
 
@@ -180,46 +170,22 @@ describe('createPatchComment', () => {
     )
   })
 
-  it('回复通知写入后失效父评论作者的未读缓存', async () => {
-    parentFindFirstMock.mockResolvedValue({
-      user_id: 9,
-      content: 'parent',
-      status: 0,
-      resource_id: null
-    })
+  // 通知的对象与文案由 server/content/comment/publish 决定, 这里只管何时调用
+  it('未被拦截时在两份缓存失效之后发通知', async () => {
+    await createPatchComment(input, 7, 2)
 
-    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
-
-    expect(createDedupMessageMock).toHaveBeenCalledWith(
-      expect.objectContaining({ recipient_id: 9 })
+    expect(onCommentPublishedMock).toHaveBeenCalledWith(11)
+    const notified = onCommentPublishedMock.mock.invocationCallOrder[0]
+    expect(invalidateCommentCacheMock.mock.invocationCallOrder[0]).toBeLessThan(
+      notified
     )
-    expect(invalidateUnreadMock).toHaveBeenCalledWith(9)
-    expect(createDedupMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
-      invalidateUnreadMock.mock.invocationCallOrder[0]
+    expect(invalidateContentMock.mock.invocationCallOrder[0]).toBeLessThan(
+      notified
     )
   })
 
-  it('回复自己的评论不发通知也不失效未读缓存', async () => {
-    parentFindFirstMock.mockResolvedValue({
-      user_id: 7,
-      content: 'parent',
-      status: 0,
-      resource_id: null
-    })
-
-    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
-
-    expect(createDedupMessageMock).not.toHaveBeenCalled()
-    expect(invalidateUnreadMock).not.toHaveBeenCalled()
-  })
-
-  it('被审核拦截时不发通知也不失效未读缓存', async () => {
-    parentFindFirstMock.mockResolvedValue({
-      user_id: 9,
-      content: 'parent',
-      status: 0,
-      resource_id: null
-    })
+  it('被审核拦截时不发通知, 等评论对他人可见后再补', async () => {
+    parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: null })
     planTextModerationMock.mockResolvedValue({
       queue: true,
       intercept: true,
@@ -228,10 +194,9 @@ describe('createPatchComment', () => {
 
     await createPatchComment({ ...input, parentId: 6 }, 7, 2)
 
-    // 拦截时通知由 apply.ts 在审核通过后补发, 此处不写消息、不失效
-    expect(createDedupMessageMock).not.toHaveBeenCalled()
-    expect(createMentionMessageMock).not.toHaveBeenCalled()
-    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+    expect(onCommentPublishedMock).not.toHaveBeenCalled()
+    // 待审评论照样失效缓存 (创建路径的既有行为)
+    expect(invalidateCommentCacheMock).toHaveBeenCalledWith(10)
   })
 })
 
@@ -239,11 +204,11 @@ describe('createPatchComment 资源评论', () => {
   const resourceInput = { ...input, resourceId: 5 }
 
   beforeEach(() => {
-    resourceFindFirstMock.mockResolvedValue({ user_id: 3 })
+    resourceFindFirstMock.mockResolvedValue({ id: 5 })
     createCommentMock.mockResolvedValue({ ...comment, resource_id: 5 })
   })
 
-  it('顶层资源评论落库 resource_id 并通知资源上传者', async () => {
+  it('顶层资源评论落库 resource_id 并发通知', async () => {
     await createPatchComment(resourceInput, 7, 2)
 
     expect(resourceFindFirstMock).toHaveBeenCalledWith(
@@ -256,39 +221,7 @@ describe('createPatchComment 资源评论', () => {
         data: expect.objectContaining({ resource_id: 5 })
       })
     )
-    // 上传者通知走 link 维度去重 (评论编辑重审通过后 content 会变)
-    expect(createLinkDedupMessageMock).toHaveBeenCalledWith({
-      type: 'comment',
-      content: '评论了您发布的资源：comment',
-      sender_id: 7,
-      recipient_id: 3,
-      link: '/patch-10/resource/5?commentId=11'
-    })
-    // mention 深链同样指向资源页
-    expect(createMentionMessageMock).toHaveBeenCalledWith(
-      'patch-10',
-      'Patch',
-      11,
-      7,
-      'user',
-      'comment',
-      5
-    )
-    // 上传者通知写入后失效其未读缓存
-    expect(invalidateUnreadMock).toHaveBeenCalledWith(3)
-    expect(createLinkDedupMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
-      invalidateUnreadMock.mock.invocationCallOrder[0]
-    )
-  })
-
-  it('评论者是上传者本人时不发通知', async () => {
-    resourceFindFirstMock.mockResolvedValue({ user_id: 7 })
-
-    await createPatchComment(resourceInput, 7, 2)
-
-    expect(createLinkDedupMessageMock).not.toHaveBeenCalled()
-    expect(createDedupMessageMock).not.toHaveBeenCalled()
-    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+    expect(onCommentPublishedMock).toHaveBeenCalledWith(11)
   })
 
   it('资源不可见或不属于该 patch 时返回错误字符串', async () => {
@@ -307,12 +240,7 @@ describe('createPatchComment 资源评论', () => {
   })
 
   it('回复继承父评论的 resource_id 并校验可见性, 忽略 body 传入值', async () => {
-    parentFindFirstMock.mockResolvedValue({
-      user_id: 9,
-      content: 'parent',
-      status: 0,
-      resource_id: 42
-    })
+    parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: 42 })
     createCommentMock.mockResolvedValue({
       ...comment,
       parent_id: 6,
@@ -338,22 +266,10 @@ describe('createPatchComment 资源评论', () => {
         data: expect.objectContaining({ resource_id: 42, parent_id: 6 })
       })
     )
-    // 回复通知父评论作者, 深链到资源页
-    expect(createDedupMessageMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recipient_id: 9,
-        link: '/patch-10/resource/42?commentId=11'
-      })
-    )
   })
 
   it('资源被隐藏后其评论不可回复', async () => {
-    parentFindFirstMock.mockResolvedValue({
-      user_id: 9,
-      content: 'parent',
-      status: 0,
-      resource_id: 42
-    })
+    parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: 42 })
     resourceFindFirstMock.mockResolvedValue(null)
 
     const result = await createPatchComment({ ...input, parentId: 6 }, 7, 2)
@@ -362,21 +278,11 @@ describe('createPatchComment 资源评论', () => {
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
-  it('普通评论 (无 resourceId) 不查资源、通知深链保持游戏页格式', async () => {
-    parentFindFirstMock.mockResolvedValue({
-      user_id: 9,
-      content: 'parent',
-      status: 0,
-      resource_id: null
-    })
+  it('普通评论 (无 resourceId) 不查资源', async () => {
+    parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: null })
 
     await createPatchComment({ ...input, parentId: 6 }, 7, 2)
 
     expect(resourceFindFirstMock).not.toHaveBeenCalled()
-    expect(createDedupMessageMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        link: '/patch-10?tab=comments&commentId=11'
-      })
-    )
   })
 })
