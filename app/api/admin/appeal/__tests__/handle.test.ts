@@ -5,6 +5,7 @@ const {
   findAppealMock,
   transactionMock,
   claimAppealMock,
+  executeRawMock,
   updateResourceMock,
   txLinkFindManyMock,
   updateLinkMock,
@@ -26,6 +27,7 @@ const {
   findAppealMock: vi.fn(),
   transactionMock: vi.fn(),
   claimAppealMock: vi.fn(),
+  executeRawMock: vi.fn(),
   updateResourceMock: vi.fn(),
   txLinkFindManyMock: vi.fn(),
   updateLinkMock: vi.fn(),
@@ -46,6 +48,7 @@ const {
 
 const events: string[] = []
 const transactionClient = {
+  $executeRaw: executeRawMock,
   moderation_appeal: { updateMany: claimAppealMock },
   patch_resource: { updateMany: updateResourceMock },
   patch_resource_link: {
@@ -125,6 +128,7 @@ beforeEach(() => {
   findAdminMock.mockResolvedValue({ id: 99, name: 'admin' })
   findAppealMock.mockResolvedValue(ratingAppeal)
   claimAppealMock.mockResolvedValue({ count: 1 })
+  executeRawMock.mockResolvedValue(1)
   updateResourceMock.mockResolvedValue({ count: 1 })
   updateLinkMock.mockResolvedValue({})
   txLinkFindManyMock.mockResolvedValue([])
@@ -185,6 +189,42 @@ describe('handleAppeal 预检', () => {
   })
 })
 
+// 删除命令的顺序是「内容行 → 待处理的申诉」。申诉处理若先认领申诉行再去锁内容行,
+// 与并发的删除就各拿一把、互等对方那把
+describe('handleAppeal 锁序', () => {
+  it.each([
+    ['rating', 'patch_rating', { text: 'restored' }],
+    ['comment', 'patch_comment', { text: 'restored' }],
+    ['resource', 'patch_resource', { name: 'n', note: '' }]
+  ])(
+    '%s: 通过与拒绝都先锁内容行, 再认领申诉行',
+    async (type, table, payload) => {
+      findAppealMock.mockResolvedValue({
+        ...ratingAppeal,
+        content_type: type,
+        payload
+      })
+
+      for (const approve of [true, false]) {
+        executeRawMock.mockClear()
+        claimAppealMock.mockClear()
+
+        expect(await handleAppeal({ appealId: 1, approve }, 99)).toEqual({})
+
+        expect(executeRawMock).toHaveBeenCalledTimes(1)
+        const [template, contentId] = executeRawMock.mock.calls[0]
+        expect(template.join('?')).toBe(
+          `SELECT id FROM ${table} WHERE id = ? FOR UPDATE`
+        )
+        expect(contentId).toBe(5)
+        expect(executeRawMock.mock.invocationCallOrder[0]).toBeLessThan(
+          claimAppealMock.mock.invocationCallOrder[0]
+        )
+      }
+    }
+  )
+})
+
 describe('handleAppeal approve rating', () => {
   // 评分统计的重算与详情缓存的失效都在迁移命令里, 随同一事务
   it('restores the hidden rating with the appealed summary through the transition command', async () => {
@@ -240,8 +280,7 @@ describe('handleAppeal approve rating', () => {
     expect(createMessageMock).not.toHaveBeenCalled()
   })
 
-  // 本事务先认领申诉行再锁内容行, 删除命令先锁内容行再删待处理的申诉: 两边互等时
-  // 数据库判死锁, 回滚的是先等待的这一方
+  // 重试是兜底: 与别的事务互等、被数据库判死锁回滚时重放一遍
   it('replays the transaction when it loses a deadlock', async () => {
     transactionMock.mockRejectedValueOnce({
       code: 'P2010',

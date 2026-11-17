@@ -31,11 +31,29 @@ import { getAppealEditableLinkFields } from '~/utils/appealPayload'
 import { APPEAL_APPROVED_LINK, APPEAL_RESULT_NOTICE } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
 import type { AppealLink, AppealPayload } from '~/types/api/appeal'
+import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { KunTxContext } from '~/server/db/tx'
 
 // 申诉载荷提交后即锁定, 管理员改不了: 正文渲染不出来时能做的只有拒绝
 const APPEAL_UNRENDERABLE =
   '申诉提交的正文无法渲染, 无法通过, 可拒绝该申诉以关闭'
+
+// 先锁内容行, 再认领申诉行: 与删除命令的顺序 (内容行 → 待处理的申诉) 一致。反过来时,
+// 申诉处理认领了申诉行去等内容行, 并发的删除锁着内容行去等申诉行, 两边互等成死锁。
+// 行已不存在时什么也锁不到, 由后面的认领与守卫给出结果
+const lockAppealedContent = async (
+  tx: Prisma.TransactionClient,
+  type: string,
+  contentId: number
+) => {
+  if (type === 'comment') {
+    await tx.$executeRaw`SELECT id FROM patch_comment WHERE id = ${contentId} FOR UPDATE`
+  } else if (type === 'rating') {
+    await tx.$executeRaw`SELECT id FROM patch_rating WHERE id = ${contentId} FOR UPDATE`
+  } else {
+    await tx.$executeRaw`SELECT id FROM patch_resource WHERE id = ${contentId} FOR UPDATE`
+  }
+}
 
 // 把申诉里的链接字段写回链接行。须在资源行锁下调用 (资源编辑先锁资源行再整体重建
 // 链接行)。隐藏态的资源不可编辑, 链接行自申诉提交起本不会变; 若其间资源被取消隐藏并
@@ -107,6 +125,7 @@ const approveAppeal = async (
     'admin.appeal.approve',
     async (ctx) => {
       const { tx } = ctx
+      await lockAppealedContent(tx, type, contentId)
       // 以申诉行状态迁移作为幂等闸门, 防止并发重复处理
       const claim = await tx.moderation_appeal.updateMany({
         where: { id: appeal.id, status: 'pending' },
@@ -178,9 +197,8 @@ const approveAppeal = async (
         }
       })
     },
-    // 认领申诉行在前、锁内容行在后, 与删除命令 (内容行 → 待处理的申诉) 相反: 两边
-    // 互等时数据库判死锁回滚其一。本事务重放后要么认领落空 (申诉已随内容删除),
-    // 要么照常通过
+    // 兜底: 与别的事务互等、被数据库判死锁回滚时重放。重放后要么认领落空 (申诉已被
+    // 处理或已随内容删除), 要么照常通过
     { retry: 2 }
   )
   if (typeof result === 'string') {
@@ -212,6 +230,7 @@ const rejectAppeal = async (
     'admin.appeal.reject',
     async (ctx) => {
       const { tx } = ctx
+      await lockAppealedContent(tx, type, contentId)
       const claim = await tx.moderation_appeal.updateMany({
         where: { id: appeal.id, status: 'pending' },
         data: { status: 'rejected', handled_by: uid }
