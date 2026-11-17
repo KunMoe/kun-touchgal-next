@@ -208,6 +208,39 @@ beforeEach(() => {
   )
 })
 
+// 资源公开但其上还有在途的审核任务 (灰度以外): 作者此时再改, 送审快照就与实际内容
+// 脱节, 也可能绕过尚未落地的人工裁决
+describe('更新资源的事务外预检: 在途审核任务', () => {
+  it('作者的资源有在途审核任务时禁止修改, 不进入预筛与事务', async () => {
+    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
+    hasPendingModerationMock.mockResolvedValue(true)
+
+    const result = await updateResource(buildInput(), 7, 1)
+
+    expect(result).toBe('您发布的资源正在审核中, 暂时无法修改')
+    expect(hasPendingModerationMock).toHaveBeenCalledWith('resource', {
+      contentId: 1
+    })
+    expect(planTextModerationMock).not.toHaveBeenCalled()
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+
+  // 管理员可以编辑待审核的资源, 在途任务不拦他
+  it('管理员不查在途审核任务', async () => {
+    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
+    hasPendingModerationMock.mockResolvedValue(true)
+    transactionQueryRawMock.mockResolvedValue([
+      { status: 0, section: 'galgame' }
+    ])
+    transactionResourceUpdateMock.mockResolvedValue(buildUpdated())
+
+    const result = await updateResource(buildInput(), 9, 3)
+
+    expect(typeof result).not.toBe('string')
+    expect(hasPendingModerationMock).not.toHaveBeenCalled()
+  })
+})
+
 // 事务外守卫读的是快照, 与事务开始之间隔着 S3 绑定/预筛的秒级窗口;
 // 锁下复检封死该窗口, 否则并发的管理员隐藏 (0→1) 会被预筛拦截写回
 // 待审核 (3), AI 放行 (3→0) 即静默撤销管理员隐藏
