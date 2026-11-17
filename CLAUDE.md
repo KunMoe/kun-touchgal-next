@@ -46,6 +46,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - 新增 API / 表单：先在 `validations/` 增加或复用 Zod schema，再用 `kunParseGetQuery` / `kunParsePostBody` / `kunParsePutBody` / `kunParseDeleteQuery` / `kunParseFormData` 解析——它们返回 `T | string`，返回 string 即代表校验失败的错误消息。
 - 客户端访问内部 API 一律走 `utils/kunFetch.ts`（自带 `credentials: 'include'` 与 `x-requested-with: kun-fetch`），不要手写重复 fetch；用 `kunErrorHandler` / `kunErrorHandlerAsync` 处理 `string | T` 返回值。
 - 响应约定：业务错误返回 `NextResponse.json('错误消息')`（字符串），成功返回 typed JSON。
+- 评论 / 评价 / 资源的物理删除与 `status` 写入只走 `server/content/**` 的命令，在 `kunTx`（`server/db/tx.ts`）里调用；事务里的业务失败用 `ctx.fail`，不要 `return` 字符串（等于提交）。lint 的 `kun/inv-content-05/06` 执法。
 - 项目自有 helper / export 多带 `kun` 前缀；跨组件、需持久化的状态放 `store/*`（Zustand）。
 - 缓存 TTL 常量在 `config/cache.ts`，Redis key 统一经 `lib/redis.ts` 前缀。
 - 代码风格（Prettier）：单引号、无分号、2 空格缩进、无尾逗号。

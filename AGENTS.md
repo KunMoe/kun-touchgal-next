@@ -27,7 +27,7 @@ TouchGal (`kun-touchgal-next`) 是一个基于 Next.js 16 App Router 的 Galgame
 - `prisma/schema/`：拆分的 PostgreSQL schema；生成 client 位于 `prisma/generated/prisma/`。
 - `db/`：数据库结构与数据变更的唯一通道。`db/migrations/` 是线性、只追加的 SQL 迁移；`db/objects.snapshot.sql` 是回放生成的库级对象快照（函数、触发器、部分索引）；工具在 `scripts/db/`。
 - `lib/`：Redis、S3、Meilisearch、OIDC、MDX 和第三方集成。
-- `server/`：cron 编排、定时任务、审核流水线和搜索索引同步。
+- `server/`：cron 编排、定时任务、审核流水线和搜索索引同步；`server/content/` 是评论 / 评价 / 资源的删除、状态迁移与编辑命令，`server/db/tx.ts` 是这些命令使用的事务执行器 `kunTx`。
 - `middleware/`：JWT、cookie 与 CSRF 实现。
 - `utils/`：fetch、错误处理、cookie、Markdown、URL/文件名安全处理及 Server Action helper。
 - `constants/`、`types/`、`config/`：领域常量/Prisma select、API DTO 和运行时配置。
@@ -74,6 +74,8 @@ pnpm prisma:generate
 - 无 DI 容器：服务直接导入 `prisma`、Redis/S3 client。只有事务范围需要传播时才传 transaction client，不新增单实现接口或工厂。
 - 跨组件/持久化数据使用现有 Zustand store；页面局部状态继续使用 React state。服务端初始数据通过 `initial*` props 水合，避免首屏重复请求。
 - 搜索写入在数据库提交后调用现有 queue sync/remove helper；不要让 Meilisearch 可用性决定数据库写入是否成功。
+- 评论、评价、资源三张内容表的物理删除与 `status` 写入只出现在 `server/content/**` 内（`kun/inv-content-05`、`kun/inv-content-06` 执法）。入口只做三件事：算出数据形状的守卫（`statusIn`、`ownerUid`），在 `kunTx` 里调用 `plan*Removal` / `execute*Removal`、`transition*`、`edit*`，把命令返回的 `skipped` 映射成自己的文案。命令在行锁下复检守卫，锁序固定为「内容行 → 审核任务」，并按实际发生的前后状态登记提交后的缓存失效与通知（`server/content/changes.ts`），入口不要再手写这些失效。
+- `kunTx` 的回调不能返回字符串：`prisma.$transaction` 的回调 `return` 字符串等于提交。业务失败用 `ctx.fail(message)`（回滚，`kunTx` 以该消息为结果）；可丢失的提交后副作用用 `ctx.afterCommit(key, effect)` 登记，必须成功的写入（审计日志等）留在事务内。
 - 跨文件承重规则（如「zod 只许命名空间导入」）在 `lint/kunInvariants.mjs` 逐条登记为 `kun/inv-*`，每条带能报错的 bad 样例，由 `lint/__tests__/kunInvariants.test.ts` 执行。不要在 `eslint.config.mjs` 新增核心 `no-restricted-imports` / `no-restricted-syntax` 块：flat config 里同名规则带选项即整体替换，会静默关掉别处的禁令。新规则的存量违规要么清零，要么记入基线；`eslint-suppressions.json` 只减不增：修掉存量违规后不跑 `pnpm lint:prune`，lint 会以退出码 2 失败；基线按路径记账，删除文件后同样要跑 `pnpm lint:prune` 清掉残留条目（有测试守护），改名后旧额度不会转移到新路径，新路径上的存量要么修掉，要么用 `eslint <新路径> --suppress-rule <规则>` 重新登记。
 - 不要手改 `prisma/generated/prisma/`、`public/sitemap.xml` 或 `.next/standalone/`；修改源 schema、路由、MDX 或构建脚本后重新生成。
 
@@ -121,7 +123,7 @@ pnpm prisma:generate
 - 测试框架为 Vitest；`vitest.config.ts` 只发现 `**/__tests__/**/*.test.ts`，别把测试放成 `.spec.ts` 或仓库外测试目录。
 - 测试与实现同域放置，例如 `server/search/__tests__/filter-builder.test.ts`、`app/api/user/follow/__tests__/route.test.ts`、`app/api/patch/rating/__tests__/write-stat-transaction.test.ts`。
 - 现有模式使用 `describe`/`it`/`expect`、`vi.hoisted` + `vi.mock` 隔离 Prisma、Next、认证、缓存、S3 与搜索；fixture 通常内联，`beforeEach` 重置并设置确定性返回值。
-- 事务测试应验证可观察结果以及 lock/commit/rollback/retry 顺序；API 测试覆盖成功路径和业务错误字符串，不测试源码文本或实现细节。
+- 事务测试应验证可观察结果以及 lock/commit/rollback/retry 顺序；API 测试覆盖成功路径和业务错误字符串，不测试源码文本或实现细节。`server/content` 的命令测试用 `server/db/__tests__/recordingTransaction.ts`：它记录每次尝试的语句（含取锁 SQL）与提交 / 回滚，读取必须先配置，没配就抛错。入口测试要么同样用它端到端跑，要么在命令层 mock。
 - 修改行为后先运行对应文件：`pnpm test -- <path>`，再运行 `pnpm typecheck`。共享服务、事务或 CI 相关变更运行全量 `pnpm test`；路由、Next 配置、Prisma 或 standalone 变更再运行 `pnpm build`。
 - CI 在 Node 26 上依次执行复制 `.env.example`（须在安装前，postinstall 的 `prisma generate` 依赖 `KUN_DATABASE_URL`）、安装、`pnpm prisma:generate`、`pnpm lint`、`pnpm typecheck` 和 `pnpm test`。
 - 当前没有全局 test setup、快照、浏览器/E2E runner、真实集成数据库 harness 或覆盖率配置；没有数值覆盖率门槛。不要声称覆盖率或端到端验证，除非单独实际执行。
