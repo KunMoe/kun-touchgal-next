@@ -1,11 +1,12 @@
 import { prisma } from '~/prisma/index'
-import { COMMENT_HTML_VERSION } from '~/app/api/utils/render/markdownToHtmlComment'
+import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
 import {
   persistCommentHtml,
   resolveCommentHtml,
   type StaleCommentHtml
 } from '~/app/api/patch/comment/html'
 
+const COMMENT_HTML_VERSION = KUN_MARKDOWN_PROFILES.comment.version
 const BATCH_SIZE = 200
 
 const backfillCommentHtml = async () => {

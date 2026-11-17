@@ -22,10 +22,11 @@ vi.mock('~/lib/redis', () => ({
   delKv: vi.fn()
 }))
 
-import {
-  COMMENT_HTML_VERSION,
-  markdownCommentProcessor
-} from '~/app/api/utils/render/markdownToHtmlComment'
+import { getKunMarkdownProcessor } from '~/app/api/utils/render/processor'
+import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
+
+const COMMENT_HTML_VERSION = KUN_MARKDOWN_PROFILES.comment.version
+const markdownCommentProcessor = getKunMarkdownProcessor('comment')
 
 afterEach(() => {
   vi.unstubAllEnvs()

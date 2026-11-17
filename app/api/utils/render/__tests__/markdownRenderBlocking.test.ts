@@ -1,9 +1,9 @@
 import { performance } from 'node:perf_hooks'
 import { describe, expect, it } from 'vitest'
-import { markdownCommentProcessor } from '~/app/api/utils/render/markdownToHtmlComment'
+import { getKunMarkdownProcessor } from '~/app/api/utils/render/processor'
 
 const renderCommentHtml = async (markdown: string) =>
-  String(await markdownCommentProcessor.process(markdown))
+  String(await getKunMarkdownProcessor('comment').process(markdown))
 
 // 证伪基准：含机器相关的耗时断言，默认不随 CI 运行。
 // 需要复现“同步阻塞 + 超时空转”时用 RUN_BENCH=1 pnpm test 触发。

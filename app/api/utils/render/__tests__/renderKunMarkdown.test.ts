@@ -25,26 +25,24 @@ import {
   MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES,
   MARKDOWN_RENDER_ERROR_CACHE_DURATION
 } from '~/config/cache'
-import {
-  NOTE_HTML_VERSION,
-  PATCH_INTRODUCTION_HTML_VERSION
-} from '~/app/api/utils/render/htmlVersion'
-import { markdownProcessor } from '~/app/api/utils/render/markdownToHtml'
-import {
-  COMMENT_HTML_VERSION,
-  markdownCommentProcessor
-} from '~/app/api/utils/render/markdownToHtmlComment'
-import { markdownExtendProcessor } from '~/app/api/utils/render/markdownToHtmlExtend'
+import { getKunMarkdownProcessor } from '~/app/api/utils/render/processor'
+import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
 import {
   renderKunMarkdown,
   renderKunMarkdownForWrite
 } from '~/app/api/utils/render/renderKunMarkdown'
-import type { KunMarkdownProfile } from '~/app/api/utils/render/renderKunMarkdown'
+
+const markdownCommentProcessor = getKunMarkdownProcessor('comment')
+const COMMENT_HTML_VERSION = KUN_MARKDOWN_PROFILES.comment.version
 
 const PROFILES = [
   ['comment', markdownCommentProcessor, COMMENT_HTML_VERSION],
-  ['note', markdownProcessor, NOTE_HTML_VERSION],
-  ['introduction', markdownExtendProcessor, PATCH_INTRODUCTION_HTML_VERSION]
+  ['note', getKunMarkdownProcessor('note'), KUN_MARKDOWN_PROFILES.note.version],
+  [
+    'introduction',
+    getKunMarkdownProcessor('introduction'),
+    KUN_MARKDOWN_PROFILES.introduction.version
+  ]
 ] as const
 
 const enableCache = () => {
@@ -214,19 +212,17 @@ describe('renderKunMarkdown 缓存', () => {
   beforeEach(enableCache)
 
   // 键只按内容 hash: 不带策略版本的话, 版本递增后仍会供出旧策略的 HTML
-  it.each(PROFILES)('%s 的缓存键带该 profile 的策略版本', async (profile) => {
-    await renderKunMarkdown(profile, 'hello')
+  it.each(PROFILES)(
+    '%s 的缓存键带该 profile 的策略版本',
+    async (profile, _processor, version) => {
+      await renderKunMarkdown(profile, 'hello')
 
-    const variant = {
-      comment: `comment-v${COMMENT_HTML_VERSION}`,
-      note: `note-v${NOTE_HTML_VERSION}`,
-      introduction: `introduction-v${PATCH_INTRODUCTION_HTML_VERSION}`
-    }[profile as KunMarkdownProfile]
-    expect(setKvMock).toHaveBeenCalledOnce()
-    expect(setKvMock.mock.calls[0][0]).toMatch(
-      new RegExp(`^markdown:html:v4:${variant}:[0-9a-f]{64}$`)
-    )
-  })
+      expect(setKvMock).toHaveBeenCalledOnce()
+      expect(setKvMock.mock.calls[0][0]).toMatch(
+        new RegExp(`^markdown:html:v4:${profile}-v${version}:[0-9a-f]{64}$`)
+      )
+    }
+  )
 
   it('命中缓存时不再解析', async () => {
     const parse = vi.spyOn(markdownCommentProcessor, 'parse')

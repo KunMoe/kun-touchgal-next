@@ -1,10 +1,12 @@
 import { prisma } from '~/prisma/index'
-import { COMMENT_HTML_VERSION } from '~/app/api/utils/render/markdownToHtmlComment'
+import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
 import {
   renderKunMarkdown,
   renderKunMarkdownForWrite
 } from '~/app/api/utils/render/renderKunMarkdown'
 import type { KunSafeHtml } from '~/types/content'
+
+const COMMENT_HTML_VERSION = KUN_MARKDOWN_PROFILES.comment.version
 
 // 评论正文与它的派生 HTML: content_html / content_html_version 由 content 渲染而来,
 // 三列的读、写、自愈都收在这里。本文件只依赖 prisma 与渲染入口, 不引评论分页缓存,

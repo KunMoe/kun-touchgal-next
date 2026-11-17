@@ -9,12 +9,8 @@ import {
   measureTreeDepth
 } from '~/app/api/utils/render/markdownBudget'
 import { renderKunMarkdown } from '~/app/api/utils/render/renderKunMarkdown'
-import { markdownProcessor } from '~/app/api/utils/render/markdownToHtml'
-import {
-  COMMENT_HTML_VERSION,
-  markdownCommentProcessor
-} from '~/app/api/utils/render/markdownToHtmlComment'
-import { markdownExtendProcessor } from '~/app/api/utils/render/markdownToHtmlExtend'
+import { getKunMarkdownProcessor } from '~/app/api/utils/render/processor'
+import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
 import type { KunMarkdownProfile } from '~/app/api/utils/render/renderKunMarkdown'
 
 // 只读盘点: 现有内容在渲染预算 (markdownBudget.ts) 下的分布, 用来校准各个阈值。
@@ -25,6 +21,7 @@ import type { KunMarkdownProfile } from '~/app/api/utils/render/renderKunMarkdow
 // (3) 评论里「已按当前版本落库却会被新预算降级」的行 —— 有的话应抬高阈值盖住它们,
 // 不要靠递增版本把它们降级
 
+const COMMENT_HTML_VERSION = KUN_MARKDOWN_PROFILES.comment.version
 const BATCH_SIZE = 500
 const SAMPLE_LIMIT = 20
 
@@ -32,9 +29,10 @@ const PARSERS: Record<
   KunMarkdownProfile,
   (markdown: string) => { children?: unknown[] }
 > = {
-  comment: (markdown) => markdownCommentProcessor.parse(markdown),
-  note: (markdown) => markdownProcessor.parse(markdown),
-  introduction: (markdown) => markdownExtendProcessor.parse(markdown)
+  comment: (markdown) => getKunMarkdownProcessor('comment').parse(markdown),
+  note: (markdown) => getKunMarkdownProcessor('note').parse(markdown),
+  introduction: (markdown) =>
+    getKunMarkdownProcessor('introduction').parse(markdown)
 }
 
 interface SourceStats {

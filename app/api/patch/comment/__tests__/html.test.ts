@@ -6,16 +6,17 @@ vi.mock('~/prisma/index', () => ({
   prisma: { patch_comment: { updateMany: updateManyMock } }
 }))
 
-import {
-  COMMENT_HTML_VERSION,
-  markdownCommentProcessor
-} from '~/app/api/utils/render/markdownToHtmlComment'
+import { getKunMarkdownProcessor } from '~/app/api/utils/render/processor'
+import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
 import {
   persistCommentHtml,
   prepareCommentContent,
   readStoredCommentHtml,
   resolveCommentHtml
 } from '~/app/api/patch/comment/html'
+
+const COMMENT_HTML_VERSION = KUN_MARKDOWN_PROFILES.comment.version
+const markdownCommentProcessor = getKunMarkdownProcessor('comment')
 
 // 渲染走真实入口; 不配 Redis, 不经缓存
 beforeEach(() => {

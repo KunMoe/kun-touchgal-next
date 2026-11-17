@@ -16,8 +16,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtmlComment', () => ({
-  COMMENT_HTML_VERSION: 1
+vi.mock('~/app/api/utils/render/profiles', () => ({
+  KUN_MARKDOWN_PROFILES: { comment: { version: 1 } }
 }))
 
 vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
