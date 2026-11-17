@@ -124,7 +124,7 @@ export const recordContentChanges = (
   const commentPageIds = ascending(commentPagePatchIds)
   if (commentPageIds.length) {
     ctx.afterCommit(`commentPage:${commentPageIds.join(',')}`, () =>
-      Promise.all(commentPageIds.map(invalidatePatchCommentCache))
+      Promise.all(commentPageIds.map((id) => invalidatePatchCommentCache(id)))
     )
   }
   const patchContentIds = ascending(patchContentPatchIds)
@@ -136,16 +136,20 @@ export const recordContentChanges = (
   const resourceDetailIds = ascending(resourceDetailPatchIds)
   if (resourceDetailIds.length) {
     ctx.afterCommit(`resourceDetail:${resourceDetailIds.join(',')}`, () =>
-      Promise.all(resourceDetailIds.map(invalidatePatchResourceDetailCache))
+      Promise.all(
+        resourceDetailIds.map((id) => invalidatePatchResourceDetailCache(id))
+      )
     )
   }
   if (resourceListChanged) {
-    ctx.afterCommit('resourceList', invalidateResourceListCache)
+    ctx.afterCommit('resourceList', () => invalidateResourceListCache())
   }
   const pendingOwners = ascending(pendingOwnerIds)
   if (pendingOwners.length) {
     ctx.afterCommit(`pendingResource:${pendingOwners.join(',')}`, () =>
-      Promise.all(pendingOwners.map(invalidateUserPendingResourceCache))
+      Promise.all(
+        pendingOwners.map((uid) => invalidateUserPendingResourceCache(uid))
+      )
     )
   }
   for (const commentId of publishedCommentIds) {

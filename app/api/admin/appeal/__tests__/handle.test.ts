@@ -14,9 +14,7 @@ const {
   updateResourceMock,
   txLinkFindManyMock,
   updateLinkMock,
-  deleteCommentMock,
   updateCommentMock,
-  txFindCommentMock,
   txQueryRawMock,
   renderForWriteMock,
   onCommentPublishedMock,
@@ -26,7 +24,8 @@ const {
   deletePendingTasksMock,
   deletePendingAppealsMock,
   deleteOrphanReportsMock,
-  isPrismaConflictMock,
+  planCommentRemovalMock,
+  executeCommentRemovalMock,
   invalidateContentMock,
   invalidateContentByPatchIdMock,
   invalidateCommentCacheMock,
@@ -52,9 +51,7 @@ const {
   updateResourceMock: vi.fn(),
   txLinkFindManyMock: vi.fn(),
   updateLinkMock: vi.fn(),
-  deleteCommentMock: vi.fn(),
   updateCommentMock: vi.fn(),
-  txFindCommentMock: vi.fn(),
   renderForWriteMock: vi.fn(),
   onCommentPublishedMock: vi.fn(),
   txQueryRawMock: vi.fn(),
@@ -64,7 +61,8 @@ const {
   deletePendingTasksMock: vi.fn(),
   deletePendingAppealsMock: vi.fn(),
   deleteOrphanReportsMock: vi.fn(),
-  isPrismaConflictMock: vi.fn(),
+  planCommentRemovalMock: vi.fn(),
+  executeCommentRemovalMock: vi.fn(),
   invalidateContentMock: vi.fn(),
   invalidateContentByPatchIdMock: vi.fn(),
   invalidateCommentCacheMock: vi.fn(),
@@ -92,11 +90,7 @@ const transactionClient = {
     findMany: txLinkFindManyMock,
     update: updateLinkMock
   },
-  patch_comment: {
-    deleteMany: deleteCommentMock,
-    updateMany: updateCommentMock,
-    findUnique: txFindCommentMock
-  },
+  patch_comment: { updateMany: updateCommentMock },
   admin_log: { create: createLogMock },
   $queryRaw: txQueryRawMock
 }
@@ -109,8 +103,13 @@ vi.mock('~/prisma/index', () => ({
     patch_resource: { findUnique: findResourceMock },
     patch_comment: { findUnique: findCommentMock },
     $transaction: transactionMock
-  },
-  isPrismaTransactionConflict: isPrismaConflictMock
+  }
+}))
+
+// 评论删除的锁、清理顺序与缓存失效由命令自己的测试覆盖; 这里只看入口怎么用它
+vi.mock('~/server/content/comment/remove', () => ({
+  planCommentRemoval: planCommentRemovalMock,
+  executeCommentRemoval: executeCommentRemovalMock
 }))
 
 vi.mock('~/app/api/utils/message', () => ({
@@ -211,19 +210,22 @@ beforeEach(() => {
   deleteResourceMock.mockResolvedValue({ count: 1 })
   updateResourceMock.mockResolvedValue({ count: 1 })
   updateLinkMock.mockResolvedValue({})
-  deleteCommentMock.mockResolvedValue({ count: 1 })
   updateCommentMock.mockResolvedValue({ count: 1 })
   renderForWriteMock.mockResolvedValue({ html: '<p>ok</p>', version: 2 })
   onCommentPublishedMock.mockResolvedValue(undefined)
   txLinkFindManyMock.mockResolvedValue([])
-  txFindCommentMock.mockResolvedValue(null)
   txQueryRawMock.mockResolvedValue([{ status: 2 }])
   createMessageMock.mockResolvedValue({})
   createLogMock.mockResolvedValue({})
   deletePendingTasksMock.mockResolvedValue({ count: 0 })
   deletePendingAppealsMock.mockResolvedValue({ count: 0 })
   deleteOrphanReportsMock.mockResolvedValue(undefined)
-  isPrismaConflictMock.mockReturnValue(false)
+  planCommentRemovalMock.mockResolvedValue({
+    roots: [{ id: 5 }],
+    skipped: [],
+    subtree: [{ id: 5 }, { id: 6 }]
+  })
+  executeCommentRemovalMock.mockResolvedValue({ deletedIds: [5, 6] })
   invalidateContentMock.mockResolvedValue(undefined)
   invalidateContentByPatchIdMock.mockResolvedValue(undefined)
   invalidateCommentCacheMock.mockResolvedValue(undefined)
@@ -676,41 +678,107 @@ describe('handleAppeal reject', () => {
     )
   })
 
-  it('guards the comment delete by hidden status and cleans descendants', async () => {
-    findAppealMock.mockResolvedValue({
-      ...ratingAppeal,
-      content_type: 'comment'
+  describe('comment', () => {
+    beforeEach(() => {
+      findAppealMock.mockResolvedValue({
+        ...ratingAppeal,
+        content_type: 'comment'
+      })
     })
-    // CTE 返回根+后代 id
-    txQueryRawMock.mockResolvedValue([{ id: 5 }, { id: 6 }])
+
+    it('deletes the comment through the removal command, guarded on the hidden status', async () => {
+      const result = await handleAppeal({ appealId: 1, approve: false }, 99)
+
+      expect(result).toEqual({})
+      // 守卫: 行锁下仍是隐藏态 (2) 才删
+      expect(planCommentRemovalMock).toHaveBeenCalledWith(
+        expect.objectContaining({ tx: transactionClient }),
+        [5],
+        { statusIn: [2] }
+      )
+      expect(executeCommentRemovalMock).toHaveBeenCalledWith(
+        expect.objectContaining({ tx: transactionClient }),
+        await planCommentRemovalMock.mock.results[0].value,
+        { orphanReports: 'inline' }
+      )
+      // 认领申诉在前, 通知与审计随删除同事务
+      expect(claimAppealMock.mock.invocationCallOrder[0]).toBeLessThan(
+        planCommentRemovalMock.mock.invocationCallOrder[0]
+      )
+      expect(createMessageMock.mock.calls[0][0].content).toBe(
+        APPEAL_RESULT_NOTICE.rejected(MODERATION_CONTENT_TYPE_MAP.comment)
+      )
+      expect(createMessageMock.mock.calls[0][1]).toBe(transactionClient)
+      expect(createLogMock.mock.calls[0][0].data.content).toContain(
+        ', 内容已删除'
+      )
+    })
+
+    it('keeps a restored comment: nothing is removed and the "kept" notice is sent', async () => {
+      // 行锁下读到已恢复 (status 0): 并发恢复赢得竞态, 内容连同它的通知、任务、申诉都保留
+      planCommentRemovalMock.mockResolvedValue({
+        roots: [],
+        skipped: [{ id: 5, reason: 'status', status: 0 }],
+        subtree: []
+      })
+
+      const result = await handleAppeal({ appealId: 1, approve: false }, 99)
+
+      expect(result).toEqual({})
+      expect(executeCommentRemovalMock).not.toHaveBeenCalled()
+      expect(createMessageMock.mock.calls[0][0].content).toBe(
+        APPEAL_RESULT_NOTICE.rejectedKept(MODERATION_CONTENT_TYPE_MAP.comment)
+      )
+      expect(createLogMock.mock.calls[0][0].data.content).toContain(
+        ', 内容已被其他操作恢复, 未执行删除'
+      )
+    })
+
+    it('closes the appeal when the comment is already gone', async () => {
+      planCommentRemovalMock.mockResolvedValue({
+        roots: [],
+        skipped: [{ id: 5, reason: 'gone' }],
+        subtree: []
+      })
+
+      const result = await handleAppeal({ appealId: 1, approve: false }, 99)
+
+      expect(result).toEqual({})
+      expect(executeCommentRemovalMock).not.toHaveBeenCalled()
+      expect(createMessageMock.mock.calls[0][0].content).toBe(
+        APPEAL_RESULT_NOTICE.rejected(MODERATION_CONTENT_TYPE_MAP.comment)
+      )
+      expect(createLogMock.mock.calls[0][0].data.content).toContain(
+        ', 内容已被其他操作删除, 未重复执行'
+      )
+    })
+
+    it('does not touch the comment when the appeal was already handled', async () => {
+      claimAppealMock.mockResolvedValue({ count: 0 })
+
+      const result = await handleAppeal({ appealId: 1, approve: false }, 99)
+
+      expect(result).toBe('该申诉已被处理, 请刷新后重试')
+      expect(planCommentRemovalMock).not.toHaveBeenCalled()
+      expect(createMessageMock).not.toHaveBeenCalled()
+    })
+  })
+
+  // 与并发的取消隐藏 / 审核裁决在行锁上互等时, 数据库会判死锁回滚其中一方
+  it('replays the transaction when it loses a deadlock', async () => {
+    transactionMock.mockRejectedValueOnce({
+      code: 'P2010',
+      meta: {
+        driverAdapterError: {
+          cause: { kind: 'postgres', originalCode: '40P01' }
+        }
+      }
+    })
 
     const result = await handleAppeal({ appealId: 1, approve: false }, 99)
 
     expect(result).toEqual({})
-    // 守卫删除条件含 status: 2 (comment 隐藏态)
-    expect(deleteCommentMock).toHaveBeenCalledWith({
-      where: { id: 5, status: 2 }
-    })
-    // 删除后按收集到的根+后代 id 清理审核任务与 pending 申诉
-    expect(deletePendingTasksMock).toHaveBeenCalledWith(
-      'comment',
-      [5, 6],
-      transactionClient
-    )
-    expect(deletePendingAppealsMock).toHaveBeenCalledWith(
-      'comment',
-      [5, 6],
-      transactionClient
-    )
-    // 举报外键 SET NULL: 删除后按 NULL 目标清理级联置空的孤儿
-    expect(deleteOrphanReportsMock).toHaveBeenCalledWith(
-      'comment',
-      transactionClient
-    )
-    expect(deleteCommentMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteOrphanReportsMock.mock.invocationCallOrder[0]
-    )
-    expect(createMessageMock.mock.calls[0][1]).toBe(transactionClient)
-    expect(invalidateCommentCacheMock).toHaveBeenCalledWith(10)
+    expect(transactionMock).toHaveBeenCalledTimes(2)
+    expect(deleteRatingMock).toHaveBeenCalledTimes(1)
   })
 })

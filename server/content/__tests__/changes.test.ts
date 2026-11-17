@@ -110,9 +110,7 @@ describe('评论变化 → 评论分页缓存与补丁详情缓存', () => {
   ])('%s', async (_name, change, page, detail) => {
     await flush([change])
 
-    expect(commentPageMock.mock.calls.map(([id]) => id)).toEqual(
-      page ? [10] : []
-    )
+    expect(commentPageMock.mock.calls).toEqual(page ? [[10]] : [])
     expect(patchContentMock.mock.calls).toEqual(detail ? [[[10]]] : [])
   })
 
@@ -200,13 +198,9 @@ describe('资源变化 → 资源详情 / 列表 / 作者待审标记缓存', ()
   ])('%s', async (_name, change, detail, list, pending) => {
     await flush([change])
 
-    expect(resourceDetailMock.mock.calls.map(([id]) => id)).toEqual(
-      detail ? [10] : []
-    )
+    expect(resourceDetailMock.mock.calls).toEqual(detail ? [[10]] : [])
     expect(resourceListMock).toHaveBeenCalledTimes(list ? 1 : 0)
-    expect(pendingResourceMock.mock.calls.map(([uid]) => uid)).toEqual(
-      pending ? [7] : []
-    )
+    expect(pendingResourceMock.mock.calls).toEqual(pending ? [[7]] : [])
     // 补丁聚合缓存跟随 recalcPatchType, 由命令自己登记
     expect(patchContentMock).not.toHaveBeenCalled()
   })
@@ -220,7 +214,7 @@ describe('批量与登记顺序', () => {
       comment(0, null, null, 30)
     ])
 
-    expect(commentPageMock.mock.calls.map(([id]) => id)).toEqual([10, 30])
+    expect(commentPageMock.mock.calls).toEqual([[10], [30]])
     expect(patchContentMock.mock.calls).toEqual([[[10, 30]]])
   })
 
