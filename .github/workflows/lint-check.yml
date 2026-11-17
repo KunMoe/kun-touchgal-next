@@ -53,3 +53,63 @@ jobs:
 
       - name: Run Unit Tests
         run: pnpm run test
+
+  # 从空库回放 db/migrations。改了 prisma/schema 没写迁移、改了迁移没刷新快照, 都在这里失败
+  db-replay:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # 主版本须与生产一致 (以生产上 `pnpm db:inspect` 的结果为准): 快照比对的
+        # pg_get_*def 输出可能随主版本变化
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kun_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      KUN_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/kun_ci?schema=public
+      # db:snapshot 回放前会清空这个库, 用服务自带的 postgres 库即可
+      KUN_DB_SCRATCH_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 启用 Corepack
+        run: |
+          npm install -g corepack@latest
+          corepack enable
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '26.12.1'
+          cache: 'pnpm'
+
+      # postinstall 钩子会执行 prisma generate, 它要读 .env
+      - name: 复制 .env.example 为 .env
+        run: cp .env.example .env
+
+      - name: 安装依赖
+        run: pnpm install
+
+      # 设了 KUN_DB_SCRATCH_URL 才会运行的那组用例: 回滚、锁重试、INVALID 索引清理、回放库保护
+      - name: 执行器的实库用例
+        run: pnpm exec vitest run scripts/db
+
+      - name: 在空库上执行全部迁移
+        run: pnpm run db:migrate
+
+      - name: 核对对象快照是否最新
+        run: pnpm run db:snapshot --check
+
+      - name: 对照快照与 Prisma schema 校验
+        run: pnpm run db:verify --prisma

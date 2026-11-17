@@ -19,7 +19,10 @@ pnpm test -- app/api/user/follow/__tests__/route.test.ts   # 运行单个测试�
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # eslint . 全仓 (lint:fix 可自动修复)
 pnpm format           # prettier --write
-pnpm prisma:push      # prisma db push + generate (改了 schema 后)
+pnpm db:new <slug>    # 改了 schema 后生成迁移草稿 → 手改 → pnpm db:snapshot (详见 AGENTS.md)
+pnpm db:migrate       # 执行 db/migrations 下未执行的迁移
+pnpm db:verify --prisma  # 只读校验库与迁移 / 快照 / schema 是否一致
+pnpm prisma:push      # prisma db push + generate (只用于本地原型)
 pnpm prisma:generate  # 仅重新生成 client
 pnpm build:sitemap    # 生成 public/sitemap.xml
 pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
@@ -34,6 +37,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - `proxy.ts`（Next 16 前身为 `middleware.ts`）：对 `/api/*`（排除 `/api/upload/*`，其在 handler 内自行校验）做 CSRF；对 `/admin`、`/user`、`/edit` 做登录保护。
 - 认证：JWT cookie 名 `kun-galgame-patch-moe-token`；proxy 用 `app/api/utils/jwtEdge.ts`，服务端用 `jwt.ts` / `verifyHeaderCookie`。
 - 数据层入口：`prisma/index.ts`（Prisma 7 + pg pool）、`lib/redis.ts`、`lib/s3.ts`。Prisma model 拆分在 `prisma/schema/*.prisma`，生成到 `prisma/generated/prisma`。
+- 库的结构与数据变更只走 `db/migrations/`（线性、只追加，已合入的文件不可改）；改 `prisma/schema` 必须同时新增迁移并刷新 `db/objects.snapshot.sql`，CI 的 `db-replay` job 执法。
 
 ## 必须遵守的约定
 

@@ -22,7 +22,7 @@ https://discord.gg/e4QePvPQTB
 
 - 使用 `git clone` 拉取本项目至本地目录
 - 参考项目根目录的 `.env.example` 文件，新建 `.env` 文件，并自行填写环境变量（`postgresql` 的本地连接配置）
-- 初次运行本项目，可执行 `pnpm prisma:push` 创建此项目所使用的本地数据库
+- 初次运行本项目，可执行 `pnpm db:migrate` 创建此项目所使用的本地数据库（含计数触发器）
 - 使用 `pnpm dev` 即可运行
 
 ```env
