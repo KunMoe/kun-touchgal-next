@@ -32,7 +32,7 @@ TouchGal (`kun-touchgal-next`) 是一个基于 Next.js 16 App Router 的 Galgame
 - `utils/`：fetch、错误处理、cookie、Markdown、URL/文件名安全处理及 Server Action helper。
 - `constants/`、`types/`、`config/`：领域常量/Prisma select、API DTO 和运行时配置。
 - `scripts/`：构建后复制、sitemap、搜索、部署、OIDC 和数据回填脚本。
-- `migration/`：人工执行的一次性迁移；`migration/backup/` 含历史及破坏性脚本，不得当作常规工作流运行。
+- `migration/`：人工执行的一次性数据脚本与同步作业，不得当作常规工作流运行；库的结构变更不放这里，走 `db/migrations/`。`migration/backup/` 只放这些脚本的运行产物（缓存、报告、数据备份），整个目录被 git 忽略，也被排除在 standalone 构建之外。
 - `posts/`、`public/`：运行时 MDX 内容和静态资源；两者参与 standalone 构建复制或 sitemap 生成。
 
 ## Development Commands
@@ -103,7 +103,7 @@ pnpm prisma:generate
 - TypeScript 为 strict、ESNext、bundler resolution、`noEmit`；别名 `~/*` 指向仓库根目录。
 - Tailwind v4 仅通过 `postcss.config.js` 的 `@tailwindcss/postcss` 接入，没有 `tailwind.config.*`；主题入口使用现有样式文件，不新增旧版配置。
 - Prisma 7 使用 PostgreSQL `pg` adapter；schema 根为 `prisma/schema/`，生成目录被忽略。schema 改动至少运行 `pnpm prisma:generate`。
-- 改 `prisma/schema` 必须同时新增迁移：`pnpm db:new <slug>` 生成草稿 → 手改（大表上的索引拆到 `.notx.sql` 用 `CONCURRENTLY`；需要新代码先上线的收缩与回填写 `-- phase: post` 并注明回滚影响）→ `pnpm db:snapshot` → `pnpm db:migrate` 应用到本地库。触发器、函数、部分索引和数据修复同样只写成迁移，不再新增 `prisma/sql/` 或 `migration/ensure*.ts`。CI 的 `db-replay` job 从空库回放并执法：改了 schema 没写迁移、改了迁移没刷新快照都会失败。
+- 改 `prisma/schema` 必须同时新增迁移：`pnpm db:new <slug>` 生成草稿 → 手改（大表上的索引拆到 `.notx.sql` 用 `CONCURRENTLY`；需要新代码先上线的收缩与回填写 `-- phase: post` 并注明回滚影响）→ `pnpm db:snapshot` → `pnpm db:migrate` 应用到本地库。触发器、函数、部分索引和数据修复同样只写成迁移；旧的旁路载体 `prisma/sql/` 与 `migration/ensure*.ts` 已删除，不要再建。CI 的 `db-replay` job 从空库回放并执法：改了 schema 没写迁移、改了迁移没刷新快照都会失败。
 - 已合入的迁移文件不可修改（台账记有 checksum），要改就另写一个新迁移；函数或触发器每换一代也是一个新迁移，写完整的 `CREATE OR REPLACE`。派生列（`patch` 的三个计数列与 `released_sort`、`patch_tag.count`、`patch_company.count`）只由触发器维护，应用层不写。
 - `pnpm db:new` 与 `pnpm db:snapshot` 需要一个会被清空的回放库，由 `KUN_DB_SCRATCH_URL` 指定，例如 `docker run --rm -d --name kun-db-scratch -p 127.0.0.1:55433:5432 --tmpfs /var/lib/postgresql/data -e POSTGRES_PASSWORD=kun postgres:17-alpine` 配 `KUN_DB_SCRATCH_URL=postgresql://postgres:kun@127.0.0.1:55433/postgres`；工具拒绝清空带表的非回放库。
 - 迁移台账在独立的 `kun_meta` schema（Prisma 不碰它）。库用户不是库的属主时建不了 schema，首次 `pnpm db:migrate` 会报出要由属主执行一次的 `CREATE SCHEMA kun_meta AUTHORIZATION …` 语句。

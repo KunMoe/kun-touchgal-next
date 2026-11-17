@@ -117,7 +117,7 @@ export const buildCachedPatch = (patch: CachedPatchSource): CachedPatch => ({
   },
   created: String(patch.created),
   updated: String(patch.updated),
-  // 读触发器维护的计数列 (migration/ensurePatchCounters.ts); 关系 _count 会被
+  // 读触发器维护的计数列 (db/migrations/0002_patch_counters.sql); 关系 _count 会被
   // Prisma 编译成子表整表 GROUP BY, 每次未命中多耗 ~75ms
   _count: toGalgameCardCount(patch)
 })

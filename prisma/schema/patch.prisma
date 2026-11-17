@@ -11,7 +11,7 @@ model patch {
   introduction         String   @default("") @db.VarChar(100007)
   released             String   @default("unknown") @db.VarChar(107)
   // released 的 YYYYMMDD 排序键 (缺省月/日补 00, 无法解析为 NULL),
-  // 由触发器维护, 应用层不写, 见 migration/ensurePatchReleasedSort.ts
+  // 由触发器维护, 应用层不写, 见 db/migrations/0003_patch_released_sort.sql
   released_sort        Int?
   content_limit        String   @default("") @db.VarChar(107)
   status               Int      @default(0)
@@ -46,7 +46,7 @@ model patch {
   updated DateTime @updatedAt
 
   // 单独 vndb_id / 单独 relation_id (另一半为 NULL) 的唯一性由两个 Prisma 无法
-  // 声明的部分唯一索引兜底, 见 prisma/sql/patch_vndb_solo_unique.sql
+  // 声明的部分唯一索引兜底, 见 db/migrations/0007_patch_vndb_solo_unique.notx.sql
   // (schema engine 的 diff 会忽略部分索引, db push 不会误删)
   @@unique([vndb_id, vndb_relation_id])
   @@index([created])

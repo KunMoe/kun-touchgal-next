@@ -209,21 +209,6 @@
       "count": 1
     }
   },
-  "migration/ensurePatchCounters.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
-  "migration/ensurePatchReleasedSort.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
-  "migration/ensureTagCompanyCounters.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
   "migration/hashTwoFactorBackupCodes.ts": {
     "no-console": {
       "count": 2
@@ -242,11 +227,6 @@
   "migration/migrateOfficialGalgameResourceTaxonomy.ts": {
     "no-console": {
       "count": 16
-    }
-  },
-  "migration/migratePatchResourceLinks.ts": {
-    "no-console": {
-      "count": 7
     }
   },
   "migration/migratePatchResourceTaxonomy.ts": {

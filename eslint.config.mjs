@@ -8,7 +8,6 @@ import react from 'eslint-plugin-react'
 import { kunInvariantConfigs } from './lint/kunInvariants.mjs'
 
 const kunConfigs = defineConfig([
-  // migration/backup 是已执行完毕的一次性脚本归档 (多带 @ts-nocheck), 不再维护
   globalIgnores([
     '.next/',
     // deployBuild.ts 的暂存构建 (构建失败会残留) 与回滚备份, 内含整份源码副本
@@ -20,8 +19,7 @@ const kunConfigs = defineConfig([
     // tsconfig 与 vitest 已同样排除, CI 的 checkout 里没有这个目录
     'docs/',
     'node_modules/',
-    'prisma/generated/',
-    'migration/backup/'
+    'prisma/generated/'
   ]),
   // eslint-plugin-react / import / jsx-a11y 仍用 ESLint 10 已移除的旧 context API, 须经 fixup 桥接
   ...fixupConfigRules(nextCoreWebVitals),
