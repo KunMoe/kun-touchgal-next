@@ -220,7 +220,7 @@ describe('renderKunMarkdown 缓存', () => {
     const variant = {
       comment: `comment-v${COMMENT_HTML_VERSION}`,
       note: `note-v${NOTE_HTML_VERSION}`,
-      introduction: `extend-v${PATCH_INTRODUCTION_HTML_VERSION}`
+      introduction: `introduction-v${PATCH_INTRODUCTION_HTML_VERSION}`
     }[profile as KunMarkdownProfile]
     expect(setKvMock).toHaveBeenCalledOnce()
     expect(setKvMock.mock.calls[0][0]).toMatch(

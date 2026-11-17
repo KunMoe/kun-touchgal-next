@@ -4,10 +4,6 @@ import {
   MARKDOWN_RENDER_ERROR_CACHE_DURATION
 } from '~/config/cache'
 import {
-  NOTE_HTML_VERSION,
-  PATCH_INTRODUCTION_HTML_VERSION
-} from './htmlVersion'
-import {
   MARKDOWN_MAX_TREE_DEPTH,
   exceedsCostFuse,
   treeDepthExceeds
@@ -18,20 +14,17 @@ import {
   readMarkdownHtmlCache,
   writeMarkdownHtmlCache
 } from './markdownHtmlCache'
-import { markdownProcessor } from './markdownToHtml'
-import {
-  COMMENT_HTML_VERSION,
-  markdownCommentProcessor
-} from './markdownToHtmlComment'
-import { markdownExtendProcessor } from './markdownToHtmlExtend'
+import { getKunMarkdownProcessor } from './processor'
+import { KUN_MARKDOWN_PROFILES } from './profiles'
 import type { KunSafeHtml } from '~/types/content'
+import type { KunMarkdownProfile } from './profiles'
+
+export type { KunMarkdownProfile } from './profiles'
 
 // 服务端 markdown → HTML 的唯一入口, 也是 KunSafeHtml 品牌在服务端渲染侧的唯一出处。
 //
 // 它是全函数: 任何输入都得到一个结果, 不会 reject。渲染不出来的内容由这里统一降级成
 // 转义纯文本并说明原因, 调用方不需要、也不应该再各自 try/catch 后自定失败语义
-
-export type KunMarkdownProfile = 'comment' | 'note' | 'introduction'
 
 // too-large / too-deep 是渲染预算的确定性结论: 同一版本下重渲染结果不变, 可以按当前
 // 版本落库。render-error 是没预料到的渲染缺陷, 不落库, 只做短 TTL 负缓存
@@ -47,45 +40,6 @@ export type KunRenderResult =
       version: number
       persistable: boolean
     }
-
-interface KunMarkdownProfileSpec {
-  processor: {
-    parse: (markdown: string) => { children?: unknown[] }
-    // 三条管线的树类型各不相同, 这里只把 parse 的产物原样交还给同一个处理器
-    run: (tree: never) => Promise<unknown>
-    stringify: (tree: never) => unknown
-  }
-  // HTML 策略版本: 处理器、净化策略、渲染预算任一变化都要递增
-  version: number
-  cacheVariant: string
-  maxBytes: number
-  // 处理器是否加载了 remark-directive (决定容器指令熔断是否生效)
-  directives: boolean
-}
-
-const PROFILES: Record<KunMarkdownProfile, KunMarkdownProfileSpec> = {
-  comment: {
-    processor: markdownCommentProcessor,
-    version: COMMENT_HTML_VERSION,
-    cacheVariant: `comment-v${COMMENT_HTML_VERSION}`,
-    maxBytes: MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES,
-    directives: true
-  },
-  note: {
-    processor: markdownProcessor,
-    version: NOTE_HTML_VERSION,
-    cacheVariant: `note-v${NOTE_HTML_VERSION}`,
-    maxBytes: MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES,
-    directives: false
-  },
-  introduction: {
-    processor: markdownExtendProcessor,
-    version: PATCH_INTRODUCTION_HTML_VERSION,
-    cacheVariant: `extend-v${PATCH_INTRODUCTION_HTML_VERSION}`,
-    maxBytes: MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES,
-    directives: true
-  }
-}
 
 const FALLBACK_PREVIEW_CHARS = 20000
 
@@ -117,14 +71,14 @@ const buildPlainTextFallback = (markdown: string, reason: KunRenderFailure) => {
 }
 
 const failure = (
-  spec: KunMarkdownProfileSpec,
+  profile: KunMarkdownProfile,
   markdown: string,
   reason: KunRenderFailure
 ): KunRenderResult => ({
   ok: false,
   reason,
   html: buildPlainTextFallback(markdown, reason) as KunSafeHtml,
-  version: spec.version,
+  version: KUN_MARKDOWN_PROFILES[profile].version,
   persistable: PERSISTABLE[reason]
 })
 
@@ -139,38 +93,38 @@ const renderUncached = async (
   profile: KunMarkdownProfile,
   markdown: string
 ): Promise<KunRenderResult> => {
-  const spec = PROFILES[profile]
+  const processor = getKunMarkdownProcessor(profile)
   try {
-    const tree = spec.processor.parse(markdown)
+    const tree = processor.parse(markdown)
     if (treeDepthExceeds(tree, MARKDOWN_MAX_TREE_DEPTH)) {
-      return failure(spec, markdown, 'too-deep')
+      return failure(profile, markdown, 'too-deep')
     }
-    const hast = await spec.processor.run(tree as never)
-    // 三条管线都以 rehypeSanitize 收尾, 输出即已净化 HTML
-    const html = String(spec.processor.stringify(hast as never)) as KunSafeHtml
-    return { ok: true, html, version: spec.version }
+    const hast = await processor.run(tree)
+    // 每个 profile 的处理器都经过 rehypeSanitize, 输出即已净化 HTML
+    const html = processor.stringify(hast) as KunSafeHtml
+    return { ok: true, html, version: KUN_MARKDOWN_PROFILES[profile].version }
   } catch (error) {
     logRenderError(profile, error)
-    return failure(spec, markdown, 'render-error')
+    return failure(profile, markdown, 'render-error')
   }
 }
 
 // 缓存里只会有渲染成功与两种解析后才得出的失败; reason 不认识时当作未命中
 const restoreCached = (
-  spec: KunMarkdownProfileSpec,
+  version: number,
   cached: { html: string; reason?: string }
 ): KunRenderResult | null => {
   // Redis 回读属于隐式信任: 写进去的只有本文件的产物
   const html = cached.html as KunSafeHtml
   if (cached.reason === undefined) {
-    return { ok: true, html, version: spec.version }
+    return { ok: true, html, version }
   }
   if (cached.reason === 'too-deep' || cached.reason === 'render-error') {
     return {
       ok: false,
       reason: cached.reason,
       html,
-      version: spec.version,
+      version,
       persistable: PERSISTABLE[cached.reason]
     }
   }
@@ -178,12 +132,12 @@ const restoreCached = (
 }
 
 const renderCached = (profile: KunMarkdownProfile, markdown: string) => {
-  const spec = PROFILES[profile]
-  const cacheKey = getMarkdownHtmlCacheKey(spec.cacheVariant, markdown)
+  const { version } = KUN_MARKDOWN_PROFILES[profile]
+  const cacheKey = getMarkdownHtmlCacheKey(`${profile}-v${version}`, markdown)
 
   return coalesceMarkdownRender(cacheKey, async () => {
     const cached = await readMarkdownHtmlCache(cacheKey)
-    const restored = cached === null ? null : restoreCached(spec, cached)
+    const restored = cached === null ? null : restoreCached(version, cached)
     if (restored !== null) {
       return restored
     }
@@ -210,20 +164,24 @@ export const renderKunMarkdown = async (
   markdown: string,
   options: { cache?: boolean } = {}
 ): Promise<KunRenderResult> => {
-  const spec = PROFILES[profile]
   try {
-    if (Buffer.byteLength(markdown, 'utf8') > spec.maxBytes) {
-      return failure(spec, markdown, 'too-large')
+    if (
+      Buffer.byteLength(markdown, 'utf8') >
+      MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES
+    ) {
+      return failure(profile, markdown, 'too-large')
     }
-    if (exceedsCostFuse(markdown, { directives: spec.directives })) {
-      return failure(spec, markdown, 'too-deep')
+    // 不解析指令的 profile 里 `:::` 只是文本, 容器指令熔断不生效
+    const directives = KUN_MARKDOWN_PROFILES[profile].directives !== 'off'
+    if (exceedsCostFuse(markdown, { directives })) {
+      return failure(profile, markdown, 'too-deep')
     }
     return options.cache === false
       ? await renderUncached(profile, markdown)
       : await renderCached(profile, markdown)
   } catch (error) {
     logRenderError(profile, error)
-    return failure(spec, markdown, 'render-error')
+    return failure(profile, markdown, 'render-error')
   }
 }
 

@@ -46,6 +46,29 @@ const safeProtocols = {
   'data-src': SAFE_MEDIA_PROTOCOL_NAMES
 }
 
+// 只追加: 在 base 之上多放行一些标签与属性。没有「替换某一项」的写法, 派生出来的
+// 策略只会比 base 多放行这里列出的东西
+export const extendSanitizeSchema = (
+  base: RehypeSanitizeOptions,
+  patch: {
+    tagNames?: readonly string[]
+    attributes?: NonNullable<RehypeSanitizeOptions['attributes']>
+  }
+): RehypeSanitizeOptions => {
+  const attributes = { ...base.attributes }
+  for (const [tagName, names] of Object.entries(patch.attributes ?? {})) {
+    attributes[tagName] = [...(attributes[tagName] ?? []), ...names]
+  }
+
+  return {
+    ...base,
+    tagNames: [...(base.tagNames ?? []), ...(patch.tagNames ?? [])],
+    attributes
+  }
+}
+
+// attributes 整体替换了默认表: 默认放行的 checked / align / start / title / id 等
+// 都被剥掉 (09-03 #5, 待裁定)。恢复哪些属于渲染策略变更
 export const markdownSanitizeSchema: RehypeSanitizeOptions = {
   ...defaultSchema,
   attributes: {
@@ -55,25 +78,25 @@ export const markdownSanitizeSchema: RehypeSanitizeOptions = {
   protocols: safeProtocols
 }
 
-export const markdownExtendSanitizeSchema: RehypeSanitizeOptions = {
-  ...markdownSanitizeSchema,
-  tagNames: [...(defaultSchema.tagNames || []), 'svg', 'path'],
-  attributes: {
-    div: [
-      'data-video-player',
-      'data-src',
-      'data-kun-link',
-      'data-href',
-      'data-text',
-      'data-kun-img-container',
-      'role',
-      'tabIndex',
-      'aria-label',
-      'className'
-    ],
-    img: imageAttributes,
-    a: linkAttributes,
-    svg: svgAttributes,
-    path: pathAttributes
+export const markdownExtendSanitizeSchema = extendSanitizeSchema(
+  markdownSanitizeSchema,
+  {
+    tagNames: ['svg', 'path'],
+    attributes: {
+      div: [
+        'data-video-player',
+        'data-src',
+        'data-kun-link',
+        'data-href',
+        'data-text',
+        'data-kun-img-container',
+        'role',
+        'tabIndex',
+        'aria-label',
+        'className'
+      ],
+      svg: svgAttributes,
+      path: pathAttributes
+    }
   }
-}
+)

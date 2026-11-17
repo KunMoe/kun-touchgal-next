@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
 import { MARKDOWN_HTML_CACHE_MAX_HTML_BYTES } from '~/config/cache'
+import type { KunMarkdownProfile } from './profiles'
 
 // markdown 渲染结果的 Redis 缓存: 只管读写、同键并发合并、超时与熔断。渲染预算、
 // 失败语义与品牌都在 renderKunMarkdown.ts, 这里不解释 reason 的取值
@@ -35,8 +36,13 @@ const isWithinByteLimit = (value: string, maxBytes: number) =>
   Buffer.byteLength(value, 'utf8') <= maxBytes
 
 // variant 必须带上该 profile 的 HTML 策略版本: 键只按内容 hash, 策略版本递增后
-// 不带版本的键会继续供出旧策略的 HTML
-export const getMarkdownHtmlCacheKey = (variant: string, markdown: string) => {
+// 不带版本的键会继续供出旧策略的 HTML。不带版本的裸名字过不了类型检查
+export type MarkdownHtmlCacheVariant = `${KunMarkdownProfile}-v${number}`
+
+export const getMarkdownHtmlCacheKey = (
+  variant: MarkdownHtmlCacheVariant,
+  markdown: string
+) => {
   const hash = createHash('sha256').update(markdown).digest('hex')
   return `${MARKDOWN_HTML_CACHE_KEY}:${MARKDOWN_HTML_CACHE_VERSION}:${variant}:${hash}`
 }
