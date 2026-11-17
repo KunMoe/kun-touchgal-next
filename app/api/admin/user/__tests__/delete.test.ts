@@ -273,7 +273,16 @@ describe('deleteUser', () => {
       timeout: 60000,
       isolationLevel: 'Serializable'
     })
-    expect(executeRawMock).not.toHaveBeenCalled()
+    // 事务的第一条语句锁被删的用户行: user 行 → 资源行, 与前台删资源、审核裁决同序
+    expect(executeRawMock).toHaveBeenCalledTimes(1)
+    const [lockTemplate, lockedUid] = executeRawMock.mock.calls[0]
+    expect(lockTemplate.join('?')).toBe(
+      'SELECT id FROM "user" WHERE id = ? FOR UPDATE'
+    )
+    expect(lockedUid).toBe(7)
+    expect(executeRawMock.mock.invocationCallOrder[0]).toBeLessThan(
+      findRatingsInTransactionMock.mock.invocationCallOrder[0]
+    )
     expect(queryRawMock).not.toHaveBeenCalled()
     expect(findRatingsMock).not.toHaveBeenCalled()
     expect(findRatingsInTransactionMock).toHaveBeenCalledWith({
@@ -561,6 +570,10 @@ describe('deleteUser', () => {
     const [template, boundIds] = queryRawMock.mock.calls[0]
     expect(template.join('?')).toContain('FOR UPDATE')
     expect(boundIds).toEqual([80, 81])
+    // 用户行先于自有补丁下的资源行
+    expect(executeRawMock.mock.invocationCallOrder[0]).toBeLessThan(
+      queryRawMock.mock.invocationCallOrder[0]
+    )
     expect(events.indexOf('lock-own-resources')).toBeLessThan(
       events.indexOf('read-own-resources')
     )

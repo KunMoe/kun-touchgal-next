@@ -115,6 +115,11 @@ export const deleteUser = async (
     try {
       result = await prisma.$transaction(
         async (prisma) => {
+          // 先锁被删的用户行。前台删资源与审核裁决都是 user 行 → 资源行; 这里若先锁
+          // 自有补丁下的资源行、到 user.delete() 才碰用户行, 就与该用户自己正在进行的
+          // 删资源反序互等。行锁随后由 user.delete() 沿用
+          await prisma.$executeRaw`SELECT id FROM "user" WHERE id = ${input.uid} FOR UPDATE`
+
           // Serializable 使「读取受影响 patch → 级联删除 → 重算」成为同一数据库快照;
           // 并发新增评价或 status 迁移会使其中一个事务回滚, 不会提交漏算结果
           const ratedPatches = await prisma.patch_rating.findMany({
@@ -145,7 +150,7 @@ export const deleteUser = async (
           // 自有 patch 随 user.delete() 级联消失, 连同其下所有人的资源/评论/评分,
           // 而级联绕过应用层 (S3 出箱/审核任务/申诉/搜索索引均无人清理), 故复用
           // deletePatchById 的清理序列。锁序与其一致 (先 patch_resource 后
-          // patch/user), 单语句全局升序取锁; links 必须锁下重读: 快照与级联删除
+          // patch), 单语句全局升序取锁; links 必须锁下重读: 快照与级联删除
           // 之间的并发重绑会换 s3 对象, 快照入队漏删新对象 (永无二次机会)
           const ownPatches = await prisma.patch.findMany({
             where: { user_id: input.uid },
