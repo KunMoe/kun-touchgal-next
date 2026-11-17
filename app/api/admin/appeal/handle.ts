@@ -103,79 +103,86 @@ const approveAppeal = async (
     }
   }
 
-  const result = await kunTx('admin.appeal.approve', async (ctx) => {
-    const { tx } = ctx
-    // 以申诉行状态迁移作为幂等闸门, 防止并发重复处理
-    const claim = await tx.moderation_appeal.updateMany({
-      where: { id: appeal.id, status: 'pending' },
-      data: { status: 'approved', handled_by: uid }
-    })
-    if (claim.count === 0) {
-      ctx.fail('该申诉已被处理, 请刷新后重试')
-    }
+  const result = await kunTx(
+    'admin.appeal.approve',
+    async (ctx) => {
+      const { tx } = ctx
+      // 以申诉行状态迁移作为幂等闸门, 防止并发重复处理
+      const claim = await tx.moderation_appeal.updateMany({
+        where: { id: appeal.id, status: 'pending' },
+        data: { status: 'approved', handled_by: uid }
+      })
+      if (claim.count === 0) {
+        ctx.fail('该申诉已被处理, 请刷新后重试')
+      }
 
-    // 仅对仍处于隐藏状态的内容生效, 不覆盖其他管理操作的结果。恢复公开连同申诉里
-    // 改过的内容一起写; 聚合重算、缓存失效与评论的通知补发都在迁移命令里。
-    // 隐藏态的内容没有在途审核任务可作废
-    let restored: unknown[]
-    // commentContent 非空即 type === 'comment'
-    if (commentContent !== null) {
-      restored = await transitionComments(ctx, [contentId], {
-        from: [COMMENT_STATUS.hidden],
-        to: COMMENT_STATUS.public,
-        data: { ...commentContent, edit: Date.now().toString() },
-        openTasks: 'keep'
-      })
-    } else if (type === 'rating') {
-      restored = await transitionRatings(ctx, [contentId], {
-        from: [RATING_STATUS.hidden],
-        to: RATING_STATUS.public,
-        data: { short_summary: payload.text ?? '' },
-        openTasks: 'keep'
-      })
-    } else {
-      restored = await transitionResources(ctx, [contentId], {
-        from: [RESOURCE_STATUS.hidden],
-        to: RESOURCE_STATUS.public,
-        data: { name: payload.name ?? '', note: payload.note ?? '' },
-        openTasks: 'keep'
-      })
-      if (restored.length > 0 && payload.modelName !== undefined) {
-        // 模型型号只属于 AI 翻译补丁, 其余类型落库恒为空串: 以库中的类型为条件写,
-        // 不看载荷。资源行已被迁移命令锁住
-        await tx.patch_resource.updateMany({
-          where: { id: contentId, type: { has: 'ai' } },
-          data: { model_name: payload.modelName }
+      // 仅对仍处于隐藏状态的内容生效, 不覆盖其他管理操作的结果。恢复公开连同申诉里
+      // 改过的内容一起写; 聚合重算、缓存失效与评论的通知补发都在迁移命令里。
+      // 隐藏态的内容没有在途审核任务可作废
+      let restored: unknown[]
+      // commentContent 非空即 type === 'comment'
+      if (commentContent !== null) {
+        restored = await transitionComments(ctx, [contentId], {
+          from: [COMMENT_STATUS.hidden],
+          to: COMMENT_STATUS.public,
+          data: { ...commentContent, edit: Date.now().toString() },
+          openTasks: 'keep'
         })
+      } else if (type === 'rating') {
+        restored = await transitionRatings(ctx, [contentId], {
+          from: [RATING_STATUS.hidden],
+          to: RATING_STATUS.public,
+          data: { short_summary: payload.text ?? '' },
+          openTasks: 'keep'
+        })
+      } else {
+        restored = await transitionResources(ctx, [contentId], {
+          from: [RESOURCE_STATUS.hidden],
+          to: RESOURCE_STATUS.public,
+          data: { name: payload.name ?? '', note: payload.note ?? '' },
+          openTasks: 'keep'
+        })
+        if (restored.length > 0 && payload.modelName !== undefined) {
+          // 模型型号只属于 AI 翻译补丁, 其余类型落库恒为空串: 以库中的类型为条件写,
+          // 不看载荷。资源行已被迁移命令锁住
+          await tx.patch_resource.updateMany({
+            where: { id: contentId, type: { has: 'ai' } },
+            data: { model_name: payload.modelName }
+          })
+        }
+        if (restored.length > 0 && payload.links) {
+          await applyAppealLinks(ctx, contentId, payload.links)
+        }
       }
-      if (restored.length > 0 && payload.links) {
-        await applyAppealLinks(ctx, contentId, payload.links)
+      if (restored.length === 0) {
+        ctx.fail('内容已不存在或状态已变更, 无法通过, 可拒绝该申诉以关闭')
       }
-    }
-    if (restored.length === 0) {
-      ctx.fail('内容已不存在或状态已变更, 无法通过, 可拒绝该申诉以关闭')
-    }
 
-    await createMessage(
-      {
-        type: 'system',
-        content: APPEAL_RESULT_NOTICE.approved(
-          MODERATION_CONTENT_TYPE_MAP[type]
-        ),
-        link: APPEAL_APPROVED_LINK,
-        recipient_id: appeal.user_id
-      },
-      tx
-    )
+      await createMessage(
+        {
+          type: 'system',
+          content: APPEAL_RESULT_NOTICE.approved(
+            MODERATION_CONTENT_TYPE_MAP[type]
+          ),
+          link: APPEAL_APPROVED_LINK,
+          recipient_id: appeal.user_id
+        },
+        tx
+      )
 
-    await tx.admin_log.create({
-      data: {
-        type: 'approve',
-        user_id: uid,
-        content: `管理员 ${adminName} 通过了申诉 (ID: ${appeal.id}, 类型: ${type}, 内容 ID: ${contentId}, 用户 ID: ${appeal.user_id}), 内容已恢复展示`
-      }
-    })
-  })
+      await tx.admin_log.create({
+        data: {
+          type: 'approve',
+          user_id: uid,
+          content: `管理员 ${adminName} 通过了申诉 (ID: ${appeal.id}, 类型: ${type}, 内容 ID: ${contentId}, 用户 ID: ${appeal.user_id}), 内容已恢复展示`
+        }
+      })
+    },
+    // 认领申诉行在前、锁内容行在后, 与删除命令 (内容行 → 待处理的申诉) 相反: 两边
+    // 互等时数据库判死锁回滚其一。本事务重放后要么认领落空 (申诉已随内容删除),
+    // 要么照常通过
+    { retry: 2 }
+  )
   if (typeof result === 'string') {
     return result
   }

@@ -239,6 +239,25 @@ describe('handleAppeal approve rating', () => {
     expect(transitionRatingsMock).not.toHaveBeenCalled()
     expect(createMessageMock).not.toHaveBeenCalled()
   })
+
+  // 本事务先认领申诉行再锁内容行, 删除命令先锁内容行再删待处理的申诉: 两边互等时
+  // 数据库判死锁, 回滚的是先等待的这一方
+  it('replays the transaction when it loses a deadlock', async () => {
+    transactionMock.mockRejectedValueOnce({
+      code: 'P2010',
+      meta: {
+        driverAdapterError: {
+          cause: { kind: 'postgres', originalCode: '40P01' }
+        }
+      }
+    })
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toEqual({})
+    expect(transactionMock).toHaveBeenCalledTimes(2)
+    expect(transitionRatingsMock).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('handleAppeal approve comment', () => {
