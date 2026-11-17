@@ -8,16 +8,10 @@ const {
   transactionMock,
   planResourceRemovalMock,
   executeResourceRemovalMock,
-  updateResourceMock,
+  transitionResourcesMock,
   createLogMock,
   createMessageMock,
-  recalcTypeMock,
-  invalidateResourceListMock,
-  invalidateContentMock,
-  invalidatePendingMock,
-  invalidateUnreadMock,
-  queueSearchSyncMock,
-  enqueueOutboxMock
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   kunParsePutBodyMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
@@ -26,21 +20,14 @@ const {
   transactionMock: vi.fn(),
   planResourceRemovalMock: vi.fn(),
   executeResourceRemovalMock: vi.fn(),
-  updateResourceMock: vi.fn(),
+  transitionResourcesMock: vi.fn(),
   createLogMock: vi.fn(),
   createMessageMock: vi.fn(),
-  recalcTypeMock: vi.fn(),
-  invalidateResourceListMock: vi.fn(),
-  invalidateContentMock: vi.fn(),
-  invalidatePendingMock: vi.fn(),
-  invalidateUnreadMock: vi.fn(),
-  queueSearchSyncMock: vi.fn(),
-  enqueueOutboxMock: vi.fn()
+  invalidateUnreadMock: vi.fn()
 }))
 
 const events: string[] = []
 const transactionClient = {
-  patch_resource: { updateMany: updateResourceMock },
   admin_log: { create: createLogMock }
 }
 
@@ -73,35 +60,19 @@ vi.mock('~/app/api/utils/message', () => ({
   createMessage: createMessageMock
 }))
 
-vi.mock('~/app/api/patch/resource/_helper', () => ({
-  recalcPatchType: recalcTypeMock
-}))
-
-// 删除的锁、清理顺序、出箱与缓存失效由命令自己的测试覆盖; 这里只看入口怎么用它
+// 删除与状态迁移的锁、清理顺序、聚合重算、出箱与缓存失效由命令自己的测试覆盖;
+// 这里只看入口怎么用它们
 vi.mock('~/server/content/resource/remove', () => ({
   planResourceRemoval: planResourceRemovalMock,
   executeResourceRemoval: executeResourceRemovalMock
 }))
 
-vi.mock('~/app/api/resource/cache', () => ({
-  invalidateResourceListCache: invalidateResourceListMock
-}))
-
-vi.mock('~/app/api/patch/cache', () => ({
-  invalidatePatchContentCache: invalidateContentMock
-}))
-
-vi.mock('~/app/api/utils/pendingResourceCache', () => ({
-  invalidateUserPendingResourceCache: invalidatePendingMock
+vi.mock('~/server/content/resource/transition', () => ({
+  transitionResources: transitionResourcesMock
 }))
 
 vi.mock('~/app/api/message/unread/cache', () => ({
   invalidateUnread: invalidateUnreadMock
-}))
-
-vi.mock('~/server/search/sync', () => ({
-  queueSearchSync: queueSearchSyncMock,
-  enqueueSearchOutbox: enqueueOutboxMock
 }))
 
 import { PUT as declinePut } from '~/app/api/admin/resource-apply/decline/route'
@@ -122,6 +93,8 @@ const pendingResource = {
   patch: { name: 'p', unique_id: 'unique-x' }
 }
 
+const txContext = expect.objectContaining({ tx: transactionClient })
+
 beforeEach(() => {
   vi.clearAllMocks()
   events.length = 0
@@ -135,16 +108,10 @@ beforeEach(() => {
     refundPublishReward: false
   })
   executeResourceRemovalMock.mockResolvedValue({ deletedIds: [3] })
-  updateResourceMock.mockResolvedValue({ count: 1 })
+  transitionResourcesMock.mockResolvedValue([{ id: 3, from: 2 }])
   createLogMock.mockResolvedValue({})
   createMessageMock.mockResolvedValue({})
-  recalcTypeMock.mockResolvedValue('unique-x')
-  invalidateResourceListMock.mockResolvedValue(undefined)
-  invalidateContentMock.mockResolvedValue(undefined)
-  invalidatePendingMock.mockResolvedValue(undefined)
   invalidateUnreadMock.mockResolvedValue(undefined)
-  queueSearchSyncMock.mockReturnValue(undefined)
-  enqueueOutboxMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
       const result = await callback(transactionClient)
@@ -155,8 +122,6 @@ beforeEach(() => {
 })
 
 describe('resource-apply decline', () => {
-  const txContext = expect.objectContaining({ tx: transactionClient })
-
   it('deletes a pending resource through the removal command, guarded on the awaiting-approval status', async () => {
     const response = await declinePut(request)
 
@@ -229,26 +194,42 @@ describe('resource-apply decline', () => {
 })
 
 describe('resource-apply approve', () => {
-  it('publishes a pending resource under a status guard', async () => {
+  it('publishes a pending resource through the transition command, guarded on the awaiting-approval status', async () => {
     const response = await approvePut(request)
 
     expect(await response.json()).toEqual({})
-    expect(updateResourceMock).toHaveBeenCalledWith({
-      where: { id: 3, status: 2 },
-      data: { status: 0 }
+    // 只从待初审 (2) 转公开 (0); 待初审的资源没有在途审核任务
+    expect(transitionResourcesMock).toHaveBeenCalledWith(txContext, [3], {
+      from: [2],
+      to: 0,
+      openTasks: 'keep'
     })
+    // 通知与审计随迁移同事务
     expect(createMessageMock).toHaveBeenCalledTimes(1)
+    expect(createMessageMock.mock.calls[0][0]).toEqual({
+      type: 'system',
+      content: '您上传的资源「r」已通过审核，感谢分享！',
+      recipient_id: 7,
+      link: '/unique-x?tab=resources&resourceSection=patch&resourceId=3'
+    })
+    expect(createMessageMock.mock.calls[0][1]).toBe(transactionClient)
+    expect(createLogMock).toHaveBeenCalledTimes(1)
+    expect(events).toEqual(['transaction-commit'])
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(7)
   })
 
   it('returns the string contract when the row vanished mid-flight', async () => {
-    // 事务外 findUnique 与事务内写之间被并发 decline 删除: 裸 update 会抛 P2025 逃逸为 500
-    updateResourceMock.mockResolvedValue({ count: 0 })
+    // 事务外读到待初审, 行锁下已被并发的拒绝删除 (或已被另一次通过处理): 走字符串
+    // 错误契约, 不是 500
+    transitionResourcesMock.mockResolvedValue([])
 
     const response = await approvePut(request)
 
     expect(await response.json()).toBe('当前资源状态无需审核')
+    expect(events).not.toContain('transaction-commit')
     expect(createMessageMock).not.toHaveBeenCalled()
-    expect(queueSearchSyncMock).not.toHaveBeenCalled()
+    expect(createLogMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
   it('keeps the pre-transaction status check', async () => {

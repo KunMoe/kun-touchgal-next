@@ -2,22 +2,19 @@ import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import type { moderation_taskModel } from '~/prisma/generated/prisma/models'
 import { createMessage } from '~/app/api/utils/message'
-import { recomputePatchRatingStat } from '~/app/api/patch/rating/stat'
-import { recalcPatchType } from '~/app/api/patch/resource/_helper'
-import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
-import { invalidateResourceListCache } from '~/app/api/resource/cache'
-import {
-  invalidatePatchContentCache,
-  invalidatePatchContentCacheByPatchId
-} from '~/app/api/patch/cache'
-import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
-import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
-import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
-import { onCommentPublished } from '~/server/content/comment/publish'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
 import { copyObject, deleteFileFromS3 } from '~/lib/s3'
+import { kunTx } from '~/server/db/tx'
+import { transitionComments } from '~/server/content/comment/transition'
+import { transitionRatings } from '~/server/content/rating/transition'
+import { transitionResources } from '~/server/content/resource/transition'
+import {
+  COMMENT_STATUS,
+  RATING_STATUS,
+  RESOURCE_STATUS
+} from '~/constants/contentStatus'
 import {
   MODERATION_REJECT_CODE_MAP,
   MODERATION_REJECT_NOTICE,
@@ -129,16 +126,10 @@ export const applyModerationVerdict = async (
     }
   }
 
-  let claimed = false
-  let resourcePatchId: number | null = null
-  let resourceUniqueId: string | null = null
-  let commentApproved = false
-  let commentPatchId: number | null = null
-  let commentResourceId: number | null = null
-  let ratingPatchId: number | null = null
-
-  await prisma.$transaction(async (tx) => {
-    // user 级联删除先锁 user 行, 再删内容与 task; 普通删除路径则是
+  const outcome = await kunTx('moderation.apply', async (ctx) => {
+    const { tx } = ctx
+    const contentId = task.content_id ?? 0
+    // user 级联删除先锁 user 行, 再删内容与 task; 普通删除与状态迁移则是
     // 内容行 → task. 裁决统一按 user → 内容行 → task 取锁, 避免反向等待.
     // 普通内容只需 FOR KEY SHARE 阻止 user 被删除; avatar/bio 会更新
     // user 行, 首次直接取 FOR UPDATE, 避免并发裁决从 KEY SHARE 升级时死锁.
@@ -150,7 +141,6 @@ export const applyModerationVerdict = async (
       } else {
         await tx.$executeRaw`SELECT id FROM "user" WHERE id = ${task.user_id} FOR KEY SHARE`
 
-        const contentId = task.content_id ?? 0
         switch (task.content_type) {
           case 'comment':
             await tx.$executeRaw`SELECT id FROM patch_comment WHERE id = ${contentId} FOR UPDATE`
@@ -179,75 +169,39 @@ export const applyModerationVerdict = async (
       }
     })
     if (claim.count === 0) {
-      return
-    }
-    claimed = true
-
-    if (task.dry_run) {
-      return
+      return { claimed: false }
     }
 
-    // m=1 转人工: 内容保持待审核, 不改内容也不通知, 等人工最终裁决
-    if (manual) {
-      return
+    // dry_run 只做评估; m=1 转人工: 内容保持待审核, 不改内容也不通知, 等人工最终裁决
+    if (task.dry_run || manual) {
+      return { claimed: true }
     }
 
+    // 三类内容都是「仍在待审核才落定」: 通过转公开, 拒绝转隐藏。内容已离开待审核
+    // (被管理员改过状态或已删除) 时迁移命令什么都不做。本条任务已在上面认领, 没有别的
+    // 在途任务要作废; 聚合重算、搜索入箱、缓存失效与评论的通知补发都在命令里
     switch (task.content_type) {
-      case 'comment': {
-        // 待审核 (1) 的评论: 通过转正常 (0), 拒绝转隐藏 (2)
-        const updated = await tx.patch_comment.updateMany({
-          where: { id: task.content_id ?? 0, status: 1 },
-          data: { status: approved ? 0 : 2 }
+      case 'comment':
+        await transitionComments(ctx, [contentId], {
+          from: [COMMENT_STATUS.pending],
+          to: approved ? COMMENT_STATUS.public : COMMENT_STATUS.hidden,
+          openTasks: 'keep'
         })
-        commentApproved = approved && updated.count > 0
-        // 通过转正常 (1→0) 后评论进入公开基线, 需失效共享缓存;
-        // 拒绝 (1→2) 待审评论本不在基线, 无需失效
-        if (commentApproved) {
-          const approvedComment = await tx.patch_comment.findUnique({
-            where: { id: task.content_id ?? 0 },
-            select: { patch_id: true, resource_id: true }
-          })
-          commentPatchId = approvedComment?.patch_id ?? null
-          commentResourceId = approvedComment?.resource_id ?? null
-        }
         break
-      }
-      case 'rating': {
-        const rating = await tx.patch_rating.findUnique({
-          where: { id: task.content_id ?? 0 },
-          select: { patch_id: true, status: true }
+      case 'rating':
+        await transitionRatings(ctx, [contentId], {
+          from: [RATING_STATUS.pending],
+          to: approved ? RATING_STATUS.public : RATING_STATUS.hidden,
+          openTasks: 'keep'
         })
-        // 待审核 (1) 的评价: 通过转正常 (0), 拒绝转隐藏 (2)
-        if (rating && rating.status === 1) {
-          await tx.patch_rating.update({
-            where: { id: task.content_id ?? 0 },
-            data: { status: approved ? 0 : 2 }
-          })
-          await recomputePatchRatingStat(rating.patch_id, tx)
-          ratingPatchId = rating.patch_id
-        }
         break
-      }
-      case 'resource': {
-        const resource = await tx.patch_resource.findUnique({
-          where: { id: task.content_id ?? 0 },
-          select: { patch_id: true, status: true }
+      case 'resource':
+        await transitionResources(ctx, [contentId], {
+          from: [RESOURCE_STATUS.pending],
+          to: approved ? RESOURCE_STATUS.public : RESOURCE_STATUS.hidden,
+          openTasks: 'keep'
         })
-        // 待审核 (3) 的资源: 通过转正常 (0), 拒绝转隐藏 (1)
-        if (resource && resource.status === 3) {
-          await tx.patch_resource.update({
-            where: { id: task.content_id ?? 0 },
-            data: { status: approved ? 0 : 1 }
-          })
-          // visible resource set changed, keep aggregates consistent with
-          // the admin hidden flow
-          resourceUniqueId = await recalcPatchType(resource.patch_id, tx)
-          // 事务性入队：与补丁变更原子提交，关闭崩溃丢失窗口
-          await enqueueSearchOutbox(tx, resource.patch_id)
-          resourcePatchId = resource.patch_id
-        }
         break
-      }
       case 'avatar': {
         if (approved) {
           // 通过分支在事务前已要求载荷可读 (S3 复制), 这里只为收窄类型
@@ -307,16 +261,15 @@ export const applyModerationVerdict = async (
         tx
       )
     }
+
+    return { claimed: true }
   })
 
-  if (!claimed) {
+  if (typeof outcome === 'string' || !outcome.claimed) {
     return false
   }
-  if (task.dry_run) {
-    return true
-  }
-  // m=1 转人工: 无内容变更与副作用, task 已置 manual, 直接返回
-  if (manual) {
+  // dry_run 与 m=1 转人工: 无内容变更与副作用, task 已落定, 直接返回
+  if (task.dry_run || manual) {
     return true
   }
 
@@ -324,37 +277,6 @@ export const applyModerationVerdict = async (
   // 驳回通知在事务内写入, 提交后失效收件人未读缓存 (L-01): 事务内失效会被并发读回填旧值
   if (!approved) {
     await invalidateUnread(task.user_id).catch(() => undefined)
-  }
-  if (commentApproved) {
-    if (commentPatchId !== null) {
-      await invalidatePatchCommentCache(commentPatchId)
-      // 评论通过 (1→0) 进入公开基线改 _count.comment, 失效补丁详情缓存 (M-05);
-      // 资源评论不计入 _count.comment, 无需失效
-      if (commentResourceId === null) {
-        await invalidatePatchContentCacheByPatchId(commentPatchId).catch(
-          () => undefined
-        )
-      }
-    }
-    // 缓存先、通知后: 创建时被拦截而没发出的通知, 在评论对他人可见后补发
-    await onCommentPublished(task.content_id ?? 0)
-  }
-  // 评价审核落定 (1→0/2) 改 ratingSummary, 失效补丁详情缓存 (M-05)
-  if (ratingPatchId !== null) {
-    await invalidatePatchContentCacheByPatchId(ratingPatchId).catch(
-      () => undefined
-    )
-  }
-  if (resourcePatchId !== null) {
-    queueSearchSync(resourcePatchId)
-    // 事务提交后失效: 事务内失效会被并发读回填旧值 (M-04), 且 Redis 故障不应回滚写入
-    if (resourceUniqueId !== null) {
-      await invalidatePatchContentCache(resourceUniqueId).catch(() => undefined)
-    }
-    await invalidatePatchResourceDetailCache(resourcePatchId)
-    await invalidateResourceListCache()
-    // 资源离开待审核 (3→0/1): 作者 hasPendingResource 可能翻假, 失效以尽早停止 bypass
-    await invalidateUserPendingResourceCache(task.user_id)
   }
   if (task.content_type === 'avatar') {
     const imageBedUrl = process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL

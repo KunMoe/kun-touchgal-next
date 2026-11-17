@@ -5,39 +5,25 @@ const {
   transactionMock,
   executeRawMock,
   claimMock,
-  findRatingMock,
-  updateRatingMock,
-  updateCommentMock,
-  findCommentMock,
-  findResourceMock,
-  updateResourceMock,
   updateUserMock,
-  recomputeOneMock,
+  transitionCommentsMock,
+  transitionRatingsMock,
+  transitionResourcesMock,
   invalidateUnreadMock
 } = vi.hoisted(() => ({
   transactionMock: vi.fn(),
   executeRawMock: vi.fn(),
   claimMock: vi.fn(),
-  findRatingMock: vi.fn(),
-  updateRatingMock: vi.fn(),
-  updateCommentMock: vi.fn(),
-  findCommentMock: vi.fn(),
-  findResourceMock: vi.fn(),
-  updateResourceMock: vi.fn(),
   updateUserMock: vi.fn(),
-  recomputeOneMock: vi.fn(),
+  transitionCommentsMock: vi.fn(),
+  transitionRatingsMock: vi.fn(),
+  transitionResourcesMock: vi.fn(),
   invalidateUnreadMock: vi.fn()
 }))
 
 const transactionClient = {
   $executeRaw: executeRawMock,
   moderation_task: { updateMany: claimMock },
-  patch_rating: { findUnique: findRatingMock, update: updateRatingMock },
-  patch_comment: {
-    updateMany: updateCommentMock,
-    findUnique: findCommentMock
-  },
-  patch_resource: { findUnique: findResourceMock, update: updateResourceMock },
   user: { update: updateUserMock }
 }
 
@@ -51,29 +37,18 @@ vi.mock('~/app/api/utils/message', () => ({
   createMessage: vi.fn()
 }))
 
-vi.mock('~/server/content/comment/publish', () => ({
-  onCommentPublished: vi.fn()
+// 内容状态迁移的锁、聚合重算、缓存失效与通知补发由命令自己的测试覆盖;
+// 这里只看裁决怎么用它们
+vi.mock('~/server/content/comment/transition', () => ({
+  transitionComments: transitionCommentsMock
 }))
 
-vi.mock('~/app/api/patch/rating/stat', () => ({
-  recomputePatchRatingStat: recomputeOneMock
+vi.mock('~/server/content/rating/transition', () => ({
+  transitionRatings: transitionRatingsMock
 }))
 
-vi.mock('~/app/api/patch/resource/_helper', () => ({
-  recalcPatchType: vi.fn()
-}))
-
-vi.mock('~/app/api/resource/cache', () => ({
-  invalidateResourceListCache: vi.fn()
-}))
-
-vi.mock('~/app/api/patch/cache', () => ({
-  invalidatePatchContentCache: vi.fn(),
-  invalidatePatchContentCacheByPatchId: vi.fn()
-}))
-
-vi.mock('~/app/api/patch/comment/cache', () => ({
-  invalidatePatchCommentCache: vi.fn()
+vi.mock('~/server/content/resource/transition', () => ({
+  transitionResources: transitionResourcesMock
 }))
 
 vi.mock('~/app/api/user/session/cache', () => ({
@@ -82,16 +57,6 @@ vi.mock('~/app/api/user/session/cache', () => ({
 
 vi.mock('~/app/api/message/unread/cache', () => ({
   invalidateUnread: invalidateUnreadMock
-}))
-
-// resource 拒绝路径的这次失效没有 .catch, 不 mock 会真连 Redis 并抛出
-vi.mock('~/app/api/utils/pendingResourceCache', () => ({
-  invalidateUserPendingResourceCache: vi.fn()
-}))
-
-vi.mock('~/server/search/sync', () => ({
-  queueSearchSync: vi.fn(),
-  enqueueSearchOutbox: vi.fn()
 }))
 
 vi.mock('~/app/api/utils/purgeCloudflareCache', () => ({
@@ -108,16 +73,6 @@ import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
 import { copyObject, deleteFileFromS3 } from '~/lib/s3'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { createMessage } from '~/app/api/utils/message'
-import { onCommentPublished } from '~/server/content/comment/publish'
-import { recalcPatchType } from '~/app/api/patch/resource/_helper'
-import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
-import { invalidateResourceListCache } from '~/app/api/resource/cache'
-import {
-  invalidatePatchContentCache,
-  invalidatePatchContentCacheByPatchId
-} from '~/app/api/patch/cache'
-import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
-import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
 import {
   MODERATION_REJECT_CODE_MAP,
   MODERATION_REJECT_NOTICE
@@ -153,33 +108,22 @@ const ratingTask = (overrides: Partial<moderation_taskModel> = {}) =>
 const joinSql = (call: unknown[]) =>
   (call[0] as TemplateStringsArray).join('?').replace(/\s+/g, ' ').trim()
 
+const txContext = expect.objectContaining({ tx: transactionClient })
+
 beforeEach(() => {
   vi.clearAllMocks()
   events.length = 0
   executeRawMock.mockResolvedValue(1)
   claimMock.mockResolvedValue({ count: 1 })
-  findRatingMock.mockResolvedValue({ patch_id: 10, status: 1 })
-  updateRatingMock.mockResolvedValue({})
-  updateCommentMock.mockResolvedValue({ count: 1 })
-  findCommentMock.mockResolvedValue({ patch_id: 10, resource_id: null })
-  findResourceMock.mockResolvedValue({ patch_id: 10, status: 3 })
-  updateResourceMock.mockResolvedValue({})
   updateUserMock.mockResolvedValue({})
-  vi.mocked(recalcPatchType).mockResolvedValue('kun-unique-id')
-  // 这两处失效在 apply.ts 里挂了 .catch, mock 必须返回 Promise
-  vi.mocked(invalidatePatchContentCache).mockResolvedValue(undefined)
-  vi.mocked(invalidatePatchContentCacheByPatchId).mockResolvedValue(undefined)
+  transitionCommentsMock.mockResolvedValue([{ id: 7, from: 1 }])
+  transitionRatingsMock.mockResolvedValue([{ id: 5, from: 1 }])
+  transitionResourcesMock.mockResolvedValue([{ id: 8, from: 3 }])
   vi.mocked(deleteFileFromS3).mockResolvedValue(undefined)
   vi.mocked(purgeCloudflareCache).mockResolvedValue({ status: 200 })
   invalidateUnreadMock.mockImplementation(async (uid: number) => {
     events.push(`invalidate-unread:${uid}`)
   })
-  recomputeOneMock.mockImplementation(
-    async (_patchId: number, tx: typeof transactionClient) => {
-      expect(tx).toBe(transactionClient)
-      events.push('recompute')
-    }
-  )
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
       events.push('transaction-start')
@@ -214,17 +158,18 @@ describe('applyModerationVerdict', () => {
       claimMock.mock.invocationCallOrder[0]
     )
 
-    expect(updateRatingMock).toHaveBeenCalledWith({
-      where: { id: 5 },
-      data: { status: 0 }
+    // 认领之后才落定内容: 只从待审核 (1) 转公开 (0)。本条任务已认领, 不作废别的任务
+    expect(transitionRatingsMock).toHaveBeenCalledWith(txContext, [5], {
+      from: [1],
+      to: 0,
+      openTasks: 'keep'
     })
-    expect(recomputeOneMock).toHaveBeenCalledWith(10, transactionClient)
+    expect(claimMock.mock.invocationCallOrder[0]).toBeLessThan(
+      transitionRatingsMock.mock.invocationCallOrder[0]
+    )
     // 通过不发驳回通知, 不失效作者未读缓存
-    expect(events).toEqual([
-      'transaction-start',
-      'recompute',
-      'transaction-commit'
-    ])
+    expect(events).toEqual(['transaction-start', 'transaction-commit'])
+    expect(createMessage).not.toHaveBeenCalled()
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
@@ -239,7 +184,7 @@ describe('applyModerationVerdict', () => {
       })
     ).resolves.toBe(false)
 
-    expect(findRatingMock).not.toHaveBeenCalled()
+    expect(transitionRatingsMock).not.toHaveBeenCalled()
     expect(createMessage).not.toHaveBeenCalled()
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
@@ -283,7 +228,7 @@ describe('applyModerationVerdict', () => {
 
     expect(executeRawMock).not.toHaveBeenCalled()
     expect(claimMock).toHaveBeenCalledTimes(1)
-    expect(findRatingMock).not.toHaveBeenCalled()
+    expect(transitionRatingsMock).not.toHaveBeenCalled()
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
@@ -298,7 +243,7 @@ describe('applyModerationVerdict', () => {
 
     expect(executeRawMock).not.toHaveBeenCalled()
     expect(claimMock).toHaveBeenCalledTimes(1)
-    expect(findRatingMock).not.toHaveBeenCalled()
+    expect(transitionRatingsMock).not.toHaveBeenCalled()
     // 转人工不写驳回通知, 不失效
     expect(createMessage).not.toHaveBeenCalled()
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
@@ -367,9 +312,11 @@ describe('applyModerationVerdict', () => {
         })
       })
     )
-    expect(updateCommentMock).toHaveBeenCalledWith({
-      where: { id: 7, status: 1 },
-      data: { status: 2 }
+    // 待审核 (1) 的评论: 拒绝转隐藏 (2)
+    expect(transitionCommentsMock).toHaveBeenCalledWith(txContext, [7], {
+      from: [1],
+      to: 2,
+      openTasks: 'keep'
     })
     expect(createMessage).toHaveBeenCalledWith(
       {
@@ -380,9 +327,6 @@ describe('applyModerationVerdict', () => {
       },
       transactionClient
     )
-    // 被拒评论不进公开基线: 既不补发创建时被拦下的通知, 也不失效评论缓存
-    expect(onCommentPublished).not.toHaveBeenCalled()
-    expect(invalidatePatchCommentCache).not.toHaveBeenCalled()
     // 驳回通知写入后, 作者未读缓存在提交后失效 (L-01)
     expect(invalidateUnreadMock).toHaveBeenCalledWith(100)
     expect(events).toEqual([
@@ -392,7 +336,8 @@ describe('applyModerationVerdict', () => {
     ])
   })
 
-  it('publishes the approved comment after both caches are invalidated', async () => {
+  // 缓存失效与创建时被拦下的通知的补发, 由迁移命令按「待审 → 公开」登记
+  it('moves an approved comment to public through the transition command', async () => {
     await expect(
       applyModerationVerdict({
         task: ratingTask({ content_type: 'comment', content_id: 7 }),
@@ -400,26 +345,17 @@ describe('applyModerationVerdict', () => {
       })
     ).resolves.toBe(true)
 
-    expect(updateCommentMock).toHaveBeenCalledWith({
-      where: { id: 7, status: 1 },
-      data: { status: 0 }
+    expect(transitionCommentsMock).toHaveBeenCalledWith(txContext, [7], {
+      from: [1],
+      to: 0,
+      openTasks: 'keep'
     })
-    expect(invalidatePatchCommentCache).toHaveBeenCalledWith(10)
-    expect(invalidatePatchContentCacheByPatchId).toHaveBeenCalledWith(10)
-    // 创建时被拦下的通知在这里补发; 排在缓存失效之后, 通知出问题不连累缓存
-    expect(onCommentPublished).toHaveBeenCalledWith(7)
-    const published = vi.mocked(onCommentPublished).mock.invocationCallOrder[0]
-    expect(
-      vi.mocked(invalidatePatchCommentCache).mock.invocationCallOrder[0]
-    ).toBeLessThan(published)
-    expect(
-      vi.mocked(invalidatePatchContentCacheByPatchId).mock
-        .invocationCallOrder[0]
-    ).toBeLessThan(published)
+    expect(createMessage).not.toHaveBeenCalled()
   })
 
-  it('does not publish when the comment already left the pending state', async () => {
-    updateCommentMock.mockResolvedValue({ count: 0 })
+  // 内容已被管理员改过状态或已删除: 任务照常落定, 内容不动
+  it('still settles the task when the content already left the pending state', async () => {
+    transitionCommentsMock.mockResolvedValue([])
 
     await expect(
       applyModerationVerdict({
@@ -428,8 +364,8 @@ describe('applyModerationVerdict', () => {
       })
     ).resolves.toBe(true)
 
-    expect(onCommentPublished).not.toHaveBeenCalled()
-    expect(invalidatePatchCommentCache).not.toHaveBeenCalled()
+    expect(claimMock).toHaveBeenCalledTimes(1)
+    expect(events).toEqual(['transaction-start', 'transaction-commit'])
   })
 
   it('falls back to the reject code label when the verdict carries no reason', async () => {
@@ -451,7 +387,7 @@ describe('applyModerationVerdict', () => {
     )
   })
 
-  it('hides the rejected rating and recomputes the patch rating summary', async () => {
+  it('hides the rejected rating and notifies the author', async () => {
     await expect(
       applyModerationVerdict({
         task: ratingTask(),
@@ -461,16 +397,14 @@ describe('applyModerationVerdict', () => {
       })
     ).resolves.toBe(true)
 
-    expect(updateRatingMock).toHaveBeenCalledWith({
-      where: { id: 5 },
-      data: { status: 2 }
+    // 待审核 (1) 的评价: 拒绝转隐藏 (2)
+    expect(transitionRatingsMock).toHaveBeenCalledWith(txContext, [5], {
+      from: [1],
+      to: 2,
+      openTasks: 'keep'
     })
-    // 被隐藏的评分要退出统计, 拒绝同样得重算并失效详情缓存
-    expect(recomputeOneMock).toHaveBeenCalledWith(10, transactionClient)
-    expect(invalidatePatchContentCacheByPatchId).toHaveBeenCalledWith(10)
     expect(events).toEqual([
       'transaction-start',
-      'recompute',
       'transaction-commit',
       'invalidate-unread:100'
     ])
@@ -485,7 +419,7 @@ describe('applyModerationVerdict', () => {
     )
   })
 
-  it('hides the rejected resource and refreshes the caches gating its visibility', async () => {
+  it('hides the rejected resource and notifies the author with the resource name', async () => {
     await expect(
       applyModerationVerdict({
         task: ratingTask({
@@ -499,11 +433,12 @@ describe('applyModerationVerdict', () => {
       })
     ).resolves.toBe(true)
 
-    expect(updateResourceMock).toHaveBeenCalledWith({
-      where: { id: 8 },
-      data: { status: 1 }
+    // 待审核 (3) 的资源: 拒绝转隐藏 (1)。聚合重算、搜索入箱与缓存失效都在迁移命令里
+    expect(transitionResourcesMock).toHaveBeenCalledWith(txContext, [8], {
+      from: [3],
+      to: 1,
+      openTasks: 'keep'
     })
-    expect(enqueueSearchOutbox).toHaveBeenCalledWith(transactionClient, 10)
     expect(createMessage).toHaveBeenCalledWith(
       {
         type: 'system',
@@ -513,10 +448,22 @@ describe('applyModerationVerdict', () => {
       },
       transactionClient
     )
-    expect(queueSearchSync).toHaveBeenCalledWith(10)
-    expect(invalidatePatchContentCache).toHaveBeenCalledWith('kun-unique-id')
-    expect(invalidateResourceListCache).toHaveBeenCalledTimes(1)
-    expect(invalidateUserPendingResourceCache).toHaveBeenCalledWith(100)
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(100)
+  })
+
+  it('moves an approved resource to public through the transition command', async () => {
+    await expect(
+      applyModerationVerdict({
+        task: ratingTask({ content_type: 'resource', content_id: 8 }),
+        approved: true
+      })
+    ).resolves.toBe(true)
+
+    expect(transitionResourcesMock).toHaveBeenCalledWith(txContext, [8], {
+      from: [3],
+      to: 0,
+      openTasks: 'keep'
+    })
   })
 
   it('keeps the existing bio and omits the appeal link when a profile verdict rejects', async () => {

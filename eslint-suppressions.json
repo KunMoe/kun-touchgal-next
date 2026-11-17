@@ -9,29 +9,14 @@
       "count": 1
     }
   },
-  "app/api/admin/appeal/handle.ts": {
-    "kun/inv-content-06": {
-      "count": 3
-    }
-  },
   "app/api/admin/comment/get.ts": {
     "kun/inv-content-02": {
-      "count": 1
-    }
-  },
-  "app/api/admin/comment/shadow-ban/shadowBan.ts": {
-    "kun/inv-content-06": {
       "count": 1
     }
   },
   "app/api/admin/moderation/batch/route.ts": {
     "no-console": {
       "count": 2
-    }
-  },
-  "app/api/admin/rating/shadow-ban/shadowBan.ts": {
-    "kun/inv-content-06": {
-      "count": 1
     }
   },
   "app/api/admin/report/handle/batch/route.ts": {
@@ -41,16 +26,6 @@
   },
   "app/api/admin/report/service.ts": {
     "kun/inv-content-01": {
-      "count": 1
-    }
-  },
-  "app/api/admin/resource-apply/approve/route.ts": {
-    "kun/inv-content-06": {
-      "count": 1
-    }
-  },
-  "app/api/admin/resource/hidden/hidden.ts": {
-    "kun/inv-content-06": {
       "count": 1
     }
   },
@@ -384,9 +359,6 @@
     }
   },
   "server/moderation/apply.ts": {
-    "kun/inv-content-06": {
-      "count": 3
-    },
     "no-console": {
       "count": 3
     }

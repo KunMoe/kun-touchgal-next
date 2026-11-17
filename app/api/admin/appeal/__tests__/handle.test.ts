@@ -3,81 +3,55 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const {
   findAdminMock,
   findAppealMock,
-  findRatingMock,
-  findResourceMock,
-  findCommentMock,
   transactionMock,
   claimAppealMock,
-  updateRatingMock,
   updateResourceMock,
   txLinkFindManyMock,
   updateLinkMock,
-  updateCommentMock,
   renderForWriteMock,
-  onCommentPublishedMock,
   createMessageMock,
   createLogMock,
-  recomputeOneMock,
   planCommentRemovalMock,
   executeCommentRemovalMock,
   planRatingRemovalMock,
   executeRatingRemovalMock,
   planResourceRemovalMock,
   executeResourceRemovalMock,
-  invalidateContentMock,
-  invalidateContentByPatchIdMock,
-  invalidateCommentCacheMock,
-  invalidateResourceDetailMock,
-  invalidateResourceListMock,
-  recalcTypeMock,
-  enqueueOutboxMock,
-  queueSearchSyncMock
+  transitionCommentsMock,
+  transitionRatingsMock,
+  transitionResourcesMock,
+  invalidateUnreadMock
 } = vi.hoisted(() => ({
   findAdminMock: vi.fn(),
   findAppealMock: vi.fn(),
-  findRatingMock: vi.fn(),
-  findResourceMock: vi.fn(),
-  findCommentMock: vi.fn(),
   transactionMock: vi.fn(),
   claimAppealMock: vi.fn(),
-  updateRatingMock: vi.fn(),
   updateResourceMock: vi.fn(),
   txLinkFindManyMock: vi.fn(),
   updateLinkMock: vi.fn(),
-  updateCommentMock: vi.fn(),
   renderForWriteMock: vi.fn(),
-  onCommentPublishedMock: vi.fn(),
   createMessageMock: vi.fn(),
   createLogMock: vi.fn(),
-  recomputeOneMock: vi.fn(),
   planCommentRemovalMock: vi.fn(),
   executeCommentRemovalMock: vi.fn(),
   planRatingRemovalMock: vi.fn(),
   executeRatingRemovalMock: vi.fn(),
   planResourceRemovalMock: vi.fn(),
   executeResourceRemovalMock: vi.fn(),
-  invalidateContentMock: vi.fn(),
-  invalidateContentByPatchIdMock: vi.fn(),
-  invalidateCommentCacheMock: vi.fn(),
-  invalidateResourceDetailMock: vi.fn(),
-  invalidateResourceListMock: vi.fn(),
-  recalcTypeMock: vi.fn(),
-  enqueueOutboxMock: vi.fn(),
-  queueSearchSyncMock: vi.fn()
+  transitionCommentsMock: vi.fn(),
+  transitionRatingsMock: vi.fn(),
+  transitionResourcesMock: vi.fn(),
+  invalidateUnreadMock: vi.fn()
 }))
 
 const events: string[] = []
-let recomputeStarted: Promise<void>
-let finishRecompute: () => void
 const transactionClient = {
   moderation_appeal: { updateMany: claimAppealMock },
-  patch_rating: { updateMany: updateRatingMock },
   patch_resource: { updateMany: updateResourceMock },
   patch_resource_link: {
     findMany: txLinkFindManyMock,
     update: updateLinkMock
   },
-  patch_comment: { updateMany: updateCommentMock },
   admin_log: { create: createLogMock }
 }
 
@@ -85,14 +59,20 @@ vi.mock('~/prisma/index', () => ({
   prisma: {
     user: { findUnique: findAdminMock },
     moderation_appeal: { findUnique: findAppealMock },
-    patch_rating: { findUnique: findRatingMock },
-    patch_resource: { findUnique: findResourceMock },
-    patch_comment: { findUnique: findCommentMock },
     $transaction: transactionMock
   }
 }))
 
-// 删除的锁、清理顺序与缓存失效由命令自己的测试覆盖; 这里只看入口怎么用它
+vi.mock('~/app/api/utils/message', () => ({
+  createMessage: createMessageMock
+}))
+
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdownForWrite: renderForWriteMock
+}))
+
+// 删除与状态迁移的锁、清理顺序、聚合重算、出箱、缓存失效与通知补发由命令自己的
+// 测试覆盖; 这里只看入口怎么用它们
 vi.mock('~/server/content/comment/remove', () => ({
   planCommentRemoval: planCommentRemovalMock,
   executeCommentRemoval: executeCommentRemovalMock
@@ -108,46 +88,20 @@ vi.mock('~/server/content/resource/remove', () => ({
   executeResourceRemoval: executeResourceRemovalMock
 }))
 
-vi.mock('~/app/api/utils/message', () => ({
-  createMessage: createMessageMock
+vi.mock('~/server/content/comment/transition', () => ({
+  transitionComments: transitionCommentsMock
 }))
 
-vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
-  renderKunMarkdownForWrite: renderForWriteMock
+vi.mock('~/server/content/rating/transition', () => ({
+  transitionRatings: transitionRatingsMock
 }))
 
-vi.mock('~/server/content/comment/publish', () => ({
-  onCommentPublished: onCommentPublishedMock
+vi.mock('~/server/content/resource/transition', () => ({
+  transitionResources: transitionResourcesMock
 }))
 
-vi.mock('~/app/api/patch/rating/stat', () => ({
-  recomputePatchRatingStat: recomputeOneMock
-}))
-
-vi.mock('~/app/api/patch/cache', () => ({
-  invalidatePatchContentCache: invalidateContentMock,
-  invalidatePatchContentCacheByPatchId: invalidateContentByPatchIdMock
-}))
-
-vi.mock('~/app/api/patch/comment/cache', () => ({
-  invalidatePatchCommentCache: invalidateCommentCacheMock
-}))
-
-vi.mock('~/app/api/patch/resource/cache', () => ({
-  invalidatePatchResourceDetailCache: invalidateResourceDetailMock
-}))
-
-vi.mock('~/app/api/resource/cache', () => ({
-  invalidateResourceListCache: invalidateResourceListMock
-}))
-
-vi.mock('~/app/api/patch/resource/_helper', () => ({
-  recalcPatchType: recalcTypeMock
-}))
-
-vi.mock('~/server/search/sync', () => ({
-  queueSearchSync: queueSearchSyncMock,
-  enqueueSearchOutbox: enqueueOutboxMock
+vi.mock('~/app/api/message/unread/cache', () => ({
+  invalidateUnread: invalidateUnreadMock
 }))
 
 import { handleAppeal } from '~/app/api/admin/appeal/handle'
@@ -163,33 +117,18 @@ const ratingAppeal = {
   payload: { text: 'restored' }
 }
 
+const txContext = expect.objectContaining({ tx: transactionClient })
+
 beforeEach(() => {
   vi.clearAllMocks()
   events.length = 0
-  const started = Promise.withResolvers<void>()
-  const finished = Promise.withResolvers<void>()
-  recomputeStarted = started.promise
-  finishRecompute = () => {
-    events.push('recompute')
-    finished.resolve()
-  }
   findAdminMock.mockResolvedValue({ id: 99, name: 'admin' })
   findAppealMock.mockResolvedValue(ratingAppeal)
-  findRatingMock.mockResolvedValue({ patch_id: 10 })
-  findResourceMock.mockResolvedValue({
-    patch_id: 10,
-    patch: { name: 'p' },
-    links: []
-  })
-  findCommentMock.mockResolvedValue({ patch_id: 10 })
   claimAppealMock.mockResolvedValue({ count: 1 })
-  updateRatingMock.mockResolvedValue({ count: 1 })
   updateResourceMock.mockResolvedValue({ count: 1 })
   updateLinkMock.mockResolvedValue({})
-  updateCommentMock.mockResolvedValue({ count: 1 })
-  renderForWriteMock.mockResolvedValue({ html: '<p>ok</p>', version: 2 })
-  onCommentPublishedMock.mockResolvedValue(undefined)
   txLinkFindManyMock.mockResolvedValue([])
+  renderForWriteMock.mockResolvedValue({ html: '<p>ok</p>', version: 2 })
   createMessageMock.mockResolvedValue({})
   createLogMock.mockResolvedValue({})
   planCommentRemovalMock.mockResolvedValue({
@@ -209,14 +148,10 @@ beforeEach(() => {
     refundPublishReward: false
   })
   executeResourceRemovalMock.mockResolvedValue({ deletedIds: [5] })
-  invalidateContentMock.mockResolvedValue(undefined)
-  invalidateContentByPatchIdMock.mockResolvedValue(undefined)
-  invalidateCommentCacheMock.mockResolvedValue(undefined)
-  invalidateResourceDetailMock.mockResolvedValue(undefined)
-  invalidateResourceListMock.mockResolvedValue(undefined)
-  recalcTypeMock.mockResolvedValue('unique-x')
-  enqueueOutboxMock.mockResolvedValue(undefined)
-  queueSearchSyncMock.mockReturnValue(undefined)
+  transitionCommentsMock.mockResolvedValue([{ id: 5, from: 2 }])
+  transitionRatingsMock.mockResolvedValue([{ id: 5, from: 2 }])
+  transitionResourcesMock.mockResolvedValue([{ id: 5, from: 1 }])
+  invalidateUnreadMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
       events.push('transaction-start')
@@ -225,31 +160,84 @@ beforeEach(() => {
       return result
     }
   )
-  recomputeOneMock.mockImplementation(() => {
-    started.resolve()
-    return finished.promise
+})
+
+describe('handleAppeal 预检', () => {
+  it('管理员不存在', async () => {
+    findAdminMock.mockResolvedValue(null)
+
+    expect(await handleAppeal({ appealId: 1, approve: true }, 99)).toBe(
+      '未找到该管理员'
+    )
+  })
+
+  it('申诉不存在或已被处理', async () => {
+    findAppealMock.mockResolvedValue(null)
+    expect(await handleAppeal({ appealId: 1, approve: true }, 99)).toBe(
+      '未找到该申诉'
+    )
+
+    findAppealMock.mockResolvedValue({ ...ratingAppeal, status: 'approved' })
+    expect(await handleAppeal({ appealId: 1, approve: true }, 99)).toBe(
+      '该申诉已被处理'
+    )
+    expect(transactionMock).not.toHaveBeenCalled()
   })
 })
 
-describe('handleAppeal approve', () => {
-  it('recomputes rating stats before an approval transaction commits', async () => {
-    const result = handleAppeal({ appealId: 1, approve: true }, 99)
-    await recomputeStarted
-    await Promise.resolve()
-    const eventsBeforeRecompute = [...events]
-    finishRecompute()
+describe('handleAppeal approve rating', () => {
+  // 评分统计的重算与详情缓存的失效都在迁移命令里, 随同一事务
+  it('restores the hidden rating with the appealed summary through the transition command', async () => {
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
 
-    await expect(result).resolves.toEqual({})
-    expect(recomputeOneMock).toHaveBeenCalledWith(10, transactionClient)
-    expect(updateRatingMock.mock.invocationCallOrder[0]).toBeLessThan(
-      recomputeOneMock.mock.invocationCallOrder[0]
+    expect(result).toEqual({})
+    // 只从隐藏 (2) 转公开 (0); 隐藏态的内容没有在途审核任务
+    expect(transitionRatingsMock).toHaveBeenCalledWith(txContext, [5], {
+      from: [2],
+      to: 0,
+      data: { short_summary: 'restored' },
+      openTasks: 'keep'
+    })
+    // 以申诉行的认领为幂等闸门, 认领在前
+    expect(claimAppealMock).toHaveBeenCalledWith({
+      where: { id: 1, status: 'pending' },
+      data: { status: 'approved', handled_by: 99 }
+    })
+    expect(claimAppealMock.mock.invocationCallOrder[0]).toBeLessThan(
+      transitionRatingsMock.mock.invocationCallOrder[0]
     )
-    expect(eventsBeforeRecompute).toEqual(['transaction-start'])
-    expect(events).toEqual([
-      'transaction-start',
-      'recompute',
-      'transaction-commit'
-    ])
+    expect(createMessageMock.mock.calls[0][0].content).toBe(
+      APPEAL_RESULT_NOTICE.approved(MODERATION_CONTENT_TYPE_MAP.rating)
+    )
+    expect(createMessageMock.mock.calls[0][1]).toBe(transactionClient)
+    expect(createLogMock).toHaveBeenCalledTimes(1)
+    expect(events).toEqual(['transaction-start', 'transaction-commit'])
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(7)
+  })
+
+  it('returns an error and rolls back when the rating is no longer hidden', async () => {
+    transitionRatingsMock.mockResolvedValue([])
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toBe(
+      '内容已不存在或状态已变更, 无法通过, 可拒绝该申诉以关闭'
+    )
+    // 认领随回滚还原, 申诉保持待处理
+    expect(events).toEqual(['transaction-start'])
+    expect(createMessageMock).not.toHaveBeenCalled()
+    expect(createLogMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+  })
+
+  it('returns an error and touches nothing when the appeal was already handled', async () => {
+    claimAppealMock.mockResolvedValue({ count: 0 })
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toBe('该申诉已被处理, 请刷新后重试')
+    expect(transitionRatingsMock).not.toHaveBeenCalled()
+    expect(createMessageMock).not.toHaveBeenCalled()
   })
 })
 
@@ -264,30 +252,23 @@ describe('handleAppeal approve comment', () => {
     findAppealMock.mockResolvedValue(commentAppeal)
   })
 
+  // 评论恢复公开后的缓存失效与通知补发 (创建时被拦截而没发的) 由迁移命令登记
   it('writes the appealed text together with its rendered html and version', async () => {
     const result = await handleAppeal({ appealId: 1, approve: true }, 99)
 
     expect(result).toEqual({})
     expect(renderForWriteMock).toHaveBeenCalledWith('comment', '改过的评论')
-    expect(updateCommentMock).toHaveBeenCalledWith({
-      where: { id: 5, status: 2 },
+    expect(transitionCommentsMock).toHaveBeenCalledWith(txContext, [5], {
+      from: [2],
+      to: 0,
       data: {
         content: '改过的评论',
         content_html: '<p>ok</p>',
         content_html_version: 2,
-        edit: expect.any(String),
-        status: 0
-      }
+        edit: expect.any(String)
+      },
+      openTasks: 'keep'
     })
-    expect(onCommentPublishedMock).toHaveBeenCalledWith(5)
-    // 缓存先、通知后: 通知出问题不该连累缓存失效
-    const notified = onCommentPublishedMock.mock.invocationCallOrder[0]
-    expect(invalidateCommentCacheMock.mock.invocationCallOrder[0]).toBeLessThan(
-      notified
-    )
-    expect(
-      invalidateContentByPatchIdMock.mock.invocationCallOrder[0]
-    ).toBeLessThan(notified)
   })
 
   // 提交入口已拒收渲染不出来的正文; 这里兜住在那之前提交的申诉。管理员改不了申诉
@@ -301,7 +282,7 @@ describe('handleAppeal approve comment', () => {
 
     expect(result).toBe('申诉提交的正文无法渲染, 无法通过, 可拒绝该申诉以关闭')
     expect(transactionMock).not.toHaveBeenCalled()
-    expect(invalidateCommentCacheMock).not.toHaveBeenCalled()
+    expect(transitionCommentsMock).not.toHaveBeenCalled()
   })
 })
 
@@ -345,13 +326,16 @@ describe('handleAppeal approve resource links', () => {
     const result = await handleAppeal({ appealId: 1, approve: true }, 99)
 
     expect(result).toEqual({})
-    expect(updateResourceMock).toHaveBeenCalledWith({
-      where: { id: 5, status: 1 },
-      data: { name: '新标题', note: '新介绍', status: 0 }
+    // 只从隐藏 (resource 为 1) 转公开, 连同申诉里的名称与介绍
+    expect(transitionResourcesMock).toHaveBeenCalledWith(txContext, [5], {
+      from: [1],
+      to: 0,
+      data: { name: '新标题', note: '新介绍' },
+      openTasks: 'keep'
     })
     expect(renderForWriteMock).toHaveBeenCalledWith('note', '新介绍')
-    // 链接行在资源行的条件写 (取得行锁) 之后才读写, 与资源编辑的加锁顺序一致
-    expect(updateResourceMock.mock.invocationCallOrder[0]).toBeLessThan(
+    // 链接行在迁移命令锁住资源行之后才读写, 与资源编辑的加锁顺序一致
+    expect(transitionResourcesMock.mock.invocationCallOrder[0]).toBeLessThan(
       txLinkFindManyMock.mock.invocationCallOrder[0]
     )
     expect(txLinkFindManyMock).toHaveBeenCalledWith({
@@ -439,15 +423,16 @@ describe('handleAppeal approve resource links', () => {
 
     const result = await handleAppeal({ appealId: 1, approve: true }, 99)
 
-    // 管理员复核的内容对不上现有链接: 整体失败, 不部分套用, 不通知不记日志
-    // 拒绝申诉会删除仍隐藏的资源, 文案里带上不删资源的处理办法
+    // 管理员复核的内容对不上现有链接: 整体失败并回滚 (已做的恢复公开随之撤销),
+    // 不部分套用, 不通知不记日志。拒绝申诉会删除仍隐藏的资源, 文案里带上不删资源的
+    // 处理办法
     expect(result).toBe(
       '资源链接在申诉提交后已变更, 无法通过该申诉。如需保留该资源, 请先在下载资源管理中恢复它, 再拒绝本申诉'
     )
+    expect(events).toEqual(['transaction-start'])
     expect(updateLinkMock).not.toHaveBeenCalled()
     expect(createMessageMock).not.toHaveBeenCalled()
     expect(createLogMock).not.toHaveBeenCalled()
-    expect(invalidateResourceDetailMock).not.toHaveBeenCalled()
   })
 
   it('writes the model name back only where the stored type is an AI patch', async () => {
@@ -459,17 +444,19 @@ describe('handleAppeal approve resource links', () => {
     const result = await handleAppeal({ appealId: 1, approve: true }, 99)
 
     expect(result).toEqual({})
-    expect(updateResourceMock).toHaveBeenCalledTimes(2)
     // 模型型号只属于 AI 翻译补丁: 以库中的类型为条件写, 不看载荷
-    expect(updateResourceMock).toHaveBeenLastCalledWith({
-      where: { id: 5, type: { has: 'ai' } },
-      data: { model_name: 'DeepSeek-V3' }
-    })
-    // 先由带状态条件的写取得资源行锁并确认仍是隐藏态
-    expect(updateResourceMock.mock.calls[0][0]).toEqual({
-      where: { id: 5, status: 1 },
-      data: { name: '新标题', note: '新介绍', status: 0 }
-    })
+    expect(updateResourceMock.mock.calls).toEqual([
+      [
+        {
+          where: { id: 5, type: { has: 'ai' } },
+          data: { model_name: 'DeepSeek-V3' }
+        }
+      ]
+    ])
+    // 先由迁移命令取得资源行锁并确认仍是隐藏态
+    expect(transitionResourcesMock.mock.invocationCallOrder[0]).toBeLessThan(
+      updateResourceMock.mock.invocationCallOrder[0]
+    )
   })
 
   it('does not write the model name when the resource is no longer hidden', async () => {
@@ -477,11 +464,11 @@ describe('handleAppeal approve resource links', () => {
       ...resourceAppeal,
       payload: { ...resourceAppeal.payload, modelName: 'DeepSeek-V3' }
     })
-    updateResourceMock.mockResolvedValue({ count: 0 })
+    transitionResourcesMock.mockResolvedValue([])
 
     await handleAppeal({ appealId: 1, approve: true }, 99)
 
-    expect(updateResourceMock).toHaveBeenCalledTimes(1)
+    expect(updateResourceMock).not.toHaveBeenCalled()
   })
 
   it('leaves link rows alone for an appeal submitted before links were editable', async () => {
@@ -493,13 +480,13 @@ describe('handleAppeal approve resource links', () => {
     const result = await handleAppeal({ appealId: 1, approve: true }, 99)
 
     expect(result).toEqual({})
-    expect(updateResourceMock).toHaveBeenCalledTimes(1)
+    expect(updateResourceMock).not.toHaveBeenCalled()
     expect(txLinkFindManyMock).not.toHaveBeenCalled()
     expect(updateLinkMock).not.toHaveBeenCalled()
   })
 
   it('does not touch link rows when the resource is no longer hidden', async () => {
-    updateResourceMock.mockResolvedValue({ count: 0 })
+    transitionResourcesMock.mockResolvedValue([])
 
     const result = await handleAppeal({ appealId: 1, approve: true }, 99)
 
@@ -517,13 +504,11 @@ describe('handleAppeal reject', () => {
 
     expect(result).toEqual({})
     // 守卫: 行锁下仍是隐藏态 (2) 才删 (R1)
-    expect(planRatingRemovalMock).toHaveBeenCalledWith(
-      expect.objectContaining({ tx: transactionClient }),
-      [5],
-      { statusIn: [2] }
-    )
+    expect(planRatingRemovalMock).toHaveBeenCalledWith(txContext, [5], {
+      statusIn: [2]
+    })
     expect(executeRatingRemovalMock).toHaveBeenCalledWith(
-      expect.objectContaining({ tx: transactionClient }),
+      txContext,
       await planRatingRemovalMock.mock.results[0].value,
       { orphanReports: 'inline' }
     )
@@ -537,6 +522,7 @@ describe('handleAppeal reject', () => {
     expect(executeRatingRemovalMock.mock.invocationCallOrder[0]).toBeLessThan(
       createMessageMock.mock.invocationCallOrder[0]
     )
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(7)
   })
 
   it('keeps a restored rating and sends the "kept" notice without deleting', async () => {
@@ -574,7 +560,7 @@ describe('handleAppeal reject', () => {
   })
 
   it('returns an error and touches nothing when the appeal was already handled', async () => {
-    // claim 失败: 抛错整体回滚, 不删不通知, 无 revertClaim 造孤儿 (R2)
+    // 认领失败: 整体回滚, 不删不通知, 不留下孤儿 pending 申诉 (R2)
     claimAppealMock.mockResolvedValue({ count: 0 })
 
     const result = await handleAppeal({ appealId: 1, approve: false }, 99)
@@ -600,13 +586,12 @@ describe('handleAppeal reject', () => {
 
       expect(result).toEqual({})
       // 守卫: 行锁下仍是隐藏态 (resource 为 1) 才删; 不收回发布奖励
-      expect(planResourceRemovalMock).toHaveBeenCalledWith(
-        expect.objectContaining({ tx: transactionClient }),
-        [5],
-        { guard: { statusIn: [1] }, refundPublishReward: false }
-      )
+      expect(planResourceRemovalMock).toHaveBeenCalledWith(txContext, [5], {
+        guard: { statusIn: [1] },
+        refundPublishReward: false
+      })
       expect(executeResourceRemovalMock).toHaveBeenCalledWith(
-        expect.objectContaining({ tx: transactionClient }),
+        txContext,
         await planResourceRemovalMock.mock.results[0].value
       )
       expect(createMessageMock.mock.calls[0][0].content).toBe(
@@ -666,13 +651,11 @@ describe('handleAppeal reject', () => {
 
       expect(result).toEqual({})
       // 守卫: 行锁下仍是隐藏态 (2) 才删
-      expect(planCommentRemovalMock).toHaveBeenCalledWith(
-        expect.objectContaining({ tx: transactionClient }),
-        [5],
-        { statusIn: [2] }
-      )
+      expect(planCommentRemovalMock).toHaveBeenCalledWith(txContext, [5], {
+        statusIn: [2]
+      })
       expect(executeCommentRemovalMock).toHaveBeenCalledWith(
-        expect.objectContaining({ tx: transactionClient }),
+        txContext,
         await planCommentRemovalMock.mock.results[0].value,
         { orphanReports: 'inline' }
       )

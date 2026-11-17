@@ -1,36 +1,27 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
-import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { moderation_appealModel } from '~/prisma/generated/prisma/models'
 import { adminHandleAppealSchema } from '~/validations/admin'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import { createMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
-import { onCommentPublished } from '~/server/content/comment/publish'
-import { recomputePatchRatingStat } from '~/app/api/patch/rating/stat'
-import { recalcPatchType } from '~/app/api/patch/resource/_helper'
-import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
-import { invalidateResourceListCache } from '~/app/api/resource/cache'
-import {
-  invalidatePatchContentCache,
-  invalidatePatchContentCacheByPatchId
-} from '~/app/api/patch/cache'
-import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 import { prepareCommentContent } from '~/app/api/patch/comment/html'
-import { queueSearchSync, enqueueSearchOutbox } from '~/server/search/sync'
 import { kunTx } from '~/server/db/tx'
 import {
   executeCommentRemoval,
   planCommentRemoval
 } from '~/server/content/comment/remove'
+import { transitionComments } from '~/server/content/comment/transition'
 import {
   executeRatingRemoval,
   planRatingRemoval
 } from '~/server/content/rating/remove'
+import { transitionRatings } from '~/server/content/rating/transition'
 import {
   executeResourceRemoval,
   planResourceRemoval
 } from '~/server/content/resource/remove'
+import { transitionResources } from '~/server/content/resource/transition'
 import {
   COMMENT_STATUS,
   RATING_STATUS,
@@ -40,9 +31,7 @@ import { getAppealEditableLinkFields } from '~/utils/appealPayload'
 import { APPEAL_APPROVED_LINK, APPEAL_RESULT_NOTICE } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
 import type { AppealLink, AppealPayload } from '~/types/api/appeal'
-
-// 事务内的业务失败, 回滚后将错误消息返回给管理员
-class AppealHandleError extends Error {}
+import type { KunTxContext } from '~/server/db/tx'
 
 // 申诉载荷提交后即锁定, 管理员改不了: 正文渲染不出来时能做的只有拒绝
 const APPEAL_UNRENDERABLE =
@@ -54,10 +43,11 @@ const APPEAL_UNRENDERABLE =
 // 而不部分套用。只写作者可改的字段 (见 getAppealEditableLinkFields), 按库中的存储类型
 // 判断, 不看载荷里记的
 const applyAppealLinks = async (
-  tx: Prisma.TransactionClient,
+  ctx: KunTxContext,
   resourceId: number,
   links: AppealLink[]
 ) => {
+  const { tx } = ctx
   const currentLinks = await tx.patch_resource_link.findMany({
     where: { resource_id: resourceId },
     select: { id: true, storage: true }
@@ -71,7 +61,7 @@ const applyAppealLinks = async (
   // 找得到即两边是同一组行
   if (links.length !== currentLinks.length || matched.length !== links.length) {
     // 拒绝申诉会删除仍处于隐藏态的资源, 所以把不删资源的处理办法一并说明
-    throw new AppealHandleError(
+    ctx.fail(
       '资源链接在申诉提交后已变更, 无法通过该申诉。如需保留该资源, 请先在下载资源管理中恢复它, 再拒绝本申诉'
     )
   }
@@ -103,24 +93,7 @@ const approveAppeal = async (
   if (typeof commentContent === 'string') {
     return APPEAL_UNRENDERABLE
   }
-
-  // 事务外预取副作用所需的 patch_id
-  let patchId: number | null = null
-  // resource 申诉通过后由 recalcPatchType 返回, 供事务提交后失效 patch 内容缓存
-  let resourceUniqueId: string | null = null
-  if (type === 'comment') {
-    const comment = await prisma.patch_comment.findUnique({
-      where: { id: contentId },
-      select: { patch_id: true }
-    })
-    patchId = comment?.patch_id ?? null
-  } else if (type === 'rating') {
-    const rating = await prisma.patch_rating.findUnique({
-      where: { id: contentId },
-      select: { patch_id: true }
-    })
-    patchId = rating?.patch_id ?? null
-  } else {
+  if (type === 'resource') {
     const renderable = await renderKunMarkdownForWrite(
       'note',
       payload.note ?? ''
@@ -128,136 +101,88 @@ const approveAppeal = async (
     if (typeof renderable === 'string') {
       return APPEAL_UNRENDERABLE
     }
-    const resource = await prisma.patch_resource.findUnique({
-      where: { id: contentId },
-      select: { patch_id: true }
-    })
-    patchId = resource?.patch_id ?? null
   }
 
-  try {
-    await prisma.$transaction(async (tx) => {
-      // 以申诉行状态迁移作为幂等闸门, 防止并发重复处理
-      const claim = await tx.moderation_appeal.updateMany({
-        where: { id: appeal.id, status: 'pending' },
-        data: { status: 'approved', handled_by: uid }
-      })
-      if (claim.count === 0) {
-        throw new AppealHandleError('该申诉已被处理, 请刷新后重试')
-      }
-
-      // 仅对仍处于隐藏状态的内容生效, 不覆盖其他管理操作的结果
-      let updatedCount = 0
-      // commentContent 非空即 type === 'comment'
-      if (commentContent !== null) {
-        const updated = await tx.patch_comment.updateMany({
-          where: { id: contentId, status: 2 },
-          data: {
-            ...commentContent,
-            edit: Date.now().toString(),
-            status: 0
-          }
-        })
-        updatedCount = updated.count
-      } else if (type === 'rating') {
-        const updated = await tx.patch_rating.updateMany({
-          where: { id: contentId, status: 2 },
-          data: { short_summary: payload.text ?? '', status: 0 }
-        })
-        updatedCount = updated.count
-      } else {
-        const updated = await tx.patch_resource.updateMany({
-          where: { id: contentId, status: 1 },
-          data: {
-            name: payload.name ?? '',
-            note: payload.note ?? '',
-            status: 0
-          }
-        })
-        updatedCount = updated.count
-        if (updated.count > 0 && payload.modelName !== undefined) {
-          // 模型型号只属于 AI 翻译补丁, 其余类型落库恒为空串: 以库中的类型为条件写,
-          // 不看载荷。资源行已被上面的条件写锁住
-          await tx.patch_resource.updateMany({
-            where: { id: contentId, type: { has: 'ai' } },
-            data: { model_name: payload.modelName }
-          })
-        }
-        if (updated.count > 0 && payload.links) {
-          await applyAppealLinks(tx, contentId, payload.links)
-        }
-        if (updated.count > 0 && patchId !== null) {
-          resourceUniqueId = await recalcPatchType(patchId, tx)
-          // 事务性入队：与补丁变更原子提交，关闭崩溃丢失窗口
-          await enqueueSearchOutbox(tx, patchId)
-        }
-      }
-      if (updatedCount === 0) {
-        throw new AppealHandleError(
-          '内容已不存在或状态已变更, 无法通过, 可拒绝该申诉以关闭'
-        )
-      }
-
-      if (type === 'rating' && patchId !== null) {
-        await recomputePatchRatingStat(patchId, tx)
-      }
-
-      await createMessage(
-        {
-          type: 'system',
-          content: APPEAL_RESULT_NOTICE.approved(
-            MODERATION_CONTENT_TYPE_MAP[type]
-          ),
-          link: APPEAL_APPROVED_LINK,
-          recipient_id: appeal.user_id
-        },
-        tx
-      )
-
-      await tx.admin_log.create({
-        data: {
-          type: 'approve',
-          user_id: uid,
-          content: `管理员 ${adminName} 通过了申诉 (ID: ${appeal.id}, 类型: ${type}, 内容 ID: ${contentId}, 用户 ID: ${appeal.user_id}), 内容已恢复展示`
-        }
-      })
+  const result = await kunTx('admin.appeal.approve', async (ctx) => {
+    const { tx } = ctx
+    // 以申诉行状态迁移作为幂等闸门, 防止并发重复处理
+    const claim = await tx.moderation_appeal.updateMany({
+      where: { id: appeal.id, status: 'pending' },
+      data: { status: 'approved', handled_by: uid }
     })
-  } catch (error) {
-    if (error instanceof AppealHandleError) {
-      return error.message
+    if (claim.count === 0) {
+      ctx.fail('该申诉已被处理, 请刷新后重试')
     }
-    throw error
+
+    // 仅对仍处于隐藏状态的内容生效, 不覆盖其他管理操作的结果。恢复公开连同申诉里
+    // 改过的内容一起写; 聚合重算、缓存失效与评论的通知补发都在迁移命令里。
+    // 隐藏态的内容没有在途审核任务可作废
+    let restored: unknown[]
+    // commentContent 非空即 type === 'comment'
+    if (commentContent !== null) {
+      restored = await transitionComments(ctx, [contentId], {
+        from: [COMMENT_STATUS.hidden],
+        to: COMMENT_STATUS.public,
+        data: { ...commentContent, edit: Date.now().toString() },
+        openTasks: 'keep'
+      })
+    } else if (type === 'rating') {
+      restored = await transitionRatings(ctx, [contentId], {
+        from: [RATING_STATUS.hidden],
+        to: RATING_STATUS.public,
+        data: { short_summary: payload.text ?? '' },
+        openTasks: 'keep'
+      })
+    } else {
+      restored = await transitionResources(ctx, [contentId], {
+        from: [RESOURCE_STATUS.hidden],
+        to: RESOURCE_STATUS.public,
+        data: { name: payload.name ?? '', note: payload.note ?? '' },
+        openTasks: 'keep'
+      })
+      if (restored.length > 0 && payload.modelName !== undefined) {
+        // 模型型号只属于 AI 翻译补丁, 其余类型落库恒为空串: 以库中的类型为条件写,
+        // 不看载荷。资源行已被迁移命令锁住
+        await tx.patch_resource.updateMany({
+          where: { id: contentId, type: { has: 'ai' } },
+          data: { model_name: payload.modelName }
+        })
+      }
+      if (restored.length > 0 && payload.links) {
+        await applyAppealLinks(ctx, contentId, payload.links)
+      }
+    }
+    if (restored.length === 0) {
+      ctx.fail('内容已不存在或状态已变更, 无法通过, 可拒绝该申诉以关闭')
+    }
+
+    await createMessage(
+      {
+        type: 'system',
+        content: APPEAL_RESULT_NOTICE.approved(
+          MODERATION_CONTENT_TYPE_MAP[type]
+        ),
+        link: APPEAL_APPROVED_LINK,
+        recipient_id: appeal.user_id
+      },
+      tx
+    )
+
+    await tx.admin_log.create({
+      data: {
+        type: 'approve',
+        user_id: uid,
+        content: `管理员 ${adminName} 通过了申诉 (ID: ${appeal.id}, 类型: ${type}, 内容 ID: ${contentId}, 用户 ID: ${appeal.user_id}), 内容已恢复展示`
+      }
+    })
+
+    return {}
+  })
+  if (typeof result === 'string') {
+    return result
   }
 
   await invalidateUnread(appeal.user_id).catch(() => undefined)
-
-  // 事务提交后的副作用, 与 AI 审核通过路径保持一致
-  if (type === 'comment' && patchId !== null) {
-    await invalidatePatchCommentCache(patchId)
-  }
-  if (type === 'resource') {
-    if (patchId !== null) {
-      queueSearchSync(patchId)
-    }
-    // 事务提交后失效: 事务内失效会被并发读回填旧值 (M-04), 且 Redis 故障不应回滚写入
-    if (resourceUniqueId !== null) {
-      await invalidatePatchContentCache(resourceUniqueId).catch(() => undefined)
-    }
-    // 恢复至 status 0 使该资源重回公开集: 详情缓存装两个 section, 不分 section 失效
-    // (事务内 updateMany 命中即资源行存在, 预取的 patchId 必非 null, 条件仅为类型收窄)
-    if (patchId !== null) {
-      await invalidatePatchResourceDetailCache(patchId)
-    }
-    await invalidateResourceListCache()
-  }
-  // comment 恢复 (2→0) 改 _count.comment, rating 恢复改 ratingSummary, 失效详情缓存 (M-05)
-  if ((type === 'comment' || type === 'rating') && patchId !== null) {
-    await invalidatePatchContentCacheByPatchId(patchId).catch(() => undefined)
-  }
-  // 缓存先、通知后: 创建时被拦截而没发出的通知, 在评论恢复公开后补发
-  if (type === 'comment') {
-    await onCommentPublished(contentId)
-  }
 
   return {}
 }

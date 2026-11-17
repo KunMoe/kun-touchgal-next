@@ -26,3 +26,20 @@ export const purgeContentDerivatives = async (
     }
   }
 }
+
+// 状态迁移之后内容还在, 指向它的在途审核任务怎么办:
+//   cancel-keep-dry-run  管理员的裁决是最终的, 在途裁决不该再覆盖它 → 作废。dry_run
+//                        任务只做评估、认领后从不改内容, 留着它的数据
+//   keep                 迁移本身就是那条任务的裁决结果, 或内容此时不可能有在途任务
+export type OpenTasksPolicy = 'cancel-keep-dry-run' | 'keep'
+
+export const settleOpenTasks = async (
+  tx: Prisma.TransactionClient,
+  kind: 'comment' | 'rating' | 'resource',
+  ids: number[],
+  policy: OpenTasksPolicy
+) => {
+  if (policy === 'cancel-keep-dry-run') {
+    await deletePendingModerationTasks(kind, ids, tx, true)
+  }
+}

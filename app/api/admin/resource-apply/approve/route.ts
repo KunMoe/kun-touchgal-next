@@ -5,15 +5,10 @@ import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { createMessage } from '~/app/api/utils/message'
 import { kunParsePutBody } from '~/app/api/utils/parseQuery'
 import { approvePatchResourceSchema } from '~/validations/admin'
-import { recalcPatchType } from '~/app/api/patch/resource/_helper'
-import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
-import { invalidateResourceListCache } from '~/app/api/resource/cache'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
-import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
-import { queueSearchSync, enqueueSearchOutbox } from '~/server/search/sync'
+import { kunTx } from '~/server/db/tx'
+import { RESOURCE_STATUS } from '~/constants/contentStatus'
+import { transitionResources } from '~/server/content/resource/transition'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
-
-class ApproveResourceError extends Error {}
 
 const approvePatchResource = async (
   input: z.infer<typeof approvePatchResourceSchema>,
@@ -40,61 +35,42 @@ const approvePatchResource = async (
     return '管理员不存在'
   }
 
-  try {
-    await prisma.$transaction(async (prisma) => {
-      // updateMany 而非 update: 上面的状态检查在事务外, 并发 decline 已删除该行时
-      // 裸 update 抛 P2025 逃逸为 500; 带 status 条件的零计数走字符串错误契约
-      const approved = await prisma.patch_resource.updateMany({
-        where: { id: resourceId, status: 2 },
-        data: { status: 0 }
-      })
-      if (approved.count === 0) {
-        throw new ApproveResourceError('当前资源状态无需审核')
-      }
-      await recalcPatchType(resource.patch_id, prisma)
-      // 事务性入队：与补丁变更原子提交，关闭崩溃丢失窗口
-      await enqueueSearchOutbox(prisma, resource.patch_id)
-
-      await createMessage(
-        {
-          type: 'system',
-          content: `您上传的资源「${resource.name || resource.patch.name}」已通过审核，感谢分享！`,
-          recipient_id: resource.user_id,
-          link: `/${resource.patch.unique_id}?tab=resources&resourceSection=${resource.section}&resourceId=${resource.id}`
-        },
-        prisma
-      )
-
-      await prisma.admin_log.create({
-        data: {
-          type: 'approve',
-          user_id: adminUid,
-          content: `管理员 ${admin.name} 审核通过了一条资源\n\nGalgame 名称:${resource.patch.name}\n资源 ID:${resource.id}\n资源标题:${resource.name}\n上传用户:${resource.user.name}`
-        }
-      })
+  const result = await kunTx('admin.resource.approve', async (ctx) => {
+    // 上面的状态检查在事务外。命令在行锁下再判一次「仍是待初审」: 并发的拒绝已删除
+    // 该行, 或已被另一次通过处理时, 这里得到空集, 走字符串错误契约而不是 500。
+    // 待初审的资源不送 AI 审核, 没有在途任务可作废
+    const moved = await transitionResources(ctx, [resourceId], {
+      from: [RESOURCE_STATUS.awaitingApproval],
+      to: RESOURCE_STATUS.public,
+      openTasks: 'keep'
     })
-  } catch (error) {
-    if (error instanceof ApproveResourceError) {
-      return error.message
+    if (!moved.length) {
+      ctx.fail('当前资源状态无需审核')
     }
-    throw error
+
+    await createMessage(
+      {
+        type: 'system',
+        content: `您上传的资源「${resource.name || resource.patch.name}」已通过审核，感谢分享！`,
+        recipient_id: resource.user_id,
+        link: `/${resource.patch.unique_id}?tab=resources&resourceSection=${resource.section}&resourceId=${resource.id}`
+      },
+      ctx.tx
+    )
+
+    await ctx.tx.admin_log.create({
+      data: {
+        type: 'approve',
+        user_id: adminUid,
+        content: `管理员 ${admin.name} 审核通过了一条资源\n\nGalgame 名称:${resource.patch.name}\n资源 ID:${resource.id}\n资源标题:${resource.name}\n上传用户:${resource.user.name}`
+      }
+    })
+
+    return {}
+  })
+  if (typeof result === 'string') {
+    return result
   }
-
-  queueSearchSync(resource.patch_id)
-  // 事务提交后失效: 事务内失效会被并发读回填旧值 (M-04), 且 Redis 故障不应回滚写入
-  await invalidatePatchContentCache(resource.patch.unique_id).catch(
-    () => undefined
-  )
-
-  // 2→0 使该资源进入公开集: 详情缓存装两个 section, 故不分 section 无条件失效
-  await invalidatePatchResourceDetailCache(resource.patch_id)
-
-  if (resource.section === 'patch') {
-    await invalidateResourceListCache()
-  }
-
-  // 资源通过人工审批 (2→0): 作者 hasPendingResource 可能翻假, 失效以尽早停止 bypass
-  await invalidateUserPendingResourceCache(resource.user_id)
 
   await invalidateUnread(resource.user_id).catch(() => undefined)
 

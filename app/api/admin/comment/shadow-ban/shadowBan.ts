@@ -1,11 +1,9 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
-import { adminUpdateCommentShadowBanSchema } from '~/validations/admin'
-import { deletePendingModerationTasks } from '~/server/moderation/submit'
-import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
-import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
-import { onCommentPublished } from '~/server/content/comment/publish'
+import { kunTx } from '~/server/db/tx'
 import { COMMENT_STATUS } from '~/constants/contentStatus'
+import { transitionComments } from '~/server/content/comment/transition'
+import { adminUpdateCommentShadowBanSchema } from '~/validations/admin'
 
 const statusLabel: Record<number, string> = {
   0: '正常',
@@ -29,7 +27,6 @@ export const updateCommentShadowBan = async (
     select: {
       id: true,
       status: true,
-      patch_id: true,
       user: { select: { name: true } }
     }
   })
@@ -40,36 +37,32 @@ export const updateCommentShadowBan = async (
     return `该评论已处于${statusLabel[status]}状态`
   }
 
-  await prisma.$transaction(async (prisma) => {
-    // 先作废在途审核任务再改 status: 锁顺序 (task→内容行) 与 worker apply 对齐,
-    // 消除与 worker 的 AB-BA 死锁; 管理员裁决为最终, 在途裁决不应再覆盖.
-    // (作者编辑路径锁序相反, 但非特权作者被 hasPendingModeration 挡在事务外)
-    // 传 excludeDryRun=true: 内容仍在, 保留不改内容的 dry_run 评估任务
-    await deletePendingModerationTasks('comment', commentId, prisma, true)
-
-    await prisma.patch_comment.update({
-      where: { id: commentId },
-      data: { status }
+  return kunTx('admin.comment.shadowBan', async (ctx) => {
+    // 管理员的裁决是最终的, 在途的审核任务一并作废 (dry_run 评估保留)。恢复为正常时,
+    // 创建时被拦截而没发出的通知由命令在提交后补发
+    const [moved] = await transitionComments(ctx, [commentId], {
+      from: Object.values(COMMENT_STATUS).filter((value) => value !== status),
+      to: status,
+      openTasks: 'cancel-keep-dry-run'
     })
+    // 上面判的是事务外快照; 行锁下已是目标状态, 或已被删除
+    if (!moved) {
+      const exists = await ctx.tx.patch_comment.findUnique({
+        where: { id: commentId },
+        select: { id: true }
+      })
+      return ctx.fail(
+        exists ? `该评论已处于${statusLabel[status]}状态` : '未找到该评论'
+      )
+    }
 
-    await prisma.admin_log.create({
+    await ctx.tx.admin_log.create({
       data: {
         type: 'update',
         user_id: adminUid,
-        content: `管理员 ${admin.name} 将用户 ${comment.user.name} 的评论 (ID: ${commentId}) 状态由 ${statusLabel[comment.status]} 修改为 ${statusLabel[status]}`
+        content: `管理员 ${admin.name} 将用户 ${comment.user.name} 的评论 (ID: ${commentId}) 状态由 ${statusLabel[moved.from]} 修改为 ${statusLabel[status]}`
       }
     })
+    return {}
   })
-
-  await invalidatePatchCommentCache(comment.patch_id)
-  // 隐藏/恢复评论改变 _count.comment, 失效补丁详情缓存 (M-05)
-  await invalidatePatchContentCacheByPatchId(comment.patch_id).catch(
-    () => undefined
-  )
-  // 恢复为正常: 这条评论可能从未公开过 (创建即被拦截, 随后被拒或被隐藏), 当时没发的
-  // 通知在这里补上; 已经发过的由去重挡住
-  if (status === COMMENT_STATUS.public) {
-    await onCommentPublished(commentId)
-  }
-  return {}
 }
