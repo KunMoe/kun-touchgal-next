@@ -17,8 +17,7 @@ import {
   recalcPatchType
 } from '~/app/api/patch/resource/_helper'
 import { deleteOrphanReports } from '~/server/report/pending'
-import { deletePendingModerationTasks } from '~/server/moderation/submit'
-import { deletePendingAppeals } from '~/server/moderation/appeal'
+import { purgeContentDerivatives } from '~/server/content/derivatives'
 import {
   enqueueSearchOutbox,
   kickSearchOutboxDrain
@@ -215,16 +214,11 @@ export const deleteUser = async (
           // user_id 级联删除, 此处 deleteMany 幂等, 只兜他人内容的孤儿
           if (ownPatchIds.length) {
             await enqueueResourceLinkDeletions(prisma, ownS3Links)
-            await deletePendingModerationTasks('comment', ownCommentIds, prisma)
-            await deletePendingModerationTasks('rating', ownRatingIds, prisma)
-            await deletePendingModerationTasks(
-              'resource',
-              ownResourceIds,
-              prisma
-            )
-            await deletePendingAppeals('comment', ownCommentIds, prisma)
-            await deletePendingAppeals('rating', ownRatingIds, prisma)
-            await deletePendingAppeals('resource', ownResourceIds, prisma)
+            await purgeContentDerivatives(prisma, {
+              comment: ownCommentIds,
+              rating: ownRatingIds,
+              resource: ownResourceIds
+            })
             // 自有 patch 的索引文档须入箱移除, 否则只能等次日 reconcile 兜底
             for (const patchId of ownPatchIds) {
               await enqueueSearchOutbox(prisma, patchId)

@@ -9,24 +9,21 @@ const {
   transactionMock,
   claimAppealMock,
   updateRatingMock,
-  deleteResourceMock,
   updateResourceMock,
   txLinkFindManyMock,
   updateLinkMock,
   updateCommentMock,
-  txQueryRawMock,
   renderForWriteMock,
   onCommentPublishedMock,
   createMessageMock,
   createLogMock,
   recomputeOneMock,
-  deletePendingTasksMock,
-  deletePendingAppealsMock,
-  deleteOrphanReportsMock,
   planCommentRemovalMock,
   executeCommentRemovalMock,
   planRatingRemovalMock,
   executeRatingRemovalMock,
+  planResourceRemovalMock,
+  executeResourceRemovalMock,
   invalidateContentMock,
   invalidateContentByPatchIdMock,
   invalidateCommentCacheMock,
@@ -34,10 +31,7 @@ const {
   invalidateResourceListMock,
   recalcTypeMock,
   enqueueOutboxMock,
-  enqueueLinkDelMock,
-  sanitizeLinksMock,
-  queueSearchSyncMock,
-  kickDrainMock
+  queueSearchSyncMock
 } = vi.hoisted(() => ({
   findAdminMock: vi.fn(),
   findAppealMock: vi.fn(),
@@ -47,24 +41,21 @@ const {
   transactionMock: vi.fn(),
   claimAppealMock: vi.fn(),
   updateRatingMock: vi.fn(),
-  deleteResourceMock: vi.fn(),
   updateResourceMock: vi.fn(),
   txLinkFindManyMock: vi.fn(),
   updateLinkMock: vi.fn(),
   updateCommentMock: vi.fn(),
   renderForWriteMock: vi.fn(),
   onCommentPublishedMock: vi.fn(),
-  txQueryRawMock: vi.fn(),
   createMessageMock: vi.fn(),
   createLogMock: vi.fn(),
   recomputeOneMock: vi.fn(),
-  deletePendingTasksMock: vi.fn(),
-  deletePendingAppealsMock: vi.fn(),
-  deleteOrphanReportsMock: vi.fn(),
   planCommentRemovalMock: vi.fn(),
   executeCommentRemovalMock: vi.fn(),
   planRatingRemovalMock: vi.fn(),
   executeRatingRemovalMock: vi.fn(),
+  planResourceRemovalMock: vi.fn(),
+  executeResourceRemovalMock: vi.fn(),
   invalidateContentMock: vi.fn(),
   invalidateContentByPatchIdMock: vi.fn(),
   invalidateCommentCacheMock: vi.fn(),
@@ -72,10 +63,7 @@ const {
   invalidateResourceListMock: vi.fn(),
   recalcTypeMock: vi.fn(),
   enqueueOutboxMock: vi.fn(),
-  enqueueLinkDelMock: vi.fn(),
-  sanitizeLinksMock: vi.fn(),
-  queueSearchSyncMock: vi.fn(),
-  kickDrainMock: vi.fn()
+  queueSearchSyncMock: vi.fn()
 }))
 
 const events: string[] = []
@@ -84,17 +72,13 @@ let finishRecompute: () => void
 const transactionClient = {
   moderation_appeal: { updateMany: claimAppealMock },
   patch_rating: { updateMany: updateRatingMock },
-  patch_resource: {
-    deleteMany: deleteResourceMock,
-    updateMany: updateResourceMock
-  },
+  patch_resource: { updateMany: updateResourceMock },
   patch_resource_link: {
     findMany: txLinkFindManyMock,
     update: updateLinkMock
   },
   patch_comment: { updateMany: updateCommentMock },
-  admin_log: { create: createLogMock },
-  $queryRaw: txQueryRawMock
+  admin_log: { create: createLogMock }
 }
 
 vi.mock('~/prisma/index', () => ({
@@ -119,6 +103,11 @@ vi.mock('~/server/content/rating/remove', () => ({
   executeRatingRemoval: executeRatingRemovalMock
 }))
 
+vi.mock('~/server/content/resource/remove', () => ({
+  planResourceRemoval: planResourceRemovalMock,
+  executeResourceRemoval: executeResourceRemovalMock
+}))
+
 vi.mock('~/app/api/utils/message', () => ({
   createMessage: createMessageMock
 }))
@@ -133,18 +122,6 @@ vi.mock('~/server/content/comment/publish', () => ({
 
 vi.mock('~/app/api/patch/rating/stat', () => ({
   recomputePatchRatingStat: recomputeOneMock
-}))
-
-vi.mock('~/server/moderation/submit', () => ({
-  deletePendingModerationTasks: deletePendingTasksMock
-}))
-
-vi.mock('~/server/moderation/appeal', () => ({
-  deletePendingAppeals: deletePendingAppealsMock
-}))
-
-vi.mock('~/server/report/pending', () => ({
-  deleteOrphanReports: deleteOrphanReportsMock
 }))
 
 vi.mock('~/app/api/patch/cache', () => ({
@@ -165,18 +142,12 @@ vi.mock('~/app/api/resource/cache', () => ({
 }))
 
 vi.mock('~/app/api/patch/resource/_helper', () => ({
-  recalcPatchType: recalcTypeMock,
-  enqueueResourceLinkDeletions: enqueueLinkDelMock,
-  sanitizeResourceLinksForAuditLog: sanitizeLinksMock
+  recalcPatchType: recalcTypeMock
 }))
 
 vi.mock('~/server/search/sync', () => ({
   queueSearchSync: queueSearchSyncMock,
   enqueueSearchOutbox: enqueueOutboxMock
-}))
-
-vi.mock('~/server/storage/s3Outbox', () => ({
-  kickS3DeletionDrain: kickDrainMock
 }))
 
 import { handleAppeal } from '~/app/api/admin/appeal/handle'
@@ -213,19 +184,14 @@ beforeEach(() => {
   findCommentMock.mockResolvedValue({ patch_id: 10 })
   claimAppealMock.mockResolvedValue({ count: 1 })
   updateRatingMock.mockResolvedValue({ count: 1 })
-  deleteResourceMock.mockResolvedValue({ count: 1 })
   updateResourceMock.mockResolvedValue({ count: 1 })
   updateLinkMock.mockResolvedValue({})
   updateCommentMock.mockResolvedValue({ count: 1 })
   renderForWriteMock.mockResolvedValue({ html: '<p>ok</p>', version: 2 })
   onCommentPublishedMock.mockResolvedValue(undefined)
   txLinkFindManyMock.mockResolvedValue([])
-  txQueryRawMock.mockResolvedValue([{ status: 2 }])
   createMessageMock.mockResolvedValue({})
   createLogMock.mockResolvedValue({})
-  deletePendingTasksMock.mockResolvedValue({ count: 0 })
-  deletePendingAppealsMock.mockResolvedValue({ count: 0 })
-  deleteOrphanReportsMock.mockResolvedValue(undefined)
   planCommentRemovalMock.mockResolvedValue({
     roots: [{ id: 5 }],
     skipped: [],
@@ -237,6 +203,12 @@ beforeEach(() => {
     skipped: []
   })
   executeRatingRemovalMock.mockResolvedValue({ deletedIds: [5] })
+  planResourceRemovalMock.mockResolvedValue({
+    rows: [{ id: 5 }],
+    skipped: [],
+    refundPublishReward: false
+  })
+  executeResourceRemovalMock.mockResolvedValue({ deletedIds: [5] })
   invalidateContentMock.mockResolvedValue(undefined)
   invalidateContentByPatchIdMock.mockResolvedValue(undefined)
   invalidateCommentCacheMock.mockResolvedValue(undefined)
@@ -244,10 +216,7 @@ beforeEach(() => {
   invalidateResourceListMock.mockResolvedValue(undefined)
   recalcTypeMock.mockResolvedValue('unique-x')
   enqueueOutboxMock.mockResolvedValue(undefined)
-  enqueueLinkDelMock.mockResolvedValue(undefined)
-  sanitizeLinksMock.mockReturnValue([])
   queueSearchSyncMock.mockReturnValue(undefined)
-  kickDrainMock.mockReturnValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
       events.push('transaction-start')
@@ -616,76 +585,72 @@ describe('handleAppeal reject', () => {
     expect(createLogMock).not.toHaveBeenCalled()
   })
 
-  it('guards the resource delete by hidden status and fires post-commit effects', async () => {
-    findAppealMock.mockResolvedValue({
-      ...ratingAppeal,
-      content_type: 'resource'
+  describe('resource', () => {
+    beforeEach(() => {
+      findAppealMock.mockResolvedValue({
+        ...ratingAppeal,
+        content_type: 'resource'
+      })
     })
-    // FOR UPDATE 锁下读到隐藏态 (resource 为 1) 才删, 闭合并发取消隐藏窗口 (R1)
-    txQueryRawMock.mockResolvedValue([{ status: 1 }])
-    // S3 入队以锁下重读的 links 为事实源, 而非事务外快照 (并发重绑会换 s3 对象)
-    txLinkFindManyMock.mockResolvedValue([
-      { storage: 's3', content: 'c-1', hash: 'h-1', s3_key: 'k-1' },
-      { storage: 'user', content: 'u-1', hash: '', s3_key: '' }
-    ])
 
-    const result = await handleAppeal({ appealId: 1, approve: false }, 99)
+    // 删除连同资源评论区的站内信、任务、申诉与孤儿举报的清理, S3 与搜索出箱,
+    // 缓存失效, 都在命令里 (此前这条路径不清评论派生物)
+    it('deletes the resource through the removal command, guarded on the hidden status', async () => {
+      const result = await handleAppeal({ appealId: 1, approve: false }, 99)
 
-    expect(result).toEqual({})
-    // 锁下已确认状态, 删除本身不再需要 status 条件 (对齐 rating 分支)
-    expect(deleteResourceMock).toHaveBeenCalledWith({
-      where: { id: 5 }
+      expect(result).toEqual({})
+      // 守卫: 行锁下仍是隐藏态 (resource 为 1) 才删; 不收回发布奖励
+      expect(planResourceRemovalMock).toHaveBeenCalledWith(
+        expect.objectContaining({ tx: transactionClient }),
+        [5],
+        { guard: { statusIn: [1] }, refundPublishReward: false }
+      )
+      expect(executeResourceRemovalMock).toHaveBeenCalledWith(
+        expect.objectContaining({ tx: transactionClient }),
+        await planResourceRemovalMock.mock.results[0].value
+      )
+      expect(createMessageMock.mock.calls[0][0].content).toBe(
+        APPEAL_RESULT_NOTICE.rejected(MODERATION_CONTENT_TYPE_MAP.resource)
+      )
+      expect(createMessageMock.mock.calls[0][1]).toBe(transactionClient)
+      expect(createLogMock.mock.calls[0][0].data.content).toContain(
+        ', 内容已删除'
+      )
     })
-    expect(enqueueLinkDelMock).toHaveBeenCalledWith(transactionClient, [
-      { content: 'c-1', patchId: 10, hash: 'h-1', s3Key: 'k-1' }
-    ])
-    expect(createMessageMock.mock.calls[0][1]).toBe(transactionClient)
-    // 删除成功的提交后副作用
-    expect(queueSearchSyncMock).toHaveBeenCalledWith(10)
-    expect(invalidateContentMock).toHaveBeenCalledWith('unique-x')
-    expect(kickDrainMock).toHaveBeenCalledTimes(1)
-  })
 
-  it('does not delete a resource that was restored before the transaction', async () => {
-    findAppealMock.mockResolvedValue({
-      ...ratingAppeal,
-      content_type: 'resource'
+    it('does not delete a resource that was restored before the transaction', async () => {
+      // 行锁下读到已恢复 (status 0): 并发恢复赢得竞态, 内容保留
+      planResourceRemovalMock.mockResolvedValue({
+        rows: [],
+        skipped: [{ id: 5, reason: 'status', status: 0 }],
+        refundPublishReward: false
+      })
+
+      const result = await handleAppeal({ appealId: 1, approve: false }, 99)
+
+      expect(result).toEqual({})
+      // 资源保留 → 其评论仍在, 什么都不清理
+      expect(executeResourceRemovalMock).not.toHaveBeenCalled()
+      expect(createMessageMock.mock.calls[0][0].content).toBe(
+        APPEAL_RESULT_NOTICE.rejectedKept(MODERATION_CONTENT_TYPE_MAP.resource)
+      )
     })
-    // FOR UPDATE 读到已恢复 (status 0): 并发恢复赢得竞态, 内容保留
-    txQueryRawMock.mockResolvedValue([{ status: 0 }])
 
-    const result = await handleAppeal({ appealId: 1, approve: false }, 99)
+    it('closes the appeal when the resource is already gone', async () => {
+      planResourceRemovalMock.mockResolvedValue({
+        rows: [],
+        skipped: [{ id: 5, reason: 'gone' }],
+        refundPublishReward: false
+      })
 
-    expect(deleteResourceMock).not.toHaveBeenCalled()
+      const result = await handleAppeal({ appealId: 1, approve: false }, 99)
 
-    expect(result).toEqual({})
-    expect(createMessageMock.mock.calls[0][0].content).toBe(
-      APPEAL_RESULT_NOTICE.rejectedKept(MODERATION_CONTENT_TYPE_MAP.resource)
-    )
-    // 资源保留 → 其评论仍在, 其举报不得清理
-    expect(deleteOrphanReportsMock).not.toHaveBeenCalled()
-    expect(queueSearchSyncMock).not.toHaveBeenCalled()
-    expect(kickDrainMock).not.toHaveBeenCalled()
-  })
-
-  it('cleans orphaned resource-comment reports after the delete', async () => {
-    findAppealMock.mockResolvedValue({
-      ...ratingAppeal,
-      content_type: 'resource'
+      expect(result).toEqual({})
+      expect(executeResourceRemovalMock).not.toHaveBeenCalled()
+      expect(createLogMock.mock.calls[0][0].data.content).toContain(
+        ', 内容已被其他操作删除, 未重复执行'
+      )
     })
-    txQueryRawMock.mockResolvedValue([{ status: 1 }])
-
-    const result = await handleAppeal({ appealId: 1, approve: false }, 99)
-
-    expect(result).toEqual({})
-    // 级联删资源评论后举报外键已置 NULL, 按 NULL 目标清理孤儿
-    expect(deleteOrphanReportsMock).toHaveBeenCalledWith(
-      'comment',
-      transactionClient
-    )
-    expect(deleteResourceMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteOrphanReportsMock.mock.invocationCallOrder[0]
-    )
   })
 
   describe('comment', () => {

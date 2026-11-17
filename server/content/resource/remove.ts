@@ -1,0 +1,187 @@
+import {
+  cleanupResourceCommentDerivatives,
+  enqueueResourceLinkDeletions,
+  recalcPatchType
+} from '~/app/api/patch/resource/_helper'
+import { invalidatePatchContentCache } from '~/app/api/patch/cache'
+import { invalidateUserSession } from '~/app/api/user/session/cache'
+import { deleteOrphanReports } from '~/server/report/pending'
+import {
+  enqueueSearchOutboxBatch,
+  kickSearchOutboxDrain
+} from '~/server/search/sync'
+import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
+import { purgeContentDerivatives } from '~/server/content/derivatives'
+import { recordContentChanges } from '~/server/content/changes'
+import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { ResourceStatus } from '~/constants/contentStatus'
+import type { KunTxContext } from '~/server/db/tx'
+
+// 资源的物理删除。两段式: plan 只加锁和读取, execute 按固定顺序清理并删除。
+// 入口夹在两段之间做自己的事 (判定结果、取审计所需的数据), 并把 skipped 映射成自己的文案
+
+// 入口算好的数据形状的守卫; 命令里不出现任何角色比较。不传即不设条件 (后台删除)
+export interface ResourceRemovalGuard {
+  statusIn: readonly ResourceStatus[]
+  ownerUid?: number
+}
+
+// 发布资源时给作者加了 3 萌萌点
+const PUBLISH_REWARD = 3
+
+type ResourceRow = Prisma.patch_resourceGetPayload<{ include: { links: true } }>
+
+export type SkippedResource =
+  | { id: number; reason: 'gone' }
+  | { id: number; reason: 'owner' }
+  | { id: number; reason: 'status'; status: ResourceStatus }
+
+export interface ResourceRemovalPlan {
+  // 锁下通过守卫的资源, 连同锁下重读的链接: 删除瞬间的真实集合
+  rows: ResourceRow[]
+  skipped: SkippedResource[]
+  refundPublishReward: boolean
+}
+
+export const planResourceRemoval = async (
+  { tx }: KunTxContext,
+  ids: number[],
+  options: {
+    guard?: ResourceRemovalGuard
+    // 是否收回发布奖励。没有默认值: 每个入口都要表态
+    refundPublishReward: boolean
+  }
+): Promise<ResourceRemovalPlan> => {
+  // 收回奖励要写作者的 user 行。锁序是 user → 资源行 (审核裁决也是这个方向), 所以
+  // 在锁资源行之前先把作者行锁住; 实际扣分留到 execute, 守卫没过就不会发生
+  if (options.refundPublishReward) {
+    await tx.$executeRaw`
+      SELECT id
+      FROM "user"
+      WHERE id IN (
+        SELECT user_id FROM patch_resource WHERE id = ANY(${ids}::int[])
+      )
+      ORDER BY id
+      FOR NO KEY UPDATE`
+  }
+
+  // 升序锁资源行: 与编辑、审核裁决的 FOR UPDATE 互斥, 批与批之间不会在资源行上反序
+  const locked = await tx.$queryRaw<Array<{ id: number }>>`
+    SELECT id
+    FROM patch_resource
+    WHERE id = ANY(${ids}::int[])
+    ORDER BY id
+    FOR UPDATE`
+  // 锁下重读行与链接: 守卫、S3 入队与提交后的缓存失效都以删除瞬间的状态为准。事务外
+  // 的快照与删除之间, 并发编辑会重绑 s3 对象, 并发的初审通过 / 隐藏会改 status
+  const current = locked.length
+    ? await tx.patch_resource.findMany({
+        where: { id: { in: locked.map((row) => row.id) } },
+        include: { links: true }
+      })
+    : []
+  const currentById = new Map(current.map((row) => [row.id, row]))
+
+  const rows: ResourceRow[] = []
+  const skipped: SkippedResource[] = []
+  const { guard } = options
+  for (const id of [...new Set(ids)].sort((a, b) => a - b)) {
+    const row = currentById.get(id)
+    const status = row?.status as ResourceStatus
+    if (!row) {
+      skipped.push({ id, reason: 'gone' })
+    } else if (
+      guard?.ownerUid !== undefined &&
+      row.user_id !== guard.ownerUid
+    ) {
+      skipped.push({ id, reason: 'owner' })
+    } else if (guard && !guard.statusIn.includes(status)) {
+      skipped.push({ id, reason: 'status', status })
+    } else {
+      rows.push(row)
+    }
+  }
+  return { rows, skipped, refundPublishReward: options.refundPublishReward }
+}
+
+export const executeResourceRemoval = async (
+  ctx: KunTxContext,
+  plan: ResourceRemovalPlan
+) => {
+  const deletedIds = plan.rows.map((row) => row.id)
+  // 没有任何资源通过守卫: 不清理、不删除、不扣分。内容保留时它评论区的通知、
+  // 任务、申诉、举报都要留着
+  if (!deletedIds.length) {
+    return { deletedIds }
+  }
+  const { tx } = ctx
+
+  // 资源评论随外键级联删除, 它们的站内信、审核任务与申诉须在删除前清 (之后无从收集)
+  await cleanupResourceCommentDerivatives(tx, deletedIds)
+  await tx.patch_resource.deleteMany({ where: { id: { in: deletedIds } } })
+  await purgeContentDerivatives(tx, { resource: deletedIds })
+  // 级联删掉的评论上的举报已被置空目标, 按 NULL 目标清理
+  await deleteOrphanReports('comment', tx)
+
+  if (plan.refundPublishReward) {
+    const countByOwner = new Map<number, number>()
+    for (const row of plan.rows) {
+      countByOwner.set(row.user_id, (countByOwner.get(row.user_id) ?? 0) + 1)
+    }
+    for (const [ownerId, count] of [...countByOwner].sort(
+      (a, b) => a[0] - b[0]
+    )) {
+      await tx.user.update({
+        where: { id: ownerId },
+        data: { moemoepoint: { increment: -PUBLISH_REWARD * count } }
+      })
+      ctx.afterCommit(`userSession:${ownerId}`, () =>
+        invalidateUserSession(ownerId)
+      )
+    }
+  }
+
+  // 去重升序: recalcPatchType 内的 patch 级通告锁按确定的顺序获取, 两个反序的重叠批
+  // 不会互等
+  const patchIds = [...new Set(plan.rows.map((row) => row.patch_id))].sort(
+    (a, b) => a - b
+  )
+  for (const patchId of patchIds) {
+    const uniqueId = await recalcPatchType(patchId, tx)
+    // 事务内失效会被并发读回填旧值 (M-04), 所以放到提交之后
+    ctx.afterCommit(`patchContent:${uniqueId}`, () =>
+      invalidatePatchContentCache(uniqueId)
+    )
+  }
+  // 搜索与 S3 删除都在事务内入箱, 与行删除原子提交; 提交后只需踢一次消费
+  await enqueueSearchOutboxBatch(tx, patchIds)
+  ctx.afterCommit('searchOutboxKick', () => kickSearchOutboxDrain())
+  await enqueueResourceLinkDeletions(
+    tx,
+    plan.rows.flatMap((row) =>
+      row.links
+        .filter((link) => link.storage === 's3')
+        .map((link) => ({
+          content: link.content,
+          patchId: row.patch_id,
+          hash: link.hash,
+          s3Key: link.s3_key
+        }))
+    )
+  )
+
+  recordContentChanges(
+    ctx,
+    plan.rows.map((row) => ({
+      kind: 'resource',
+      id: row.id,
+      patchId: row.patch_id,
+      ownerId: row.user_id,
+      before: { status: row.status as ResourceStatus, section: row.section },
+      after: null
+    }))
+  )
+  ctx.afterCommit('s3DeletionKick', () => kickS3DeletionDrain())
+
+  return { deletedIds }
+}

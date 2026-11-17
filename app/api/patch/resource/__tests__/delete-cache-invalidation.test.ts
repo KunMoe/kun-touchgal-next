@@ -1,345 +1,245 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const rec = await vi.hoisted(async () =>
+  (
+    await import('~/server/db/__tests__/recordingTransaction')
+  ).recordingTransaction()
+)
 const {
-  userFindUniqueMock,
-  resourceFindUniqueMock,
-  transactionMock,
-  transactionQueryRawMock,
-  transactionLinkFindManyMock,
-  transactionResourceFindUniqueMock,
-  transactionResourceFindManyMock,
-  transactionUserUpdateMock,
-  transactionResourceDeleteMock,
-  transactionResourceDeleteManyMock,
-  transactionAdminLogCreateMock,
-  cleanupResourceCommentDerivativesMock,
-  enqueueResourceLinkDeletionsMock,
-  recalcPatchTypeMock,
-  sanitizeResourceLinksForAuditLogMock,
-  deletePendingModerationTasksMock,
-  deletePendingAppealsMock,
-  deleteOrphanReportsMock,
-  enqueueSearchOutboxMock,
-  queueSearchSyncMock,
-  kickSearchOutboxDrainMock,
-  invalidatePatchResourceDetailCacheMock,
-  invalidateResourceListCacheMock,
-  invalidatePatchContentCacheMock,
-  invalidateUserSessionMock,
-  invalidateUserPendingResourceCacheMock,
-  kickS3DeletionDrainMock
+  patchContentMock,
+  resourceDetailMock,
+  resourceListMock,
+  pendingResourceMock,
+  userSessionMock,
+  kickSearchMock,
+  kickS3Mock
 } = vi.hoisted(() => ({
-  userFindUniqueMock: vi.fn(),
-  resourceFindUniqueMock: vi.fn(),
-  transactionMock: vi.fn(),
-  transactionQueryRawMock: vi.fn(),
-  transactionLinkFindManyMock: vi.fn(),
-  transactionResourceFindUniqueMock: vi.fn(),
-  transactionResourceFindManyMock: vi.fn(),
-  transactionUserUpdateMock: vi.fn(),
-  transactionResourceDeleteMock: vi.fn(),
-  transactionResourceDeleteManyMock: vi.fn(),
-  transactionAdminLogCreateMock: vi.fn(),
-  cleanupResourceCommentDerivativesMock: vi.fn(),
-  enqueueResourceLinkDeletionsMock: vi.fn(),
-  recalcPatchTypeMock: vi.fn(),
-  sanitizeResourceLinksForAuditLogMock: vi.fn(),
-  deletePendingModerationTasksMock: vi.fn(),
-  deletePendingAppealsMock: vi.fn(),
-  deleteOrphanReportsMock: vi.fn(),
-  enqueueSearchOutboxMock: vi.fn(),
-  queueSearchSyncMock: vi.fn(),
-  kickSearchOutboxDrainMock: vi.fn(),
-  invalidatePatchResourceDetailCacheMock: vi.fn(),
-  invalidateResourceListCacheMock: vi.fn(),
-  invalidatePatchContentCacheMock: vi.fn(),
-  invalidateUserSessionMock: vi.fn(),
-  invalidateUserPendingResourceCacheMock: vi.fn(),
-  kickS3DeletionDrainMock: vi.fn()
+  patchContentMock: vi.fn(),
+  resourceDetailMock: vi.fn(),
+  resourceListMock: vi.fn(),
+  pendingResourceMock: vi.fn(),
+  userSessionMock: vi.fn(),
+  kickSearchMock: vi.fn(),
+  kickS3Mock: vi.fn()
 }))
 
-const transactionClient = {
-  user: { update: transactionUserUpdateMock },
-  patch_resource: {
-    delete: transactionResourceDeleteMock,
-    deleteMany: transactionResourceDeleteManyMock,
-    findUnique: transactionResourceFindUniqueMock,
-    findMany: transactionResourceFindManyMock
-  },
-  patch_resource_link: { findMany: transactionLinkFindManyMock },
-  admin_log: { create: transactionAdminLogCreateMock },
-  $queryRaw: transactionQueryRawMock
-}
-
-vi.mock('~/prisma/index', () => ({
-  isPrismaTransactionConflict: () => false,
-  prisma: {
-    user: { findUnique: userFindUniqueMock },
-    patch_resource: { findUnique: resourceFindUniqueMock },
-    $transaction: transactionMock
-  }
-}))
-
-vi.mock('~/app/api/patch/resource/_helper', () => ({
-  cleanupResourceCommentDerivatives: cleanupResourceCommentDerivativesMock,
-  enqueueResourceLinkDeletions: enqueueResourceLinkDeletionsMock,
-  recalcPatchType: recalcPatchTypeMock,
-  sanitizeResourceLinksForAuditLog: sanitizeResourceLinksForAuditLogMock
-}))
-
-vi.mock('~/app/api/patch/resource/cache', () => ({
-  invalidatePatchResourceDetailCache: invalidatePatchResourceDetailCacheMock
-}))
-
-vi.mock('~/app/api/resource/cache', () => ({
-  invalidateResourceListCache: invalidateResourceListCacheMock
-}))
-
+vi.mock('~/prisma/index', () => rec.module)
+// 删除命令与它用到的积木照常执行, 只挡掉它们顶层引入的外部服务
+vi.mock('~/lib/s3', () => ({}))
+vi.mock('~/lib/redis', () => ({}))
+vi.mock('~/lib/meilisearch', () => ({ getMeiliClient: () => null }))
+vi.mock('~/server/tasks/withTaskLock', () => ({ withTaskLock: vi.fn() }))
+vi.mock('~/server/moderation/config', () => ({ getModerationConfig: vi.fn() }))
 vi.mock('~/app/api/patch/cache', () => ({
-  invalidatePatchContentCache: invalidatePatchContentCacheMock
+  invalidatePatchContentCache: patchContentMock,
+  invalidatePatchContentCacheByPatchId: vi.fn()
 }))
-
-vi.mock('~/app/api/user/session/cache', () => ({
-  invalidateUserSession: invalidateUserSessionMock
+vi.mock('~/app/api/patch/comment/cache', () => ({
+  invalidatePatchCommentCache: vi.fn()
 }))
-
+vi.mock('~/app/api/patch/resource/cache', () => ({
+  invalidatePatchResourceDetailCache: resourceDetailMock
+}))
+vi.mock('~/app/api/resource/cache', () => ({
+  invalidateResourceListCache: resourceListMock
+}))
 vi.mock('~/app/api/utils/pendingResourceCache', () => ({
-  invalidateUserPendingResourceCache: invalidateUserPendingResourceCacheMock
+  invalidateUserPendingResourceCache: pendingResourceMock
 }))
-
-vi.mock('~/server/moderation/submit', () => ({
-  deletePendingModerationTasks: deletePendingModerationTasksMock
+vi.mock('~/app/api/user/session/cache', () => ({
+  invalidateUserSession: userSessionMock
 }))
-
-vi.mock('~/server/moderation/appeal', () => ({
-  deletePendingAppeals: deletePendingAppealsMock
+vi.mock('~/server/content/comment/publish', () => ({
+  onCommentPublished: vi.fn()
 }))
-
-vi.mock('~/server/report/pending', () => ({
-  deleteOrphanReports: deleteOrphanReportsMock
+vi.mock('~/server/search/sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/search/sync')>()),
+  kickSearchOutboxDrain: kickSearchMock
 }))
-
-vi.mock('~/server/search/sync', () => ({
-  enqueueSearchOutbox: enqueueSearchOutboxMock,
-  enqueueSearchOutboxBatch: vi.fn(),
-  queueSearchSync: queueSearchSyncMock,
-  kickSearchOutboxDrain: kickSearchOutboxDrainMock
-}))
-
-vi.mock('~/server/storage/s3Outbox', () => ({
-  kickS3DeletionDrain: kickS3DeletionDrainMock
+vi.mock('~/server/storage/s3Outbox', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/storage/s3Outbox')>()),
+  kickS3DeletionDrain: kickS3Mock
 }))
 
 import { deleteResource } from '~/app/api/patch/resource/delete'
 import { deleteResource as adminDeleteResource } from '~/app/api/admin/resource/delete'
+import {
+  resourceLink,
+  resourceRow,
+  seedResourceRemoval,
+  shortResourceLabels
+} from '~/server/content/resource/__tests__/removalFixture'
+import type { ResourceRowFixture } from '~/server/content/resource/__tests__/removalFixture'
 
-// 事务外预取的快照, 权限判定与 S3 链接收集用它
-const buildSnapshot = (overrides: Record<string, unknown> = {}) => ({
-  id: 1,
-  status: 0,
-  section: 'galgame',
-  user_id: 7,
-  patch_id: 10,
-  links: [],
-  patch: { name: 'Patch' },
-  ...overrides
-})
+// snapshotStatus 是事务外预检读到的状态; lockedRows 是行锁下重读到的
+const seed = (snapshotStatus: number, lockedRows: ResourceRowFixture[]) => {
+  rec.on('patch_resource.findUnique', {
+    id: 1,
+    user_id: 7,
+    status: snapshotStatus
+  })
+  seedResourceRemoval(rec, lockedRows, [1])
+}
 
-// 事务内 delete 的返回值, 即该行被删除瞬间的真实状态
-const buildDeleted = (overrides: Record<string, unknown> = {}) => ({
-  id: 1,
-  status: 0,
-  section: 'galgame',
-  user_id: 7,
-  patch_id: 10,
-  ...overrides
-})
+const logContent = () =>
+  (rec.argsOf('admin_log.create')[0] as { data: { content: string } }).data
+    .content
 
 beforeEach(() => {
+  rec.reset()
   vi.resetAllMocks()
-  userFindUniqueMock.mockResolvedValue({ id: 9, name: 'Admin' })
-  // 事务内行锁命中 (status 供守卫复检) + 锁下重读: links 与 admin 审计快照的事实源
-  transactionQueryRawMock.mockResolvedValue([{ id: 1, status: 0 }])
-  transactionLinkFindManyMock.mockResolvedValue([])
-  transactionResourceFindUniqueMock.mockImplementation(async () =>
-    buildSnapshot()
-  )
-  // 管理端批量路径: 锁下 findMany 是删除瞬间状态的事实源
-  transactionResourceFindManyMock.mockImplementation(async () => [
-    buildSnapshot()
-  ])
-  cleanupResourceCommentDerivativesMock.mockResolvedValue(undefined)
-  invalidatePatchContentCacheMock.mockResolvedValue(undefined)
-  recalcPatchTypeMock.mockResolvedValue('patch-10')
-  sanitizeResourceLinksForAuditLogMock.mockReturnValue([])
-  transactionMock.mockImplementation(
-    async (callback: (client: typeof transactionClient) => unknown) =>
-      callback(transactionClient)
-  )
-  transactionUserUpdateMock.mockResolvedValue({})
+  rec.on('user.findUnique', { id: 9, name: 'Admin' })
 })
 
-// 闸门读 delete 的返回值而非事务外快照: 两者之间存在并发 approve / 隐藏的窗口
+// 失效闸门读行锁下重读的行而非事务外快照: 两者之间存在并发的初审通过 / 隐藏窗口
 describe('删除资源按删除瞬间状态分派缓存失效', () => {
   it('删除 section=galgame 的公开资源只失效详情缓存', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
-    transactionResourceDeleteMock.mockResolvedValue(buildDeleted())
+    seed(0, [resourceRow(1, { section: 'galgame' })])
 
     await deleteResource({ resourceId: 1 }, 7, 2)
 
-    expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
-    expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()
+    expect(resourceDetailMock.mock.calls).toEqual([[10]])
+    expect(resourceListMock).not.toHaveBeenCalled()
   })
 
   it('删除 section=patch 的公开资源两个缓存都失效', async () => {
-    resourceFindUniqueMock.mockResolvedValue(
-      buildSnapshot({ section: 'patch' })
-    )
-    transactionResourceDeleteMock.mockResolvedValue(
-      buildDeleted({ section: 'patch' })
-    )
+    seed(0, [resourceRow(1)])
 
     await deleteResource({ resourceId: 1 }, 7, 2)
 
-    expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
-    expect(invalidateResourceListCacheMock).toHaveBeenCalledTimes(1)
+    expect(resourceDetailMock.mock.calls).toEqual([[10]])
+    expect(resourceListMock).toHaveBeenCalledTimes(1)
   })
 
-  // 快照 status=2, 并发 approve 提交后该行已是 0: 无守卫的 delete 删掉的是公开行
-  it('快照为待审核但删除时已通过审核, 仍失效详情缓存', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot({ status: 2 }))
-    transactionResourceDeleteMock.mockResolvedValue(buildDeleted({ status: 0 }))
+  // 快照 status=2, 并发的初审通过提交后该行已是 0: 管理员删掉的是公开行
+  it('快照为待初审但删除时已通过审核, 仍失效详情缓存', async () => {
+    seed(2, [resourceRow(1, { section: 'galgame' })])
 
-    await deleteResource({ resourceId: 1 }, 7, 3)
+    await deleteResource({ resourceId: 1 }, 9, 3)
 
-    expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
-    expect(invalidateUserPendingResourceCacheMock).not.toHaveBeenCalled()
+    expect(resourceDetailMock.mock.calls).toEqual([[10]])
+    expect(pendingResourceMock).not.toHaveBeenCalled()
   })
 
   it('删除待审核资源失效作者的 pending 缓存而非详情缓存', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot({ status: 3 }))
-    transactionQueryRawMock.mockResolvedValue([{ id: 1, status: 3 }])
-    transactionResourceDeleteMock.mockResolvedValue(buildDeleted({ status: 3 }))
+    seed(3, [resourceRow(1, { status: 3 })])
 
-    await deleteResource({ resourceId: 1 }, 7, 3)
+    await deleteResource({ resourceId: 1 }, 9, 3)
 
-    expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
-    expect(invalidateUserPendingResourceCacheMock).toHaveBeenCalledWith(7)
+    expect(resourceDetailMock).not.toHaveBeenCalled()
+    expect(resourceListMock).not.toHaveBeenCalled()
+    expect(pendingResourceMock.mock.calls).toEqual([[7]])
   })
 
-  // 管理端无守卫: 锁下重读为 0 (并发 approve 已提交) 即失效详情而非 pending
+  // 管理端无守卫: 锁下重读为 0 (并发的初审通过已提交) 即失效详情而非 pending
   it('管理员删除同样按锁下重读的删除瞬间状态判定', async () => {
-    transactionResourceFindManyMock.mockResolvedValue([
-      buildSnapshot({ status: 0 })
-    ])
+    seed(2, [resourceRow(1)])
 
     await adminDeleteResource({ resourceIds: [1] }, 9)
 
-    expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
-    expect(invalidateUserPendingResourceCacheMock).not.toHaveBeenCalled()
+    expect(resourceDetailMock.mock.calls).toEqual([[10]])
+    expect(pendingResourceMock).not.toHaveBeenCalled()
+  })
+
+  it('补丁聚合缓存、搜索出箱与 S3 出箱都在提交之后处理', async () => {
+    seed(0, [resourceRow(1)])
+    const seenCommitted: boolean[] = []
+    const record = async () => {
+      seenCommitted.push(rec.attempts[0].committed)
+    }
+    patchContentMock.mockImplementation(record)
+    kickSearchMock.mockImplementation(record)
+    kickS3Mock.mockImplementation(record)
+
+    await deleteResource({ resourceId: 1 }, 7, 2)
+
+    expect(patchContentMock.mock.calls).toEqual([['patch-10']])
+    expect(kickSearchMock).toHaveBeenCalledTimes(1)
+    expect(kickS3Mock).toHaveBeenCalledTimes(1)
+    expect(seenCommitted).toEqual([true, true, true])
   })
 })
 
 // S3 入队与审计的事实源是行锁下重读的集合: 事务外快照与行锁之间的并发重绑会
 // 换 s3_key, 级联删除绕过应用层, 用快照入队会让新对象永不进删除出箱
 describe('资源删除以锁下重读的 links 入队 S3 删除', () => {
-  it('入队集合来自锁下 findMany 而非事务外快照', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
-    transactionLinkFindManyMock.mockResolvedValue([
-      { storage: 's3', content: 'new-c', hash: 'new-h', s3_key: 'new-k' },
-      { storage: 'user', content: 'u', hash: '', s3_key: '' }
+  it('入队集合来自锁下重读的链接, 只收 s3 存储的', async () => {
+    seed(0, [
+      resourceRow(1, {
+        links: [resourceLink(5, 's3'), resourceLink(6, 'user')]
+      })
     ])
-    transactionResourceDeleteMock.mockResolvedValue(buildDeleted())
 
     await deleteResource({ resourceId: 1 }, 7, 2)
 
-    expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
-      transactionClient,
-      [{ content: 'new-c', patchId: 10, hash: 'new-h', s3Key: 'new-k' }]
-    )
-  })
-
-  // 扣分先于行锁 (锁序 user → patch_resource 与 moderation apply 一致), 锁下行
-  // 消失走 throw 回滚而非 return: 提交型返回会落下误扣
-  it('锁下行已被并发删除, 返回业务错误且不提交删除副作用', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
-    transactionQueryRawMock.mockResolvedValue([])
-
-    const result = await deleteResource({ resourceId: 1 }, 7, 2)
-
-    expect(result).toBe('未找到对应的资源')
-    expect(transactionResourceDeleteMock).not.toHaveBeenCalled()
-    expect(enqueueResourceLinkDeletionsMock).not.toHaveBeenCalled()
-    expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
-    expect(kickS3DeletionDrainMock).not.toHaveBeenCalled()
+    expect(rec.argsOf('s3_deletion_outbox.createMany')).toEqual([
+      { data: [{ s3_key: 'k-5' }], skipDuplicates: true }
+    ])
   })
 
   it('管理员删除的入队与审计都取锁下重读的行', async () => {
-    const lockedLinks = [
-      { storage: 's3', content: 'cur-c', hash: 'cur-h', s3_key: 'cur-k' }
-    ]
-    transactionResourceFindManyMock.mockResolvedValue([
-      buildSnapshot({ name: 'renamed', links: lockedLinks })
+    seed(0, [
+      resourceRow(1, { name: 'renamed', links: [resourceLink(5, 's3')] })
     ])
 
     await adminDeleteResource({ resourceIds: [1] }, 9)
 
-    expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
-      transactionClient,
-      [{ content: 'cur-c', patchId: 10, hash: 'cur-h', s3Key: 'cur-k' }]
-    )
-    expect(sanitizeResourceLinksForAuditLogMock).toHaveBeenCalledWith(
-      lockedLinks
-    )
-    expect(
-      transactionAdminLogCreateMock.mock.calls[0][0].data.content
-    ).toContain('renamed')
+    expect(rec.argsOf('s3_deletion_outbox.createMany')).toEqual([
+      { data: [{ s3_key: 'k-5' }], skipDuplicates: true }
+    ])
+    expect(logContent()).toContain('renamed')
+    // 审计里的链接已脱敏
+    expect(logContent()).not.toContain('k-5')
+    expect(logContent()).not.toContain('c-5')
   })
 })
 
-// 举报外键 SET NULL: 资源行删除后按 NULL 目标清理级联置空的孤儿 (锁序一致)
-describe('资源删除清理其评论的 pending 举报', () => {
-  it('用户删除: cleanup 在删除前, 孤儿举报清理在删除后', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
-    transactionResourceDeleteMock.mockResolvedValue(buildDeleted())
+describe('资源删除的清理顺序', () => {
+  // 资源评论随外键级联删除: 评论区的站内信、评论的审核任务与申诉须在删除前清;
+  // 举报外键是 SET NULL, 孤儿举报在删除后按 NULL 目标清;
+  // 资源自身的审核任务与申诉 content_id 无外键, 级联带不走, 须显式清理
+  it('用户删除: 评论派生物在删除前, 资源自身的任务 / 申诉与孤儿举报在删除后', async () => {
+    seed(0, [resourceRow(1)])
 
     await deleteResource({ resourceId: 1 }, 7, 2)
 
-    expect(
-      cleanupResourceCommentDerivativesMock.mock.invocationCallOrder[0]
-    ).toBeLessThan(transactionResourceDeleteMock.mock.invocationCallOrder[0])
-    expect(deleteOrphanReportsMock).toHaveBeenCalledWith(
-      'comment',
-      transactionClient
-    )
-    expect(
-      transactionResourceDeleteMock.mock.invocationCallOrder[0]
-    ).toBeLessThan(deleteOrphanReportsMock.mock.invocationCallOrder[0])
-  })
-})
-
-// cleanupResourceCommentDerivatives 只清该资源「评论」的申诉; 资源行自身的申诉
-// content_id 无外键、挂的 task 是 rejected 态, 级联与 deletePendingModerationTasks
-// 都带不走, 须在删除方显式清理
-describe('资源删除清理资源自身的 pending 申诉', () => {
-  it('用户删除: 行删除后清理该资源的 pending 申诉', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
-    transactionResourceDeleteMock.mockResolvedValue(buildDeleted())
-
-    await deleteResource({ resourceId: 1 }, 7, 2)
-
-    expect(deletePendingModerationTasksMock).toHaveBeenCalledWith(
-      'resource',
-      1,
-      transactionClient
-    )
-    expect(deletePendingAppealsMock).toHaveBeenCalledWith(
-      'resource',
-      1,
-      transactionClient
-    )
-    expect(
-      transactionResourceDeleteMock.mock.invocationCallOrder[0]
-    ).toBeLessThan(deletePendingAppealsMock.mock.invocationCallOrder[0])
+    expect(shortResourceLabels(rec)).toEqual([
+      'lock user',
+      'lock resource',
+      'patch_resource.findMany',
+      'patch_resource.findMany',
+      'user_message.deleteMany',
+      'moderation_task.deleteMany',
+      'moderation_appeal.deleteMany',
+      'patch_resource.deleteMany',
+      'moderation_task.deleteMany',
+      'moderation_appeal.deleteMany',
+      'patch_report.deleteMany',
+      'user.update',
+      'recalc.lock',
+      'patch_resource.findMany',
+      'patch.update',
+      'search_outbox.enqueue',
+      's3_deletion_outbox.createMany'
+    ])
+    expect(rec.argsOf('moderation_appeal.deleteMany')).toEqual([
+      {
+        where: {
+          content_type: 'comment',
+          content_id: { in: [100] },
+          status: 'pending'
+        }
+      },
+      {
+        where: {
+          content_type: 'resource',
+          content_id: { in: [1] },
+          status: 'pending'
+        }
+      }
+    ])
+    expect(rec.argsOf('patch_report.deleteMany')).toEqual([
+      { where: { target_type: 'comment', status: 0, comment_id: null } }
+    ])
   })
 })

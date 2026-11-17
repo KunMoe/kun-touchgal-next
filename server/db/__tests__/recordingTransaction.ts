@@ -197,9 +197,9 @@ export const recordingTransaction = () => {
         typeof result === 'function' ? (result as Handler) : () => result
       )
     },
-    // 配置原生 SQL 的返回值, 按展平后的 SQL 文本匹配; 先登记的优先
+    // 配置原生 SQL 的返回值, 按展平后的 SQL 文本匹配; 后登记的优先, 与 on 的覆盖一致
     onRaw(pattern: RegExp, result: unknown) {
-      rawHandlers.push({
+      rawHandlers.unshift({
         pattern,
         handler:
           typeof result === 'function' ? (result as RawHandler) : () => result

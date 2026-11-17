@@ -5,8 +5,7 @@ import { invalidateResourceListCache } from '~/app/api/resource/cache'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { invalidateTagListCache } from '~/app/api/tag/cache'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
-import { deletePendingModerationTasks } from '~/server/moderation/submit'
-import { deletePendingAppeals } from '~/server/moderation/appeal'
+import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { queueSearchRemove, enqueueSearchOutbox } from '~/server/search/sync'
 import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
 
@@ -76,37 +75,13 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
     await enqueueResourceLinkDeletions(prisma, s3Links)
 
     // 内容已级联删除, 删除后再清理其未决审核任务与未处理申诉 (content_id 无外键, 用删除前收集的 id);
-    // 清理置于删除后, 与 submitAppeal 的内容行锁配合, 杜绝并发申诉提交造成的 TOCTOU 孤儿
-    await deletePendingModerationTasks(
-      'comment',
-      comments.map((comment) => comment.id),
-      prisma
-    )
-    await deletePendingModerationTasks(
-      'rating',
-      ratings.map((rating) => rating.id),
-      prisma
-    )
-    await deletePendingModerationTasks(
-      'resource',
-      patchResources.map((resource) => resource.id),
-      prisma
-    )
-    await deletePendingAppeals(
-      'comment',
-      comments.map((comment) => comment.id),
-      prisma
-    )
-    await deletePendingAppeals(
-      'rating',
-      ratings.map((rating) => rating.id),
-      prisma
-    )
-    await deletePendingAppeals(
-      'resource',
-      patchResources.map((resource) => resource.id),
-      prisma
-    )
+    // 清理置于删除后, 与 submitAppeal 的内容行锁配合, 杜绝并发申诉提交造成的 TOCTOU 孤儿。
+    // 评论区的站内信这里不清: 整游戏删除留下的通知死链已裁定另案处理
+    await purgeContentDerivatives(prisma, {
+      comment: comments.map((comment) => comment.id),
+      rating: ratings.map((rating) => rating.id),
+      resource: patchResources.map((resource) => resource.id)
+    })
 
     return {}
   })

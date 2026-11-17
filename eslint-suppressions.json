@@ -10,9 +10,6 @@
     }
   },
   "app/api/admin/appeal/handle.ts": {
-    "kun/inv-content-05": {
-      "count": 1
-    },
     "kun/inv-content-06": {
       "count": 3
     }
@@ -49,16 +46,6 @@
   },
   "app/api/admin/resource-apply/approve/route.ts": {
     "kun/inv-content-06": {
-      "count": 1
-    }
-  },
-  "app/api/admin/resource-apply/decline/route.ts": {
-    "kun/inv-content-05": {
-      "count": 1
-    }
-  },
-  "app/api/admin/resource/delete.ts": {
-    "kun/inv-content-05": {
       "count": 1
     }
   },
@@ -132,9 +119,6 @@
   },
   "app/api/patch/resource/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "kun/inv-content-05": {
       "count": 1
     }
   },

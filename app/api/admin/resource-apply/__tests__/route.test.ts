@@ -6,57 +6,42 @@ const {
   findResourceMock,
   findAdminMock,
   transactionMock,
-  txQueryRawMock,
-  txLinkFindManyMock,
-  deleteResourceMock,
+  planResourceRemovalMock,
+  executeResourceRemovalMock,
   updateResourceMock,
   createLogMock,
   createMessageMock,
-  cleanupDerivativesMock,
-  deleteOrphanReportsMock,
-  enqueueLinkDelMock,
   recalcTypeMock,
   invalidateResourceListMock,
   invalidateContentMock,
   invalidatePendingMock,
   invalidateUnreadMock,
   queueSearchSyncMock,
-  enqueueOutboxMock,
-  kickDrainMock
+  enqueueOutboxMock
 } = vi.hoisted(() => ({
   kunParsePutBodyMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
   findResourceMock: vi.fn(),
   findAdminMock: vi.fn(),
   transactionMock: vi.fn(),
-  txQueryRawMock: vi.fn(),
-  txLinkFindManyMock: vi.fn(),
-  deleteResourceMock: vi.fn(),
+  planResourceRemovalMock: vi.fn(),
+  executeResourceRemovalMock: vi.fn(),
   updateResourceMock: vi.fn(),
   createLogMock: vi.fn(),
   createMessageMock: vi.fn(),
-  cleanupDerivativesMock: vi.fn(),
-  deleteOrphanReportsMock: vi.fn(),
-  enqueueLinkDelMock: vi.fn(),
   recalcTypeMock: vi.fn(),
   invalidateResourceListMock: vi.fn(),
   invalidateContentMock: vi.fn(),
   invalidatePendingMock: vi.fn(),
   invalidateUnreadMock: vi.fn(),
   queueSearchSyncMock: vi.fn(),
-  enqueueOutboxMock: vi.fn(),
-  kickDrainMock: vi.fn()
+  enqueueOutboxMock: vi.fn()
 }))
 
 const events: string[] = []
 const transactionClient = {
-  patch_resource: {
-    deleteMany: deleteResourceMock,
-    updateMany: updateResourceMock
-  },
-  patch_resource_link: { findMany: txLinkFindManyMock },
-  admin_log: { create: createLogMock },
-  $queryRaw: txQueryRawMock
+  patch_resource: { updateMany: updateResourceMock },
+  admin_log: { create: createLogMock }
 }
 
 vi.mock('next/server', () => ({
@@ -89,13 +74,13 @@ vi.mock('~/app/api/utils/message', () => ({
 }))
 
 vi.mock('~/app/api/patch/resource/_helper', () => ({
-  cleanupResourceCommentDerivatives: cleanupDerivativesMock,
-  enqueueResourceLinkDeletions: enqueueLinkDelMock,
   recalcPatchType: recalcTypeMock
 }))
 
-vi.mock('~/server/report/pending', () => ({
-  deleteOrphanReports: deleteOrphanReportsMock
+// 删除的锁、清理顺序、出箱与缓存失效由命令自己的测试覆盖; 这里只看入口怎么用它
+vi.mock('~/server/content/resource/remove', () => ({
+  planResourceRemoval: planResourceRemovalMock,
+  executeResourceRemoval: executeResourceRemovalMock
 }))
 
 vi.mock('~/app/api/resource/cache', () => ({
@@ -119,10 +104,6 @@ vi.mock('~/server/search/sync', () => ({
   enqueueSearchOutbox: enqueueOutboxMock
 }))
 
-vi.mock('~/server/storage/s3Outbox', () => ({
-  kickS3DeletionDrain: kickDrainMock
-}))
-
 import { PUT as declinePut } from '~/app/api/admin/resource-apply/decline/route'
 import { PUT as approvePut } from '~/app/api/admin/resource-apply/approve/route'
 
@@ -141,18 +122,6 @@ const pendingResource = {
   patch: { name: 'p', unique_id: 'unique-x' }
 }
 
-// 与事务外快照刻意不同源: 快照不含 links, 锁下重读见到的是并发重绑后的新 s3
-// 对象. 实现若退回快照入队, 要么编译失败 (include 已删), 要么下面的断言收不到新 key
-const lockedResourceLinks = [
-  {
-    storage: 's3',
-    content: 'c2',
-    hash: 'h2',
-    s3_key: 'patch/10/h2-rebound.zip'
-  },
-  { storage: 'user', content: 'https://example.com', hash: '', s3_key: '' }
-]
-
 beforeEach(() => {
   vi.clearAllMocks()
   events.length = 0
@@ -160,16 +129,15 @@ beforeEach(() => {
   verifyHeaderCookieMock.mockResolvedValue({ uid: 99, role: 4 })
   findResourceMock.mockResolvedValue(pendingResource)
   findAdminMock.mockResolvedValue({ id: 99, name: 'admin' })
-  // 事务首条 FOR UPDATE 命中行; S3 入队的事实源是锁下重读的 links
-  txQueryRawMock.mockResolvedValue([{ id: 3 }])
-  txLinkFindManyMock.mockResolvedValue(lockedResourceLinks)
-  deleteResourceMock.mockResolvedValue({ count: 1 })
+  planResourceRemovalMock.mockResolvedValue({
+    rows: [{ id: 3 }],
+    skipped: [],
+    refundPublishReward: false
+  })
+  executeResourceRemovalMock.mockResolvedValue({ deletedIds: [3] })
   updateResourceMock.mockResolvedValue({ count: 1 })
   createLogMock.mockResolvedValue({})
   createMessageMock.mockResolvedValue({})
-  cleanupDerivativesMock.mockResolvedValue(undefined)
-  deleteOrphanReportsMock.mockResolvedValue(undefined)
-  enqueueLinkDelMock.mockResolvedValue(undefined)
   recalcTypeMock.mockResolvedValue('unique-x')
   invalidateResourceListMock.mockResolvedValue(undefined)
   invalidateContentMock.mockResolvedValue(undefined)
@@ -177,7 +145,6 @@ beforeEach(() => {
   invalidateUnreadMock.mockResolvedValue(undefined)
   queueSearchSyncMock.mockReturnValue(undefined)
   enqueueOutboxMock.mockResolvedValue(undefined)
-  kickDrainMock.mockReturnValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
       const result = await callback(transactionClient)
@@ -188,91 +155,76 @@ beforeEach(() => {
 })
 
 describe('resource-apply decline', () => {
-  it('deletes a pending resource under a status guard and drains the s3 outbox', async () => {
+  const txContext = expect.objectContaining({ tx: transactionClient })
+
+  it('deletes a pending resource through the removal command, guarded on the awaiting-approval status', async () => {
     const response = await declinePut(request)
 
     expect(await response.json()).toEqual({})
-    // 回归护栏: where 必须带 status 2, 退回裸 delete/无条件 deleteMany 即失败
-    expect(deleteResourceMock).toHaveBeenCalledWith({
-      where: { id: 3, status: 2 }
+    // 回归护栏: 守卫必须是「仍待初审 (2)」, 且不收回发布奖励
+    expect(planResourceRemovalMock).toHaveBeenCalledWith(txContext, [3], {
+      guard: { statusIn: [2] },
+      refundPublishReward: false
     })
-    // 评论衍生物须先于删除清理, 否则级联后无从收集 comment id
-    expect(cleanupDerivativesMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteResourceMock.mock.invocationCallOrder[0]
+    expect(executeResourceRemovalMock).toHaveBeenCalledWith(
+      txContext,
+      await planResourceRemovalMock.mock.results[0].value
     )
-    // 必须收到事务 client: 守卫在它之后, 未命中时靠回滚撤销它的写入. 回调形参名
-    // 遮蔽了模块级 prisma, 改名重构漏改这里会静默落到 autocommit 连接上
-    expect(cleanupDerivativesMock).toHaveBeenCalledWith(transactionClient, 3)
-    // 举报外键 SET NULL: 资源行删除后按 NULL 目标清理级联置空的孤儿
-    expect(deleteOrphanReportsMock).toHaveBeenCalledWith(
-      'comment',
-      transactionClient
-    )
-    expect(deleteResourceMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteOrphanReportsMock.mock.invocationCallOrder[0]
-    )
-    // 入队事实源必须是锁下重读: 行锁之后 findMany, 收到的是重绑后的新 s3 对象
-    expect(txLinkFindManyMock).toHaveBeenCalledWith({
-      where: { resource_id: 3 }
-    })
-    expect(txQueryRawMock.mock.invocationCallOrder[0]).toBeLessThan(
-      txLinkFindManyMock.mock.invocationCallOrder[0]
-    )
-    expect(enqueueLinkDelMock).toHaveBeenCalledWith(transactionClient, [
-      {
-        content: 'c2',
-        patchId: 10,
-        hash: 'h2',
-        s3Key: 'patch/10/h2-rebound.zip'
-      }
-    ])
+    // 通知与审计随删除同事务
     expect(createMessageMock).toHaveBeenCalledTimes(1)
-    expect(kickDrainMock).toHaveBeenCalledTimes(1)
+    expect(createMessageMock.mock.calls[0][0]).toEqual({
+      type: 'system',
+      content: '您上传的资源「r」未通过审核，原因：不合规',
+      recipient_id: 7,
+      link: '/unique-x?tab=resources&resourceSection=patch'
+    })
+    expect(createMessageMock.mock.calls[0][1]).toBe(transactionClient)
+    expect(createLogMock).toHaveBeenCalledTimes(1)
+    expect(events).toEqual(['transaction-commit'])
+    expect(invalidateUnreadMock).toHaveBeenCalledWith(7)
   })
 
   it('refuses to delete a resource that a concurrent approval already published', async () => {
-    // 管理员先点「同意发布」(2→0) 后卡片仍在列表上, 再点「拒绝发布」: 事务外读到 status 0
-    findResourceMock.mockResolvedValue({ ...pendingResource, status: 0 })
-    deleteResourceMock.mockResolvedValue({ count: 0 })
+    // 管理员先点「同意发布」(2→0) 后卡片仍在列表上, 再点「拒绝发布」: 行锁下读到 status 0
+    planResourceRemovalMock.mockResolvedValue({
+      rows: [],
+      skipped: [{ id: 3, reason: 'status', status: 0 }],
+      refundPublishReward: false
+    })
 
     const response = await declinePut(request)
 
     expect(await response.json()).toBe('当前资源状态无需审核')
-    // 哨兵必须逃出事务回调: 回调内吞掉改为 return 会让事务提交, 使守卫之前
-    // cleanup 删掉的站内信/待裁决任务/pending 申诉永久落库而资源仍在
+    // 事务回滚; 资源保留, 它评论区的站内信、任务、申诉、举报一概不清理
     expect(events).not.toContain('transaction-commit')
-    // 守卫未命中必须在提交后副作用之前返回: S3 删除出箱不得被排空 (不可逆)
-    expect(kickDrainMock).not.toHaveBeenCalled()
-    // 资源保留 → 其评论仍在, 其举报不得清理
-    expect(deleteOrphanReportsMock).not.toHaveBeenCalled()
+    expect(executeResourceRemovalMock).not.toHaveBeenCalled()
     expect(createMessageMock).not.toHaveBeenCalled()
     expect(createLogMock).not.toHaveBeenCalled()
-    expect(queueSearchSyncMock).not.toHaveBeenCalled()
-    expect(invalidateResourceListMock).not.toHaveBeenCalled()
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 
-  it('bails out before cleanup when the locked row no longer exists', async () => {
-    // 并发 decline 已删除行: FOR UPDATE 空命中, 须在 cleanup 之前提前退出.
-    // 区分于 count===0 分支——那边 cleanup 已执行靠回滚撤销, 这里根本不该执行
-    txQueryRawMock.mockResolvedValue([])
+  it('bails out when the locked row no longer exists', async () => {
+    // 并发的拒绝已删除该行
+    planResourceRemovalMock.mockResolvedValue({
+      rows: [],
+      skipped: [{ id: 3, reason: 'gone' }],
+      refundPublishReward: false
+    })
 
     const response = await declinePut(request)
 
     expect(await response.json()).toBe('当前资源状态无需审核')
     expect(events).not.toContain('transaction-commit')
-    // 抛点在锁下重读之前: findMany 也不该执行
-    expect(txLinkFindManyMock).not.toHaveBeenCalled()
-    expect(cleanupDerivativesMock).not.toHaveBeenCalled()
-    expect(deleteResourceMock).not.toHaveBeenCalled()
+    expect(executeResourceRemovalMock).not.toHaveBeenCalled()
     expect(createMessageMock).not.toHaveBeenCalled()
-    expect(kickDrainMock).not.toHaveBeenCalled()
   })
 
-  it('propagates non-sentinel transaction failures', async () => {
-    deleteResourceMock.mockRejectedValue(new Error('connection lost'))
+  it('propagates transaction failures', async () => {
+    executeResourceRemovalMock.mockRejectedValue(new Error('connection lost'))
 
     await expect(declinePut(request)).rejects.toThrow('connection lost')
-    expect(kickDrainMock).not.toHaveBeenCalled()
+    expect(events).not.toContain('transaction-commit')
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 })
 

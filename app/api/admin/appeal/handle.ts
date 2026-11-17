@@ -8,10 +8,7 @@ import { createMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { onCommentPublished } from '~/server/content/comment/publish'
 import { recomputePatchRatingStat } from '~/app/api/patch/rating/stat'
-import {
-  recalcPatchType,
-  enqueueResourceLinkDeletions
-} from '~/app/api/patch/resource/_helper'
+import { recalcPatchType } from '~/app/api/patch/resource/_helper'
 import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
 import { invalidateResourceListCache } from '~/app/api/resource/cache'
 import {
@@ -21,10 +18,6 @@ import {
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 import { prepareCommentContent } from '~/app/api/patch/comment/html'
 import { queueSearchSync, enqueueSearchOutbox } from '~/server/search/sync'
-import { deletePendingModerationTasks } from '~/server/moderation/submit'
-import { deletePendingAppeals } from '~/server/moderation/appeal'
-import { deleteOrphanReports } from '~/server/report/pending'
-import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
 import { kunTx } from '~/server/db/tx'
 import {
   executeCommentRemoval,
@@ -34,7 +27,15 @@ import {
   executeRatingRemoval,
   planRatingRemoval
 } from '~/server/content/rating/remove'
-import { COMMENT_STATUS, RATING_STATUS } from '~/constants/contentStatus'
+import {
+  executeResourceRemoval,
+  planResourceRemoval
+} from '~/server/content/resource/remove'
+import {
+  COMMENT_STATUS,
+  RATING_STATUS,
+  RESOURCE_STATUS
+} from '~/constants/contentStatus'
 import { getAppealEditableLinkFields } from '~/utils/appealPayload'
 import { APPEAL_APPROVED_LINK, APPEAL_RESULT_NOTICE } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
@@ -261,12 +262,6 @@ const approveAppeal = async (
   return {}
 }
 
-type RejectOutcome = {
-  contentDeleted: boolean
-  didDelete: boolean
-  affectedUniqueId: string
-}
-
 const rejectAppeal = async (
   appeal: moderation_appealModel,
   adminName: string,
@@ -274,26 +269,16 @@ const rejectAppeal = async (
 ) => {
   const type = appeal.content_type
   const contentId = appeal.content_id
-  const hiddenStatus = type === 'resource' ? 1 : 2
 
-  // 事务外预取仅取 patch_id 供提交后缓存失效; links 在事务内锁下重读 —— 快照与
-  // 守卫删除之间的「恢复→重绑→再隐藏」会换 s3 对象, 快照入队漏删新对象
-  // 评论与评价的缓存失效由删除命令按被删行的状态登记, 不需要预取
-  let patchId: number | null = null
-  if (type === 'resource') {
-    const resource = await prisma.patch_resource.findUnique({
-      where: { id: contentId },
-      select: { patch_id: true }
-    })
-    patchId = resource?.patch_id ?? null
-  }
-
-  // claim + guarded delete + 通知 + 审计同事务原子提交:
-  //   - guarded delete 以 status 条件 + 行锁闭合"读状态→删除"窗口: 并发恢复 (approveAppeal /
-  //     admin 取消隐藏) 要么先提交使删除匹配 0 行而跳过, 要么被行锁阻塞后见已删——不再误删已恢复内容 (R1)
-  //   - 通知与审计随删除同事务, 失败整体回滚, 杜绝"已删已拒但无通知/无审计"的部分状态 (R3)
-  //   - 失败整体回滚自动还原 claim, 无需 check-then-write 的 revertClaim, 杜绝孤儿 pending 申诉 (R2)
-  const outcome = await kunTx<RejectOutcome>(
+  // 认领 + 守卫删除 + 通知 + 审计同事务原子提交:
+  //   - 删除命令在行锁下判定「仍是隐藏态」才删: 并发的恢复 (申诉通过 / 管理员取消
+  //     隐藏) 要么先提交使守卫不通过, 要么被行锁挡到本事务之后 —— 不会误删已恢复的内容 (R1)
+  //   - 通知与审计随删除同事务, 失败整体回滚, 不留下「已删已拒但无通知 / 无审计」(R3)
+  //   - 失败整体回滚自动还原认领, 不会留下孤儿 pending 申诉 (R2)
+  // 守卫没过时分两种: 内容已被恢复 (仍存在 → 保留, 它的通知、任务、申诉、举报都不
+  // 动), 或已被别处删除 (不存在 → 已达到拒绝的目的)。
+  // 删除的清理、出箱与缓存失效都在命令里, 这里不再有提交后的分支
+  const outcome = await kunTx(
     'admin.appeal.reject',
     async (ctx) => {
       const { tx } = ctx
@@ -306,72 +291,39 @@ const rejectAppeal = async (
       }
 
       let didDelete = false
-      let contentDeleted = false
-      let affectedUniqueId = ''
-
+      let skipped: Array<{ reason: string }>
       if (type === 'comment') {
-        // 守卫在行锁下判定: 仍是隐藏态才删。未通过时内容已被恢复 (仍存在 → 保留,
-        // 连同它的通知、任务、申诉都不动) 或已被并发删除 (不存在 → 达标)
         const plan = await planCommentRemoval(ctx, [contentId], {
           statusIn: [COMMENT_STATUS.hidden]
         })
         if (plan.roots.length) {
           await executeCommentRemoval(ctx, plan, { orphanReports: 'inline' })
           didDelete = true
-          contentDeleted = true
-        } else {
-          contentDeleted = plan.skipped.some((item) => item.reason === 'gone')
         }
+        skipped = plan.skipped
       } else if (type === 'rating') {
-        // 守卫只放行隐藏态: 隐藏评价不计入统计, 删除不重算、也不锁 patch
+        // 隐藏评价不计入统计: 守卫只放行隐藏态, 命令不重算、也不锁 patch
         const plan = await planRatingRemoval(ctx, [contentId], {
           statusIn: [RATING_STATUS.hidden]
         })
         if (plan.rows.length) {
           await executeRatingRemoval(ctx, plan, { orphanReports: 'inline' })
           didDelete = true
-          contentDeleted = true
-        } else {
-          contentDeleted = plan.skipped.some((item) => item.reason === 'gone')
         }
+        skipped = plan.skipped
       } else {
-        // FOR UPDATE 锁定资源行并读事务内当前状态, 与并发恢复串行化 (对齐
-        // rating 分支); links 锁下重读, 以删除瞬间的集合入队 S3 出箱.
-        // 资源删除会级联删其评论 (resource_id Cascade), 评论举报外键是
-        // SET NULL: 确认删除后清理级联置空的孤儿举报
-        const locked = await tx.$queryRaw<{ status: number }[]>`
-          SELECT status FROM patch_resource WHERE id = ${contentId} FOR UPDATE
-        `
-        if (
-          locked.length > 0 &&
-          locked[0].status === hiddenStatus &&
-          patchId !== null
-        ) {
-          const resourcePatchId = patchId
-          const lockedLinks = await tx.patch_resource_link.findMany({
-            where: { resource_id: contentId }
-          })
-          const resourceLinksForS3 = lockedLinks
-            .filter((link) => link.storage === 's3')
-            .map((link) => ({
-              content: link.content,
-              patchId: resourcePatchId,
-              hash: link.hash,
-              s3Key: link.s3_key
-            }))
-          await tx.patch_resource.deleteMany({ where: { id: contentId } })
-          await deletePendingModerationTasks('resource', contentId, tx)
-          await deletePendingAppeals('resource', contentId, tx)
-          await deleteOrphanReports('comment', tx)
-          affectedUniqueId = await recalcPatchType(resourcePatchId, tx)
-          await enqueueSearchOutbox(tx, resourcePatchId)
-          await enqueueResourceLinkDeletions(tx, resourceLinksForS3)
+        const plan = await planResourceRemoval(ctx, [contentId], {
+          guard: { statusIn: [RESOURCE_STATUS.hidden] },
+          refundPublishReward: false
+        })
+        if (plan.rows.length) {
+          await executeResourceRemoval(ctx, plan)
           didDelete = true
-          contentDeleted = true
-        } else {
-          contentDeleted = locked.length === 0
         }
+        skipped = plan.skipped
       }
+      const contentDeleted =
+        didDelete || skipped.some((item) => item.reason === 'gone')
 
       await createMessage(
         {
@@ -401,7 +353,7 @@ const rejectAppeal = async (
         }
       })
 
-      return { contentDeleted, didDelete, affectedUniqueId }
+      return {}
     },
     { retry: 2 }
   )
@@ -410,18 +362,6 @@ const rejectAppeal = async (
   }
 
   await invalidateUnread(appeal.user_id).catch(() => undefined)
-
-  // 提交后副作用: 仅当本事务真正执行删除时触发, 与既有 adminDelete* 的提交后失效对齐;
-  // best-effort, Redis 故障不回滚已提交的 DB 删除 (M-04/M-05)
-  if (outcome.didDelete && patchId !== null) {
-    queueSearchSync(patchId)
-    await invalidatePatchContentCache(outcome.affectedUniqueId).catch(
-      () => undefined
-    )
-    // 不失效资源列表 / 详情缓存: 带守卫的删除只匹配 hiddenStatus (resource 为 1) 的行,
-    // 这些行本就不在两个缓存的 status=0 集合里
-    kickS3DeletionDrain()
-  }
 
   return {}
 }
