@@ -5,12 +5,12 @@ import {
   executeCommentRemoval,
   planCommentRemoval
 } from '~/server/content/comment/remove'
+import {
+  executeRatingRemoval,
+  planRatingRemoval
+} from '~/server/content/rating/remove'
 import { adminHandleReportSchema } from '~/validations/admin'
-import { deletePendingModerationTasks } from '~/server/moderation/submit'
-import { deletePendingAppeals } from '~/server/moderation/appeal'
 import { deleteOrphanReports } from '~/server/report/pending'
-import { recomputePatchRatingStat } from '~/app/api/patch/rating/stat'
-import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 
 export const handleReport = async (
@@ -26,8 +26,7 @@ export const handleReport = async (
       reason: true,
       sender_id: true,
       comment_id: true,
-      rating_id: true,
-      patch_id: true
+      rating_id: true
     }
   })
   if (!report) {
@@ -55,8 +54,6 @@ export const handleReport = async (
     handled_at: new Date()
   }
   const deleting = input.action === 'delete' && targetId !== null
-  const ratingPatchId =
-    deleting && targetType === 'rating' ? report.patch_id : undefined
 
   // 两个管理员同时处理同一目标的不同举报, 会互相等对方已认领的举报行; 被数据库
   // 判为死锁的一方重放后在认领处落空
@@ -70,10 +67,10 @@ export const handleReport = async (
         deleting && targetType === 'comment'
           ? await planCommentRemoval(ctx, [targetId])
           : null
-      if (deleting && targetType === 'rating') {
-        await tx.$queryRaw`
-          SELECT id FROM patch_rating WHERE id = ${targetId} FOR UPDATE`
-      }
+      const ratingPlan =
+        deleting && targetType === 'rating'
+          ? await planRatingRemoval(ctx, [targetId])
+          : null
 
       // 认领: 本条举报仍未处理才继续。并发处理同一条举报的另一方匹配 0 行, 整个
       // 事务回滚, 不会覆盖已写下的结案记录、重复通知或重复删除
@@ -107,14 +104,16 @@ export const handleReport = async (
           })
         : []
 
+      // 删除、清理与缓存失效都在命令里; 孤儿举报留给下面在结案之后清
       if (commentPlan) {
         await executeCommentRemoval(ctx, commentPlan, {
           orphanReports: 'caller'
         })
-      } else if (deleting) {
-        await tx.patch_rating.deleteMany({ where: { id: targetId } })
-        await deletePendingModerationTasks('rating', [targetId], tx)
-        await deletePendingAppeals('rating', [targetId], tx)
+      }
+      if (ratingPlan) {
+        await executeRatingRemoval(ctx, ratingPlan, {
+          orphanReports: 'caller'
+        })
       }
 
       if (relatedReports.length) {
@@ -148,10 +147,6 @@ export const handleReport = async (
         })
       })
 
-      if (ratingPatchId !== undefined && ratingPatchId !== null) {
-        await recomputePatchRatingStat(ratingPatchId, tx)
-      }
-
       return recipientIds
     },
     { retry: 2 }
@@ -164,13 +159,6 @@ export const handleReport = async (
   await Promise.all(
     notifiedUids.map((uid) => invalidateUnread(uid).catch(() => undefined))
   )
-
-  // 删除评分改变 ratingSummary, 失效补丁详情缓存 (M-05)
-  if (ratingPatchId !== undefined && ratingPatchId !== null) {
-    await invalidatePatchContentCacheByPatchId(ratingPatchId).catch(
-      () => undefined
-    )
-  }
 
   return {}
 }

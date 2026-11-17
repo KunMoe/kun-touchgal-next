@@ -30,7 +30,11 @@ import {
   executeCommentRemoval,
   planCommentRemoval
 } from '~/server/content/comment/remove'
-import { COMMENT_STATUS } from '~/constants/contentStatus'
+import {
+  executeRatingRemoval,
+  planRatingRemoval
+} from '~/server/content/rating/remove'
+import { COMMENT_STATUS, RATING_STATUS } from '~/constants/contentStatus'
 import { getAppealEditableLinkFields } from '~/utils/appealPayload'
 import { APPEAL_APPROVED_LINK, APPEAL_RESULT_NOTICE } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
@@ -274,15 +278,9 @@ const rejectAppeal = async (
 
   // 事务外预取仅取 patch_id 供提交后缓存失效; links 在事务内锁下重读 —— 快照与
   // 守卫删除之间的「恢复→重绑→再隐藏」会换 s3 对象, 快照入队漏删新对象
-  // 评论的缓存失效由删除命令按被删行的状态登记, 不需要预取
+  // 评论与评价的缓存失效由删除命令按被删行的状态登记, 不需要预取
   let patchId: number | null = null
-  if (type === 'rating') {
-    const rating = await prisma.patch_rating.findUnique({
-      where: { id: contentId },
-      select: { patch_id: true }
-    })
-    patchId = rating?.patch_id ?? null
-  } else if (type === 'resource') {
+  if (type === 'resource') {
     const resource = await prisma.patch_resource.findUnique({
       where: { id: contentId },
       select: { patch_id: true }
@@ -325,20 +323,16 @@ const rejectAppeal = async (
           contentDeleted = plan.skipped.some((item) => item.reason === 'gone')
         }
       } else if (type === 'rating') {
-        // FOR UPDATE 锁定评分行并读事务内当前状态, 与并发恢复串行化
-        const locked = await tx.$queryRaw<{ status: number }[]>`
-          SELECT status FROM patch_rating WHERE id = ${contentId} FOR UPDATE
-        `
-        if (locked.length > 0 && locked[0].status === hiddenStatus) {
-          await tx.patch_rating.deleteMany({ where: { id: contentId } })
-          await deletePendingModerationTasks('rating', contentId, tx)
-          await deletePendingAppeals('rating', contentId, tx)
-          await deleteOrphanReports('rating', tx)
-          // 隐藏态(2)评分不计入 ratingSummary, 删除无需重算统计 (对齐 adminDeleteRating)
+        // 守卫只放行隐藏态: 隐藏评价不计入统计, 删除不重算、也不锁 patch
+        const plan = await planRatingRemoval(ctx, [contentId], {
+          statusIn: [RATING_STATUS.hidden]
+        })
+        if (plan.rows.length) {
+          await executeRatingRemoval(ctx, plan, { orphanReports: 'inline' })
           didDelete = true
           contentDeleted = true
         } else {
-          contentDeleted = locked.length === 0
+          contentDeleted = plan.skipped.some((item) => item.reason === 'gone')
         }
       } else {
         // FOR UPDATE 锁定资源行并读事务内当前状态, 与并发恢复串行化 (对齐
@@ -420,17 +414,13 @@ const rejectAppeal = async (
   // 提交后副作用: 仅当本事务真正执行删除时触发, 与既有 adminDelete* 的提交后失效对齐;
   // best-effort, Redis 故障不回滚已提交的 DB 删除 (M-04/M-05)
   if (outcome.didDelete && patchId !== null) {
-    if (type === 'rating') {
-      await invalidatePatchContentCacheByPatchId(patchId).catch(() => undefined)
-    } else {
-      queueSearchSync(patchId)
-      await invalidatePatchContentCache(outcome.affectedUniqueId).catch(
-        () => undefined
-      )
-      // 不失效资源列表 / 详情缓存: 带守卫的删除只匹配 hiddenStatus (resource 为 1) 的行,
-      // 这些行本就不在两个缓存的 status=0 集合里
-      kickS3DeletionDrain()
-    }
+    queueSearchSync(patchId)
+    await invalidatePatchContentCache(outcome.affectedUniqueId).catch(
+      () => undefined
+    )
+    // 不失效资源列表 / 详情缓存: 带守卫的删除只匹配 hiddenStatus (resource 为 1) 的行,
+    // 这些行本就不在两个缓存的 status=0 集合里
+    kickS3DeletionDrain()
   }
 
   return {}

@@ -11,7 +11,7 @@
   },
   "app/api/admin/appeal/handle.ts": {
     "kun/inv-content-05": {
-      "count": 2
+      "count": 1
     },
     "kun/inv-content-06": {
       "count": 3
@@ -32,11 +32,6 @@
       "count": 2
     }
   },
-  "app/api/admin/rating/delete.ts": {
-    "kun/inv-content-05": {
-      "count": 1
-    }
-  },
   "app/api/admin/rating/shadow-ban/shadowBan.ts": {
     "kun/inv-content-06": {
       "count": 1
@@ -44,11 +39,6 @@
   },
   "app/api/admin/report/handle/batch/route.ts": {
     "no-console": {
-      "count": 1
-    }
-  },
-  "app/api/admin/report/handle/service.ts": {
-    "kun/inv-content-05": {
       "count": 1
     }
   },
@@ -132,9 +122,6 @@
   },
   "app/api/patch/rating/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "kun/inv-content-05": {
       "count": 1
     }
   },

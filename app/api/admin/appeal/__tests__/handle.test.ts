@@ -9,7 +9,6 @@ const {
   transactionMock,
   claimAppealMock,
   updateRatingMock,
-  deleteRatingMock,
   deleteResourceMock,
   updateResourceMock,
   txLinkFindManyMock,
@@ -26,6 +25,8 @@ const {
   deleteOrphanReportsMock,
   planCommentRemovalMock,
   executeCommentRemovalMock,
+  planRatingRemovalMock,
+  executeRatingRemovalMock,
   invalidateContentMock,
   invalidateContentByPatchIdMock,
   invalidateCommentCacheMock,
@@ -46,7 +47,6 @@ const {
   transactionMock: vi.fn(),
   claimAppealMock: vi.fn(),
   updateRatingMock: vi.fn(),
-  deleteRatingMock: vi.fn(),
   deleteResourceMock: vi.fn(),
   updateResourceMock: vi.fn(),
   txLinkFindManyMock: vi.fn(),
@@ -63,6 +63,8 @@ const {
   deleteOrphanReportsMock: vi.fn(),
   planCommentRemovalMock: vi.fn(),
   executeCommentRemovalMock: vi.fn(),
+  planRatingRemovalMock: vi.fn(),
+  executeRatingRemovalMock: vi.fn(),
   invalidateContentMock: vi.fn(),
   invalidateContentByPatchIdMock: vi.fn(),
   invalidateCommentCacheMock: vi.fn(),
@@ -81,7 +83,7 @@ let recomputeStarted: Promise<void>
 let finishRecompute: () => void
 const transactionClient = {
   moderation_appeal: { updateMany: claimAppealMock },
-  patch_rating: { updateMany: updateRatingMock, deleteMany: deleteRatingMock },
+  patch_rating: { updateMany: updateRatingMock },
   patch_resource: {
     deleteMany: deleteResourceMock,
     updateMany: updateResourceMock
@@ -106,10 +108,15 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-// 评论删除的锁、清理顺序与缓存失效由命令自己的测试覆盖; 这里只看入口怎么用它
+// 删除的锁、清理顺序与缓存失效由命令自己的测试覆盖; 这里只看入口怎么用它
 vi.mock('~/server/content/comment/remove', () => ({
   planCommentRemoval: planCommentRemovalMock,
   executeCommentRemoval: executeCommentRemovalMock
+}))
+
+vi.mock('~/server/content/rating/remove', () => ({
+  planRatingRemoval: planRatingRemovalMock,
+  executeRatingRemoval: executeRatingRemovalMock
 }))
 
 vi.mock('~/app/api/utils/message', () => ({
@@ -206,7 +213,6 @@ beforeEach(() => {
   findCommentMock.mockResolvedValue({ patch_id: 10 })
   claimAppealMock.mockResolvedValue({ count: 1 })
   updateRatingMock.mockResolvedValue({ count: 1 })
-  deleteRatingMock.mockResolvedValue({ count: 1 })
   deleteResourceMock.mockResolvedValue({ count: 1 })
   updateResourceMock.mockResolvedValue({ count: 1 })
   updateLinkMock.mockResolvedValue({})
@@ -226,6 +232,11 @@ beforeEach(() => {
     subtree: [{ id: 5 }, { id: 6 }]
   })
   executeCommentRemovalMock.mockResolvedValue({ deletedIds: [5, 6] })
+  planRatingRemovalMock.mockResolvedValue({
+    rows: [{ id: 5, user_id: 7, patch_id: 10, status: 2 }],
+    skipped: []
+  })
+  executeRatingRemovalMock.mockResolvedValue({ deletedIds: [5] })
   invalidateContentMock.mockResolvedValue(undefined)
   invalidateContentByPatchIdMock.mockResolvedValue(undefined)
   invalidateCommentCacheMock.mockResolvedValue(undefined)
@@ -533,20 +544,19 @@ describe('handleAppeal approve resource links', () => {
 
 describe('handleAppeal reject', () => {
   it('deletes a still-hidden rating and writes notice + audit inside the transaction', async () => {
-    txQueryRawMock.mockResolvedValue([{ status: 2 }])
-
     const result = await handleAppeal({ appealId: 1, approve: false }, 99)
 
     expect(result).toEqual({})
-    // 守卫删除: FOR UPDATE 读到隐藏态才删 (R1)
-    expect(deleteRatingMock).toHaveBeenCalledWith({ where: { id: 5 } })
-    // 举报外键 SET NULL: 删除后按 NULL 目标清理级联置空的孤儿 (锁序一致)
-    expect(deleteOrphanReportsMock).toHaveBeenCalledWith(
-      'rating',
-      transactionClient
+    // 守卫: 行锁下仍是隐藏态 (2) 才删 (R1)
+    expect(planRatingRemovalMock).toHaveBeenCalledWith(
+      expect.objectContaining({ tx: transactionClient }),
+      [5],
+      { statusIn: [2] }
     )
-    expect(deleteRatingMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteOrphanReportsMock.mock.invocationCallOrder[0]
+    expect(executeRatingRemovalMock).toHaveBeenCalledWith(
+      expect.objectContaining({ tx: transactionClient }),
+      await planRatingRemovalMock.mock.results[0].value,
+      { orphanReports: 'inline' }
     )
     // R3: 通知与审计随删除同事务 —— createMessage 收到 tx, admin_log 写在 tx 上
     expect(createMessageMock).toHaveBeenCalledTimes(1)
@@ -555,43 +565,43 @@ describe('handleAppeal reject', () => {
       APPEAL_RESULT_NOTICE.rejected(MODERATION_CONTENT_TYPE_MAP.rating)
     )
     expect(createLogMock).toHaveBeenCalledTimes(1)
-    expect(deleteRatingMock.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(executeRatingRemovalMock.mock.invocationCallOrder[0]).toBeLessThan(
       createMessageMock.mock.invocationCallOrder[0]
     )
-    // didDelete=true 才触发提交后缓存失效
-    expect(invalidateContentByPatchIdMock).toHaveBeenCalledWith(10)
   })
 
   it('keeps a restored rating and sends the "kept" notice without deleting', async () => {
-    // FOR UPDATE 读到已恢复 (status 0): 并发恢复赢得竞态, 不得删除 (R1)
-    txQueryRawMock.mockResolvedValue([{ status: 0 }])
+    // 行锁下读到已恢复 (status 0): 并发恢复赢得竞态, 不得删除 (R1); 内容保留,
+    // 它的举报、任务、申诉都不清理
+    planRatingRemovalMock.mockResolvedValue({
+      rows: [],
+      skipped: [{ id: 5, reason: 'status', status: 0 }]
+    })
 
     const result = await handleAppeal({ appealId: 1, approve: false }, 99)
 
     expect(result).toEqual({})
-    expect(deleteRatingMock).not.toHaveBeenCalled()
-    // 内容保留 → 其举报仍有效, 不得清理
-    expect(deleteOrphanReportsMock).not.toHaveBeenCalled()
+    expect(executeRatingRemovalMock).not.toHaveBeenCalled()
     expect(createMessageMock.mock.calls[0][0].content).toBe(
       APPEAL_RESULT_NOTICE.rejectedKept(MODERATION_CONTENT_TYPE_MAP.rating)
     )
     expect(createMessageMock.mock.calls[0][1]).toBe(transactionClient)
-    // 未删除 → 不触发提交后副作用
-    expect(invalidateContentByPatchIdMock).not.toHaveBeenCalled()
   })
 
   it('closes the appeal without side effects when the rating is already gone', async () => {
-    // 内容已被并发删除: 达到拒绝目标, 关闭申诉但不重复删、不做副作用
-    txQueryRawMock.mockResolvedValue([])
+    // 内容已被并发删除: 达到拒绝目标, 关闭申诉但不重复删
+    planRatingRemovalMock.mockResolvedValue({
+      rows: [],
+      skipped: [{ id: 5, reason: 'gone' }]
+    })
 
     const result = await handleAppeal({ appealId: 1, approve: false }, 99)
 
     expect(result).toEqual({})
-    expect(deleteRatingMock).not.toHaveBeenCalled()
+    expect(executeRatingRemovalMock).not.toHaveBeenCalled()
     expect(createMessageMock.mock.calls[0][0].content).toBe(
       APPEAL_RESULT_NOTICE.rejected(MODERATION_CONTENT_TYPE_MAP.rating)
     )
-    expect(invalidateContentByPatchIdMock).not.toHaveBeenCalled()
   })
 
   it('returns an error and touches nothing when the appeal was already handled', async () => {
@@ -601,7 +611,7 @@ describe('handleAppeal reject', () => {
     const result = await handleAppeal({ appealId: 1, approve: false }, 99)
 
     expect(result).toBe('该申诉已被处理, 请刷新后重试')
-    expect(deleteRatingMock).not.toHaveBeenCalled()
+    expect(planRatingRemovalMock).not.toHaveBeenCalled()
     expect(createMessageMock).not.toHaveBeenCalled()
     expect(createLogMock).not.toHaveBeenCalled()
   })
@@ -779,6 +789,6 @@ describe('handleAppeal reject', () => {
 
     expect(result).toEqual({})
     expect(transactionMock).toHaveBeenCalledTimes(2)
-    expect(deleteRatingMock).toHaveBeenCalledTimes(1)
+    expect(executeRatingRemovalMock).toHaveBeenCalledTimes(1)
   })
 })

@@ -6,33 +6,26 @@ const {
   transactionMock,
   createMock,
   updateMock,
-  deleteMock,
   recomputeOneMock,
   planTextModerationMock,
   hasPendingModerationMock,
-  enqueueTextModerationMock,
-  deletePendingModerationTasksMock,
-  deleteOrphanReportsMock
+  enqueueTextModerationMock
 } = vi.hoisted(() => ({
   findUniqueMock: vi.fn(),
   transactionMock: vi.fn(),
   createMock: vi.fn(),
   updateMock: vi.fn(),
-  deleteMock: vi.fn(),
   recomputeOneMock: vi.fn(),
   planTextModerationMock: vi.fn(),
   hasPendingModerationMock: vi.fn(),
-  enqueueTextModerationMock: vi.fn(),
-  deletePendingModerationTasksMock: vi.fn(),
-  deleteOrphanReportsMock: vi.fn()
+  enqueueTextModerationMock: vi.fn()
 }))
 
 const events: string[] = []
 const transactionClient = {
   patch_rating: {
     create: createMock,
-    update: updateMock,
-    delete: deleteMock
+    update: updateMock
   }
 }
 
@@ -51,22 +44,12 @@ vi.mock('~/server/moderation/submit', () => ({
   MODERATION_SKIP: { queue: false, intercept: false, dryRun: false },
   planTextModeration: planTextModerationMock,
   hasPendingModeration: hasPendingModerationMock,
-  enqueueTextModeration: enqueueTextModerationMock,
-  deletePendingModerationTasks: deletePendingModerationTasksMock
-}))
-
-vi.mock('~/server/moderation/appeal', () => ({
-  deletePendingAppeals: vi.fn()
-}))
-
-vi.mock('~/server/report/pending', () => ({
-  deleteOrphanReports: deleteOrphanReportsMock
+  enqueueTextModeration: enqueueTextModerationMock
 }))
 
 import { ratingSubject } from '~/server/moderation/subject'
 import { createPatchRating } from '~/app/api/patch/rating/create'
 import { updatePatchRating } from '~/app/api/patch/rating/update'
-import { deletePatchRating } from '~/app/api/patch/rating/delete'
 
 const ratingInput = {
   recommend: 'yes',
@@ -107,7 +90,6 @@ beforeEach(() => {
   events.length = 0
   createMock.mockResolvedValue(rating)
   updateMock.mockResolvedValue(rating)
-  deleteMock.mockResolvedValue(rating)
   planTextModerationMock.mockResolvedValue({
     queue: false,
     intercept: false,
@@ -115,8 +97,6 @@ beforeEach(() => {
   })
   hasPendingModerationMock.mockResolvedValue(false)
   enqueueTextModerationMock.mockResolvedValue(undefined)
-  deletePendingModerationTasksMock.mockResolvedValue(undefined)
-  deleteOrphanReportsMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
       events.push('transaction-start')
@@ -175,27 +155,6 @@ describe('public patch rating write transactions', () => {
       ratingSubject('summary'),
       { userRole: 1, previous: ratingSubject('before') }
     )
-  })
-
-  it('recomputes rating stats before the delete transaction commits', async () => {
-    findUniqueMock.mockResolvedValueOnce(rating)
-
-    await deletePatchRating({ ratingId: 5 }, 7, 1)
-
-    expect(recomputeOneMock).toHaveBeenCalledWith(10, transactionClient)
-    // 举报外键 SET NULL: 删除后按 NULL 目标清理级联置空的孤儿 (锁序一致)
-    expect(deleteOrphanReportsMock).toHaveBeenCalledWith(
-      'rating',
-      transactionClient
-    )
-    expect(deleteMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteOrphanReportsMock.mock.invocationCallOrder[0]
-    )
-    expect(events).toEqual([
-      'transaction-start',
-      'recompute',
-      'transaction-commit'
-    ])
   })
 
   it('rolls back create when rating-stat recomputation fails', async () => {

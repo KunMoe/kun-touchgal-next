@@ -1,12 +1,11 @@
 import * as z from 'zod'
-import { isPrismaTransactionConflict, prisma } from '~/prisma/index'
+import { prisma } from '~/prisma/index'
 import { adminDeleteRatingSchema } from '~/validations/admin'
-import { Prisma } from '~/prisma/generated/prisma/client'
-import { recomputePatchRatingStats } from '~/app/api/patch/rating/stat'
-import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
-import { deletePendingModerationTasks } from '~/server/moderation/submit'
-import { deletePendingAppeals } from '~/server/moderation/appeal'
-import { deleteOrphanReports } from '~/server/report/pending'
+import { kunTx } from '~/server/db/tx'
+import {
+  executeRatingRemoval,
+  planRatingRemoval
+} from '~/server/content/rating/remove'
 import { truncateLogContent } from '~/app/api/admin/_log'
 
 const adminDeleteRatingSummaryLimit = 10
@@ -72,72 +71,35 @@ export const deleteRating = async (
     return '未找到该管理员'
   }
 
-  const ratingIds = ratings.map((rating) => rating.id)
-  const patchIds = [...new Set(ratings.map((rating) => rating.patch_id))].sort(
-    (a, b) => a - b
-  )
-
-  let retryCount = 0
-  while (true) {
-    try {
-      await prisma.$transaction(async (prisma) => {
-        // 先锁涉及的 patch, 避免补丁级联删除与评价删除/统计重算反向等待
-        await prisma.$executeRaw`
-          SELECT id
-          FROM patch
-          WHERE id IN (${Prisma.join(patchIds)})
-          ORDER BY id
-          FOR KEY SHARE
-        `
-
-        // 以事务内的当前 status 决定哪些 patch 需要重算
-        const lockedRatings = await prisma.$queryRaw<
-          Array<{ id: number; patch_id: number; status: number }>
-        >`
-          SELECT id, patch_id, status
-          FROM patch_rating
-          WHERE id IN (${Prisma.join(ratingIds)})
-          ORDER BY id
-          FOR UPDATE
-        `
-
-        await prisma.patch_rating.deleteMany({
-          where: {
-            id: {
-              in: ratingIds
-            }
-          }
-        })
-        await deletePendingModerationTasks('rating', ratingIds, prisma)
-        await deletePendingAppeals('rating', ratingIds, prisma)
-        await deleteOrphanReports('rating', prisma)
-
-        await recomputePatchRatingStats(
-          lockedRatings
-            .filter((rating) => rating.status === 0)
-            .map((rating) => rating.patch_id),
-          prisma
-        )
-
-        await prisma.admin_log.create({
-          data: {
-            type: 'delete',
-            user_id: uid,
-            content: buildDeleteLogContent(admin.name, ratings)
-          }
-        })
-      })
-      break
-    } catch (error) {
-      if (!isPrismaTransactionConflict(error) || retryCount >= 2) {
-        throw error
+  // 后台删除不设守卫: 隐藏、待审的评价都能删。与补丁级联删除、统计重算在锁上互等
+  // 时数据库会判死锁回滚其中一方, 重放即可
+  return kunTx(
+    'admin.rating.delete',
+    async (ctx) => {
+      const plan = await planRatingRemoval(
+        ctx,
+        ratings.map((rating) => rating.id)
+      )
+      if (!plan.rows.length) {
+        ctx.fail('未找到对应的评价')
       }
-      retryCount++
-    }
-  }
+      await executeRatingRemoval(ctx, plan, { orphanReports: 'inline' })
 
-  // 事务提交后失效补丁详情缓存: ratingSummary 随评分统计变化 (M-05)
-  await invalidatePatchContentCacheByPatchId(patchIds).catch(() => undefined)
+      // 审计只记锁下实际删掉的评价, 不记读取之后已被别人删掉的
+      const removedIds = new Set(plan.rows.map((row) => row.id))
+      await ctx.tx.admin_log.create({
+        data: {
+          type: 'delete',
+          user_id: uid,
+          content: buildDeleteLogContent(
+            admin.name,
+            ratings.filter((rating) => removedIds.has(rating.id))
+          )
+        }
+      })
 
-  return {}
+      return {}
+    },
+    { retry: 2 }
+  )
 }

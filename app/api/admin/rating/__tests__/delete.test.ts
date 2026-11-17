@@ -1,66 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const {
-  findRatingsMock,
-  findAdminMock,
-  transactionMock,
-  executeRawMock,
-  isConflictMock,
-  queryRawMock,
-  deleteManyMock,
-  createLogMock,
-  recomputeManyMock,
-  recomputeOneMock,
-  deleteTasksMock,
-  deleteAppealsMock,
-  deleteOrphanReportsMock
-} = vi.hoisted(() => ({
-  findRatingsMock: vi.fn(),
-  findAdminMock: vi.fn(),
-  transactionMock: vi.fn(),
-  executeRawMock: vi.fn(),
-  isConflictMock: vi.fn(),
-  queryRawMock: vi.fn(),
-  deleteManyMock: vi.fn(),
-  createLogMock: vi.fn(),
-  recomputeManyMock: vi.fn(),
-  recomputeOneMock: vi.fn(),
-  deleteTasksMock: vi.fn(),
-  deleteAppealsMock: vi.fn(),
-  deleteOrphanReportsMock: vi.fn()
+const rec = await vi.hoisted(async () =>
+  (
+    await import('~/server/db/__tests__/recordingTransaction')
+  ).recordingTransaction()
+)
+const { patchContentMock } = vi.hoisted(() => ({ patchContentMock: vi.fn() }))
+
+vi.mock('~/prisma/index', () => rec.module)
+// submit.ts 读审核配置要连 Redis; 这里只用到它的 deletePendingModerationTasks
+vi.mock('~/server/moderation/config', () => ({ getModerationConfig: vi.fn() }))
+vi.mock('~/app/api/patch/comment/cache', () => ({
+  invalidatePatchCommentCache: vi.fn()
 }))
-
-const transactionClient = {
-  $executeRaw: executeRawMock,
-  $queryRaw: queryRawMock,
-  patch_rating: { deleteMany: deleteManyMock },
-  admin_log: { create: createLogMock }
-}
-
-vi.mock('~/prisma/index', () => ({
-  isPrismaTransactionConflict: isConflictMock,
-  prisma: {
-    patch_rating: { findMany: findRatingsMock },
-    user: { findUnique: findAdminMock },
-    $transaction: transactionMock
-  }
+vi.mock('~/app/api/patch/cache', () => ({
+  invalidatePatchContentCacheByPatchId: patchContentMock
 }))
-
-vi.mock('~/app/api/patch/rating/stat', () => ({
-  recomputePatchRatingStats: recomputeManyMock,
-  recomputePatchRatingStat: recomputeOneMock
+vi.mock('~/app/api/patch/resource/cache', () => ({
+  invalidatePatchResourceDetailCache: vi.fn()
 }))
-
-vi.mock('~/server/moderation/submit', () => ({
-  deletePendingModerationTasks: deleteTasksMock
+vi.mock('~/app/api/resource/cache', () => ({
+  invalidateResourceListCache: vi.fn()
 }))
-
-vi.mock('~/server/moderation/appeal', () => ({
-  deletePendingAppeals: deleteAppealsMock
+vi.mock('~/app/api/utils/pendingResourceCache', () => ({
+  invalidateUserPendingResourceCache: vi.fn()
 }))
-
-vi.mock('~/server/report/pending', () => ({
-  deleteOrphanReports: deleteOrphanReportsMock
+vi.mock('~/server/content/comment/publish', () => ({
+  onCommentPublished: vi.fn()
 }))
 
 import { deleteRating } from '~/app/api/admin/rating/delete'
@@ -79,98 +45,107 @@ const rating = (id: number, patchId: number, status: number) => ({
   created,
   updated: created
 })
+const locked = (id: number, patchId: number, status: number) => ({
+  id,
+  user_id: id + 100,
+  patch_id: patchId,
+  status
+})
 
-const getJoinedValues = (call: unknown[]) => {
-  const joined = call.find(
-    (value): value is { values: unknown[] } =>
-      typeof value === 'object' &&
-      value !== null &&
-      'values' in value &&
-      Array.isArray(value.values)
-  )
-  return joined?.values
-}
+const RATING_LOCK =
+  /FROM patch_rating WHERE id = ANY\(\?::int\[\]\) ORDER BY id FOR UPDATE$/
+
+const shortLabels = () =>
+  rec
+    .labels()
+    .map((label) =>
+      label.includes('FOR KEY SHARE')
+        ? 'lock patch'
+        : label.includes('FOR UPDATE')
+          ? 'lock rating'
+          : label.includes('pg_advisory_xact_lock')
+            ? 'stat.lock'
+            : label.includes('INSERT INTO patch_rating_stat')
+              ? 'stat.upsert'
+              : label
+    )
+
+const logContent = () =>
+  (rec.argsOf('admin_log.create')[0] as { data: { content: string } }).data
+    .content
 
 beforeEach(() => {
-  vi.clearAllMocks()
-  isConflictMock.mockReturnValue(true)
-  executeRawMock.mockResolvedValue(1)
-  findRatingsMock.mockResolvedValue([
+  rec.reset()
+  vi.resetAllMocks()
+  rec.on('user.findUnique', { id: 99, name: 'admin' })
+  // 事务外快照: 1 隐藏、2 与 3 公开、4 隐藏
+  rec.on('patch_rating.findMany', [
     rating(1, 10, 2),
     rating(2, 10, 0),
     rating(3, 20, 0),
     rating(4, 30, 2)
   ])
-  findAdminMock.mockResolvedValue({ id: 99, name: 'admin' })
-  queryRawMock.mockResolvedValue([
-    { id: 1, patch_id: 10, status: 0 },
-    { id: 2, patch_id: 10, status: 0 },
-    { id: 3, patch_id: 20, status: 2 },
-    { id: 4, patch_id: 30, status: 2 }
-  ])
-  deleteManyMock.mockResolvedValue({ count: 4 })
-  createLogMock.mockResolvedValue({})
-  recomputeManyMock.mockResolvedValue(undefined)
-  recomputeOneMock.mockResolvedValue(undefined)
-  deleteTasksMock.mockResolvedValue(undefined)
-  deleteAppealsMock.mockResolvedValue(undefined)
-  deleteOrphanReportsMock.mockResolvedValue(undefined)
-  transactionMock.mockImplementation(
-    async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
-      callback(transactionClient)
-  )
 })
 
 describe('deleteRating', () => {
-  it('locks target ratings and recomputes only currently visible patches in the delete transaction', async () => {
+  // 快照与事务之间状态变了: 1 被恢复公开, 3 被隐藏。重算以锁下的当前状态为准
+  it('先锁 patch 再锁评价行, 只重算锁下公开评价所在的补丁', async () => {
+    rec.onRaw(RATING_LOCK, [
+      locked(1, 10, 0),
+      locked(2, 10, 0),
+      locked(3, 20, 2),
+      locked(4, 30, 2)
+    ])
+
     await expect(
       deleteRating({ ratingIds: [1, 2, 3, 4] }, 99)
     ).resolves.toEqual({})
 
+    expect(rec.attempts[0].committed).toBe(true)
     // 举报外键 SET NULL: 删除后按 NULL 目标清理级联置空的孤儿 (锁序一致)
-    expect(deleteOrphanReportsMock).toHaveBeenCalledWith(
-      'rating',
-      transactionClient
-    )
-    expect(deleteManyMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteOrphanReportsMock.mock.invocationCallOrder[0]
-    )
-
-    expect(executeRawMock).toHaveBeenCalledTimes(1)
-    const patchLockSql = (
-      executeRawMock.mock.calls[0][0] as TemplateStringsArray
-    )
-      .join('?')
-      .replace(/\s+/g, ' ')
-      .trim()
-    expect(patchLockSql).toContain('FROM patch')
-    expect(patchLockSql).toContain('ORDER BY id')
-    expect(patchLockSql).toContain('FOR KEY SHARE')
-    expect(getJoinedValues(executeRawMock.mock.calls[0])).toEqual([10, 20, 30])
-
-    expect(queryRawMock).toHaveBeenCalledTimes(1)
-    const sql = (queryRawMock.mock.calls[0][0] as TemplateStringsArray)
-      .join('?')
-      .replace(/\s+/g, ' ')
-      .trim()
-    expect(sql).toContain('FROM patch_rating')
-    expect(sql).toContain('FOR UPDATE')
-    expect(sql).toContain('ORDER BY id')
-    expect(getJoinedValues(queryRawMock.mock.calls[0])).toEqual([1, 2, 3, 4])
-
-    expect(recomputeManyMock).toHaveBeenCalledWith([10, 10], transactionClient)
-    expect(recomputeOneMock).not.toHaveBeenCalled()
-    expect(executeRawMock.mock.invocationCallOrder[0]).toBeLessThan(
-      queryRawMock.mock.invocationCallOrder[0]
-    )
-    expect(queryRawMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteManyMock.mock.invocationCallOrder[0]
-    )
-    expect(deleteManyMock.mock.invocationCallOrder[0]).toBeLessThan(
-      recomputeManyMock.mock.invocationCallOrder[0]
-    )
+    expect(shortLabels()).toEqual([
+      'lock patch',
+      'lock rating',
+      'patch_rating.deleteMany',
+      'moderation_task.deleteMany',
+      'moderation_appeal.deleteMany',
+      'patch_report.deleteMany',
+      'stat.lock',
+      'stat.upsert',
+      'admin_log.create'
+    ])
+    const statLock = rec
+      .labels()
+      .find((label) => label.includes('pg_advisory_xact_lock')) as string
+    expect(rec.argsOf(statLock)).toEqual([[481002, 10]])
+    // 公开评价被删 → ratingSummary 变; 隐藏评价所在的补丁 20 / 30 不失效
+    expect(patchContentMock.mock.calls).toEqual([[[10]]])
+    expect(logContent()).toContain('批量删除了 4 条评价')
   })
-  it('retries PostgreSQL deadlocks surfaced by raw query', async () => {
+
+  it('审计日志只记锁下实际删掉的评价', async () => {
+    rec.onRaw(RATING_LOCK, [locked(2, 10, 0)])
+
+    await deleteRating({ ratingIds: [1, 2, 3, 4] }, 99)
+
+    expect(rec.argsOf('patch_rating.deleteMany')).toEqual([
+      { where: { id: { in: [2] } } }
+    ])
+    expect(logContent()).toContain('删除了一条评价')
+    expect(logContent()).toContain('"id":2')
+  })
+
+  it('锁下一条都不剩时报未找到, 不写审计', async () => {
+    rec.onRaw(RATING_LOCK, [])
+
+    expect(await deleteRating({ ratingIds: [1, 2, 3, 4] }, 99)).toBe(
+      '未找到对应的评价'
+    )
+    expect(rec.attempts[0].rolledBack).toBe(true)
+    expect(rec.labels()).not.toContain('admin_log.create')
+  })
+
+  it('原生语句报出的 PostgreSQL 死锁会重放整个事务', async () => {
     const conflictError = Object.assign(new Error('raw query failed'), {
       code: 'P2010',
       meta: {
@@ -179,24 +154,34 @@ describe('deleteRating', () => {
         }
       }
     })
-    let attempt = 0
-    transactionMock.mockImplementation(
-      async (callback: (tx: typeof transactionClient) => Promise<unknown>) => {
-        const result = await callback(transactionClient)
-        attempt++
-        if (attempt === 1) {
-          throw conflictError
-        }
-        return result
+    let lockCalls = 0
+    rec.onRaw(RATING_LOCK, () => {
+      lockCalls++
+      if (lockCalls === 1) {
+        throw conflictError
       }
-    )
+      return [locked(2, 10, 0)]
+    })
 
     await expect(
       deleteRating({ ratingIds: [1, 2, 3, 4] }, 99)
     ).resolves.toEqual({})
 
-    expect(findRatingsMock).toHaveBeenCalledTimes(1)
-    expect(transactionMock).toHaveBeenCalledTimes(2)
-    expect(recomputeManyMock).toHaveBeenCalledTimes(2)
+    // 快照只读一次, 事务重放一次; 被回滚的那次不留下任何副作用
+    expect(
+      rec.outside.filter((item) => item.label === 'patch_rating.findMany')
+    ).toHaveLength(1)
+    expect(rec.attempts.map((attempt) => attempt.committed)).toEqual([
+      false,
+      true
+    ])
+    expect(patchContentMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('事务外一条都没读到时不开事务', async () => {
+    rec.on('patch_rating.findMany', [])
+
+    expect(await deleteRating({ ratingIds: [1] }, 99)).toBe('未找到对应的评价')
+    expect(rec.attempts).toHaveLength(0)
   })
 })
