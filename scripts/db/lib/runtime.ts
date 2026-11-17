@@ -147,6 +147,29 @@ export const kunReadLedger = async (
   return rows
 }
 
+// 库里已有表而基线迁移不在台账里: 这个库不是由迁移建起来的 (db push 建的, 或恢复的备份
+// 没带 kun_meta)。照常执行会从基线开始重建全部表, 撞上「已存在」而失败, 不如直接说清该做什么
+export const kunRefuseUnregisteredDatabase = async (
+  client: pg.Client,
+  files: KunMigrationFile[]
+) => {
+  const baseline = files.map((file) => file.version).sort()[0]
+  const ledger = await kunReadLedger(client)
+  if (ledger.some((row) => row.kind === 'sql' && row.version === baseline)) {
+    return
+  }
+  const { rows } = await client.query(
+    `SELECT COUNT(*)::int AS tables
+     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')`
+  )
+  if (rows[0].tables > 0) {
+    throw new Error(
+      `这个库的 public 下已有 ${rows[0].tables} 张表, 但基线迁移 ${baseline} 不在台账里: 它不是由 db:migrate 建起来的, 不能从头执行迁移。先跑 pnpm db:inspect --counts 盘点, 再用 pnpm db:migrate --mark-applied <版本> --reason <依据> 把库里已经具备的版本登记进台账 (见 AGENTS.md)`
+    )
+  }
+}
+
 // 会话级通告锁, 不显式释放: 各命令都是跑完即断开连接, 锁随会话结束。
 // 拿不到就立刻失败而不排队: 排队的会话带着快照, 会让持锁一方的并发建索引死锁
 export const kunPrepareLedger = async (client: pg.Client) => {

@@ -8,6 +8,7 @@ import {
   kunLoadMigrationFiles,
   kunPrepareLedger,
   kunReadLedger,
+  kunRefuseUnregisteredDatabase,
   kunRunCli,
   kunRunMigrations
 } from './lib/runtime'
@@ -129,6 +130,7 @@ kunRunCli(async () => {
     } else if (values['mark-applied']) {
       await markApplied(client, files, values['mark-applied'], values.reason)
     } else if (values['dry-run']) {
+      await kunRefuseUnregisteredDatabase(client, files)
       const plan = kunPlanMigrations(files, await kunReadLedger(client), phase)
       if (!plan.ok) {
         throw new Error(`${plan.reason}: ${plan.detail}`)
@@ -138,6 +140,7 @@ kunRunCli(async () => {
       }
       console.log(`共 ${plan.pending.length} 个 (--phase ${phase})`)
     } else {
+      await kunRefuseUnregisteredDatabase(client, files)
       const count = await kunRunMigrations(client, files, phase)
       console.log(`✓ 执行了 ${count} 个迁移 (--phase ${phase})`)
     }

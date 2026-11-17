@@ -1,6 +1,8 @@
+/* eslint-disable no-console */
 import '../validations/dotenv-check'
 import { execSync } from 'child_process'
 import { existsSync, renameSync, rmSync } from 'fs'
+import { kunReportDeployChain, kunRunDeployChain } from './deployChain'
 
 const activeDistDir = '.next'
 const stagedDistDir = '.next-deploy'
@@ -9,6 +11,16 @@ const appNames = ['kun-touchgal-next', 'kun-touchgal-next-cron']
 
 const runCommand = (command: string, env: NodeJS.ProcessEnv = process.env) => {
   execSync(command, { stdio: 'inherit', env })
+}
+
+// 取回标准输出供部署链判断, 同时照常打印, 部署日志里不缺这一段
+const captureCommand = (command: string) => {
+  const output = execSync(command, {
+    encoding: 'utf8',
+    stdio: ['inherit', 'pipe', 'inherit']
+  })
+  process.stdout.write(output)
+  return output
 }
 
 const isApplicationRunning = () =>
@@ -61,13 +73,19 @@ if (process.env.KUN_VISUAL_NOVEL_TEST_SITE_LABEL) {
   )
 }
 
-runCommand('git pull')
-runCommand('pnpm prisma:push')
-rmSync(stagedDistDir, { recursive: true, force: true })
-runCommand('pnpm build', {
-  ...process.env,
-  NODE_ENV: 'production',
-  KUN_DEPLOY_BUILD_SKIP_CHECKS: 'true',
-  KUN_NEXT_DIST_DIR: stagedDistDir
-})
-activateStagedBuild()
+process.exitCode = kunReportDeployChain(
+  kunRunDeployChain({
+    run: runCommand,
+    capture: captureCommand,
+    build: () => {
+      rmSync(stagedDistDir, { recursive: true, force: true })
+      runCommand('pnpm build', {
+        ...process.env,
+        NODE_ENV: 'production',
+        KUN_DEPLOY_BUILD_SKIP_CHECKS: 'true',
+        KUN_NEXT_DIST_DIR: stagedDistDir
+      })
+    },
+    activate: activateStagedBuild
+  })
+)

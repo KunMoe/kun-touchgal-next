@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process'
+import { readdirSync } from 'fs'
 import { fileURLToPath } from 'url'
 import {
   afterAll,
@@ -10,8 +11,10 @@ import {
   it,
   vi
 } from 'vitest'
+import { kunCountPlannedMigrations } from '../../deployChain'
 import { kunParseMigrationFile } from '../lib/migrationFiles'
 import {
+  KUN_MIGRATIONS_DIR,
   kunConnect,
   kunConnectScratch,
   kunFindInvalidIndexes,
@@ -307,30 +310,79 @@ describe.skipIf(!scratchUrl)('迁移执行器 (实库)', () => {
       ).rejects.toMatchObject({ code: '25006' })
     })
 
-    it('--mark-applied 连着 --dry-run 时报错退出, 不写台账', async () => {
-      let stderr = ''
+    // 对回放库执行 db:migrate 命令本身; 失败时 stderr 非空
+    const migrateCli = (args: string[]) => {
       try {
-        execFileSync(
+        const stdout = execFileSync(
           'node_modules/.bin/esno',
-          [
-            fileURLToPath(new URL('../migrate.ts', import.meta.url)),
-            '--mark-applied',
-            '0001',
-            '--reason',
-            'x',
-            '--dry-run'
-          ],
+          [fileURLToPath(new URL('../migrate.ts', import.meta.url)), ...args],
           {
             stdio: 'pipe',
+            encoding: 'utf8',
             env: { ...process.env, KUN_DATABASE_URL: scratchUrl }
           }
         )
+        return { stdout, stderr: '' }
       } catch (error) {
-        stderr = String((error as { stderr: Buffer }).stderr)
+        const failure = error as { stdout: string; stderr: string }
+        return { stdout: failure.stdout, stderr: failure.stderr }
       }
+    }
+
+    it('--mark-applied 连着 --dry-run 时报错退出, 不写台账', async () => {
+      const { stderr } = migrateCli([
+        '--mark-applied',
+        '0001',
+        '--reason',
+        'x',
+        '--dry-run'
+      ])
 
       expect(stderr).toContain('--mark-applied 不能与')
       expect(await exists('kun_meta.schema_migration')).toBe(false)
+    })
+
+    it.each([[[]], [['--dry-run']], [['--phase', 'pre']]])(
+      '库里已有表而台账为空时 db:migrate %j 拒绝执行, 不建台账也不建表',
+      async (args) => {
+        await client.query('CREATE TABLE "user" (id int)')
+
+        expect(migrateCli(args).stderr).toContain('不在台账里')
+        expect(await exists('kun_meta.schema_migration')).toBe(false)
+        expect(await exists('public.patch')).toBe(false)
+      }
+    )
+
+    it('只登记了后面的版本、基线不在台账里时同样拒绝', async () => {
+      await client.query('CREATE TABLE "user" (id int)')
+      migrateCli(['--mark-applied', '0002', '--reason', 'test'])
+
+      expect(migrateCli([]).stderr).toContain('基线迁移 0001 不在台账里')
+      expect(await ledgerVersions()).toEqual(['0002'])
+    })
+
+    it('空库和登记过基线的库不受这道保护影响', async () => {
+      expect(migrateCli(['--dry-run']).stderr).toBe('')
+
+      await client.query('CREATE TABLE "user" (id int)')
+      expect(
+        migrateCli(['--mark-applied', '0001', '--reason', 'test']).stderr
+      ).toBe('')
+      expect(migrateCli(['--dry-run']).stderr).toBe('')
+    })
+
+    // deploy:build 靠 --dry-run 的汇总行判断有没有待执行的 post 迁移, 从而决定 push 排在哪
+    it('--dry-run 的汇总行能被部署链读出待执行的个数', async () => {
+      expect(kunCountPlannedMigrations(migrateCli(['--dry-run']).stdout)).toBe(
+        readdirSync(KUN_MIGRATIONS_DIR).length
+      )
+
+      expect(migrateCli([]).stderr).toBe('')
+      expect(
+        kunCountPlannedMigrations(
+          migrateCli(['--phase', 'post', '--dry-run']).stdout
+        )
+      ).toBe(0)
     })
   })
 

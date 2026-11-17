@@ -299,16 +299,6 @@
       "count": 4
     }
   },
-  "scripts/deployBuild.ts": {
-    "no-console": {
-      "count": 4
-    }
-  },
-  "scripts/deployInstall.ts": {
-    "no-console": {
-      "count": 5
-    }
-  },
   "scripts/dynamic-routes/getKunDynamicPatches.ts": {
     "no-console": {
       "count": 1

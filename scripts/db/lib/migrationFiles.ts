@@ -364,7 +364,7 @@ export const kunPlanMigrations = (
     return phase === 'pre'
       ? fail(
           'pending-post-before-pre',
-          `${blocked.fileName} 之前还有未执行的 post 迁移 ${firstOther.fileName}; 先补跑 --phase post, 或把两者拆成两次部署`
+          `${blocked.fileName} 排在尚未执行的 post 迁移 ${firstOther.fileName} 之后。带 ${firstOther.fileName} 的版本已经上线时 (它上次执行失败), 修好后补跑 pnpm db:migrate --phase post; 那个版本还没有上线时不要补跑 (post 要等新代码上线), 先部署一个不含 ${blocked.fileName} 的版本`
         )
       : fail(
           'pending-pre-before-post',
