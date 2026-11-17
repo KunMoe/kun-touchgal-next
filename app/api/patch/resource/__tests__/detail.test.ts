@@ -15,8 +15,12 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtml', () => ({
-  markdownToHtml: vi.fn(async (markdown: string) => `<p>${markdown}</p>`)
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdown: vi.fn(async (_profile: string, markdown: string) => ({
+    ok: true,
+    html: `<p>${markdown}</p>`,
+    version: 1
+  }))
 }))
 
 import { getPatchResourceDetail } from '~/app/api/patch/resource/detail'

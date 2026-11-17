@@ -20,6 +20,7 @@ import {
   planTextModeration
 } from '~/server/moderation/submit'
 import { resourceSubject } from '~/server/moderation/subject'
+import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import type { PatchResource } from '~/types/api/patch'
 
 export const updatePatchResource = async (
@@ -78,6 +79,12 @@ export const updatePatchResource = async (
   })
   if (!currentPatch) {
     return '未找到该资源对应的 Galgame 信息, 请确认 Galgame 存在'
+  }
+
+  // 渲染不出来的备注在落库前拒绝 (只检查: 备注的 HTML 不落库, 详情页读时渲染)
+  const renderable = await renderKunMarkdownForWrite('note', input.note)
+  if (typeof renderable === 'string') {
+    return renderable
   }
 
   // 送审字段 (见 resourceSubject 的策略表) 有变化就必须重新送审; 待人工审批

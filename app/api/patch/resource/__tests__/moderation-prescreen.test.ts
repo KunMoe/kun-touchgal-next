@@ -488,3 +488,37 @@ describe('首个资源人工审批通知', () => {
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
 })
+
+// 嵌套超出渲染预算的 markdown 详情页渲染不出来 (只能降级成纯文本), 所以落库前就拒绝;
+// 拒绝要发生在预筛与 S3 绑定之前, 否则白建任务、白复制对象
+describe('渲染不出来的资源介绍', () => {
+  const note = `${'>'.repeat(300)} x`
+
+  it('创建时被拒, 不预筛、不绑定、不写库', async () => {
+    const result = await createPatchResource({ ...resourceInput, note }, 7, 2)
+
+    expect(result).toBe(
+      '资源备注中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+    expect(getModerationConfigMock).not.toHaveBeenCalled()
+    expect(bindUploadedResourceMock).not.toHaveBeenCalled()
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+
+  it('编辑时被拒, 不预筛、不绑定、不写库', async () => {
+    resourceFindUniqueMock.mockResolvedValue(storedResource)
+
+    const result = await updatePatchResource(
+      { ...resourceInput, resourceId: 1, note },
+      7,
+      2
+    )
+
+    expect(result).toBe(
+      '资源备注中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+    expect(getModerationConfigMock).not.toHaveBeenCalled()
+    expect(bindUploadedResourceMock).not.toHaveBeenCalled()
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+})

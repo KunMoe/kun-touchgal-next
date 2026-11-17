@@ -2,6 +2,7 @@ import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import { submitAppealSchema } from '~/validations/appeal'
+import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import {
   APPEAL_LINK_SELECT,
   getAppealModelName
@@ -213,6 +214,18 @@ export const submitAppeal = async (input: SubmitAppealInput, uid: number) => {
   })
   if (otherPendingAppeal) {
     return '该内容已有待处理的申诉'
+  }
+
+  // 申诉通过时这段正文会原样写回评论 / 资源备注: 渲染不出来的内容在提交时就拒绝,
+  // 用户当场得到反馈 (评价的简评是纯文本, 不经渲染)
+  const renderable =
+    input.contentType === 'comment'
+      ? await renderKunMarkdownForWrite('comment', input.content)
+      : input.contentType === 'resource'
+        ? await renderKunMarkdownForWrite('note', input.note)
+        : null
+  if (typeof renderable === 'string') {
+    return renderable
   }
 
   // 事务内先 FOR UPDATE 锁内容行再重校验存活, 与并发的内容删除互斥:

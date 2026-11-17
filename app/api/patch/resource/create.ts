@@ -20,6 +20,7 @@ import {
   planTextModeration
 } from '~/server/moderation/submit'
 import { resourceSubject } from '~/server/moderation/subject'
+import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import type { PatchResource } from '~/types/api/patch'
 
 export const createPatchResource = async (
@@ -59,6 +60,12 @@ export const createPatchResource = async (
   }
   const patchId = currentPatch.id
   const needApproval = resourceCount === 0 && userRole < 3
+
+  // 渲染不出来的备注在落库前拒绝 (只检查: 备注的 HTML 不落库, 详情页读时渲染)
+  const renderable = await renderKunMarkdownForWrite('note', input.note)
+  if (typeof renderable === 'string') {
+    return renderable
+  }
 
   // 首个资源走既有人工审批流 (status=2), 不重复送 AI 审核;
   // 送审字段由 resourceSubject 的策略表决定, 全空的资源无文本可审, 直接放行

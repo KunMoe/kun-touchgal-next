@@ -31,9 +31,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtmlComment', () => ({
-  COMMENT_HTML_VERSION: 1,
-  markdownToHtmlComment: renderMock
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdownForWrite: renderMock
 }))
 
 vi.mock('~/server/moderation/submit', () => ({
@@ -68,7 +67,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   findCommentMock.mockResolvedValue(stored)
   hasPendingModerationMock.mockResolvedValue(false)
-  renderMock.mockResolvedValue('<p>after</p>')
+  renderMock.mockResolvedValue({ html: '<p>after</p>', version: 1 })
   planTextModerationMock.mockResolvedValue(SKIP)
   invalidateContentCacheMock.mockResolvedValue(undefined)
   transactionMock.mockImplementation(
@@ -123,6 +122,34 @@ describe('updateComment 送审', () => {
       dryRun,
       { contentId: 5, userId: 7 }
     )
+  })
+
+  it('渲染不出来的正文返回错误消息, 不进入预筛、不写库', async () => {
+    renderMock.mockResolvedValue(
+      '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+
+    expect(await updateComment(input, 7, 1)).toBe(
+      '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+    expect(renderMock).toHaveBeenCalledWith('comment', 'after')
+    expect(planTextModerationMock).not.toHaveBeenCalled()
+    expect(transactionMock).not.toHaveBeenCalled()
+    expect(invalidateCommentCacheMock).not.toHaveBeenCalled()
+  })
+
+  it('正文与派生 HTML、版本一起落库', async () => {
+    const result = await updateComment(input, 7, 1)
+
+    expect(updateCommentMock.mock.calls[0][0].data).toMatchObject({
+      content: 'after',
+      content_html: '<p>after</p>',
+      content_html_version: 1
+    })
+    expect(result).toEqual({
+      contentHtml: '<p>after</p>',
+      contentPreview: 'after'
+    })
   })
 
   it('审核中的评论禁止作者再次修改, 不进入预筛', async () => {

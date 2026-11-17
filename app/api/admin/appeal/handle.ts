@@ -3,10 +3,7 @@ import { prisma, isPrismaTransactionConflict } from '~/prisma/index'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { moderation_appealModel } from '~/prisma/generated/prisma/models'
 import { adminHandleAppealSchema } from '~/validations/admin'
-import {
-  COMMENT_HTML_VERSION,
-  markdownToHtmlComment
-} from '~/app/api/utils/render/markdownToHtmlComment'
+import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import { createMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { sendDeferredCommentNotifications } from '~/server/moderation/apply'
@@ -22,6 +19,7 @@ import {
   invalidatePatchContentCacheByPatchId
 } from '~/app/api/patch/cache'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
+import { prepareCommentContent } from '~/app/api/patch/comment/html'
 import { collectCommentSubtreeIds } from '~/app/api/patch/comment/subtree'
 import { queueSearchSync, enqueueSearchOutbox } from '~/server/search/sync'
 import { deletePendingModerationTasks } from '~/server/moderation/submit'
@@ -35,6 +33,10 @@ import type { AppealLink, AppealPayload } from '~/types/api/appeal'
 
 // 事务内的业务失败, 回滚后将错误消息返回给管理员
 class AppealHandleError extends Error {}
+
+// 申诉载荷提交后即锁定, 管理员改不了: 正文渲染不出来时能做的只有拒绝
+const APPEAL_UNRENDERABLE =
+  '申诉提交的正文无法渲染, 无法通过, 可拒绝该申诉以关闭'
 
 // 把申诉里的链接字段写回链接行。须在资源行锁下调用 (资源编辑先锁资源行再整体重建
 // 链接行)。隐藏态的资源不可编辑, 链接行自申诉提交起本不会变; 若其间资源被取消隐藏并
@@ -84,20 +86,19 @@ const approveAppeal = async (
   const contentId = appeal.content_id
   const payload = appeal.payload as AppealPayload
 
-  // 事务外预取副作用所需的 patch_id 并渲染评论 HTML
+  // 事务外渲染评论 HTML。申诉正文由用户提交, 渲染不出来就不能写回; 提交入口已做同样的
+  // 检查, 这里兜住在那之前提交的申诉
+  const commentContent =
+    type === 'comment' ? await prepareCommentContent(payload.text ?? '') : null
+  if (typeof commentContent === 'string') {
+    return APPEAL_UNRENDERABLE
+  }
+
+  // 事务外预取副作用所需的 patch_id
   let patchId: number | null = null
   // resource 申诉通过后由 recalcPatchType 返回, 供事务提交后失效 patch 内容缓存
   let resourceUniqueId: string | null = null
-  let contentHtml = ''
-  let contentHtmlVersion = 0
   if (type === 'comment') {
-    try {
-      contentHtml = await markdownToHtmlComment(payload.text ?? '')
-      contentHtmlVersion = COMMENT_HTML_VERSION
-    } catch {
-      contentHtml = ''
-      contentHtmlVersion = 0
-    }
     const comment = await prisma.patch_comment.findUnique({
       where: { id: contentId },
       select: { patch_id: true }
@@ -110,6 +111,13 @@ const approveAppeal = async (
     })
     patchId = rating?.patch_id ?? null
   } else {
+    const renderable = await renderKunMarkdownForWrite(
+      'note',
+      payload.note ?? ''
+    )
+    if (typeof renderable === 'string') {
+      return APPEAL_UNRENDERABLE
+    }
     const resource = await prisma.patch_resource.findUnique({
       where: { id: contentId },
       select: { patch_id: true }
@@ -130,13 +138,12 @@ const approveAppeal = async (
 
       // 仅对仍处于隐藏状态的内容生效, 不覆盖其他管理操作的结果
       let updatedCount = 0
-      if (type === 'comment') {
+      // commentContent 非空即 type === 'comment'
+      if (commentContent !== null) {
         const updated = await tx.patch_comment.updateMany({
           where: { id: contentId, status: 2 },
           data: {
-            content: payload.text ?? '',
-            content_html: contentHtml,
-            content_html_version: contentHtmlVersion,
+            ...commentContent,
             edit: Date.now().toString(),
             status: 0
           }

@@ -43,7 +43,11 @@ const {
     }),
     findUniqueMock: vi.fn(),
     favoriteFindFirstMock: vi.fn(),
-    markdownMock: vi.fn(async (markdown: string) => `<p>${markdown}</p>`)
+    markdownMock: vi.fn(async (_profile: string, markdown: string) => ({
+      ok: true,
+      html: `<p>${markdown}</p>`,
+      version: 1
+    }))
   }
 })
 
@@ -65,8 +69,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtmlExtend', () => ({
-  markdownToHtmlExtend: markdownMock
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdown: markdownMock
 }))
 
 import { getPatchById } from '~/app/api/patch/get'

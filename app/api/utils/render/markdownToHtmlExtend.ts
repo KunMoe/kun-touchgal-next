@@ -10,12 +10,10 @@ import { remarkKunVideo } from './remarkKunVideo'
 import { remarkKunLink } from './remarkKunLink'
 import { remarkKunExternalLinks } from './remarkKunExternalLinks'
 import { remarkKunWrapImage } from './remarkKunWrapImage'
-import { renderMarkdownHtmlWithCache } from './markdownHtmlCache'
 import { markdownExtendSanitizeSchema } from './sanitizeSchema'
 import { rehypeKunImageLoading } from './rehypeKunImageLoading'
-import { PATCH_INTRODUCTION_HTML_VERSION } from './htmlVersion'
 
-const markdownExtendProcessor = unified()
+export const markdownExtendProcessor = unified()
   .use(remarkParse)
   .use(remarkDirective)
   .use(remarkKunVideo)
@@ -29,15 +27,3 @@ const markdownExtendProcessor = unified()
   .use(remarkKunWrapImage)
   .use(rehypeStringify)
   .freeze()
-
-export const markdownToHtmlExtend = async (markdown: string) => {
-  return renderMarkdownHtmlWithCache(
-    `extend-v${PATCH_INTRODUCTION_HTML_VERSION}`,
-    markdown,
-    async () => {
-      const htmlVFile = await markdownExtendProcessor.process(markdown)
-
-      return String(htmlVFile)
-    }
-  )
-}

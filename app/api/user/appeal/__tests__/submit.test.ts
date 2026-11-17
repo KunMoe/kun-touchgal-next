@@ -10,7 +10,8 @@ const {
   txQueryRawMock,
   txFindResourceMock,
   txLinkFindManyMock,
-  createAppealMock
+  createAppealMock,
+  renderForWriteMock
 } = vi.hoisted(() => ({
   findTaskMock: vi.fn(),
   findNewerTaskMock: vi.fn(),
@@ -21,7 +22,8 @@ const {
   txQueryRawMock: vi.fn(),
   txFindResourceMock: vi.fn(),
   txLinkFindManyMock: vi.fn(),
-  createAppealMock: vi.fn()
+  createAppealMock: vi.fn(),
+  renderForWriteMock: vi.fn()
 }))
 
 const transactionClient = {
@@ -42,6 +44,10 @@ vi.mock('~/prisma/index', () => ({
     patch_comment: { findUnique: findCommentMock },
     $transaction: transactionMock
   }
+}))
+
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdownForWrite: renderForWriteMock
 }))
 
 import { submitAppeal } from '~/app/api/user/appeal/submit'
@@ -112,6 +118,7 @@ beforeEach(() => {
   txFindResourceMock.mockResolvedValue({ type: ['manual'], model_name: '' })
   txLinkFindManyMock.mockResolvedValue(storedLinks)
   createAppealMock.mockResolvedValue({})
+  renderForWriteMock.mockResolvedValue({ html: '<p>ok</p>', version: 1 })
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
       callback(transactionClient)
@@ -403,5 +410,44 @@ describe('submitAppeal 评论', () => {
     expect(createdPayload()).toEqual({ text: '改过的评论' })
     expect(txFindResourceMock).not.toHaveBeenCalled()
     expect(txLinkFindManyMock).not.toHaveBeenCalled()
+  })
+})
+
+// 申诉通过时载荷里的正文原样写回评论 / 资源备注, 渲染不出来的内容要在提交时拒绝:
+// 留到管理员通过时才发现, 用户已经改不了了 (申诉只能提交一次)
+describe('submitAppeal 渲染不出来的正文', () => {
+  it('评论申诉按评论管线检查, 被拒时不建申诉', async () => {
+    findTaskMock.mockResolvedValue({
+      ...resourceTask,
+      content_type: 'comment'
+    })
+    renderForWriteMock.mockResolvedValue(
+      '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+
+    const result = await submitAppeal(
+      { contentType: 'comment', taskId: 3, content: '> > > 评论' },
+      UID
+    )
+
+    expect(result).toBe(
+      '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+    expect(renderForWriteMock).toHaveBeenCalledWith('comment', '> > > 评论')
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+
+  it('资源申诉按备注管线检查介绍, 被拒时不建申诉', async () => {
+    renderForWriteMock.mockResolvedValue(
+      '资源备注中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+
+    const result = await submitAppeal(resourceInput([]), UID)
+
+    expect(result).toBe(
+      '资源备注中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+    expect(renderForWriteMock).toHaveBeenCalledWith('note', '新介绍')
+    expect(transactionMock).not.toHaveBeenCalled()
   })
 })

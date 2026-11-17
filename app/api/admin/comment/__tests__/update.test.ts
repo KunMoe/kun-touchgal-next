@@ -32,9 +32,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtmlComment', () => ({
-  COMMENT_HTML_VERSION: 3,
-  markdownToHtmlComment: renderMock
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdownForWrite: renderMock
 }))
 
 vi.mock('~/app/api/patch/comment/cache', () => ({
@@ -64,7 +63,7 @@ beforeEach(() => {
     updated: created
   })
   findAdminMock.mockResolvedValue({ id: 99, name: 'admin' })
-  renderMock.mockResolvedValue('<p>new</p>')
+  renderMock.mockResolvedValue({ html: '<p>new</p>', version: 3 })
   updateCommentMock.mockResolvedValue({})
   createLogMock.mockResolvedValue({})
   invalidateCacheMock.mockResolvedValue(undefined)
@@ -99,5 +98,18 @@ describe('updateComment', () => {
     expect(logContent).toContain(`"contentPreview":"${'评'.repeat(100)}"`)
 
     expect(invalidateCacheMock).toHaveBeenCalledWith(10)
+  })
+
+  it('渲染不出来的正文返回错误消息, 不写库、不记日志', async () => {
+    renderMock.mockResolvedValue(
+      '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+
+    await expect(
+      updateComment({ commentId: 1, content: 'deep', isSpoiler: false }, 99)
+    ).resolves.toBe('评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交')
+
+    expect(transactionMock).not.toHaveBeenCalled()
+    expect(invalidateCacheMock).not.toHaveBeenCalled()
   })
 })

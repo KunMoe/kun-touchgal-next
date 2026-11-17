@@ -3,16 +3,13 @@ import { convert } from 'html-to-text'
 import { prisma } from '~/prisma/index'
 import { patchCommentUpdateSchema } from '~/validations/patch'
 import {
-  COMMENT_HTML_VERSION,
-  markdownToHtmlComment
-} from '~/app/api/utils/render/markdownToHtmlComment'
-import {
   enqueueTextModeration,
   hasPendingModeration,
   planTextModeration
 } from '~/server/moderation/submit'
 import { commentSubject } from '~/server/moderation/subject'
 import { invalidatePatchCommentCache } from './cache'
+import { prepareCommentContent } from './html'
 import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
 
 export const updateComment = async (
@@ -44,14 +41,9 @@ export const updateComment = async (
     return '您发布的评论正在审核中, 暂时无法修改'
   }
 
-  let contentHtml = ''
-  let contentHtmlVersion = 0
-  try {
-    contentHtml = await markdownToHtmlComment(content)
-    contentHtmlVersion = COMMENT_HTML_VERSION
-  } catch {
-    contentHtml = ''
-    contentHtmlVersion = 0
+  const prepared = await prepareCommentContent(content)
+  if (typeof prepared === 'string') {
+    return prepared
   }
 
   // 编辑正文后必须重新送审, 否则先发正常内容再改成违规即可绕过审核
@@ -64,9 +56,7 @@ export const updateComment = async (
     await tx.patch_comment.update({
       where: { id: commentId, user_id: commentUserUid },
       data: {
-        content,
-        content_html: contentHtml,
-        content_html_version: contentHtmlVersion,
+        ...prepared,
         is_spoiler: isSpoiler,
         edit: Date.now().toString(),
         ...(moderation.intercept ? { status: 1 } : {})
@@ -88,5 +78,8 @@ export const updateComment = async (
       () => undefined
     )
   }
-  return { contentHtml, contentPreview: convert(contentHtml).trim() }
+  return {
+    contentHtml: prepared.content_html,
+    contentPreview: convert(prepared.content_html).trim()
+  }
 }

@@ -2,10 +2,6 @@ import * as z from 'zod'
 import { convert } from 'html-to-text'
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
-import {
-  COMMENT_HTML_VERSION,
-  markdownToHtmlComment
-} from '~/app/api/utils/render/markdownToHtmlComment'
 import { getPatchCommentSchema } from '~/validations/patch'
 import {
   getCommentRatingVisibilityWhere,
@@ -13,7 +9,11 @@ import {
   type KunViewer
 } from '~/app/api/utils/contentVisibility'
 import { withPatchCommentPageCache } from './cache'
-import { readStoredCommentHtml } from './html'
+import {
+  persistCommentHtml,
+  resolveCommentHtml,
+  type StaleCommentHtml
+} from './html'
 import type { PatchComment } from '~/types/api/patch'
 
 // 共享缓存基线视角: status=0 公开可见, isLike 一律 false
@@ -105,38 +105,6 @@ const resolveCurrentPage = async (
   })
 
   return Math.floor(commentsBeforeTargetRoot / limit) + 1
-}
-
-// 回落渲染后就地写回, 使版本过期的历史评论收敛到 content_html 快路径,
-// 缩短 COMMENT_HTML_VERSION 递增到 backfill 跑完之间的重复渲染窗口。
-// CAS 条件 (content_html_version != CURRENT + updated) 的两道防线:
-//   1. 版本条件: 已被 backfill/其他请求更新到当前版本的行不会再次覆盖 (避免并发自愈重写)
-//   2. updated 条件: 评论内容被修改过则不覆盖 (避免旧内容的渲染结果误写入新内容记录)
-// 写回失败不影响本次响应, 下次请求幂等重试。
-const persistStaleCommentHtml = async (
-  renders: { id: number; html: string; updated: Date }[]
-) => {
-  // 逐条 autocommit 而非单个 $transaction: 各行自愈写相互独立、无原子性需求,
-  // 提交即释放行锁且单条失败不牵连其他, 对齐 flushPatchViewsTask 的 autocommit 约定
-  for (const { id, html, updated } of renders) {
-    try {
-      await prisma.patch_comment.updateMany({
-        where: {
-          id,
-          content_html_version: { not: COMMENT_HTML_VERSION },
-          updated
-        },
-        data: {
-          content_html: html,
-          content_html_version: COMMENT_HTML_VERSION
-        }
-      })
-    } catch (error) {
-      // 单条写回失败不影响其他行与本次响应, 下次请求幂等重试
-      // eslint-disable-next-line no-console
-      console.error('Failed to persist backfilled comment html:', error)
-    }
-  }
 }
 
 // 构建某一页的评论树与总数 (isLike 一律 false, 由调用方按 uid 叠加)
@@ -255,23 +223,23 @@ const buildCommentPage = async (
   }
 
   const allComments = [...rootComments, ...descendantComments]
-  const staleRenders: { id: number; html: string; updated: Date }[] = []
+  // 版本落后的历史评论回落实时渲染。resolveCommentHtml 不会 reject: 渲染不出来的
+  // 评论只把自己降级成纯文本, 不拖垮整页
+  const staleRenders: StaleCommentHtml[] = []
   const htmlEntries = await Promise.all(
     allComments.map(async (c) => {
-      const stored = readStoredCommentHtml(c)
-      if (stored !== null) {
-        return [c.id, stored] as const
+      const { html, heal } = await resolveCommentHtml(c)
+      if (heal !== null) {
+        staleRenders.push(heal)
       }
-      // 版本不匹配的历史评论: 回落实时渲染, 并记下待写回自愈
-      const html = await markdownToHtmlComment(c.content)
-      staleRenders.push({ id: c.id, html, updated: c.updated })
       return [c.id, html] as const
     })
   )
   const htmlMap = new Map<number, string>(htmlEntries)
 
+  // 写回自愈不阻塞本次响应, 失败时下次请求幂等重试
   if (staleRenders.length > 0) {
-    void persistStaleCommentHtml(staleRenders).catch(() => undefined)
+    void persistCommentHtml(staleRenders).catch(() => undefined)
   }
 
   const comments: PatchComment[] = rootComments.map((comment) => {

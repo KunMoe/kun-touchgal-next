@@ -6,7 +6,7 @@ import { toGalgameCardCount } from '~/constants/api/select'
 import { getKv, setKv, setKvIfAbsent } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
 import { roundOneDecimal } from '~/utils/rating/average'
-import { markdownToHtmlExtend } from '~/app/api/utils/render/markdownToHtmlExtend'
+import { renderKunMarkdown } from '~/app/api/utils/render/renderKunMarkdown'
 import {
   getCachedPatchFavoriteStatus,
   getPatchCacheKey,
@@ -130,7 +130,8 @@ export const buildPatchIntroduction = async (
   bangumiId: patch.bangumi_id,
   steamId: patch.steam_id,
   dlsiteCode: patch.dlsite_code,
-  introduction: await markdownToHtmlExtend(patch.introduction),
+  introduction: (await renderKunMarkdown('introduction', patch.introduction))
+    .html,
   released: patch.released,
   alias: patch.alias.map((a) => a.name),
   tag: patch.tag.map((tag) => tag.tag),

@@ -1,6 +1,8 @@
 // 修改本文件中的 sanitize 策略后，必须在
 // app/api/utils/render/markdownToHtmlComment.ts 中递增 COMMENT_HTML_VERSION，
 // 并运行 `pnpm backfill:comment-html` 重新渲染所有评论，否则旧落库 HTML 仍按旧策略服务用户。
+// markdownBudget.ts 里的渲染预算同属渲染策略，改动时照此办理：超出预算的评论是把降级
+// 结果按当前版本落库的，不递增版本就放宽预算，这些行会一直停在降级输出上。
 import { defaultSchema } from 'rehype-sanitize'
 import {
   SAFE_LINK_PROTOCOL_NAMES,

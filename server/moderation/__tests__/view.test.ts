@@ -1,22 +1,4 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-
-// 介绍管线对哨兵输入抛错, 其余照常渲染: 用来验证渲染失败时的回退
-vi.mock(
-  import('~/app/api/utils/render/markdownToHtml'),
-  async (importOriginal) => {
-    const original = await importOriginal()
-    return {
-      ...original,
-      markdownToHtml: async (markdown: string) => {
-        if (markdown.includes('__RENDER_FAILS__')) {
-          throw new RangeError('Maximum call stack size exceeded')
-        }
-        return original.markdownToHtml(markdown)
-      }
-    }
-  }
-)
-
 import { matchBlacklist, normalizeModerationText } from '../prefilter'
 import {
   bioSubject,
@@ -227,20 +209,14 @@ describe('buildAuditView: markdown 段审「读者所见 + 原文」两面', () 
     ])
   })
 
-  it('渲染抛错时只送原文, 不让任务失败', async () => {
+  // 渲染入口对超出预算的内容给的是转义后的原文加一句说明, 不是读者看到的另一面
+  it('渲染不出来时只送原文, 不让任务失败', async () => {
+    const note = `${'>'.repeat(300)} 加群 98**76**54321`
     const view = await buildAuditView(
-      resourceSubject({
-        name: 'Patch v1',
-        note: '__RENDER_FAILS__ 加群 98**76**54321',
-        modelName: '',
-        links: []
-      })
+      resourceSubject({ name: 'Patch v1', note, modelName: '', links: [] })
     )
 
-    expect(view[1]).toEqual({
-      label: '介绍',
-      shown: '__RENDER_FAILS__ 加群 98**76**54321'
-    })
+    expect(view[1]).toEqual({ label: '介绍', shown: note })
   })
 })
 

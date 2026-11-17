@@ -23,8 +23,15 @@ vi.mock('~/prisma/index', () => ({
 }))
 
 vi.mock('~/app/api/utils/render/markdownToHtmlComment', () => ({
-  COMMENT_HTML_VERSION: 1,
-  markdownToHtmlComment: vi.fn(async (markdown: string) => `<p>${markdown}</p>`)
+  COMMENT_HTML_VERSION: 1
+}))
+
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdown: vi.fn(async (_profile: string, markdown: string) => ({
+    ok: true,
+    html: `<p>${markdown}</p>`,
+    version: 1
+  }))
 }))
 
 // 直通缓存层, 使断言只针对查询构造

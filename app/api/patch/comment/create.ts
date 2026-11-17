@@ -8,10 +8,6 @@ import {
 } from '~/app/api/utils/message'
 import { createMentionMessage } from '~/app/api/utils/createMentionMessage'
 import {
-  COMMENT_HTML_VERSION,
-  markdownToHtmlComment
-} from '~/app/api/utils/render/markdownToHtmlComment'
-import {
   enqueueTextModeration,
   planTextModeration
 } from '~/server/moderation/submit'
@@ -19,6 +15,7 @@ import { commentSubject } from '~/server/moderation/subject'
 import { getResourceVisibilityWhere } from '~/app/api/utils/contentVisibility'
 import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { invalidatePatchCommentCache } from './cache'
+import { prepareCommentContent } from './html'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import type { PatchComment } from '~/types/api/patch'
@@ -73,27 +70,18 @@ export const createPatchComment = async (
     resourceUploaderUid = resource.user_id
   }
 
-  const [contentResult, moderation] = await Promise.all([
-    (async () => {
-      try {
-        return {
-          html: await markdownToHtmlComment(input.content),
-          version: COMMENT_HTML_VERSION
-        }
-      } catch {
-        return { html: '', version: 0 }
-      }
-    })(),
+  const [prepared, moderation] = await Promise.all([
+    prepareCommentContent(input.content),
     planTextModeration(commentSubject(input.content), { userRole })
   ])
-  const { html: contentHtml, version: contentHtmlVersion } = contentResult
+  if (typeof prepared === 'string') {
+    return prepared
+  }
 
   const data = await prisma.$transaction(async (tx) => {
     const created = await tx.patch_comment.create({
       data: {
-        content: input.content,
-        content_html: contentHtml,
-        content_html_version: contentHtmlVersion,
+        ...prepared,
         is_spoiler: input.isSpoiler,
         status: moderation.intercept ? 1 : 0,
         user_id: uid,
@@ -169,16 +157,11 @@ export const createPatchComment = async (
     )
   }
 
-  const renderedHtml =
-    contentHtmlVersion === COMMENT_HTML_VERSION && contentHtml
-      ? contentHtml
-      : await markdownToHtmlComment(data.content)
-
   const newComment: Omit<PatchComment, 'user'> = {
     id: data.id,
     uniqueId: data.patch?.unique_id ?? '',
-    content: renderedHtml,
-    contentPreview: convert(renderedHtml).trim(),
+    content: prepared.content_html,
+    contentPreview: convert(prepared.content_html).trim(),
     isLike: false,
     isSpoiler: data.is_spoiler,
     status: data.status,

@@ -4,7 +4,7 @@ const {
   findManyMock,
   countMock,
   likeFindManyMock,
-  markdownToHtmlMock,
+  renderKunMarkdownMock,
   getKvMock,
   getKvsMock,
   setKvMock,
@@ -16,7 +16,7 @@ const {
   findManyMock: vi.fn(),
   countMock: vi.fn(),
   likeFindManyMock: vi.fn(),
-  markdownToHtmlMock: vi.fn(),
+  renderKunMarkdownMock: vi.fn(),
   getKvMock: vi.fn(),
   getKvsMock: vi.fn(),
   setKvMock: vi.fn(),
@@ -38,8 +38,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtml', () => ({
-  markdownToHtml: markdownToHtmlMock
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdown: renderKunMarkdownMock
 }))
 
 vi.mock('~/lib/redis', () => ({
@@ -99,7 +99,6 @@ describe('getPatchResource', () => {
     countMock.mockResolvedValue(0)
     likeFindManyMock.mockResolvedValue([])
     findManyMock.mockResolvedValue([buildRow()])
-    markdownToHtmlMock.mockResolvedValue('<p>Release notes</p>')
     setKvMock.mockResolvedValue(undefined)
     setKvIfAbsentMock.mockResolvedValue(true)
     acquireKvLockMock.mockResolvedValue('token-1')
@@ -155,7 +154,7 @@ describe('getPatchResource', () => {
       expect(resources[0]?.note).toBe('Release notes')
     }
     expect(findManyMock).toHaveBeenCalledTimes(2)
-    expect(markdownToHtmlMock).not.toHaveBeenCalled()
+    expect(renderKunMarkdownMock).not.toHaveBeenCalled()
   })
 
   it('overlays personal like state on the shared cache for logged-in users', async () => {

@@ -6,10 +6,9 @@ vi.mock('~/lib/redis', () => ({
   delKv: vi.fn()
 }))
 
-import { markdownToHtml } from '~/app/api/utils/render/markdownToHtml'
-import { markdownToHtmlComment } from '~/app/api/utils/render/markdownToHtmlComment'
-import { markdownToHtmlExtend } from '~/app/api/utils/render/markdownToHtmlExtend'
+import { renderKunMarkdown } from '~/app/api/utils/render/renderKunMarkdown'
 import { markdownToHtml as markdownToHtmlResourceNote } from '~/components/patch/resource/kun/markdownToHtml'
+import type { KunMarkdownProfile } from '~/app/api/utils/render/renderKunMarkdown'
 
 // X08-01: 四条管线曾在净化之后挂语法高亮插件。服务端的净化会剥掉 code 上的 language-*
 // 类名, 插件从不上色, 却照样解析围栏 meta 里的行号区间, 并把区间逐行展开成数组:
@@ -18,10 +17,13 @@ import { markdownToHtml as markdownToHtmlResourceNote } from '~/components/patch
 
 const SERVER_CODE_BLOCK = '<pre><code>const a = 1\n</code></pre>'
 
+const server = (profile: KunMarkdownProfile) => async (markdown: string) =>
+  (await renderKunMarkdown(profile, markdown)).html
+
 const PIPELINES = [
-  ['标准', markdownToHtml, SERVER_CODE_BLOCK],
-  ['评论', markdownToHtmlComment, SERVER_CODE_BLOCK],
-  ['介绍', markdownToHtmlExtend, SERVER_CODE_BLOCK],
+  ['标准', server('note'), SERVER_CODE_BLOCK],
+  ['评论', server('comment'), SERVER_CODE_BLOCK],
+  ['介绍', server('introduction'), SERVER_CODE_BLOCK],
   // 客户端渲染鲲补丁备注用的是 rehype-sanitize 默认策略, 保留语言类名
   [
     '资源备注 (客户端) ',

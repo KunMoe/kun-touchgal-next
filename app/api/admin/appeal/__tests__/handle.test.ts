@@ -15,8 +15,11 @@ const {
   txLinkFindManyMock,
   updateLinkMock,
   deleteCommentMock,
+  updateCommentMock,
   txFindCommentMock,
   txQueryRawMock,
+  renderForWriteMock,
+  sendDeferredNotificationsMock,
   createMessageMock,
   createLogMock,
   recomputeOneMock,
@@ -50,7 +53,10 @@ const {
   txLinkFindManyMock: vi.fn(),
   updateLinkMock: vi.fn(),
   deleteCommentMock: vi.fn(),
+  updateCommentMock: vi.fn(),
   txFindCommentMock: vi.fn(),
+  renderForWriteMock: vi.fn(),
+  sendDeferredNotificationsMock: vi.fn(),
   txQueryRawMock: vi.fn(),
   createMessageMock: vi.fn(),
   createLogMock: vi.fn(),
@@ -88,6 +94,7 @@ const transactionClient = {
   },
   patch_comment: {
     deleteMany: deleteCommentMock,
+    updateMany: updateCommentMock,
     findUnique: txFindCommentMock
   },
   admin_log: { create: createLogMock },
@@ -108,6 +115,14 @@ vi.mock('~/prisma/index', () => ({
 
 vi.mock('~/app/api/utils/message', () => ({
   createMessage: createMessageMock
+}))
+
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdownForWrite: renderForWriteMock
+}))
+
+vi.mock('~/server/moderation/apply', () => ({
+  sendDeferredCommentNotifications: sendDeferredNotificationsMock
 }))
 
 vi.mock('~/app/api/patch/rating/stat', () => ({
@@ -197,6 +212,9 @@ beforeEach(() => {
   updateResourceMock.mockResolvedValue({ count: 1 })
   updateLinkMock.mockResolvedValue({})
   deleteCommentMock.mockResolvedValue({ count: 1 })
+  updateCommentMock.mockResolvedValue({ count: 1 })
+  renderForWriteMock.mockResolvedValue({ html: '<p>ok</p>', version: 2 })
+  sendDeferredNotificationsMock.mockResolvedValue(undefined)
   txLinkFindManyMock.mockResolvedValue([])
   txFindCommentMock.mockResolvedValue(null)
   txQueryRawMock.mockResolvedValue([{ status: 2 }])
@@ -253,6 +271,50 @@ describe('handleAppeal approve', () => {
   })
 })
 
+describe('handleAppeal approve comment', () => {
+  const commentAppeal = {
+    ...ratingAppeal,
+    content_type: 'comment',
+    payload: { text: '改过的评论' }
+  }
+
+  beforeEach(() => {
+    findAppealMock.mockResolvedValue(commentAppeal)
+  })
+
+  it('writes the appealed text together with its rendered html and version', async () => {
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toEqual({})
+    expect(renderForWriteMock).toHaveBeenCalledWith('comment', '改过的评论')
+    expect(updateCommentMock).toHaveBeenCalledWith({
+      where: { id: 5, status: 2 },
+      data: {
+        content: '改过的评论',
+        content_html: '<p>ok</p>',
+        content_html_version: 2,
+        edit: expect.any(String),
+        status: 0
+      }
+    })
+    expect(sendDeferredNotificationsMock).toHaveBeenCalledWith(5)
+  })
+
+  // 提交入口已拒收渲染不出来的正文; 这里兜住在那之前提交的申诉。管理员改不了申诉
+  // 载荷, 所以给的是他能照做的提示, 不是给作者看的「请精简后再提交」
+  it('refuses to approve text that cannot be rendered, leaving the appeal pending', async () => {
+    renderForWriteMock.mockResolvedValue(
+      '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toBe('申诉提交的正文无法渲染, 无法通过, 可拒绝该申诉以关闭')
+    expect(transactionMock).not.toHaveBeenCalled()
+    expect(invalidateCommentCacheMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('handleAppeal approve resource links', () => {
   const resourceAppeal = {
     ...ratingAppeal,
@@ -297,6 +359,7 @@ describe('handleAppeal approve resource links', () => {
       where: { id: 5, status: 1 },
       data: { name: '新标题', note: '新介绍', status: 0 }
     })
+    expect(renderForWriteMock).toHaveBeenCalledWith('note', '新介绍')
     // 链接行在资源行的条件写 (取得行锁) 之后才读写, 与资源编辑的加锁顺序一致
     expect(updateResourceMock.mock.invocationCallOrder[0]).toBeLessThan(
       txLinkFindManyMock.mock.invocationCallOrder[0]
@@ -315,6 +378,17 @@ describe('handleAppeal approve resource links', () => {
         password: ''
       }
     })
+  })
+
+  it('refuses to approve a note that cannot be rendered', async () => {
+    renderForWriteMock.mockResolvedValue(
+      '资源备注中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
+
+    const result = await handleAppeal({ appealId: 1, approve: true }, 99)
+
+    expect(result).toBe('申诉提交的正文无法渲染, 无法通过, 可拒绝该申诉以关闭')
+    expect(transactionMock).not.toHaveBeenCalled()
   })
 
   it('links the approved notice to the appeal page filtered to approved appeals', async () => {

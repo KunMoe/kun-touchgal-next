@@ -6,11 +6,10 @@ import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
 import { unified } from 'unified'
 import { remarkKunExternalLinks } from './remarkKunExternalLinks'
-import { renderMarkdownHtmlWithCache } from './markdownHtmlCache'
 import { markdownSanitizeSchema } from './sanitizeSchema'
 import { rehypeKunImageLoading } from './rehypeKunImageLoading'
 
-const markdownProcessor = unified()
+export const markdownProcessor = unified()
   .use(remarkParse)
   .use(remarkRehype)
   .use(remarkKunExternalLinks)
@@ -20,11 +19,3 @@ const markdownProcessor = unified()
   .use(rehypeKunImageLoading)
   .use(rehypeStringify)
   .freeze()
-
-export const markdownToHtml = async (markdown: string) => {
-  return renderMarkdownHtmlWithCache('standard', markdown, async () => {
-    const htmlVFile = await markdownProcessor.process(markdown)
-
-    return String(htmlVFile)
-  })
-}

@@ -1,14 +1,17 @@
 import { performance } from 'node:perf_hooks'
 import { describe, expect, it } from 'vitest'
-import { renderCommentHtml } from '~/app/api/utils/render/markdownToHtmlComment'
+import { markdownCommentProcessor } from '~/app/api/utils/render/markdownToHtmlComment'
+
+const renderCommentHtml = async (markdown: string) =>
+  String(await markdownCommentProcessor.process(markdown))
 
 // 证伪基准：含机器相关的耗时断言，默认不随 CI 运行。
 // 需要复现“同步阻塞 + 超时空转”时用 RUN_BENCH=1 pnpm test 触发。
 const bench = describe.runIf(process.env.RUN_BENCH === '1')
 
-// 证伪基准：验证 markdown 渲染是否在事件循环上同步阻塞，且
-// renderWithTimeout(markdownHtmlCache.ts:104-123) 的 Promise.race 超时对其是否空转。
-// 不改生产代码，仅通过 renderCommentHtml（裸 unified processor，无缓存）取硬数据。
+// 证伪基准：验证 markdown 渲染是否在事件循环上同步阻塞，且 Promise.race 式的渲染
+// 超时对其是否空转（结论是空转，渲染入口因此不再套这层超时）。
+// 不改生产代码，仅通过裸 unified processor（无缓存）取硬数据。
 //
 // 关键测量方法：探针法。在调用 render 前调度一个 setTimeout(0) 探针，并强制
 // await 到它真正触发，测其被推迟的时长 probeDelay。

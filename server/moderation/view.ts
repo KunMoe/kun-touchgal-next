@@ -1,7 +1,6 @@
-import { markdownToHtml } from '~/app/api/utils/render/markdownToHtml'
-import { markdownToHtmlComment } from '~/app/api/utils/render/markdownToHtmlComment'
+import { renderKunMarkdown } from '~/app/api/utils/render/renderKunMarkdown'
 import { kunHtmlToText } from '~/server/content/text'
-import type { KunSafeHtml } from '~/types/content'
+import type { KunMarkdownProfile } from '~/app/api/utils/render/renderKunMarkdown'
 import { sliceCodePoints, stripInvisible } from '~/utils/text/unicode'
 import { normalizeModerationText } from './prefilter'
 import { segmentMaxLength } from './subject'
@@ -19,12 +18,12 @@ export interface AuditSegment {
 }
 
 // 与展示用的是同一个处理器: 哪种语法可见由渲染器决定, 不由送审侧的正则猜
-const RENDERERS: Record<
+const RENDER_PROFILES: Record<
   Exclude<SegmentKind, 'plain'>,
-  (markdown: string) => Promise<KunSafeHtml>
+  KunMarkdownProfile
 > = {
-  'markdown-comment': markdownToHtmlComment,
-  'markdown-standard': markdownToHtml
+  'markdown-comment': 'comment',
+  'markdown-standard': 'note'
 }
 
 const isLongForm = (kind: SegmentKind) => kind === 'markdown-standard'
@@ -32,7 +31,8 @@ const isLongForm = (kind: SegmentKind) => kind === 'markdown-standard'
 // markdown 段必须两面都审, 只审任何一面都会漏:
 // - 行内标记、内嵌标签拆开的词 (98**76**54321) 只有渲染后才连成读者看到的样子;
 // - 指令、HTML 块、HTML 注释渲染后不可见, 原文却会出现在通知与个人主页里。
-// 两面归一化后相同时只送原文; 渲染抛错或结果为空时同样只送原文
+// 两面归一化后相同时只送原文; 渲染不出来或结果为空时同样只送原文 (渲染入口对
+// 渲染不出来的内容给的是转义后的原文加一句说明, 不是读者看到的另一面)
 const viewOfMarkdown = async (
   label: string,
   kind: Exclude<SegmentKind, 'plain'>,
@@ -40,7 +40,8 @@ const viewOfMarkdown = async (
 ): Promise<AuditSegment> => {
   let shown = ''
   try {
-    shown = kunHtmlToText(await RENDERERS[kind](source), 'audit')
+    const rendered = await renderKunMarkdown(RENDER_PROFILES[kind], source)
+    shown = rendered.ok ? kunHtmlToText(rendered.html, 'audit') : ''
   } catch {
     shown = ''
   }

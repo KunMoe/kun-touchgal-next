@@ -1,11 +1,8 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { patchCommentUpdateSchema } from '~/validations/patch'
-import {
-  COMMENT_HTML_VERSION,
-  markdownToHtmlComment
-} from '~/app/api/utils/render/markdownToHtmlComment'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
+import { prepareCommentContent } from '~/app/api/patch/comment/html'
 import { truncateLogContent } from '~/app/api/admin/_log'
 
 const adminUpdateCommentPreviewLimit = 100
@@ -27,23 +24,16 @@ export const updateComment = async (
 
   const { commentId, content } = input
 
-  let contentHtml = ''
-  let contentHtmlVersion = 0
-  try {
-    contentHtml = await markdownToHtmlComment(content)
-    contentHtmlVersion = COMMENT_HTML_VERSION
-  } catch {
-    contentHtml = ''
-    contentHtmlVersion = 0
+  const prepared = await prepareCommentContent(content)
+  if (typeof prepared === 'string') {
+    return prepared
   }
 
   await prisma.$transaction(async (prisma) => {
     await prisma.patch_comment.update({
       where: { id: commentId },
       data: {
-        content,
-        content_html: contentHtml,
-        content_html_version: contentHtmlVersion,
+        ...prepared,
         edit: Date.now().toString()
       }
     })

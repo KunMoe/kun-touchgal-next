@@ -129,11 +129,10 @@ export const KUN_INVARIANTS = [
     reason:
       '品牌只存在于编译期, 随手断言等于把没渲染过的字符串放行到 HTML 汇点与文本投影',
     removeWhen: 'KunSafeHtml 品牌被移除',
-    // 生产者: 三条 markdown 管线的出口、落库 HTML 读取器、编辑器预览器,
+    // 生产者: 服务端 markdown 渲染的唯一入口、落库 HTML 读取器、编辑器预览器,
     // 以及两处客户端净化 / 高亮 (DOMPurify、sugar-high)
     ignores: [
-      'app/api/utils/render/markdownHtmlCache.ts',
-      'app/api/utils/render/markdownToHtmlComment.ts',
+      'app/api/utils/render/renderKunMarkdown.ts',
       'app/api/patch/comment/html.ts',
       'utils/markdownPreview.ts',
       'components/patch/resource/kun/KunResourceDownload.tsx',

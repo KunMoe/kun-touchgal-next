@@ -1,5 +1,5 @@
 import { prisma } from '~/prisma/index'
-import { markdownToHtml } from '~/app/api/utils/render/markdownToHtml'
+import { renderKunMarkdown } from '~/app/api/utils/render/renderKunMarkdown'
 import {
   getResourceVisibilityWhere,
   type KunViewer
@@ -53,8 +53,8 @@ export const getPatchResourceDetail = async (
   }
 
   // 其他资源与本资源同 patch 同 section, 可见性口径与本资源一致
-  const [noteHtml, others, followRelation] = await Promise.all([
-    data.note ? markdownToHtml(data.note) : '',
+  const [noteRender, others, followRelation] = await Promise.all([
+    data.note ? renderKunMarkdown('note', data.note) : null,
     prisma.patch_resource.findMany({
       where: {
         patch_id: data.patch_id,
@@ -88,7 +88,10 @@ export const getPatchResourceDetail = async (
   const galgame = toGalgameCard(gal)
 
   return {
-    resource: { ...mapResource(data, data.like_by.length > 0), noteHtml },
+    resource: {
+      ...mapResource(data, data.like_by.length > 0),
+      noteHtml: noteRender?.html ?? ''
+    },
     patchName: gal.name,
     contentLimit: gal.content_limit,
     galgame,

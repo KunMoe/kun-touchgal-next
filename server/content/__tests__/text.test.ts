@@ -1,17 +1,18 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import { renderCommentHtml } from '~/app/api/utils/render/markdownToHtmlComment'
-import { markdownToHtmlExtend } from '~/app/api/utils/render/markdownToHtmlExtend'
+import { renderKunMarkdown } from '~/app/api/utils/render/renderKunMarkdown'
 import { kunExcerpt, kunHtmlToText, kunRawExcerpt } from '../text'
 
 // 输入一律取真实渲染管线的产物: 投影的对象是读者实际拿到的 HTML。
-// 关掉 Redis 配置让介绍管线不走缓存, 测试不触网
+// 关掉 Redis 配置让渲染不走缓存, 测试不触网
 beforeAll(() => {
   vi.stubEnv('REDIS_HOST', '')
   vi.stubEnv('REDIS_PORT', '')
 })
 
-const introduction = markdownToHtmlExtend
-const comment = renderCommentHtml
+const introduction = async (markdown: string) =>
+  (await renderKunMarkdown('introduction', markdown)).html
+const comment = async (markdown: string) =>
+  (await renderKunMarkdown('comment', markdown)).html
 
 describe('kunHtmlToText display: 给人看的描述、预览与摘要', () => {
   it('拉丁字母标题不转大写', async () => {

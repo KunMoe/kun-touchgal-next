@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const {
   createCommentMock,
   transactionMock,
-  markdownToHtmlCommentMock,
+  renderForWriteMock,
   planTextModerationMock,
   enqueueTextModerationMock,
   createDedupMessageMock,
@@ -16,7 +16,7 @@ const {
 } = vi.hoisted(() => ({
   createCommentMock: vi.fn(),
   transactionMock: vi.fn(),
-  markdownToHtmlCommentMock: vi.fn(),
+  renderForWriteMock: vi.fn(),
   planTextModerationMock: vi.fn(),
   enqueueTextModerationMock: vi.fn(),
   createDedupMessageMock: vi.fn(),
@@ -51,9 +51,8 @@ vi.mock('~/app/api/utils/createMentionMessage', () => ({
   createMentionMessage: createMentionMessageMock
 }))
 
-vi.mock('~/app/api/utils/render/markdownToHtmlComment', () => ({
-  COMMENT_HTML_VERSION: 1,
-  markdownToHtmlComment: markdownToHtmlCommentMock
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdownForWrite: renderForWriteMock
 }))
 
 vi.mock('~/server/moderation/submit', () => ({
@@ -96,7 +95,7 @@ const input = {
 beforeEach(() => {
   vi.clearAllMocks()
   createCommentMock.mockResolvedValue(comment)
-  markdownToHtmlCommentMock.mockResolvedValue('<p>comment</p>')
+  renderForWriteMock.mockResolvedValue({ html: '<p>comment</p>', version: 1 })
   planTextModerationMock.mockResolvedValue({
     queue: false,
     intercept: false,
@@ -112,10 +111,11 @@ beforeEach(() => {
 
 describe('createPatchComment', () => {
   it('starts moderation pre-screening before Markdown rendering completes', async () => {
-    let resolveRender: ((html: string) => void) | undefined
-    markdownToHtmlCommentMock.mockImplementationOnce(
+    let resolveRender:
+      ((rendered: { html: string; version: number }) => void) | undefined
+    renderForWriteMock.mockImplementationOnce(
       () =>
-        new Promise<string>((resolve) => {
+        new Promise<{ html: string; version: number }>((resolve) => {
           resolveRender = resolve
         })
     )
@@ -128,7 +128,7 @@ describe('createPatchComment', () => {
     )
     expect(transactionMock).not.toHaveBeenCalled()
 
-    resolveRender?.('<p>comment</p>')
+    resolveRender?.({ html: '<p>comment</p>', version: 1 })
     const result = await creation
 
     expect(createCommentMock).toHaveBeenCalledWith(
@@ -143,27 +143,26 @@ describe('createPatchComment', () => {
     expect(result).toEqual(
       expect.objectContaining({ content: '<p>comment</p>', status: 0 })
     )
+    // 响应直接用落库的 HTML, 提交之后不再渲染第二次
+    expect(renderForWriteMock).toHaveBeenCalledTimes(1)
   })
 
-  it('preserves the stored fallback when initial Markdown rendering fails', async () => {
-    markdownToHtmlCommentMock
-      .mockRejectedValueOnce(new Error('render failed'))
-      .mockResolvedValueOnce('<p>retry</p>')
+  // 渲染不出来是由输入决定的, 重试不会成功: 不落「空 HTML + version 0」等读时重试,
+  // 而是当场拒绝, 库里不收渲染不出来的正文
+  it('渲染不出来的正文返回错误消息, 不进事务、不发通知、不失效缓存', async () => {
+    renderForWriteMock.mockResolvedValueOnce(
+      '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
+    )
 
     const result = await createPatchComment(input, 7, 2)
 
-    expect(createCommentMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          content_html: '',
-          content_html_version: 0,
-          status: 0
-        })
-      })
+    expect(result).toBe(
+      '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
     )
-    expect(result).toEqual(
-      expect.objectContaining({ content: '<p>retry</p>', status: 0 })
-    )
+    expect(renderForWriteMock).toHaveBeenCalledWith('comment', 'comment')
+    expect(transactionMock).not.toHaveBeenCalled()
+    expect(createMentionMessageMock).not.toHaveBeenCalled()
+    expect(invalidateContentMock).not.toHaveBeenCalled()
   })
 
   it('评论创建后按 unique_id 失效补丁详情缓存 (M-05)', async () => {

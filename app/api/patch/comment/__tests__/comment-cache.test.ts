@@ -13,7 +13,8 @@ const {
   rootFindManyMock,
   likeFindManyMock,
   queryRawMock,
-  updateManyMock
+  updateManyMock,
+  renderMock
 } = vi.hoisted(() => {
   const kvStore = new Map<string, string>()
   const lockStore = new Set<string>()
@@ -47,7 +48,8 @@ const {
     rootFindManyMock: vi.fn(),
     likeFindManyMock: vi.fn(),
     queryRawMock: vi.fn(),
-    updateManyMock: vi.fn(async () => ({ count: 1 }))
+    updateManyMock: vi.fn(async () => ({ count: 1 })),
+    renderMock: vi.fn()
   }
 })
 
@@ -75,8 +77,11 @@ vi.mock('~/prisma/index', () => ({
 }))
 
 vi.mock('~/app/api/utils/render/markdownToHtmlComment', () => ({
-  COMMENT_HTML_VERSION: 1,
-  markdownToHtmlComment: vi.fn(async (markdown: string) => `<p>${markdown}</p>`)
+  COMMENT_HTML_VERSION: 1
+}))
+
+vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
+  renderKunMarkdown: renderMock
 }))
 
 import { getPatchComment } from '~/app/api/patch/comment/get'
@@ -115,6 +120,11 @@ beforeEach(() => {
   rootFindManyMock.mockResolvedValue([rootComment])
   likeFindManyMock.mockResolvedValue([])
   queryRawMock.mockResolvedValue([])
+  renderMock.mockImplementation(async (_profile: string, markdown: string) => ({
+    ok: true,
+    html: `<p>${markdown}</p>`,
+    version: 1
+  }))
 })
 
 describe('getPatchComment 缓存', () => {
@@ -210,7 +220,7 @@ describe('getPatchComment 缓存', () => {
 
     const result = await getPatchComment(input, viewer)
 
-    // 版本不匹配 → 回落 markdownToHtmlComment (mock: `<p>${content}</p>`)
+    // 版本不匹配 → 回落渲染入口 (mock: `<p>${content}</p>`)
     expect(result.comments[0].content).toBe('<p>hello</p>')
     // fire-and-forget 写回, flush 微任务后断言幂等前置条件 (updated 用于防止并发修改时误写旧渲染)
     await Promise.resolve()
@@ -222,5 +232,61 @@ describe('getPatchComment 缓存', () => {
       },
       data: { content_html: '<p>hello</p>', content_html_version: 1 }
     })
+  })
+
+  // P02-01: 一条渲染不出来的评论曾让整页 reject (500), 且每次读都重付渲染成本
+  it('一页里有一条渲染不出来的评论时只降级该条, 整页照常返回', async () => {
+    const poison = {
+      ...rootComment,
+      id: 101,
+      content: 'poison',
+      content_html: '',
+      content_html_version: 0
+    }
+    rootFindManyMock.mockResolvedValueOnce([rootComment, poison])
+    renderMock.mockImplementation(async () => ({
+      ok: false,
+      reason: 'too-deep',
+      html: '<p>poison</p>\n<p>已按纯文本显示</p>',
+      version: 1,
+      persistable: true
+    }))
+
+    const result = await getPatchComment(input, viewer)
+
+    expect(result.comments.map((comment) => comment.id)).toEqual([100, 101])
+    expect(result.comments[0].content).toBe('<p>hello</p>')
+    expect(result.comments[1].content).toContain('已按纯文本显示')
+    // 预算给出的降级结果是确定的, 按当前版本写回后不再重渲染
+    await Promise.resolve()
+    expect(updateManyMock).toHaveBeenCalledTimes(1)
+    expect(updateManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 101 }),
+        data: {
+          content_html: '<p>poison</p>\n<p>已按纯文本显示</p>',
+          content_html_version: 1
+        }
+      })
+    )
+  })
+
+  it('渲染缺陷 (render-error) 的降级结果只用于本次响应, 不写回', async () => {
+    rootFindManyMock.mockResolvedValueOnce([
+      { ...rootComment, content_html: '', content_html_version: 0 }
+    ])
+    renderMock.mockImplementation(async () => ({
+      ok: false,
+      reason: 'render-error',
+      html: '<p>hello</p>\n<p>暂时无法渲染</p>',
+      version: 1,
+      persistable: false
+    }))
+
+    const result = await getPatchComment(input, viewer)
+
+    expect(result.comments[0].content).toContain('暂时无法渲染')
+    await Promise.resolve()
+    expect(updateManyMock).not.toHaveBeenCalled()
   })
 })

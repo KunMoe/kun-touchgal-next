@@ -23,5 +23,7 @@ export const COMMENT_CACHE_DURATION = 60
 // 下载计数去重窗口: 同一 (用户或 IP, 链接) 在此时间内只计一次, 防脚本刷量与缓存抖动
 export const DOWNLOAD_DEDUP_CACHE_DURATION = 60 * 60
 export const MARKDOWN_HTML_CACHE_DURATION = 5 * 60
+// 渲染缺陷 (render-error) 的负缓存: 只为挡住短时间内的重复渲染, 修复上线后尽快失效
+export const MARKDOWN_RENDER_ERROR_CACHE_DURATION = 60
 export const MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES = 128 * 1024
 export const MARKDOWN_HTML_CACHE_MAX_HTML_BYTES = 256 * 1024
