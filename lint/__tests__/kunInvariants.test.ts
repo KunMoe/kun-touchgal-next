@@ -128,8 +128,9 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
     ).toEqual([])
   })
 
-  // 测试做不了生产写入, 却常要 mock / 断言这些方法; 示例路径不在 __tests__ 下, 上面照常执行
-  it.each(['inv-content-05', 'inv-content-06'])(
+  // 测试做不了生产写入, 却常要 mock / 断言这些方法 (inv-content-05/06), 输入夹具也常写
+  // { ...baseInput, role: 2 } (inv-authz-03); 示例路径不在 __tests__ 下, 上面照常执行
+  it.each(['inv-content-05', 'inv-content-06', 'inv-authz-03'])(
     '%s 不管 __tests__ 下的文件',
     async (id) => {
       const inv = KUN_INVARIANTS.find((item) => item.id === id)

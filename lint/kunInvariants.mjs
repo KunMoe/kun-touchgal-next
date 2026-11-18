@@ -96,6 +96,32 @@ const hiddenRelationWrite = [
 ]
 const NESTED_UPDATE = `${RELATION_WRITE} > ObjectExpression > Property${keyIs('/^(update|updateMany|upsert)$/')}`
 
+// inv-authz-01/03 共用。角色值: 名为 role / userRole / currentUserRole 的裸标识符, 或属性名是这三个之一的成员访问
+// (含可选链 r.user?.role、a?.b.role 与字符串键 x['role'])
+const ROLE_NAME = '/^(role|userRole|currentUserRole)$/'
+const ROLE_VALUE = `:matches(Identifier[name=${ROLE_NAME}], MemberExpression[computed=false][property.name=${ROLE_NAME}], MemberExpression[computed=true][property.value=${ROLE_NAME}], ChainExpression[expression.computed=false][expression.property.name=${ROLE_NAME}])`
+// 外面包一层非空断言或 as / satisfies 也算 (只有类型, 运行时就是这个角色值)
+const ROLE_WRAPPER =
+  ':matches(TSNonNullExpression, TSAsExpression, TSSatisfiesExpression)'
+// 角色常量: 数字字面量, 或 KUN_ROLE.<X> / KUN_ROLE['X']
+const roleConstantAt = (side) =>
+  `:matches([${side}.type='Literal'][${side}.value=type(number)], [${side}.type='MemberExpression'][${side}.object.name='KUN_ROLE'])`
+const ROLE_COMPARE = 'BinaryExpression[operator=/^([<>]=?|[!=]==?)$/]'
+// 报角色值那一侧; 另一侧是常量。两种操作数顺序各一条, 再各配一条带包装的
+const roleComparedToConstant = () =>
+  ['left', 'right'].flatMap((side) => {
+    const other = side === 'left' ? 'right' : 'left'
+    const compare = `${ROLE_COMPARE}${roleConstantAt(other)}`
+    return [
+      `${compare} > ${ROLE_VALUE}.${side}`,
+      `${compare} > ${ROLE_WRAPPER}.${side} > ${ROLE_VALUE}.expression`
+    ]
+  })
+
+// 对象字面量里写 role 键: 标识符键 (含简写 { ...actor, role }) 或字符串键; 不认 [role] 这种以变量为键的计算键
+const ROLE_KEY =
+  ":matches([computed=false][key.name='role'], [key.value='role'])"
+
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
   {
@@ -449,6 +475,125 @@ export const KUN_INVARIANTS = [
         'export const run = (tx: any, reply: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { update: { where: { id: 2 }, data: { reply: { create: { ...reply } } } } } } })',
         "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { comment: { update: { where: { id: 2 }, data: { content: 'x' } satisfies object } } } })",
         'export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { patch_comment_like: { updateMany: { where: { id: 2 }, data: { status: 1 } } } } })'
+      ]
+    }
+  },
+  {
+    id: 'inv-authz-01',
+    statement:
+      '角色值不得与数字字面量或 KUN_ROLE.<X> 比较, 权限判断一律走 can(subject, capability)',
+    reason:
+      '门槛散落成数字比较时, 调一次门槛要逐处找, 两次调整都留下了漏改的位置, 客户端的镜像也与服务端分叉过; constants/permission.ts 的能力表是门槛的唯一事实源',
+    removeWhen: '角色不再是有序整数, 或权限改由数据库 / 外部授权服务承载',
+    // 能力表本身要拿角色与门槛比较
+    ignores: ['constants/role.ts', 'constants/permission.ts'],
+    enforce: { kind: 'syntax', selectors: roleComparedToConstant() },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        'export const deny = (payload: any) => payload.role < 4',
+        'export const allow = (x: any) => 3 <= x.role',
+        'export const official = (r: any) => r.user?.role > 2',
+        'export const admin = (a: any) => a?.b.role >= 3',
+        'export const isSuper = (role: number) => role === 4',
+        'export const deny = (userRole: number) => userRole < 3',
+        'export const notUser = (currentUserRole: number) => currentUserRole !== 1',
+        'export const exempt = (options: any) => options.userRole >= 4',
+        "export const creator = (user: any) => user['role'] == 2",
+        'export const isSuper = (user: any) => user.role === KUN_ROLE.SUPER_ADMIN',
+        'export const deny = (user: any) => KUN_ROLE.ADMIN > user.role',
+        'export const admin = (user: any) => user.role! >= 3',
+        'export const admin = (user: any) => (user.role as number) >= 3',
+        'export const canDelete = (comment: any, uid: number, userRole: number) => comment.user_id !== uid && userRole < 3'
+      ],
+      good: [
+        "export const admin = (payload: any) => can(payload, 'admin.access')",
+        'export const same = (user: any, other: any) => user.role === other.role',
+        'export const many = (x: any) => x.roleCount > 3',
+        'export const label = (user: any) => KUN_ROLE_LABEL[toKunRole(user.role)]',
+        'export const level = (LEVEL: any, role: number) => LEVEL[role] > 3',
+        "export const assistant = (message: any) => message.role === 'assistant'",
+        'export const self = (user: any) => user.uid === 4',
+        'export const ordered = (role: number, threshold: number) => role >= threshold',
+        'export const narrow = (user: any) => toKunRole(user.role)'
+      ]
+    }
+  },
+  {
+    id: 'inv-authz-02',
+    statement:
+      '断言目标类型里出现 KunActor 的 as / <> 断言只许出现在 verifyAndLoadUser 与测试 helper 里',
+    reason:
+      'KunActor 的品牌只存在于编译期, 代表「会话已校验、角色取自库里」; 随手断言等于把未校验的 payload 放行到所有按 KunActor 收参的权限判断',
+    removeWhen: 'KunActor 品牌被移除',
+    // 构造点: 会话校验后从库里取角色的唯一入口, 以及测试用的 actor 工厂
+    ignores: [
+      'app/api/utils/jwt.ts',
+      'app/api/utils/__tests__/kunTestActor.ts'
+    ],
+    // 只看断言的目标类型子树 (含交叉 / 联合 / 泛型实参 / 命名空间限定 / import 类型),
+    // 被断言的表达式里出现 KunActor (fn<KunActor>(x) as Other) 不算
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        ":matches(TSAsExpression, TSTypeAssertion) > .typeAnnotation Identifier[name='KunActor']"
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        'export const forge = (payload: any) => payload as KunActor',
+        'export const forge = (payload: KunGalgamePayload) => payload as KunGalgamePayload & KunActor',
+        'export const forge = (payload: unknown) => payload as unknown as KunActor',
+        'export const forge = (payload: any) => <KunActor>payload',
+        'export const forge = (payload: any) => payload as KunActor | null',
+        'export const forge = (list: any[]) => list as KunActor[]',
+        'export const forge = (payload: any) => payload as Role.KunActor',
+        "export const forge = (payload: any) => payload as import('~/constants/role').KunActor"
+      ],
+      good: [
+        'export const uid = (actor: KunActor) => actor.uid',
+        'export const keep = (payload: KunGalgamePayload & KunActor): KunActor => payload',
+        'export const load = (payload: KunActor) => { const actor: KunActor = payload; return actor }',
+        'export const pick = (x: unknown) => fn<KunActor>(x) as Other',
+        'export const load = async (req: Request): Promise<KunActor | null> => verifyAndLoadUser(req)',
+        'export const subject = (s: KunSubject) => s as KunSubject'
+      ]
+    }
+  },
+  {
+    id: 'inv-authz-03',
+    statement:
+      '对象字面量里展开之后不得再写 role 键; 构造 KunActor 只许在 verifyAndLoadUser 里',
+    reason:
+      '{ ...actor, role: 4 } 不需要断言就能得到带品牌的 KunActor (展开保留品牌, TS 不拦), 角色被换掉而 inv-authz-02 看不到',
+    removeWhen: 'KunActor 品牌被移除, 或改为不可展开的类实例',
+    // 测试的输入夹具常写 { ...baseInput, role: 2 }; 测试要的 actor 走 __tests__/kunTestActor.ts
+    ignores: ['app/api/utils/jwt.ts', '**/__tests__/**'],
+    // 只认写在展开之后的 role 键 (写在展开之前的会被展开盖掉, 换不掉角色): 会话 DTO
+    // ({ role: user.role, ..., ...redirectConfig }) 这类 role 在前的写法不报。
+    // 展开的实参不限名字: ctx.actor、条件展开、任意变量名都算
+    enforce: {
+      kind: 'syntax',
+      selectors: [`ObjectExpression > SpreadElement ~ Property${ROLE_KEY}`]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        'export const forge = (payload: KunActor) => ({ ...payload, role: 4 })',
+        'export const forge = (actor: KunActor, role: KunRole) => ({ ...actor, role })',
+        "export const forge = (viewer: KunActor) => ({ ...viewer, 'role': 4 })",
+        'export const forge = (user: any, row: any) => ({ ...user, name: row.name, role: toKunRole(row.role) })',
+        'export const forge = (ctx: any) => ({ ...ctx.actor, role: KUN_ROLE.ADMIN })',
+        'export const forge = (actor: KunActor, guest: KunSubject, ok: boolean) => ({ ...(ok ? actor : guest), role: 4 })'
+      ],
+      good: [
+        'export const dto = (user: any) => ({ uid: user.id, role: user.role })',
+        'export const dto = (user: any, redirectConfig: object) => ({ uid: user.id, role: user.role, ...redirectConfig })',
+        "export const rename = (payload: any) => ({ ...payload, name: 'x' })",
+        'export const nested = (payload: any) => ({ ...payload, user: { role: 4 } })',
+        'export const flag = (payload: any, role: string) => ({ ...payload, [role]: true })',
+        'export const strip = ({ role, ...rest }: any) => ({ ...rest })'
       ]
     }
   }
