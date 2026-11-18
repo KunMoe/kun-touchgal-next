@@ -3,7 +3,9 @@
 // 用法 (要连生产库与真实的桶, 由站长执行):
 //   pnpm exec esno migration/backfillResourceLinkS3Key.ts           # dry-run: 只 HeadObject、分类、写报告
 //   pnpm exec esno migration/backfillResourceLinkS3Key.ts --write   # 写入
-// 报告写到 migration/backup/backfillResourceLinkS3Key.<dry-run|write>.csv, 一行一条链接。
+// 报告写到 migration/backup/backfillResourceLinkS3Key.<dry-run|write>.<开始时间>.csv, 一行一条
+// 链接, 逐行追加: 每次运行各留一份 (第二遍 --write 扫不到第一遍写过的行, 第一遍的报告不能被
+// 覆盖), 中途中止时已处理的行也在报告里。
 //
 // 为什么要回填: S3 删除写出箱的消费者删对象之前要确认没有链接还引用它
 // (server/storage/references.ts)。历史行没有 s3_key, 只能按 content 尾段顺序扫描整张表;
@@ -27,7 +29,7 @@
 // lib/s3 在导入时就用环境变量建客户端, .env 必须先于它加载
 import 'dotenv/config'
 import path from 'node:path'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { prisma } from '~/prisma/index'
 import { headObject } from '~/lib/s3'
@@ -107,12 +109,15 @@ const REPORT_COLUMNS = [
   'resolved_exists'
 ] as const
 
-type ReportRow = Record<(typeof REPORT_COLUMNS)[number], unknown>
+export type ReportRow = Record<(typeof REPORT_COLUMNS)[number], unknown>
 
+// onRow 在每行处理完 (含写库) 之后调用, 报告随处理进度落盘
 export const backfillResourceLinkS3Key = async ({
-  write
+  write,
+  onRow = () => undefined
 }: {
   write: boolean
+  onRow?: (row: ReportRow) => void
 }) => {
   const links = await prisma.patch_resource_link.findMany({
     where: { storage: 's3', s3_key: '' },
@@ -157,7 +162,6 @@ export const backfillResourceLinkS3Key = async ({
     return found
   }
 
-  const report: ReportRow[] = []
   const categories: Record<string, number> = {}
   const results: Record<string, number> = {}
   for (const [index, { link, tailKey, resolvedKey }] of candidates.entries()) {
@@ -183,7 +187,7 @@ export const backfillResourceLinkS3Key = async ({
     }
     categories[category] = (categories[category] ?? 0) + 1
     results[result] = (results[result] ?? 0) + 1
-    report.push({
+    onRow({
       category,
       result,
       link_id: link.id,
@@ -204,31 +208,31 @@ export const backfillResourceLinkS3Key = async ({
   const remaining = await prisma.patch_resource_link.count({
     where: { storage: 's3', s3_key: '' }
   })
-  return { scanned: links.length, categories, results, report, remaining }
+  return { scanned: links.length, categories, results, remaining }
 }
 
 const run = async () => {
   const write = process.argv.includes('--write')
   const mode = write ? 'write' : 'dry-run'
-  const { scanned, categories, results, report, remaining } =
-    await backfillResourceLinkS3Key({ write })
-
-  const reportFile = `migration/backup/backfillResourceLinkS3Key.${mode}.csv`
+  const startedAt = new Date().toISOString().replace(/[:.]/g, '-')
+  const reportFile = `migration/backup/backfillResourceLinkS3Key.${mode}.${startedAt}.csv`
   mkdirSync(path.dirname(reportFile), { recursive: true })
-  writeFileSync(
-    reportFile,
-    [
-      REPORT_COLUMNS.join(','),
-      ...report.map((row) =>
-        REPORT_COLUMNS.map((column) => csvField(row[column])).join(',')
-      )
-    ].join('\n') + '\n'
-  )
+  writeFileSync(reportFile, `${REPORT_COLUMNS.join(',')}\n`)
+  console.log(`报告: ${reportFile}`)
+
+  const { scanned, categories, results, remaining } =
+    await backfillResourceLinkS3Key({
+      write,
+      onRow: (row) =>
+        appendFileSync(
+          reportFile,
+          `${REPORT_COLUMNS.map((column) => csvField(row[column])).join(',')}\n`
+        )
+    })
 
   console.log(`\n模式: ${mode}, 扫描 s3_key 为空的 s3 链接 ${scanned} 条`)
   console.log(`  分类: ${JSON.stringify(categories)}`)
   console.log(`  结果: ${JSON.stringify(results)}`)
-  console.log(`报告: ${reportFile}`)
   console.log(
     `剩余 s3_key 为空的 s3 链接: ${remaining} 条${remaining === 0 ? ' (可以发布收窄后的引用谓词)' : ''}`
   )

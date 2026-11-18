@@ -19,9 +19,20 @@ vi.mock('~/lib/s3', () => ({ headObject: headObjectMock }))
 vi.mock('~/lib/redis', () => ({}))
 
 import {
-  backfillResourceLinkS3Key,
+  backfillResourceLinkS3Key as backfillRun,
   classifyLegacyLink
 } from '~/migration/backfillResourceLinkS3Key'
+import type { ReportRow } from '~/migration/backfillResourceLinkS3Key'
+
+// 报告逐行交给 onRow; 收集起来与汇总一起断言
+const backfillResourceLinkS3Key = async ({ write }: { write: boolean }) => {
+  const report: ReportRow[] = []
+  const summary = await backfillRun({
+    write,
+    onRow: (row) => report.push(row)
+  })
+  return { ...summary, report }
+}
 
 const URL = 'https://cloud.example.test'
 
@@ -231,6 +242,30 @@ describe('backfillResourceLinkS3Key', () => {
 
     expect(executeRawMock).not.toHaveBeenCalled()
     expect(result.results).toEqual({ skipped: 1 })
+  })
+
+  it('中途中止时, 已处理 (已写库) 的行已经交给报告', async () => {
+    seed(
+      [
+        link(1, `${URL}/patch/1/resource/h/f.zip`),
+        link(2, `${URL}/patch/1/resource/h/g.zip`)
+      ],
+      ['patch/1/resource/h/f.zip']
+    )
+    headObjectMock
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        Object.assign(new Error('timeout'), { name: 'TimeoutError' })
+      )
+    const rows: ReportRow[] = []
+
+    await expect(
+      backfillRun({ write: true, onRow: (row) => rows.push(row) })
+    ).rejects.toThrow(/HeadObject patch\/1\/resource\/h\/g\.zip 失败/)
+    expect(executeRawMock).toHaveBeenCalledTimes(1)
+    expect(rows).toEqual([
+      expect.objectContaining({ link_id: 1, result: 'written' })
+    ])
   })
 
   it('HeadObject 除 404 以外的错误直接中止, 不当成「不存在」', async () => {
