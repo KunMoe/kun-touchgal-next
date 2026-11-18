@@ -5,6 +5,12 @@ import {
 } from '~/utils/validate'
 import { nonEmptyFileSchema } from './file'
 import { captchaVerifyTokenSchema } from './captcha'
+import {
+  kunTotpCodeMessage,
+  optionalBackupCodeSchema,
+  optionalTotpCodeSchema,
+  secondFactorCodeSchema
+} from './secondFactor'
 
 export const avatarSchema = z.object({
   avatar: nonEmptyFileSchema
@@ -27,20 +33,11 @@ export const usernameSchema = z.object({
 })
 
 // 敏感操作的二次验证 (server/auth/stepUp.ts)。这里只管形状: 每种操作要哪些因子由那边的
-// 策略表决定, 缺了由 requireStepUp 报「请输入…」, 所以三项都可选; 表单把没填的项提交成
-// 空串, 空串按没填处理
+// 策略表决定, 缺了由 requireStepUp 报「请输入…」, 所以三项都可选
 export const stepUpProofSchema = z.object({
   currentPassword: z.string().trim().max(1007).optional(),
-  totp: z
-    .string()
-    .trim()
-    .regex(/^$|^\d{6}$/, { message: '2FA 验证码必须为 6 位数字' })
-    .optional(),
-  backupCode: z
-    .string()
-    .trim()
-    .regex(/^$|^\d{6}$/, { message: '备用验证码必须为 6 位数字' })
-    .optional()
+  totp: optionalTotpCodeSchema,
+  backupCode: optionalBackupCodeSchema
 })
 
 export const resetEmailSchema = z
@@ -111,12 +108,10 @@ export const enableUser2FASchema = z.object({
   token: z
     .string()
     .trim()
-    .regex(/^\d{6}$/, { message: '2FA 验证码必须为 6 位数字' })
+    .regex(/^\d{6}$/, { message: kunTotpCodeMessage })
 })
 
-export const disableUser2FASchema = enableUser2FASchema.extend({
-  isBackupCode: z.boolean().optional().default(false)
-})
+export const disableUser2FASchema = secondFactorCodeSchema
 
 // 还没刷新的旧页面不带请求体: 回一句人话, 而不是 zod 的类型错误
 export const beginTwoFactorEnrollmentSchema = z.object(

@@ -21,6 +21,10 @@ import type { Prisma } from '~/prisma/generated/prisma/client'
 const TOTP_CONFIG = generateConfig()
 // 一个码在它所属时间步的前后各一步内都可接受, 最长约 90 秒; 登记要盖过这段时间
 const USED_STEP_TTL_SECONDS = 120
+// 10 个 6 位备份码在每账号 10 次 / 15 分钟的预算下约 104 天被撞中一个, 10 位是它的一万倍。
+// 存量的 6 位码继续可用, 校验层两种长度都收 (validations/secondFactor.ts)
+const BACKUP_CODE_COUNT = 10
+const BACKUP_CODE_LENGTH = 10
 
 export const SECOND_FACTOR_FAILURE_MESSAGE = {
   invalid: '验证码无效',
@@ -169,6 +173,6 @@ export const createTotpKey = (issuer: string, user: string) => {
 
 // 备份码唯一的生成点: plain 只在启用时给用户看一次, stored 是落库的 HMAC
 export const issueBackupCodes = () => {
-  const plain = generateBackupCodes()
+  const plain = generateBackupCodes(BACKUP_CODE_COUNT, BACKUP_CODE_LENGTH)
   return { plain, stored: plain.map(hashTwoFactorBackupCode) }
 }

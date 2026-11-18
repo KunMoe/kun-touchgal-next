@@ -6,6 +6,7 @@ import {
 } from '~/utils/validate'
 import { isKunWhitelistedEmailDomain } from '~/constants/email/whitelist'
 import { captchaVerifyTokenSchema } from './captcha'
+import { secondFactorCodeSchema } from './secondFactor'
 
 const kunWhitelistedEmailDomainMessage =
   '暂不支持该邮箱服务商，请使用列表中的常见邮箱注册'
@@ -64,7 +65,4 @@ export const disableEmailNoticeSchema = z.object({
   validateEmailCode: z.string().uuid({ message: '非法的邮箱验证码格式' })
 })
 
-export const verifyLogin2FASchema = z.object({
-  token: z.string().regex(/^\d{6}$/, { message: '2FA 验证码必须为 6 位数字' }),
-  isBackupCode: z.boolean().optional().default(false)
-})
+export const verifyLogin2FASchema = secondFactorCodeSchema

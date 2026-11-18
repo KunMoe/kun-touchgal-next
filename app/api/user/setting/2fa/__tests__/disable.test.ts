@@ -90,6 +90,24 @@ describe('POST /api/user/setting/2fa/disable', () => {
     expect(db.queries).toEqual([])
   })
 
+  it.each([
+    [
+      { token: '12345678', isBackupCode: true },
+      '备用验证码必须为 6 位或 10 位数字'
+    ],
+    // 身份验证器的验证码恒为 6 位: 10 位只在声明为备用验证码时才收
+    [{ token: '1234567890', isBackupCode: false }, '2FA 验证码必须为 6 位数字'],
+    [
+      { token: 'abcdef', isBackupCode: true },
+      '备用验证码必须为 6 位或 10 位数字'
+    ]
+  ])('rejects %j without reading the DB', async (body, message) => {
+    const response = await post(body)
+
+    expect(await read(response)).toBe(message)
+    expect(db.queries).toEqual([])
+  })
+
   it('answers 用户未启用 2FA when there is nothing to disable', async () => {
     db.patchUser(UID, { enable_2fa: false })
 
@@ -215,6 +233,21 @@ describe('POST /api/user/setting/2fa/disable', () => {
       // 先消费, 后关闭
       const writes = db.queries.filter((query) => !query.endsWith('findUnique'))
       expect(writes).toEqual(['$executeRaw', 'user.updateMany'])
+    })
+
+    // 新发的备份码是 10 位, 存量的 6 位照常可用
+    it('accepts a 10-digit backup code next to the 6-digit ones', async () => {
+      db.patchUser(UID, {
+        two_factor_backup: [
+          hashTwoFactorBackupCode('0123456789'),
+          hashTwoFactorBackupCode(BACKUP_CODES[0])
+        ]
+      })
+
+      const response = await post({ token: '0123456789', isBackupCode: true })
+
+      expect(await read(response)).toEqual(DISABLED)
+      expectDisabled()
     })
 
     it('rejects a wrong code and keeps every backup code', async () => {

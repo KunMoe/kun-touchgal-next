@@ -380,7 +380,7 @@ export const TwoFactorAuth = () => {
                 placeholder={
                   isUsingBackupCode ? '输入备用验证码' : '输入 6 位验证码'
                 }
-                maxLength={6}
+                maxLength={isUsingBackupCode ? 10 : 6}
                 className="text-lg text-center"
               />
               <button

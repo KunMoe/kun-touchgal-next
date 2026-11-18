@@ -43,7 +43,7 @@ const read = async (response: Response) => response.json()
 const expectEnabledWith = (backupCode: string[]) => {
   expect(backupCode).toHaveLength(10)
   for (const code of backupCode) {
-    expect(code).toMatch(/^\d{6}$/)
+    expect(code).toMatch(/^\d{10}$/)
   }
   const row = db.user(UID)
   expect(row?.enable_2fa).toBe(true)

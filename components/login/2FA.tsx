@@ -74,7 +74,7 @@ export const TwoFactor = () => {
         variant="bordered"
         inputMode="numeric"
         autoComplete="one-time-code"
-        maxLength={6}
+        maxLength={isUsingBackupCode ? 10 : 6}
       />
 
       <Button

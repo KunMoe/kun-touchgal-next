@@ -366,12 +366,12 @@ describe('issuing', () => {
     ).toBe(STEP)
   })
 
-  it('returns ten backup codes and stores only their hashes', () => {
+  it('returns ten 10-digit backup codes and stores only their hashes', () => {
     const codes = issueBackupCodes()
 
     expect(codes.plain).toHaveLength(10)
     expect(new Set(codes.plain).size).toBe(10)
-    expect(codes.plain.every((code) => /^\d{6}$/.test(code))).toBe(true)
+    expect(codes.plain.every((code) => /^\d{10}$/.test(code))).toBe(true)
     expect(codes.stored).toEqual(codes.plain.map(hashTwoFactorBackupCode))
     expect(codes.stored.every((code) => /^h1:[0-9a-f]{64}$/.test(code))).toBe(
       true

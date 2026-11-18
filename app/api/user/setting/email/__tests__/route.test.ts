@@ -125,7 +125,8 @@ describe('POST /api/user/setting/email: request gates', () => {
     [{ email: 'not-an-email' }, '请输入合法的邮箱格式'],
     [{ code: 'abc' }, '邮箱验证码格式无效'],
     [{ totp: '12345' }, '2FA 验证码必须为 6 位数字'],
-    [{ backupCode: '12345' }, '备用验证码必须为 6 位数字']
+    [{ backupCode: '12345' }, '备用验证码必须为 6 位或 10 位数字'],
+    [{ backupCode: '12345678' }, '备用验证码必须为 6 位或 10 位数字']
   ])(
     'returns the zod message for %j without reading the DB',
     async (overrides, message) => {

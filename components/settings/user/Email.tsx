@@ -220,7 +220,7 @@ export const Email = () => {
                         isRequired
                         type="text"
                         inputMode="numeric"
-                        maxLength={6}
+                        maxLength={10}
                         label="备用验证码"
                         autoCorrect="off"
                         autoCapitalize="none"
