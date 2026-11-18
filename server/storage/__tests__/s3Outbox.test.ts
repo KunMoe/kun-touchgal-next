@@ -84,7 +84,7 @@ describe('enqueueS3Deletion 事务性入队', () => {
       'ON CONFLICT (s3_key) DO UPDATE'
     )
     expect((strings as string[]).join('?')).toContain(
-      'seq = s3_deletion_outbox.seq + 1'
+      "seq = nextval(pg_get_serial_sequence('s3_deletion_outbox', 'seq'))"
     )
     // 未落到顶层 prisma：证明入队参与调用方事务、与行删除原子提交
     expect(executeRawMock).not.toHaveBeenCalled()

@@ -12,7 +12,7 @@ import {
 import { dbContractUrl, openDbContract } from '~/server/db/__tests__/dbContract'
 
 // S3 删除写出箱在真实 PostgreSQL 上的行为 (运行方式见 server/db/__tests__/dbContract.ts)。
-// 引用谓词的 content 尾段、upsert 递增 seq、判定之后的 (s3_key, seq) 删行撞上未提交的重新
+// 引用谓词的 content 尾段、upsert 换发 seq、判定之后的 (s3_key, seq) 删行撞上未提交的重新
 // 入队: 这三件事 mock 测不出来
 
 const { deleteFileFromS3Mock } = vi.hoisted(() => ({
@@ -182,28 +182,47 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
 
       await outbox.enqueueS3Deletion(prisma, [key, key])
 
-      const row = await outboxRow(key)
-      expect(row).toMatchObject({ seq: 0, attempts: 0 })
+      expect(
+        await prisma.s3_deletion_outbox.count({ where: { s3_key: key } })
+      ).toBe(1)
+      expect(await outboxRow(key)).toMatchObject({ attempts: 0 })
     })
 
-    it('重复入队递增 seq, 保留 attempts 与 created, 刷新 updated 排到队尾', async () => {
+    it('重复入队换发 seq, 保留 attempts 与 created, 刷新 updated 排到队尾', async () => {
       const key = newKey()
       await outbox.enqueueS3Deletion(prisma, [key])
+      const old = new Date('2026-01-01T00:00:00Z')
       await prisma.s3_deletion_outbox.update({
         where: { s3_key: key },
-        data: { attempts: 2 }
+        data: { attempts: 2, updated: old }
       })
       const before = await outboxRow(key)
 
       await outbox.enqueueS3Deletion(prisma, [key])
 
       const after = await outboxRow(key)
-      expect(after?.seq).toBe(1)
+      expect(after!.seq).not.toBe(before!.seq)
       expect(after?.attempts).toBe(2)
       expect(after?.created).toEqual(before?.created)
-      expect(after!.updated.getTime()).toBeGreaterThanOrEqual(
-        before!.updated.getTime()
-      )
+      expect(after!.updated.getTime()).toBeGreaterThan(old.getTime())
+    })
+
+    it('删掉之后重新插入的行拿到新的 seq: 按旧读数删行不会带走它', async () => {
+      const key = newKey()
+      await outbox.enqueueS3Deletion(prisma, [key])
+      const first = await outboxRow(key)
+      await prisma.s3_deletion_outbox.deleteMany({
+        where: { s3_key: key, seq: first!.seq }
+      })
+
+      // 续锁失败时另一个 drain 还拿着 (key, 旧 seq) 的读数
+      await outbox.enqueueS3Deletion(prisma, [key])
+      const stale = await prisma.s3_deletion_outbox.deleteMany({
+        where: { s3_key: key, seq: first!.seq }
+      })
+
+      expect(stale.count).toBe(0)
+      expect(await outboxRow(key)).not.toBeNull()
     })
   })
 
@@ -241,6 +260,7 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
       const lastHolder = await newLink({ content: `${STORAGE_URL}/${key}` })
       // 另一条共享链接先前已被删除, 它的入队还在出箱里
       await outbox.enqueueS3Deletion(prisma, [key])
+      const queued = await outboxRow(key)
 
       let txReady!: () => void
       const txStarted = new Promise<void>((resolve) => (txReady = resolve))
@@ -275,7 +295,9 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
 
       expect(await drain).toEqual({ deleted: 0, skippedReferenced: 1 })
       expect(deleteFileFromS3Mock).not.toHaveBeenCalled()
-      expect(await outboxRow(key)).toMatchObject({ seq: 1 })
+      const kept = await outboxRow(key)
+      expect(kept).not.toBeNull()
+      expect(kept!.seq).not.toBe(queued!.seq)
 
       expect(await outbox.drainS3DeletionOutbox()).toEqual({
         deleted: 1,

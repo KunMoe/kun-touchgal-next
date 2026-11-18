@@ -11,9 +11,10 @@ const OUTBOX_LOCK_TTL_SECONDS = 300
 // 删除写出箱入队：把待删除的 S3 key 持久化到出箱。client 传业务行删除所在事务的 tx，
 // 使入队与删除原子提交——提交后即便进程崩溃，删除意图也已落库，由 worker 兜底删除，
 // 关闭原「提交后 Promise.all 删 S3、崩溃即丢失内存中 key」的不可恢复窗口。
-// 同 key 重复入队合并为一行并把 seq + 1：消费者按 (s3_key, seq) 删行，处理期间到达的
-// 入队不会被这一轮的删行带走 (见 drain 的注释)。updated 是 @updatedAt (应用层维护，
-// 原生 SQL 必须显式赋值)，时间写 UTC 墙钟与 Prisma 一致；形状照抄 enqueueSearchOutboxBatch
+// 同 key 重复入队合并为一行，并从 seq 列的全局序列取新值 (新插入由列默认值取)：消费者按
+// (s3_key, seq) 删行，处理期间到达的入队不会被这一轮的删行带走 (见 drain 的注释)。updated
+// 是 @updatedAt (应用层维护，原生 SQL 必须显式赋值)，时间写 UTC 墙钟与 Prisma 一致；
+// 形状照抄 enqueueSearchOutboxBatch
 export const enqueueS3Deletion = async (
   client: Prisma.TransactionClient,
   keys: string[]
@@ -28,7 +29,8 @@ export const enqueueS3Deletion = async (
     SELECT unnest(${uniqueKeys}::text[]),
       now() AT TIME ZONE 'UTC', now() AT TIME ZONE 'UTC'
     ON CONFLICT (s3_key) DO UPDATE
-      SET seq = s3_deletion_outbox.seq + 1, updated = now() AT TIME ZONE 'UTC'`
+      SET seq = nextval(pg_get_serial_sequence('s3_deletion_outbox', 'seq')),
+        updated = now() AT TIME ZONE 'UTC'`
 }
 
 // 单一消费者：加锁保证任意时刻只有一个 drain 在跑（即时 kick 与定时任务共用同锁）。
@@ -37,8 +39,9 @@ export const enqueueS3Deletion = async (
 // 事务删掉最后一个持有者并重新入队，seq 已变，这一行留到下一轮重判；只按 s3_key 删的话，
 // 那次入队被合并吞掉，对象再无引用也再无出箱行，成为永久孤儿。删行若撞上那个事务未提交的
 // 行锁，会等它提交后按新 seq 重新判定，同样不命中。
-// 点查不加锁：引用集合只会原子地「非空 → 非空」或「非空 → 空」(写入不变量见 references.ts)，
-// 两个 drain 并发 (续锁失败) 时各自点查、幂等删除、CAS 删行，任意交错结果一致。
+// 点查不加锁：引用集合只会原子地「非空 → 非空」或「非空 → 空」(写入不变量见 references.ts)。
+// 两个 drain 并发 (续锁失败、锁键被逐出) 时各自点查、幂等删除、CAS 删行：seq 取自全局序列、
+// 永不重复，一个 drain 删掉行之后重新插入的行不会被另一个按旧读数删掉。
 // 删除失败累加 attempts 并滞留，等下一轮重试——至少一次投递。
 export const drainS3DeletionOutbox = async () =>
   withTaskLock(

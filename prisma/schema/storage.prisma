@@ -8,10 +8,11 @@ model s3_deletion_outbox {
   s3_key String @id
   // 处理失败累加，仅供观测/告警；不参与消费逻辑
   attempts Int @default(0)
-  // 每次重复入队自增，作为认领令牌：消费者只按 (s3_key, seq) 删行。判定「仍被引用」之后、
-  // 删行之前若有事务删掉了最后一个持有者并重新入队，seq 已变，这一行留到下一轮重判；
-  // 否则删除意图被合并吞掉，对象成为永久孤儿 (与 search_outbox 同形)
-  seq      Int @default(0)
+  // 认领令牌：每次入队 (新插入与重复入队) 都从全局序列取新值，消费者只按 (s3_key, seq) 删行。
+  // 判定「仍被引用」之后、删行之前若有事务删掉了最后一个持有者并重新入队，seq 已变，这一行留到
+  // 下一轮重判；否则删除意图被合并吞掉，对象成为永久孤儿。不从 0 起计：删行后重新插入的行若又是
+  // 0，并发的第二个 drain 会按旧读数把它删掉
+  seq      BigInt @default(autoincrement())
 
   created DateTime @default(now())
   updated DateTime @updatedAt
