@@ -1,4 +1,4 @@
-'use server'
+import 'server-only'
 
 import { getRedirectConfig } from '~/app/api/admin/setting/redirect/getRedirectConfig'
 import { getDisableRegisterStatus } from '~/app/api/admin/setting/register/service'

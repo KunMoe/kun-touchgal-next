@@ -4,7 +4,15 @@ import { configDefaults, defineConfig } from 'vitest/config'
 export default defineConfig({
   resolve: {
     alias: {
-      '~': fileURLToPath(new URL('./', import.meta.url))
+      '~': fileURLToPath(new URL('./', import.meta.url)),
+      // server-only 的默认入口一导入就 throw, 只有 Next 打包时的 react-server 条件才解析到
+      // 空模块; 测试直接加载这些模块, 所以指到同一个空模块
+      'server-only': fileURLToPath(
+        new URL(
+          './node_modules/next/dist/compiled/server-only/empty.js',
+          import.meta.url
+        )
+      )
     }
   },
   test: {

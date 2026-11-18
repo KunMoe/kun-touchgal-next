@@ -1,4 +1,4 @@
-'use server'
+import 'server-only'
 
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import { getFolders } from '~/app/api/user/profile/favorite/folder/get'

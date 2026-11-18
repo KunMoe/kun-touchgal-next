@@ -623,6 +623,31 @@ export const KUN_INVARIANTS = [
         "import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'"
       ]
     }
+  },
+  {
+    id: 'inv-server-01',
+    aliases: ['T05'],
+    statement:
+      "不写 'use server' 指令 (文件首行与函数体内都算); 只在服务端被 await 的读取器首行写 import 'server-only'",
+    reason:
+      "'use server' 不是「仅服务端」标记: 它把模块的每个导出登记成可被直接 POST 的 Server Function, 入参来自客户端, 调用不经页面守卫。全仓的 actions.ts 只被 page / layout 在服务端调用, 带着这个指令等于多出一批没人校验入参的端点",
+    removeWhen:
+      '出现确实要由客户端调用的 Server Function 时, 把那个文件加进本条的 ignores, 并在函数内自行校验入参与鉴权',
+    enforce: {
+      kind: 'syntax',
+      selectors: ["ExpressionStatement[directive='use server']"]
+    },
+    examples: {
+      file: 'app/kunInvariantExample.ts',
+      bad: [
+        "'use server'\nexport const load = async () => 1",
+        'export const save = async () => {\n  "use server"\n  return 1\n}'
+      ],
+      good: [
+        "import 'server-only'\nexport const load = async () => 1",
+        "export const label = 'use server'"
+      ]
+    }
   }
 ]
 

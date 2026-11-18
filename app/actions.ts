@@ -1,4 +1,4 @@
-'use server'
+import 'server-only'
 
 import { getPatchVisibilityWhere } from '~/utils/actions/getPatchVisibilityWhere'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'

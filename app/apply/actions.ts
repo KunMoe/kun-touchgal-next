@@ -1,4 +1,4 @@
-'use server'
+import 'server-only'
 
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import { getApplyStatus } from '~/app/api/apply/status/service'

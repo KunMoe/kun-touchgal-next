@@ -8,7 +8,7 @@ TouchGal (`kun-touchgal-next`) 是一个基于 Next.js 16 App Router 的 Galgame
 
 ## Architecture & Data Flow
 
-- `app/**/page.tsx` 默认是 Server Component。列表/详情页通常调用同目录 `actions.ts`，由 Server Action 复用 `app/api/**/service.ts`，再访问 Prisma、Redis 或 Meilisearch；需要交互时将 `initial*` 数据传给 Client Component。
+- `app/**/page.tsx` 默认是 Server Component。列表/详情页通常调用同目录 `actions.ts`，由这个只在服务端被 await 的页面读取器复用 `app/api/**/service.ts`，再访问 Prisma、Redis 或 Meilisearch；需要交互时将 `initial*` 数据传给 Client Component。
 - 浏览器交互路径为 Client Component → `utils/kunFetch.ts` → `app/api/**/route.ts` → `app/api/utils/parseQuery.ts` + `validations/*.ts` → JWT/角色/所有权校验 → service → Prisma/缓存。不要在组件内重复实现内部 fetch 包装。
 - Route Handler 保持薄：解析、鉴权、分派和 `NextResponse.json`；查询、事务和 DTO 转换放同目录 `service.ts`、HTTP 动词文件或共享 helper。
 - PostgreSQL 统一通过 `prisma/index.ts` 的单例访问。多表变更与审计日志使用 `prisma.$transaction`；可复用 helper 接收 transaction client。提交后再失效 Redis、刷新用户会话或排队同步搜索。
@@ -19,17 +19,17 @@ TouchGal (`kun-touchgal-next`) 是一个基于 Next.js 16 App Router 的 Galgame
 
 ## Key Directories
 
-- `app/`：App Router 页面、布局、Server Actions、Route Handlers、错误/元数据边界及 OIDC 路由。
+- `app/`：App Router 页面、布局、页面读取器（`actions.ts`）、Route Handlers、错误/元数据边界及 OIDC 路由。
 - `app/api/`：HTTP 边界和主要领域服务；复杂查询或写入不要堆在 `route.ts`。
 - `components/`：按 `patch`、`resource`、`search`、`user`、`admin` 等领域组织的 UI；`components/kun/` 为共享组件。
 - `store/`：Zustand 状态；持久状态使用 `persist`，简单表单状态留在组件内。
-- `validations/`：API 与 Server Action 共用的 Zod schema，包含中文用户错误信息。
+- `validations/`：API 与页面读取器共用的 Zod schema，包含中文用户错误信息。
 - `prisma/schema/`：拆分的 PostgreSQL schema；生成 client 位于 `prisma/generated/prisma/`。
 - `db/`：数据库结构与数据变更的唯一通道。`db/migrations/` 是线性、只追加的 SQL 迁移；`db/objects.snapshot.sql` 是回放生成的库级对象快照（函数、触发器、部分索引）；工具在 `scripts/db/`。
 - `lib/`：Redis、S3、Meilisearch、OIDC、MDX 和第三方集成。
 - `server/`：cron 编排、定时任务、审核流水线和搜索索引同步；`server/content/` 是评论 / 评价 / 资源的删除、状态迁移与编辑命令，`server/db/tx.ts` 是这些命令使用的事务执行器 `kunTx`。
 - `middleware/`：JWT、cookie 与 CSRF 实现。
-- `utils/`：fetch、错误处理、cookie、Markdown、URL/文件名安全处理及 Server Action helper。
+- `utils/`：fetch、错误处理、cookie、Markdown、URL/文件名安全处理及页面读取器 helper（`utils/actions/`）。
 - `constants/`、`types/`、`config/`：领域常量/Prisma select、API DTO 和运行时配置。
 - `scripts/`：构建后复制、sitemap、搜索、部署、OIDC 和数据回填脚本。
 - `migration/`：人工执行的一次性数据脚本与同步作业，不得当作常规工作流运行；库的结构变更不放这里，走 `db/migrations/`。`migration/backup/` 只放这些脚本的运行产物（缓存、报告、数据备份），整个目录被 git 忽略，也被排除在 standalone 构建之外。
@@ -67,8 +67,8 @@ pnpm prisma:generate
 
 - 使用 `~/...` 根路径别名；类型导入使用 `import type`。React 组件/PascalCase 文件，普通 helper/camelCase；内部聚合 helper 常以 `_` 开头，项目 helper 常以 `kun` 开头。
 - Prettier：单引号、无分号、2 空格、无尾逗号、LF。不要手工重排无关代码。
-- 默认保留 Server Component；只有 hooks、浏览器 API、Zustand 或交互式 HeroUI 场景才加 `'use client'`。Server Action 文件显式加 `'use server'`。
-- 新 API/表单边界先复用或补充 `validations/*.ts`，再通过 `kunParseGetQuery`、`kunParsePostBody`、`kunParsePutBody`、`kunParseDeleteQuery` 或 `kunParseFormData` 解析。Server Action 使用 `safeParseSchema`。
+- 默认保留 Server Component；只有 hooks、浏览器 API、Zustand 或交互式 HeroUI 场景才加 `'use client'`。`actions.ts` 与 `utils/actions/` 是页面读取器，首行写 `import 'server-only'`，不写 `'use server'`：那个指令不是「仅服务端」标记，它会把每个导出登记成可被直接 POST 的 Server Function（入参来自客户端，也不经页面守卫）。全仓目前没有由客户端调用的 Server Function，`kun/inv-server-01` 拦住这个指令；确实需要时把文件加进该条的 `ignores`，并在函数内自行校验入参与鉴权。
+- 新 API/表单边界先复用或补充 `validations/*.ts`，再通过 `kunParseGetQuery`、`kunParsePostBody`、`kunParsePutBody`、`kunParseDeleteQuery` 或 `kunParseFormData` 解析。页面读取器使用 `safeParseSchema`。
 - 业务错误通常以 `NextResponse.json('中文错误消息')` 返回，部分认证/CSRF 路径设置 401/403；客户端按 `string | T` 使用 `kunErrorHandler`/`kunErrorHandlerAsync`，不要假设所有业务错误都有非 2xx 状态。
 - 独立查询用 `Promise.all`；有顺序约束的事务、锁、缓存失效和外部副作用必须保持顺序。显式后台工作使用现有 `void ...catch(...)`、Next `after(...)` 或 Redis task lock 模式。
 - 无 DI 容器：服务直接导入 `prisma`、Redis/S3 client。只有事务范围需要传播时才传 transaction client，不新增单实现接口或工厂。

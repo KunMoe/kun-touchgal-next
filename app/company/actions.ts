@@ -1,4 +1,4 @@
-'use server'
+import 'server-only'
 
 import * as z from 'zod'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'

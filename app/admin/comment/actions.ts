@@ -1,4 +1,4 @@
-'use server'
+import 'server-only'
 
 import * as z from 'zod'
 import { getComment } from '~/app/api/admin/comment/get'

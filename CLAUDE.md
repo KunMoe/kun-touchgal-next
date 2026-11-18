@@ -32,7 +32,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 
 ## 请求与数据流（核心）
 
-- Server Component（`app/**/page.tsx`）→ `app/**/actions.ts` → service → `prisma` / `redis`。
+- Server Component（`app/**/page.tsx`）→ `app/**/actions.ts` → service → `prisma` / `redis`。`actions.ts` 是只在服务端被 await 的页面读取器，首行 `import 'server-only'`，不写 `'use server'`（会把导出登记成可被直接 POST 的 Server Function；lint 的 `kun/inv-server-01` 执法）。
 - Client Component → `utils/kunFetch.ts` → `app/api/**/route.ts` → `parseQuery` + Zod 校验 → 鉴权 → service/cache → Prisma。
 - `proxy.ts`（Next 16 前身为 `middleware.ts`）：对 `/api/*`（排除 `/api/upload/*`，其在 handler 内自行校验）做 CSRF；对 `/admin`、`/user`、`/edit` 做登录保护。
 - 认证：JWT cookie 名 `kun-galgame-patch-moe-token`；proxy 用 `app/api/utils/jwtEdge.ts`，服务端用 `jwt.ts` / `verifyHeaderCookie`。

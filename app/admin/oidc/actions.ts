@@ -1,4 +1,4 @@
-'use server'
+import 'server-only'
 
 import { getOidcClients } from '~/app/api/admin/oidc/service'
 import { verifySuperAdmin } from '~/utils/actions/parseSuperAdminAction'

@@ -1,4 +1,4 @@
-'use server'
+import 'server-only'
 
 import { cache } from 'react'
 import { getNSFWHeader } from './getNSFWHeader'
