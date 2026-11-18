@@ -1,10 +1,6 @@
 import 'server-only'
 import { parseCookies } from '~/utils/cookies'
 import { parseBlockedTagIds } from '~/utils/blockedTag'
-import {
-  KUN_AUTH_TOKEN_COOKIE,
-  KUN_NSFW_SETTING_COOKIE
-} from '~/utils/nsfwHeader'
 import { verifyKunTokenWithUser } from '~/app/api/utils/jwt'
 import { shouldBypassSharedCache } from '~/app/api/utils/contentVisibility'
 import {
@@ -15,7 +11,11 @@ import {
   type PublicListView
 } from './patchVisibility'
 
-// 设置页写的镜像 cookie (zustand persist), 内容是用户屏蔽的标签 id
+const KUN_AUTH_TOKEN_COOKIE = 'kun-galgame-patch-moe-token'
+// 设置 store (zustand persist) 写出的两个镜像 cookie: 分级设置, 用户屏蔽的标签 id。
+// 服务端只在本文件读它们 (kun/inv-viewer-02 执法)
+const KUN_NSFW_SETTING_COOKIE =
+  'kun-patch-setting-store|state|data|kunNsfwEnable'
 const KUN_BLOCKED_TAG_MIRROR_COOKIE =
   'kun-patch-setting-store|state|data|kunBlockedTagIds'
 

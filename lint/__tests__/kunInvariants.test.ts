@@ -129,24 +129,28 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
   })
 
   // 测试做不了生产写入, 却常要 mock / 断言这些方法 (inv-content-05/06), 输入夹具也常写
-  // { ...baseInput, role: 2 } (inv-authz-03), 构造操作者要用 kunTestActor (inv-authz-04);
+  // { ...baseInput, role: 2 } (inv-authz-03), 构造操作者要用 kunTestActor (inv-authz-04),
+  // 拼 Cookie 头要写镜像 cookie 的名字 (inv-viewer-02);
   // 示例路径不在 __tests__ 下, 上面照常执行
-  it.each(['inv-content-05', 'inv-content-06', 'inv-authz-03', 'inv-authz-04'])(
-    '%s 不管 __tests__ 下的文件',
-    async (id) => {
-      const inv = KUN_INVARIANTS.find((item) => item.id === id)
-      expect(inv?.examples.file).not.toContain('__tests__')
-      for (const bad of inv?.examples.bad ?? []) {
-        const reports = await reportsOf(
-          eslint,
-          bad,
-          'app/api/__tests__/kunInvariantExample.test.ts',
-          `kun/${id}`
-        )
-        expect(reports, bad).toEqual([])
-      }
+  it.each([
+    'inv-content-05',
+    'inv-content-06',
+    'inv-authz-03',
+    'inv-authz-04',
+    'inv-viewer-02'
+  ])('%s 不管 __tests__ 下的文件', async (id) => {
+    const inv = KUN_INVARIANTS.find((item) => item.id === id)
+    expect(inv?.examples.file).not.toContain('__tests__')
+    for (const bad of inv?.examples.bad ?? []) {
+      const reports = await reportsOf(
+        eslint,
+        bad,
+        'app/api/__tests__/kunInvariantExample.test.ts',
+        `kun/${id}`
+      )
+      expect(reports, bad).toEqual([])
     }
-  )
+  })
 
   // KunActor 只在服务端流动: 客户端的表单与 store 更新 ({ ...user, role }) 不归这条管。
   // 作用域收窄或放宽都会让这条变红

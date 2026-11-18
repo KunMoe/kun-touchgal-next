@@ -504,10 +504,6 @@ const verifyAndLoadUser = async (refreshToken: string) => {
   }
 }
 
-export const verifyKunToken = async (refreshToken: string) => {
-  return (await verifyAndLoadUser(refreshToken))?.payload ?? null
-}
-
 export const verifyKunTokenWithUser = async (refreshToken: string) => {
   return verifyAndLoadUser(refreshToken)
 }

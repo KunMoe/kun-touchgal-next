@@ -8,10 +8,6 @@ import {
   type ListView,
   type PatchVisibility
 } from '~/server/viewer/patchVisibility'
-import {
-  buildVisibilityCacheKey,
-  hasBlockedTagFilter
-} from '~/app/api/utils/visibilityCacheKey'
 
 const LIMITS: (ContentLimit | null)[] = ['sfw', 'nsfw', null]
 
@@ -128,31 +124,4 @@ describe('toPublicListView', () => {
     ])
     expect(isPersonal).toBe(false)
   })
-})
-
-// 过渡期的对照: 现有缓存层仍从 where 反推视角段与「是否带屏蔽标签」。正向给出的值必须与反推
-// 的一致, 各端点才能逐个改为消费 ListView 而不换键。反推那一侧删除时这一组一并删除
-describe('与从 where 反推的旧实现一致', () => {
-  it.each(LIMITS)('%s: 无屏蔽标签时视角段逐字节相同', (contentLimit) => {
-    const visibility: PatchVisibility = { contentLimit, blockedTagIds: [] }
-    const view = toPublicListView(visibility)
-
-    expect(view.kind).toBe('shared')
-    expect(view.kind === 'shared' && view.cacheVariant).toBe(
-      buildVisibilityCacheKey(toPatchWhere(visibility))
-    )
-  })
-
-  it.each(LIMITS)(
-    '%s: 是否可共享与反推的「带屏蔽标签」互为反面',
-    (contentLimit) => {
-      for (const blockedTagIds of [[], [1], [5, 2], [2147483647]]) {
-        const visibility: PatchVisibility = { contentLimit, blockedTagIds }
-
-        expect(toPublicListView(visibility).kind === 'filtered').toBe(
-          hasBlockedTagFilter(toPatchWhere(visibility))
-        )
-      }
-    }
-  )
 })

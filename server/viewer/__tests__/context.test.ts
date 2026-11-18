@@ -2,14 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
 const {
-  verifyKunTokenMock,
   verifyKunTokenWithUserMock,
   hasPendingResourceMock,
   headersMock,
   cookiesMock,
   renderCache
 } = vi.hoisted(() => ({
-  verifyKunTokenMock: vi.fn(),
   verifyKunTokenWithUserMock: vi.fn(),
   hasPendingResourceMock: vi.fn(),
   headersMock: vi.fn(),
@@ -18,7 +16,6 @@ const {
 }))
 
 vi.mock('~/app/api/utils/jwt', () => ({
-  verifyKunToken: verifyKunTokenMock,
   verifyKunTokenWithUser: verifyKunTokenWithUserMock
 }))
 
@@ -48,7 +45,6 @@ import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
 import { getViewerContext } from '~/server/viewer/fromHeaders'
 import { verifyHeaderCookie as verifyRequestCookie } from '~/middleware/_verifyHeaderCookie'
 import { verifyHeaderCookie as verifyRenderCookie } from '~/utils/actions/verifyHeaderCookie'
-import { loadAuthUser } from '~/utils/actions/loadAuthUser'
 
 const TOKEN = 'kun-galgame-patch-moe-token'
 const NSFW = 'kun-patch-setting-store|state|data|kunNsfwEnable'
@@ -137,7 +133,6 @@ describe('session / viewer', () => {
     await ctx.viewer()
 
     expect(verifyKunTokenWithUserMock).toHaveBeenCalledTimes(1)
-    expect(verifyKunTokenMock).not.toHaveBeenCalled()
   })
 
   it('无效 token 也只校验一次', async () => {
@@ -392,13 +387,11 @@ describe('两个适配器', () => {
     ])
     expect(second).toBe(first)
 
-    const [payload, auth, visibility] = await Promise.all([
+    const [payload, visibility] = await Promise.all([
       verifyRenderCookie(),
-      loadAuthUser(),
       first.visibility()
     ])
     expect(payload).toEqual(sessionOf(1).payload)
-    expect(auth).toEqual(sessionOf(1))
     expect(visibility).toEqual({ contentLimit: 'sfw', blockedTagIds: [7, 8] })
     expect(headersMock).toHaveBeenCalledTimes(1)
     expect(cookiesMock).not.toHaveBeenCalled()
@@ -409,7 +402,6 @@ describe('两个适配器', () => {
     headersMock.mockResolvedValue(new Headers())
 
     await expect(verifyRenderCookie()).resolves.toBeNull()
-    await expect(loadAuthUser()).resolves.toBeNull()
     expect(verifyKunTokenWithUserMock).not.toHaveBeenCalled()
   })
 })

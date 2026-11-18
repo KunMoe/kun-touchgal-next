@@ -681,6 +681,33 @@ export const KUN_INVARIANTS = [
         "import type { ViewerContext } from '~/server/viewer/context'"
       ]
     }
+  },
+  {
+    id: 'inv-viewer-02',
+    aliases: ['T05'],
+    statement:
+      '设置 store 的两个镜像 cookie (kun-patch-setting-store|state|data|…) 的名字只许出现在 server/viewer/context.ts: 服务端读它们来决定视角只有这一处',
+    reason:
+      '这两个 cookie 没有签名, 只能对有效会话采信。此前 Route Handler 与页面各有一族 helper 各读一遍, 三次可见性缺陷都是一侧改了另一侧没改 (匿名请求带 kunNsfwEnable=all 曾经 /api 拿到 NSFW 列表 52 天)。再出现第二个读取点, 两边就又得靠注释保持一致',
+    removeWhen: '服务端不再读这两个镜像 cookie',
+    files: ['app/**', 'server/**', 'middleware/**', 'utils/**', 'lib/**'],
+    ignores: ['server/viewer/context.ts', '**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [],
+      strings: [/kun-patch-setting-store\|state\|data\|/]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "export const name = 'kun-patch-setting-store|state|data|kunNsfwEnable'",
+        'export const read = (cookies: Record<string, string>, key: string) => cookies[`kun-patch-setting-store|state|data|${key}`]'
+      ],
+      good: [
+        "import { viewerContextFromRequest } from '~/server/viewer/fromRequest'",
+        "export const storeName = 'kun-patch-setting-store'"
+      ]
+    }
   }
 ]
 
