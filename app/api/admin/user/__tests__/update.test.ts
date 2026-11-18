@@ -38,6 +38,7 @@ vi.mock('~/app/api/utils/algorithm', () => ({
 }))
 
 import { updateUser } from '~/app/api/admin/user/update'
+import { adminUpdateUserSchema } from '~/validations/admin'
 
 // 库里存量的保留名用户: uid 1 (超管本人) 与冒名的 admin 都属于这一类
 const reservedNameUser = {
@@ -131,5 +132,78 @@ describe('updateUser 保留用户名', () => {
         data: expect.objectContaining({ name: 'kun-admin' })
       })
     )
+  })
+})
+
+describe('updateUser 角色按 delta 判定', () => {
+  const setup = (targetRole: number, operatorRole = 4) => {
+    findUserMock.mockReset()
+    findUserMock
+      .mockResolvedValueOnce({ ...reservedNameUser, role: targetRole })
+      .mockResolvedValueOnce({ role: operatorRole, name: 'root-admin' })
+  }
+
+  it('没改角色时可以保存超级管理员账号的其它字段', async () => {
+    setup(4)
+
+    await expect(
+      updateUser({ ...baseInput, role: 4, moemoepoint: 7 }, 99)
+    ).resolves.toEqual({})
+
+    expect(updateUserMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ role: 4, moemoepoint: 7 })
+      })
+    )
+  })
+
+  it.each([1, 2, 3])(
+    '不能把 role %i 的用户设置为超级管理员, 不落库',
+    async (targetRole) => {
+      setup(targetRole)
+
+      await expect(updateUser({ ...baseInput, role: 4 }, 99)).resolves.toBe(
+        '不能将用户设置为该角色'
+      )
+
+      expect(transactionMock).not.toHaveBeenCalled()
+      expect(deleteTokenMock).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    [1, 3],
+    [3, 1],
+    [4, 3],
+    [4, 1]
+  ])('可以把 role %i 改成 role %i (含给超级管理员降权)', async (from, to) => {
+    setup(from)
+
+    await expect(updateUser({ ...baseInput, role: to }, 99)).resolves.toEqual(
+      {}
+    )
+
+    expect(updateUserMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: to }) })
+    )
+    expect(deleteTokenMock).toHaveBeenCalledWith(7)
+  })
+
+  it('操作者在库里已不是超级管理员时不能改任何人的角色', async () => {
+    setup(1, 3)
+
+    await expect(updateUser({ ...baseInput, role: 2 }, 99)).resolves.toBe(
+      '设置用户为管理员仅限超级管理员可用'
+    )
+
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+
+  it('schema 只校验角色的取值域, 不在这一层卡可授予的上限', () => {
+    const parse = (role: number) =>
+      adminUpdateUserSchema.safeParse({ ...baseInput, role }).success
+
+    expect([1, 2, 3, 4].map(parse)).toEqual([true, true, true, true])
+    expect([0, 5].map(parse)).toEqual([false, false])
   })
 })

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
+import { useShallow } from 'zustand/react/shallow'
 import {
   Button,
   Input,
@@ -18,8 +19,10 @@ import {
 import { Edit2 } from 'lucide-react'
 import { USER_STATUS_MAP } from '~/constants/user'
 import { KUN_ROLE_LABEL } from '~/constants/role'
+import { canAssignRole } from '~/constants/permission'
 import { kunFetchPost, kunFetchPut } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
+import { useUserStore } from '~/store/userStore'
 import type { AdminUser } from '~/types/api/admin'
 
 interface Props {
@@ -42,6 +45,13 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
   const [formUser, setFormUser] = useState<AdminUser>(initialUser)
   const [password, setPassword] = useState('')
   const [disabling2FA, setDisabling2FA] = useState(false)
+  const currentUser = useUserStore(
+    useShallow((state) => ({ uid: state.user.uid, role: state.user.role }))
+  )
+  // 与服务端同一个判定: 只列得出能保存的角色 (当前角色恒在其中)
+  const assignableRoles = roleOptions.filter((role) =>
+    canAssignRole(currentUser, { current: user.role, next: role.value })
+  )
   const { isOpen, onOpen, onClose } = useDisclosure()
 
   useEffect(() => {
@@ -153,7 +163,7 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
                 selectedKeys={[String(formUser.role)]}
                 onChange={(e) => handleChange('role', Number(e.target.value))}
               >
-                {roleOptions.map((role) => (
+                {assignableRoles.map((role) => (
                   <SelectItem key={role.value}>{role.label}</SelectItem>
                 ))}
               </Select>

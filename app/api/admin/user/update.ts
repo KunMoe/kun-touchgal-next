@@ -7,6 +7,7 @@ import {
 } from '~/constants/reserved-usernames.server'
 import { deleteKunToken } from '~/app/api/utils/jwt'
 import { hashPassword } from '~/app/api/utils/algorithm'
+import { can, canAssignRole } from '~/constants/permission'
 
 export const updateUser = async (
   input: z.infer<typeof adminUpdateUserSchema>,
@@ -38,8 +39,13 @@ export const updateUser = async (
   if (!admin) {
     return '未找到该管理员'
   }
-  if (rest.role >= 3 && admin.role < 4) {
-    return '设置用户为管理员仅限超级管理员可用'
+  // 角色按 delta 判定: 没改角色就放行; 改了, 操作者要有授予角色的能力, 目标角色也要
+  // 可被授予 (超级管理员不在其中)
+  const operator = { uid: adminUid, role: admin.role }
+  if (!canAssignRole(operator, { current: user.role, next: rest.role })) {
+    return can(operator, 'role.assign')
+      ? '不能将用户设置为该角色'
+      : '设置用户为管理员仅限超级管理员可用'
   }
   // 保留词只拦「改名」这一步: 表单整体提交, name 恒定携带, 若在 schema 层判
   // 会把库里存量的保留名用户 (含 uid 1 与冒名的 admin) 锁死, 连封禁都做不了

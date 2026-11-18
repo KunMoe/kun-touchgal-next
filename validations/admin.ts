@@ -6,6 +6,7 @@ import {
 } from '~/constants/admin'
 import { MODERATION_TEXT_CONTENT_TYPE } from '~/constants/moderation'
 import { kunPasswordRegex } from '~/utils/validate'
+import { KUN_ROLE } from '~/constants/role'
 
 export const adminReportTargetTypeSchema = z.enum(['comment', 'rating'])
 
@@ -183,7 +184,9 @@ export const adminUpdateUserSchema = z.object({
     .min(1, { message: '用户名长度至少为 1 个字符' })
     .max(17, { message: '用户名长度不能超过 17 个字符' }),
   email: z.string().trim().email({ message: '请输入合法的邮箱格式' }),
-  role: z.coerce.number().min(1).max(3),
+  // 只校验取值域。表单整体提交, role 恒定携带: 在这里卡「可授予」的上限会让超级管理员账号
+  // 连别的字段都保存不了; 能不能改成这个角色由服务按新旧角色判定 (canAssignRole)
+  role: z.coerce.number().min(KUN_ROLE.USER).max(KUN_ROLE.SUPER_ADMIN),
   status: z.coerce.number().min(0).max(2),
   dailyImageCount: z.coerce.number().min(0).max(50),
   moemoepoint: z.coerce
