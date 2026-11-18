@@ -170,6 +170,40 @@ describe('getPatchComment 缓存', () => {
     expect(rootFindManyMock).toHaveBeenCalledTimes(2)
   })
 
+  // content.viewPending 的边界: 创作者 (role 2) 与普通用户一样走共享缓存,
+  // 管理员 (role 3) 起绕过共享缓存
+  it.each([1, 2])(
+    'role %i 没有自己的待审评论时走共享缓存, 第二次命中不重建',
+    async (role) => {
+      const roleViewer = { uid: 7, role }
+
+      await getPatchComment(input, roleViewer)
+      await getPatchComment(input, roleViewer)
+
+      expect(countMock).toHaveBeenCalledWith({
+        where: { patch_id: 10, user_id: 7, status: 1 }
+      })
+      expect(getKvMock).toHaveBeenCalled()
+      expect(rootFindManyMock).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each([3, 4])(
+    'role %i 绕过共享缓存, 不查自己的待审评论数, 每次重建',
+    async (role) => {
+      const roleViewer = { uid: 7, role }
+
+      await getPatchComment(input, roleViewer)
+      await getPatchComment(input, roleViewer)
+
+      expect(countMock).not.toHaveBeenCalledWith({
+        where: { patch_id: 10, user_id: 7, status: 1 }
+      })
+      expect(getKvMock).not.toHaveBeenCalled()
+      expect(rootFindManyMock).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('失效后重新回源', async () => {
     await getPatchComment(input, viewer)
     rootFindManyMock.mockClear()
