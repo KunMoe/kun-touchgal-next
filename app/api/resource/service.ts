@@ -7,12 +7,9 @@ import {
   setResourceListCache,
   setResourceListCacheIfAbsent
 } from './cache'
-import {
-  getResourceVisibilityWhere,
-  type KunViewer
-} from '~/app/api/utils/contentVisibility'
+import { getListResourceStatusWhere } from '~/app/api/utils/contentVisibility'
 import { kunCacheSingleflight } from '~/app/api/utils/cacheSingleflight'
-import { hasBlockedTagFilter } from '~/app/api/utils/visibilityCacheKey'
+import { toPatchWhere, type ListView } from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { PatchResource, ResourceListResponse } from '~/types/api/resource'
 
@@ -109,27 +106,23 @@ const queryPatchResource = async (
 
 export const getPatchResource = async (
   input: z.infer<typeof resourceSchema>,
-  visibilityWhere: Prisma.patchWhereInput,
-  viewer: KunViewer | null,
-  bypassCache: boolean
+  view: ListView
 ): Promise<ResourceListResponse> => {
-  // 带屏蔽标签的视角不参与共享缓存, 见 hasBlockedTagFilter
+  const visibilityWhere = toPatchWhere(view.visibility)
+  const statusWhere = getListResourceStatusWhere(view)
+
+  // 只有 shared 视角读写共享缓存 (各视角的含义见 ListView)
   const cacheKey =
-    bypassCache || hasBlockedTagFilter(visibilityWhere)
-      ? null
-      : await getResourceListCacheKey(input, visibilityWhere)
+    view.kind === 'shared'
+      ? await getResourceListCacheKey(input, view.cacheVariant)
+      : null
 
   const cached = await getCachedResourceList(cacheKey)
   if (cached.response) {
     return cached.response
   }
 
-  // 共享缓存路径按公开视角查询, 避免 viewer 相关内容写入缓存
-  const statusWhere = bypassCache
-    ? getResourceVisibilityWhere(viewer)
-    : { status: 0 }
-
-  // bypassCache / 版本号读取失败 (cacheKey 为 null) 与缓存读失败均不参与单飞
+  // 非 shared 视角 / 版本号读取失败 (cacheKey 为 null) 与缓存读失败均不参与单飞
   if (!cacheKey || !cached.canWrite) {
     return queryPatchResource(input, visibilityWhere, statusWhere)
   }

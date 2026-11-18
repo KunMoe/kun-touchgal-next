@@ -3,8 +3,6 @@ import * as z from 'zod'
 import { RESOURCE_LIST_CACHE_DURATION } from '~/config/cache'
 import { delKv, getKv, getKvs, setKv, setKvIfAbsent } from '~/lib/redis'
 import { resourceSchema } from '~/validations/resource'
-import { buildVisibilityCacheKey } from '~/app/api/utils/visibilityCacheKey'
-import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { ResourceListResponse } from '~/types/api/resource'
 
 const RESOURCE_LIST_CACHE_KEY_PREFIX = 'resource:list'
@@ -52,7 +50,7 @@ export const invalidateResourceStatsListCache = async () => {
 
 export const getResourceListCacheKey = async (
   input: z.infer<typeof resourceSchema>,
-  visibilityWhere: Prisma.patchWhereInput
+  cacheVariant: string
 ) => {
   const shouldUseStatsVersion =
     input.sortField === 'download' || input.sortField === 'like'
@@ -84,7 +82,7 @@ export const getResourceListCacheKey = async (
     input.sortOrder,
     String(input.page),
     String(input.limit),
-    buildVisibilityCacheKey(visibilityWhere)
+    cacheVariant
   ].join('|')
   const hash = createHash('sha1').update(parts).digest('hex').slice(0, 16)
   return `${RESOURCE_LIST_CACHE_KEY_PREFIX}:${hash}`

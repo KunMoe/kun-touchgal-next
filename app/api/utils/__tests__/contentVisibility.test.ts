@@ -11,6 +11,7 @@ vi.mock('~/app/api/utils/pendingResourceCache', () => ({
 import {
   getCommentRatingVisibilityWhere,
   getCommentVisibilitySql,
+  getListResourceStatusWhere,
   getResourceVisibilityWhere,
   isContentVisibleToViewer,
   shouldBypassSharedCache
@@ -56,6 +57,45 @@ describe('shouldBypassSharedCache', () => {
 
 // content.viewPending 的边界: 创作者 (role 2) 与普通用户同视角, 只看得到自己的待审内容;
 // 管理员 (role 3) 起才看得到他人的待审内容
+describe('getListResourceStatusWhere', () => {
+  const visibility = { contentLimit: 'sfw', blockedTagIds: [] } as const
+
+  it('shared 与 filtered 视角只看公开资源', () => {
+    expect(
+      getListResourceStatusWhere({
+        kind: 'shared',
+        visibility,
+        cacheVariant: 'sfw:'
+      })
+    ).toEqual({ status: 0 })
+    expect(
+      getListResourceStatusWhere({
+        kind: 'filtered',
+        visibility: { contentLimit: 'sfw', blockedTagIds: [1] }
+      })
+    ).toEqual({ status: 0 })
+  })
+
+  it('personal 视角按 viewer 取: 作者看到自己待审核的, 管理员看到全部待审核的', () => {
+    expect(
+      getListResourceStatusWhere({
+        kind: 'personal',
+        visibility,
+        viewer: { uid: 7, role: 2 }
+      })
+    ).toEqual({
+      OR: [{ status: 0 }, { status: { in: [2, 3] }, user_id: 7 }]
+    })
+    expect(
+      getListResourceStatusWhere({
+        kind: 'personal',
+        visibility,
+        viewer: { uid: 7, role: 3 }
+      })
+    ).toEqual({ status: { in: [0, 2, 3] } })
+  })
+})
+
 describe('待审内容可见性的角色边界 (content.viewPending)', () => {
   const OTHER_UID = 99
 

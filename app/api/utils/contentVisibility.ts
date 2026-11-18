@@ -1,6 +1,7 @@
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { hasPendingResource } from '~/app/api/utils/pendingResourceCache'
 import { can } from '~/constants/permission'
+import type { ListView } from '~/server/viewer/patchVisibility'
 
 export interface KunViewer {
   uid: number
@@ -40,6 +41,13 @@ export const getResourceVisibilityWhere = (viewer: KunViewer | null) => {
   }
   return { status: 0 }
 }
+
+// 列表里的资源按视角取 status 条件: 只有 personal 视角看得到待审核资源。shared 与 filtered
+// 一律按公开基线, 共享缓存里才不会混进因人而异的内容
+export const getListResourceStatusWhere = (view: ListView) =>
+  view.kind === 'personal'
+    ? getResourceVisibilityWhere(view.viewer)
+    : { status: 0 }
 
 // 评论抓取递归 CTE 中的原生 SQL 片段 (语义同 getCommentRatingVisibilityWhere)
 export const getCommentVisibilitySql = (viewer: KunViewer | null) =>

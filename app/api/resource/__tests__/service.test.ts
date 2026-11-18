@@ -42,16 +42,16 @@ vi.mock('~/prisma/index', () => ({
 }))
 
 import { getPatchResource } from '~/app/api/resource/service'
+import { toPublicListView } from '~/server/viewer/patchVisibility'
 
-const blockedTagWhere = (count: number) => ({
-  NOT: {
-    tag: {
-      some: {
-        tag_id: { in: Array.from({ length: count }, (_, index) => index + 1) }
-      }
-    }
-  }
-})
+// 分级不限、无屏蔽标签的共享视角
+const ALL_VIEW = toPublicListView({ contentLimit: null, blockedTagIds: [] })
+
+const blockedView = (count: number) =>
+  toPublicListView({
+    contentLimit: null,
+    blockedTagIds: Array.from({ length: count }, (_, index) => index + 1)
+  })
 
 const INPUT = {
   sortField: 'created',
@@ -77,12 +77,7 @@ describe('getPatchResource', () => {
   })
 
   it('skips the shared cache entirely when any tag is blocked', async () => {
-    const response = await getPatchResource(
-      INPUT,
-      blockedTagWhere(1),
-      null,
-      false
-    )
+    const response = await getPatchResource(INPUT, blockedView(1))
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
@@ -94,12 +89,7 @@ describe('getPatchResource', () => {
   })
 
   it('skips the shared cache for large blocked tag sets too', async () => {
-    const response = await getPatchResource(
-      INPUT,
-      blockedTagWhere(60),
-      null,
-      false
-    )
+    const response = await getPatchResource(INPUT, blockedView(60))
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
@@ -111,7 +101,7 @@ describe('getPatchResource', () => {
   it('returns cached response without querying or locking', async () => {
     getKvMock.mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
 
-    const response = await getPatchResource(INPUT, {}, null, false)
+    const response = await getPatchResource(INPUT, ALL_VIEW)
 
     expect(response).toEqual(CACHED_RESPONSE)
     expect(acquireKvLockMock).not.toHaveBeenCalled()
@@ -122,7 +112,7 @@ describe('getPatchResource', () => {
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue('token-1')
 
-    const response = await getPatchResource(INPUT, {}, null, false)
+    const response = await getPatchResource(INPUT, ALL_VIEW)
 
     const cacheKey = getRequestedCacheKey()
     expect(response).toEqual(EMPTY_RESPONSE)
@@ -146,7 +136,7 @@ describe('getPatchResource', () => {
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue('token-1')
 
-    await getPatchResource(INPUT, {}, null, false)
+    await getPatchResource(INPUT, ALL_VIEW)
 
     expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
     const { select } = resourceFindManyMock.mock.calls[0][0]
@@ -162,9 +152,7 @@ describe('getPatchResource', () => {
 
     await getPatchResource(
       { ...INPUT, sortField: 'like', sortOrder: 'asc' },
-      {},
-      null,
-      false
+      ALL_VIEW
     )
 
     expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
@@ -185,12 +173,7 @@ describe('getPatchResource', () => {
       getKvMock.mockResolvedValue(null)
       acquireKvLockMock.mockResolvedValue('token-1')
 
-      await getPatchResource(
-        { ...INPUT, sortField, sortOrder },
-        {},
-        null,
-        false
-      )
+      await getPatchResource({ ...INPUT, sortField, sortOrder }, ALL_VIEW)
 
       expect(resourceFindManyMock.mock.calls[0][0].orderBy).toStrictEqual([
         { [sortField]: sortOrder },
@@ -205,7 +188,7 @@ describe('getPatchResource', () => {
       .mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
     acquireKvLockMock.mockResolvedValue(null)
 
-    const response = await getPatchResource(INPUT, {}, null, false)
+    const response = await getPatchResource(INPUT, ALL_VIEW)
 
     expect(response).toEqual(CACHED_RESPONSE)
     expect(resourceFindManyMock).not.toHaveBeenCalled()
@@ -217,7 +200,7 @@ describe('getPatchResource', () => {
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue(null)
 
-    const response = await getPatchResource(INPUT, {}, null, false)
+    const response = await getPatchResource(INPUT, ALL_VIEW)
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(getKvMock).toHaveBeenCalledTimes(4)
@@ -232,12 +215,11 @@ describe('getPatchResource', () => {
   })
 
   it('bypasses cache and singleflight for personalized viewers', async () => {
-    const response = await getPatchResource(
-      INPUT,
-      {},
-      { uid: 1, role: 3 },
-      true
-    )
+    const response = await getPatchResource(INPUT, {
+      kind: 'personal',
+      visibility: { contentLimit: null, blockedTagIds: [] },
+      viewer: { uid: 1, role: 3 }
+    })
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(getKvsMock).not.toHaveBeenCalled()
@@ -256,7 +238,7 @@ describe('getPatchResource', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvsMock.mockRejectedValue(new Error('redis down'))
 
-    const response = await getPatchResource(INPUT, {}, null, false)
+    const response = await getPatchResource(INPUT, ALL_VIEW)
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(getKvMock).not.toHaveBeenCalled()
@@ -269,7 +251,7 @@ describe('getPatchResource', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValue(new Error('redis down'))
 
-    const response = await getPatchResource(INPUT, {}, null, false)
+    const response = await getPatchResource(INPUT, ALL_VIEW)
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(acquireKvLockMock).not.toHaveBeenCalled()

@@ -4,9 +4,7 @@ import * as z from 'zod'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'
 import { resourceSchema } from '~/validations/resource'
 import { getPatchResource } from '~/app/api/resource/service'
-import { getPatchVisibilityWhere } from '~/utils/actions/getPatchVisibilityWhere'
-import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
-import { shouldBypassSharedCache } from '~/app/api/utils/contentVisibility'
+import { getViewerContext } from '~/server/viewer/fromHeaders'
 
 export const kunGetActions = async (params: z.infer<typeof resourceSchema>) => {
   const input = safeParseSchema(resourceSchema, params)
@@ -14,17 +12,9 @@ export const kunGetActions = async (params: z.infer<typeof resourceSchema>) => {
     return input
   }
 
-  const [visibilityWhere, payload] = await Promise.all([
-    getPatchVisibilityWhere(),
-    verifyHeaderCookie()
-  ])
-  const bypassCache = await shouldBypassSharedCache(payload)
+  const ctx = await getViewerContext()
+  const view = await ctx.listView({ personalizedByPendingResource: true })
 
-  const response = await getPatchResource(
-    input,
-    visibilityWhere,
-    payload,
-    bypassCache
-  )
+  const response = await getPatchResource(input, view)
   return response
 }

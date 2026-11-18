@@ -37,21 +37,20 @@ vi.mock('~/prisma/index', () => ({
 }))
 
 import { getHomeData } from '~/app/api/home/service'
+import { toPublicListView } from '~/server/viewer/patchVisibility'
 
-// sha1('all:') 前 16 位, 即 buildVisibilityCacheKey({}) 的哈希
+// 分级不限、无屏蔽标签的共享视角
+const ALL_VIEW = toPublicListView({ contentLimit: null, blockedTagIds: [] })
+// sha1('all:') 前 16 位
 const CACHE_KEY = 'home:v2:69fdeab2a1c8368d'
 const LOCK_KEY = `${CACHE_KEY}:lock`
 const CACHED_RESPONSE = { galgames: [], resources: [{ id: 1 }] }
 
-const blockedTagWhere = (count: number) => ({
-  NOT: {
-    tag: {
-      some: {
-        tag_id: { in: Array.from({ length: count }, (_, index) => index + 1) }
-      }
-    }
-  }
-})
+const blockedView = (count: number) =>
+  toPublicListView({
+    contentLimit: null,
+    blockedTagIds: Array.from({ length: count }, (_, index) => index + 1)
+  })
 
 describe('getHomeData', () => {
   beforeEach(() => {
@@ -66,7 +65,7 @@ describe('getHomeData', () => {
   it('returns cached response without querying or locking', async () => {
     getKvMock.mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
 
-    const response = await getHomeData({}, null, false)
+    const response = await getHomeData(ALL_VIEW)
 
     expect(response).toEqual(CACHED_RESPONSE)
     expect(acquireKvLockMock).not.toHaveBeenCalled()
@@ -77,7 +76,7 @@ describe('getHomeData', () => {
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue('token-1')
 
-    const response = await getHomeData({}, null, false)
+    const response = await getHomeData(ALL_VIEW)
 
     expect(response).toEqual({ galgames: [], resources: [] })
     expect(acquireKvLockMock).toHaveBeenCalledWith(LOCK_KEY, 10)
@@ -96,7 +95,7 @@ describe('getHomeData', () => {
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue('token-1')
 
-    await getHomeData({}, null, false)
+    await getHomeData(ALL_VIEW)
 
     expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
     const { select } = resourceFindManyMock.mock.calls[0][0]
@@ -111,7 +110,7 @@ describe('getHomeData', () => {
     acquireKvLockMock.mockResolvedValue('token-1')
     patchFindManyMock.mockRejectedValue(new Error('db down'))
 
-    await expect(getHomeData({}, null, false)).rejects.toThrow('db down')
+    await expect(getHomeData(ALL_VIEW)).rejects.toThrow('db down')
 
     expect(setKvMock).not.toHaveBeenCalled()
     expect(releaseKvLockMock).toHaveBeenCalledWith(LOCK_KEY, 'token-1')
@@ -123,7 +122,7 @@ describe('getHomeData', () => {
       .mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
     acquireKvLockMock.mockResolvedValue(null)
 
-    const response = await getHomeData({}, null, false)
+    const response = await getHomeData(ALL_VIEW)
 
     expect(response).toEqual(CACHED_RESPONSE)
     expect(patchFindManyMock).not.toHaveBeenCalled()
@@ -135,7 +134,7 @@ describe('getHomeData', () => {
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue(null)
 
-    const response = await getHomeData({}, null, false)
+    const response = await getHomeData(ALL_VIEW)
 
     expect(response).toEqual({ galgames: [], resources: [] })
     expect(getKvMock).toHaveBeenCalledTimes(4)
@@ -154,7 +153,7 @@ describe('getHomeData', () => {
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockRejectedValue(new Error('redis down'))
 
-    const response = await getHomeData({}, null, false)
+    const response = await getHomeData(ALL_VIEW)
 
     expect(response).toEqual({ galgames: [], resources: [] })
     expect(getKvMock).toHaveBeenCalledTimes(1)
@@ -165,10 +164,18 @@ describe('getHomeData', () => {
   })
 
   it('skips the shared cache entirely when any tag is blocked', async () => {
-    const response = await getHomeData(blockedTagWhere(1), null, false)
+    const response = await getHomeData(blockedView(1))
 
     expect(response).toEqual({ galgames: [], resources: [] })
     expect(patchFindManyMock).toHaveBeenCalledTimes(1)
+    // 屏蔽标签进查询条件, 资源仍按公开基线
+    const blockedWhere = { NOT: { tag: { some: { tag_id: { in: [1] } } } } }
+    expect(patchFindManyMock.mock.calls[0][0].where).toEqual(blockedWhere)
+    expect(resourceFindManyMock.mock.calls[0][0].where).toEqual({
+      patch: blockedWhere,
+      section: 'patch',
+      status: 0
+    })
     expect(getKvMock).not.toHaveBeenCalled()
     expect(acquireKvLockMock).not.toHaveBeenCalled()
     expect(setKvMock).not.toHaveBeenCalled()
@@ -176,7 +183,7 @@ describe('getHomeData', () => {
   })
 
   it('skips the shared cache for large blocked tag sets too', async () => {
-    const response = await getHomeData(blockedTagWhere(60), null, false)
+    const response = await getHomeData(blockedView(60))
 
     expect(response).toEqual({ galgames: [], resources: [] })
     expect(patchFindManyMock).toHaveBeenCalledTimes(1)
@@ -184,11 +191,53 @@ describe('getHomeData', () => {
     expect(setKvMock).not.toHaveBeenCalled()
   })
 
+  it('queries the personal view without the shared cache and with its own status filter', async () => {
+    const response = await getHomeData({
+      kind: 'personal',
+      visibility: { contentLimit: 'sfw', blockedTagIds: [] },
+      viewer: { uid: 7, role: 1 }
+    })
+
+    expect(response).toEqual({ galgames: [], resources: [] })
+    expect(getKvMock).not.toHaveBeenCalled()
+    expect(acquireKvLockMock).not.toHaveBeenCalled()
+    expect(setKvMock).not.toHaveBeenCalled()
+    expect(setKvIfAbsentMock).not.toHaveBeenCalled()
+    expect(patchFindManyMock.mock.calls[0][0].where).toEqual({
+      content_limit: 'sfw'
+    })
+    expect(resourceFindManyMock.mock.calls[0][0].where).toEqual({
+      patch: { content_limit: 'sfw' },
+      section: 'patch',
+      OR: [{ status: 0 }, { status: { in: [2, 3] }, user_id: 7 }]
+    })
+  })
+
+  it.each([
+    ['sfw', 'home:v2:c01ede773657b5e2'],
+    ['nsfw', 'home:v2:1f035bb8804256f0']
+  ] as const)(
+    'keys the %s shared view separately and queries the public baseline',
+    async (contentLimit, cacheKey) => {
+      getKvMock.mockResolvedValue(null)
+      acquireKvLockMock.mockResolvedValue('token-1')
+
+      await getHomeData(toPublicListView({ contentLimit, blockedTagIds: [] }))
+
+      expect(getKvMock).toHaveBeenCalledWith(cacheKey)
+      expect(resourceFindManyMock.mock.calls[0][0].where).toEqual({
+        patch: { content_limit: contentLimit },
+        section: 'patch',
+        status: 0
+      })
+    }
+  )
+
   it('queries directly without locking when the cache read fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValue(new Error('redis down'))
 
-    const response = await getHomeData({}, null, false)
+    const response = await getHomeData(ALL_VIEW)
 
     expect(response).toEqual({ galgames: [], resources: [] })
     expect(acquireKvLockMock).not.toHaveBeenCalled()

@@ -3,25 +3,18 @@ import { prisma } from '~/prisma/index'
 import { delKv, getKv, setKv, setKvIfAbsent } from '~/lib/redis'
 import { HOME_CACHE_DURATION } from '~/config/cache'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
-import {
-  buildVisibilityCacheKey,
-  hasBlockedTagFilter
-} from '../utils/visibilityCacheKey'
 import { kunCacheSingleflight } from '~/app/api/utils/cacheSingleflight'
-import {
-  getResourceVisibilityWhere,
-  type KunViewer
-} from '~/app/api/utils/contentVisibility'
+import { getListResourceStatusWhere } from '~/app/api/utils/contentVisibility'
+import { toPatchWhere, type ListView } from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { HomeResource } from '~/types/api/home'
 
 const HOME_CACHE_KEY_PREFIX = 'home:v2'
 
-// 与 galgame / resource / tag 列表缓存一致: 视角部分取哈希, 避免屏蔽标签
-// 原样进入键名令键长随客户端输入增长
-const getHomeCacheKey = (visibilityWhere: Prisma.patchWhereInput) => {
+// 与 galgame / resource 列表缓存一致: 键里的视角段取哈希
+const getHomeCacheKey = (cacheVariant: string) => {
   const hash = createHash('sha1')
-    .update(buildVisibilityCacheKey(visibilityWhere))
+    .update(cacheVariant)
     .digest('hex')
     .slice(0, 16)
   return `${HOME_CACHE_KEY_PREFIX}:${hash}`
@@ -178,27 +171,20 @@ const setHomeCacheIfAbsent = async (
   }
 }
 
-export const getHomeData = async (
-  visibilityWhere: Prisma.patchWhereInput,
-  viewer: KunViewer | null,
-  bypassCache: boolean
-): Promise<HomeResponse> => {
-  const cacheKey = getHomeCacheKey(visibilityWhere)
+export const getHomeData = async (view: ListView): Promise<HomeResponse> => {
+  const visibilityWhere = toPatchWhere(view.visibility)
+  const statusWhere = getListResourceStatusWhere(view)
 
-  // 带屏蔽标签的视角不参与共享缓存, 见 hasBlockedTagFilter
-  const skipSharedCache = bypassCache || hasBlockedTagFilter(visibilityWhere)
+  // 只有 shared 视角读写共享缓存 (各视角的含义见 ListView)
+  if (view.kind !== 'shared') {
+    return queryHomeData(visibilityWhere, statusWhere)
+  }
 
-  const cached = skipSharedCache
-    ? { response: null, canWrite: false }
-    : await getCachedHomeData(cacheKey)
+  const cacheKey = getHomeCacheKey(view.cacheVariant)
+  const cached = await getCachedHomeData(cacheKey)
   if (cached.response) {
     return cached.response
   }
-
-  // 共享缓存路径按公开视角查询, 避免 viewer 相关内容写入缓存
-  const statusWhere = bypassCache
-    ? getResourceVisibilityWhere(viewer)
-    : { status: 0 }
 
   if (!cached.canWrite) {
     return queryHomeData(visibilityWhere, statusWhere)
