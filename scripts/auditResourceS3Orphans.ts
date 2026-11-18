@@ -8,6 +8,8 @@
 // 会同意删除的对象。只看 LastModified 早于 48 小时的对象: bind 复制出 finalKey 到资源行提交
 // 之间, 对象暂时没有引用, 不算孤儿。in_outbox 为 true 的已在删除写出箱里排队, 不是漏删。
 // 用途: 给「是否在 patch_resource_link 上加删除触发器」提供孤儿规模的数据。
+// lib/s3 在导入时就用环境变量建客户端, .env 必须先于它加载
+import 'dotenv/config'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ListObjectsV2Command } from '@aws-sdk/client-s3'

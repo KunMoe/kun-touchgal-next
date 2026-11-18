@@ -24,6 +24,8 @@
 // HeadObject 除 404 以外的错误 (鉴权、网络) 直接中止: 把它当成「不存在」会让分类失真。
 // 写入以「仍是空 s3_key、content 未变」为条件, 不改 updated; 与编辑并发而没写成的行在报告里
 // 标为 conflict, 编辑重建的新行也还是空 s3_key, 所以 --write 要跑两遍。
+// lib/s3 在导入时就用环境变量建客户端, .env 必须先于它加载
+import 'dotenv/config'
 import path from 'node:path'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
