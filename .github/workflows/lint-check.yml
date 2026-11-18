@@ -158,3 +158,10 @@ jobs:
 
       - name: 对照快照与 Prisma schema 校验
         run: pnpm run db:verify --prisma
+
+      # 设了 KUN_DB_CONTRACT_URL 才会运行的那组用例: 应用层的条件更新、冷却与并发在真库上的行为。
+      # 用例要求 user 表为空, 跑完删掉自己建的行
+      - name: 应用层的实库用例
+        env:
+          KUN_DB_CONTRACT_URL: postgresql://postgres:postgres@127.0.0.1:5432/kun_ci?schema=public
+        run: pnpm exec vitest run server/auth/__tests__/emailChange.db.test.ts

@@ -7,6 +7,7 @@ import {
   it,
   vi
 } from 'vitest'
+import { createHash } from 'crypto'
 import { KUN_ROLE } from '~/constants/role'
 
 // 改邮箱入口的可观察行为 (仍按现状钉住的已知问题, 用例名带 [current: ...])。
@@ -43,7 +44,6 @@ const TAKEN_EMAIL = 'taken@example.com'
 const PASSWORD = 'kunpass123'
 const WRONG_PASSWORD = 'wrongpass456'
 const CODE = 'AbC1234'
-const REVERT_PREFIX = 'email-change-revert:'
 const NOTICE_FAILED = '发送旧邮箱安全通知失败, 请稍后重试'
 const CODE_INVALID = '您的验证码无效, 请重新输入'
 const REPLAYED = '该验证码已经使用过, 请等身份验证器显示新的验证码后再试'
@@ -93,9 +93,6 @@ const use2FA = () => {
     two_factor_backup: BACKUP_CODES.map(hashTwoFactorBackupCode)
   })
 }
-
-const revertKeys = () =>
-  kv.keys().filter((key) => key.startsWith(REVERT_PREFIX))
 
 beforeAll(async () => {
   passwordHash = await hashPassword(PASSWORD)
@@ -434,7 +431,7 @@ describe('POST /api/user/setting/email: verification code', () => {
     expect(await read(missing)).toBe('您的验证码无效, 请重新输入')
     expect(db.user(UID)?.email).toBe(OLD_EMAIL)
     expect(mail.outbox).toEqual([])
-    expect(revertKeys()).toEqual([])
+    expect(db.emailChanges()).toEqual([])
   })
 
   it('leaves the code in place after a wrong guess and compares case-insensitively', async () => {
@@ -448,10 +445,15 @@ describe('POST /api/user/setting/email: verification code', () => {
 })
 
 describe('POST /api/user/setting/email: notice and commit', () => {
-  it('notifies the old address with a revert link, then switches the email', async () => {
-    let atSend: { email?: string; revertKeys: string[] } | undefined
+  const sha256 = (value: string) =>
+    createHash('sha256').update(value).digest('hex')
+  const tokenIn = (text: string) =>
+    text.match(/revert\?token=([A-Za-z0-9_-]+)/)?.[1] ?? ''
+
+  it('notifies the old address with a revert link, then switches the email and records the change', async () => {
+    let atSend: { email?: string; ledger: number } | undefined
     mail.onSend(() => {
-      atSend = { email: db.user(UID)?.email, revertKeys: revertKeys() }
+      atSend = { email: db.user(UID)?.email, ledger: db.emailChanges().length }
     })
 
     const response = await post(passwordBody())
@@ -459,33 +461,36 @@ describe('POST /api/user/setting/email: notice and commit', () => {
     expect(await read(response)).toEqual({})
     expect(db.user(UID)?.email).toBe(NEW_EMAIL)
     expect(kv.get(NEW_EMAIL)).toBeNull()
+    // 通知发出那一刻库里还是旧地址, 台账也还没写: 发不出去就什么都不改
+    expect(atSend).toEqual({ email: OLD_EMAIL, ledger: 0 })
 
-    const [revertKey] = revertKeys()
-    expect(revertKeys()).toHaveLength(1)
-    const token = revertKey.slice(REVERT_PREFIX.length)
-    expect(token).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-    )
-    const record = kv.get(revertKey)
-    expect(record?.ttl).toBe(86400)
-    expect(JSON.parse(record?.value ?? '')).toEqual({
-      uid: UID,
-      oldEmail: OLD_EMAIL,
-      newEmail: NEW_EMAIL,
-      createdAt: FIXED_NOW.toISOString()
-    })
-
-    // 通知发出那一刻: 撤销记录已写好, 库里还是旧地址
-    expect(atSend).toEqual({ email: OLD_EMAIL, revertKeys: [revertKey] })
-
-    const link = `${FAKE_SITE_ADDRESS}/api/user/setting/email/revert?token=${token}`
     expect(mail.outbox).toHaveLength(1)
     const [notice] = mail.outbox
+    const token = tokenIn(notice.plain)
+    // 32 字节随机数的 base64url
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    const link = `${FAKE_SITE_ADDRESS}/api/user/setting/email/revert?token=${token}`
     expect(notice.to).toEqual([OLD_EMAIL])
     expect(notice.html).toContain(`href="${link}"`)
     expect(notice.html).toContain(OLD_EMAIL)
     expect(notice.html).toContain(NEW_EMAIL)
     expect(notice.plain).toContain(link)
+
+    // 库里只有令牌的哈希; 撤销状态不再放 Redis
+    expect(db.emailChanges()).toEqual([
+      {
+        id: 1,
+        user_id: UID,
+        old_email: OLD_EMAIL,
+        new_email: NEW_EMAIL,
+        revert_token_hash: sha256(token),
+        created: FIXED_NOW,
+        expires: new Date(FIXED_NOW.getTime() + 24 * 60 * 60 * 1000),
+        reverted: null
+      }
+    ])
+    expect(kv.keys()).toEqual([])
+    expect(db.transactions).toEqual([{ committed: true }])
   })
 
   it.each(['http-error', 'status-error', 'throw'] as const)(
@@ -498,12 +503,12 @@ describe('POST /api/user/setting/email: notice and commit', () => {
       expect(await read(response)).toBe(NOTICE_FAILED)
       expect(mail.outbox).toHaveLength(1)
       expect(db.user(UID)?.email).toBe(OLD_EMAIL)
-      expect(revertKeys()).toEqual([])
+      expect(db.emailChanges()).toEqual([])
       expect(kv.get(NEW_EMAIL)?.value).toBe(CODE)
     }
   )
 
-  it('reports a failed write and drops the revert record (unique violation)', async () => {
+  it('reports a failed write and records nothing (unique violation)', async () => {
     // 另一个请求在检查与写入之间抢注了同一地址
     db.interceptNextWrite(() =>
       db.insertUser(makeUser({ id: 9, name: 'racer', email: NEW_EMAIL }))
@@ -513,9 +518,9 @@ describe('POST /api/user/setting/email: notice and commit', () => {
 
     expect(await read(response)).toBe('更新邮箱失败, 请稍后重试')
     expect(db.user(UID)?.email).toBe(OLD_EMAIL)
-    expect(revertKeys()).toEqual([])
+    expect(db.emailChanges()).toEqual([])
     expect(kv.get(NEW_EMAIL)?.value).toBe(CODE)
-    // 通知已在写库前发出, 旧邮箱收到的是一封指向已删除撤销记录的提醒
+    // 通知已在写库前发出: 旧邮箱收到的是一封链接打不开的提醒
     expect(mail.outbox).toHaveLength(1)
   })
 
@@ -526,6 +531,126 @@ describe('POST /api/user/setting/email: notice and commit', () => {
 
     expect(await read(response)).toBe('更新邮箱失败, 请稍后重试')
     expect(db.user(UID)?.email).toBe(OLD_EMAIL)
-    expect(revertKeys()).toEqual([])
+    expect(db.emailChanges()).toEqual([])
+    expect(db.transactions).toEqual([{ committed: false }])
+  })
+
+  // 读到的旧邮箱与提交时库里的不一致 (管理员在这之间改过): 以旧邮箱为条件的更新落空
+  it('does nothing when the account email changes between the read and the commit', async () => {
+    db.interceptNextWrite(() =>
+      db.patchUser(UID, { email: 'by-admin@example.com' })
+    )
+
+    const response = await post(passwordBody())
+
+    expect(await read(response)).toBe('账户邮箱已发生变化, 请刷新后重试')
+    expect(db.user(UID)?.email).toBe('by-admin@example.com')
+    expect(db.emailChanges()).toEqual([])
+    expect(kv.get(NEW_EMAIL)?.value).toBe(CODE)
+  })
+})
+
+describe('POST /api/user/setting/email: 24-hour cooldown', () => {
+  const THIRD_EMAIL = 'third@example.com'
+  const COOLDOWN = '24 小时内只能修改一次邮箱, 请稍后再试'
+  const DAY_MS = 24 * 60 * 60 * 1000
+
+  beforeEach(() => {
+    kv.put(THIRD_EMAIL, CODE, 600)
+  })
+
+  it('refuses a second change within 24 hours without mailing anyone', async () => {
+    expect(await read(await post(passwordBody()))).toEqual({})
+    vi.setSystemTime(new Date(FIXED_NOW.getTime() + DAY_MS - 1000))
+
+    const response = await post(passwordBody({ email: THIRD_EMAIL }))
+
+    expect(await read(response)).toBe(COOLDOWN)
+    expect(db.user(UID)?.email).toBe(NEW_EMAIL)
+    expect(db.emailChanges()).toHaveLength(1)
+    // 只有第一次变更发往最初邮箱的那一封
+    expect(mail.outbox.map((sent) => sent.to)).toEqual([[OLD_EMAIL]])
+    expect(kv.get(THIRD_EMAIL)?.value).toBe(CODE)
+  })
+
+  it('asks for the identity proof before saying anything about the cooldown', async () => {
+    await post(passwordBody())
+
+    const response = await post(
+      passwordBody({ email: THIRD_EMAIL, currentPassword: WRONG_PASSWORD })
+    )
+
+    expect(await read(response)).toBe('当前密码输入错误')
+  })
+
+  it('counts a change that was reverted', async () => {
+    db.insertEmailChange({
+      user_id: UID,
+      old_email: 'earlier@example.com',
+      new_email: OLD_EMAIL,
+      revert_token_hash: 'a'.repeat(64),
+      created: new Date(FIXED_NOW.getTime() - 60_000),
+      expires: new Date(FIXED_NOW.getTime() + DAY_MS),
+      reverted: new Date(FIXED_NOW.getTime() - 30_000)
+    })
+
+    const response = await post(passwordBody())
+
+    expect(await read(response)).toBe(COOLDOWN)
+    expect(db.user(UID)?.email).toBe(OLD_EMAIL)
+    expect(mail.outbox).toEqual([])
+  })
+
+  it('allows the next change once 24 hours have passed', async () => {
+    await post(passwordBody())
+    vi.setSystemTime(new Date(FIXED_NOW.getTime() + DAY_MS + 1000))
+
+    const response = await post(passwordBody({ email: THIRD_EMAIL }))
+
+    expect(await read(response)).toEqual({})
+    expect(db.user(UID)?.email).toBe(THIRD_EMAIL)
+    expect(db.emailChanges()).toHaveLength(2)
+    // 第二次变更的提醒发给它当时的旧邮箱
+    expect(mail.outbox.map((sent) => sent.to)).toEqual([
+      [OLD_EMAIL],
+      [NEW_EMAIL]
+    ])
+  })
+
+  it("is per account: another user's recent change does not matter", async () => {
+    db.insertEmailChange({
+      user_id: 8,
+      old_email: 'x@example.com',
+      new_email: TAKEN_EMAIL,
+      revert_token_hash: 'b'.repeat(64),
+      created: FIXED_NOW,
+      expires: new Date(FIXED_NOW.getTime() + DAY_MS),
+      reverted: null
+    })
+
+    expect(await read(await post(passwordBody()))).toEqual({})
+  })
+
+  // 预检之后、提交之前另一个请求先完成了一次变更: 行锁下的那次判定兜住
+  it('rolls the email back when a concurrent change lands between the pre-check and the commit', async () => {
+    db.interceptNextWrite(() => {
+      db.insertEmailChange({
+        user_id: UID,
+        old_email: 'earlier@example.com',
+        new_email: OLD_EMAIL,
+        revert_token_hash: 'c'.repeat(64),
+        created: FIXED_NOW,
+        expires: new Date(FIXED_NOW.getTime() + DAY_MS),
+        reverted: null
+      })
+    })
+
+    const response = await post(passwordBody())
+
+    expect(await read(response)).toBe(COOLDOWN)
+    expect(db.user(UID)?.email).toBe(OLD_EMAIL)
+    expect(db.emailChanges()).toHaveLength(1)
+    expect(db.transactions).toEqual([{ committed: false }])
+    expect(kv.get(NEW_EMAIL)?.value).toBe(CODE)
   })
 })

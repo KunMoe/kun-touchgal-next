@@ -8,8 +8,6 @@ export type EmailChangeRevertPayload = {
   createdAt: string
 }
 
-export const EMAIL_CHANGE_REVERT_TTL_SECONDS = 24 * 60 * 60
-
 export const createEmailChangeRevertKey = (token: string) =>
   `email-change-revert:${token}`
 

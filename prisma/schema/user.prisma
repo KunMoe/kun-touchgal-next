@@ -58,8 +58,31 @@ model user {
   moderation_blacklist moderation_blacklist[] @relation("user_moderation_blacklist")
   moderation_appeal    moderation_appeal[]    @relation("user_moderation_appeal")
 
+  email_change user_email_change[]
+
   created DateTime @default(now())
   updated DateTime @updatedAt
+}
+
+// 自助改邮箱的台账, 一行是一次变更 (server/auth/emailChange.ts)。24 小时冷却与发往旧邮箱的
+// 撤销链接都读它; 管理员在后台改邮箱不写这张表。
+// 三个时间列都由应用以 JS Date 写入 (UTC 墙钟), created 刻意不设库默认值: 冷却按它判定,
+// 库的 CURRENT_TIMESTAMP 是会话时区的墙钟, 混进来会差出一个时区
+model user_email_change {
+  id                Int    @id @default(autoincrement())
+  old_email         String @db.VarChar(1007)
+  new_email         String @db.VarChar(1007)
+  // 撤销令牌的 sha256 (hex); 明文只出现在发往旧邮箱的那封信里
+  revert_token_hash String @unique @db.Char(64)
+
+  user_id Int
+  user    user @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  created  DateTime
+  expires  DateTime
+  reverted DateTime?
+
+  @@index([user_id, created])
 }
 
 model user_follow_relation {

@@ -469,9 +469,12 @@ describe.skipIf(!scratchUrl)('迁移执行器 (实库)', () => {
 
     it('不把待执行迁移要重建的 INVALID 索引算作故障, 来路不明的照报', async () => {
       await kunRunMigrations(client, kunLoadMigrationFiles(), 'all')
-      // 把 0007 还原成「建索引时进程被杀」: 台账没写, 目标索引以 INVALID 留下
+      // 把 0007 还原成「建索引时进程被杀」: 台账没写, 目标索引以 INVALID 留下。
+      // 比它晚的版本改记成登记行: 它们若以「已执行」的身份排在待执行的 0007 之后, 台账
+      // 本身就是乱序, 校验会因此失败, 而不是因为这条索引
       await client.query(`
         DELETE FROM kun_meta.schema_migration WHERE version = '0007';
+        UPDATE kun_meta.schema_migration SET baseline = true WHERE version > '0007';
         DROP INDEX patch_vndb_id_solo_key;
         CREATE TABLE dup (x int); INSERT INTO dup VALUES (1), (1);
       `)

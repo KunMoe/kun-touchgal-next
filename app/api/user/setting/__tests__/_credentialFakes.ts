@@ -2,7 +2,8 @@ import { vi } from 'vitest'
 import { generateConfig, Hotp } from 'time2fa'
 
 // 凭证类路由 (改邮箱 / 改密码 / 2FA / 管理员关 2FA) 的边界假对象, 全部是内存状态:
-// user 与 admin_log 两张表、KV、尝试预算、会话、邮件投递。断言看最终状态, 不看内部调用形状。
+// user / admin_log / user_email_change 三张表、KV、尝试预算、会话、邮件投递。断言看最终状态,
+// 不看内部调用形状。
 // 只实现被测路由用到的查询形状, 其余 (没实现的方法、复合 where、操作符对象) 一律抛错,
 // 免得一条没实现的查询静默回空让用例照样通过。
 //
@@ -29,6 +30,17 @@ export interface FakeUserRow {
   enable_2fa: boolean
   two_factor_secret: string
   two_factor_backup: string[]
+}
+
+export interface FakeEmailChangeRow {
+  id: number
+  user_id: number
+  old_email: string
+  new_email: string
+  revert_token_hash: string
+  created: Date
+  expires: Date
+  reverted: Date | null
 }
 
 export interface FakeAdminLogRow {
@@ -95,6 +107,7 @@ const BACKUP_CONSUME_SQL =
 const createFakeDb = () => {
   let users = new Map<number, FakeUserRow>()
   let adminLogs: FakeAdminLogRow[] = []
+  let emailChanges: FakeEmailChangeRow[] = []
   // 每次查询的标签 ('user.findUnique' 等), 用于「校验失败不碰库」一类断言
   const queries: string[] = []
   // 每次 $transaction 的结局, 按调用顺序
@@ -243,6 +256,102 @@ const createFakeDb = () => {
         return structuredClone(row)
       }
     }),
+    // 只实现 server/auth/emailChange.ts 用到的四种形状
+    user_email_change: strict('prisma.user_email_change', {
+      findFirst: async (args: {
+        where: { user_id: number; created: { gt: Date } }
+        select?: Record<string, unknown>
+      }) => {
+        queries.push('user_email_change.findFirst')
+        const { user_id, created, ...rest } = args.where
+        const after = created?.gt
+        if (
+          typeof user_id !== 'number' ||
+          !(after instanceof Date) ||
+          Object.keys(created).length !== 1 ||
+          Object.keys(rest).length
+        ) {
+          return unsupported('user_email_change.findFirst where', args.where)
+        }
+        const row = emailChanges.find(
+          (change) => change.user_id === user_id && change.created > after
+        )
+        return row ? structuredClone(row) : null
+      },
+      findUnique: async (args: { where: { revert_token_hash: string } }) => {
+        queries.push('user_email_change.findUnique')
+        const keys = Object.keys(args.where ?? {})
+        if (keys.length !== 1 || keys[0] !== 'revert_token_hash') {
+          return unsupported('user_email_change.findUnique where', args.where)
+        }
+        const row = emailChanges.find(
+          (change) => change.revert_token_hash === args.where.revert_token_hash
+        )
+        return row ? structuredClone(row) : null
+      },
+      create: async (args: {
+        data: Omit<FakeEmailChangeRow, 'id' | 'reverted'>
+      }) => {
+        queries.push('user_email_change.create')
+        runWriteHook()
+        const { data } = args
+        // created 没有库默认值, 三个时间列都必须由应用给出
+        if (
+          !(data.created instanceof Date) ||
+          !(data.expires instanceof Date)
+        ) {
+          return unsupported('user_email_change.create data', data)
+        }
+        if (
+          emailChanges.some(
+            (change) => change.revert_token_hash === data.revert_token_hash
+          )
+        ) {
+          throw prismaError(
+            'P2002',
+            'Unique constraint failed on the fields: (`revert_token_hash`)'
+          )
+        }
+        const row: FakeEmailChangeRow = {
+          ...structuredClone(data),
+          id: Math.max(0, ...emailChanges.map((change) => change.id)) + 1,
+          reverted: null
+        }
+        emailChanges.push(row)
+        journal?.push(() => {
+          emailChanges = emailChanges.filter((change) => change !== row)
+        })
+        return structuredClone(row)
+      },
+      updateMany: async (args: {
+        where: { id: number; reverted: null }
+        data: { reverted: Date }
+      }) => {
+        queries.push('user_email_change.updateMany')
+        const whereKeys = Object.keys(args.where ?? {}).sort()
+        const dataKeys = Object.keys(args.data ?? {})
+        if (
+          whereKeys.join() !== 'id,reverted' ||
+          args.where.reverted !== null ||
+          dataKeys.join() !== 'reverted' ||
+          !(args.data.reverted instanceof Date)
+        ) {
+          return unsupported('user_email_change.updateMany', args)
+        }
+        runWriteHook()
+        const row = emailChanges.find(
+          (change) => change.id === args.where.id && change.reverted === null
+        )
+        if (!row) {
+          return { count: 0 }
+        }
+        row.reverted = args.data.reverted
+        journal?.push(() => {
+          row.reverted = null
+        })
+        return { count: 1 }
+      }
+    }),
     $executeRaw: async (
       strings: TemplateStringsArray,
       ...values: unknown[]
@@ -306,6 +415,13 @@ const createFakeDb = () => {
       users.set(id, { ...row, ...structuredClone(data) })
     },
     adminLogs: () => structuredClone(adminLogs),
+    emailChanges: () => structuredClone(emailChanges),
+    insertEmailChange: (row: Omit<FakeEmailChangeRow, 'id'>) => {
+      emailChanges.push({
+        ...structuredClone(row),
+        id: Math.max(0, ...emailChanges.map((change) => change.id)) + 1
+      })
+    },
     // 下一次写 (update / updateMany / create / $executeRaw) 真正落库前先跑 hook;
     // hook 抛错即该次写失败
     interceptNextWrite: (hook: () => void) => {
@@ -321,6 +437,7 @@ const createFakeDb = () => {
     reset: () => {
       users = new Map()
       adminLogs = []
+      emailChanges = []
       queries.length = 0
       transactions.length = 0
       nextWriteHook = null

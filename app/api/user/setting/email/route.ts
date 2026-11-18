@@ -1,96 +1,28 @@
 import { prisma } from '~/prisma/index'
 import { NextRequest, NextResponse } from 'next/server'
-import { randomUUID } from 'crypto'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { resetEmailSchema } from '~/validations/user'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
-import { delKv, setKv } from '~/lib/redis'
+import { delKv } from '~/lib/redis'
 import { requireStepUp } from '~/server/auth/stepUp'
 import {
-  createEmailChangeRevertKey,
-  EMAIL_CHANGE_REVERT_TTL_SECONDS,
-  sendEmailChangeNotification,
-  type EmailChangeRevertPayload
-} from './_emailChange'
+  commitEmailChange,
+  EMAIL_CHANGE_COOLDOWN_MESSAGE,
+  isEmailChangeCoolingDown,
+  issueRevertToken
+} from '~/server/auth/emailChange'
+import { sendEmailChangeNotification } from './_emailChange'
 
-type EmailChangeUser = {
-  id: number
-  email: string
-}
+const NOTICE_FAILED = '发送旧邮箱安全通知失败, 请稍后重试'
 
-type PreviousEmailNoticeResult =
-  { error: string; revertKey?: never } | { error?: never; revertKey: string }
-
-const getEmailChangeUser = async (uid: number) => {
-  return prisma.user.findUnique({
-    where: { id: uid },
-    select: { id: true, email: true }
-  })
-}
-
-const isEmailTaken = async (user: EmailChangeUser, email: string) => {
+const isEmailTaken = async (uid: number, email: string) => {
   const existedUser = await prisma.user.findUnique({
     where: { email },
     select: { id: true }
   })
-  return !!existedUser && existedUser.id !== user.id
-}
-
-const createRevertToken = async (user: EmailChangeUser, newEmail: string) => {
-  const revertToken = randomUUID()
-  const revertPayload: EmailChangeRevertPayload = {
-    uid: user.id,
-    oldEmail: user.email,
-    newEmail,
-    createdAt: new Date().toISOString()
-  }
-  const revertKey = createEmailChangeRevertKey(revertToken)
-
-  await setKv(
-    revertKey,
-    JSON.stringify(revertPayload),
-    EMAIL_CHANGE_REVERT_TTL_SECONDS
-  )
-
-  return { revertKey, revertToken }
-}
-
-const sendPreviousEmailNotice = async (
-  user: EmailChangeUser,
-  newEmail: string
-): Promise<PreviousEmailNoticeResult> => {
-  const { revertKey, revertToken } = await createRevertToken(user, newEmail)
-  const noticeResult = await sendEmailChangeNotification(
-    user.email,
-    newEmail,
-    revertToken
-  ).catch(() => '发送旧邮箱安全通知失败, 请稍后重试')
-
-  if (noticeResult) {
-    await delKv(revertKey)
-    return { error: noticeResult }
-  }
-
-  return { revertKey }
-}
-
-const commitEmailChange = async (
-  uid: number,
-  email: string,
-  revertKey: string
-) => {
-  try {
-    await prisma.user.update({
-      where: { id: uid },
-      data: { email }
-    })
-    await delKv(email).catch(() => undefined)
-  } catch {
-    await delKv(revertKey)
-    return '更新邮箱失败, 请稍后重试'
-  }
+  return !!existedUser && existedUser.id !== uid
 }
 
 const updateEmail = async (req: NextRequest) => {
@@ -107,7 +39,10 @@ const updateEmail = async (req: NextRequest) => {
     return '读取请求头失败'
   }
 
-  const user = await getEmailChangeUser(payload.uid)
+  const user = await prisma.user.findUnique({
+    where: { id: payload.uid },
+    select: { email: true }
+  })
   if (!user) {
     return '用户不存在'
   }
@@ -123,25 +58,46 @@ const updateEmail = async (req: NextRequest) => {
     return stepUp.message
   }
 
+  if (await isEmailChangeCoolingDown(payload.uid)) {
+    return EMAIL_CHANGE_COOLDOWN_MESSAGE
+  }
+
   const isCodeValid = await verifyVerificationCode(input.email, input.code)
   if (!isCodeValid) {
     return '您的验证码无效, 请重新输入'
   }
 
   // 查重排在两道证明之后: 没证明身份、没收到新邮箱的验证码, 就问不出一个邮箱注册没有
-  if (await isEmailTaken(user, input.email)) {
+  if (await isEmailTaken(payload.uid, input.email)) {
     return '该邮箱已被使用'
   }
 
-  const notice = await sendPreviousEmailNotice(user, input.email)
-  if (notice.error) {
-    return notice.error
-  }
-  if (!notice.revertKey) {
-    return '发送旧邮箱安全通知失败, 请稍后重试'
+  // 先通知旧邮箱, 发不出去就不改: 撤销链接是旧邮箱持有者唯一的自助恢复手段
+  const revert = issueRevertToken()
+  const noticeError = await sendEmailChangeNotification(
+    user.email,
+    input.email,
+    revert.token
+  ).catch(() => NOTICE_FAILED)
+  if (noticeError) {
+    return noticeError
   }
 
-  return commitEmailChange(payload.uid, input.email, notice.revertKey)
+  let failure
+  try {
+    failure = await commitEmailChange(stepUp.passed, {
+      oldEmail: user.email,
+      newEmail: input.email,
+      revertTokenHash: revert.hash
+    })
+  } catch {
+    return '更新邮箱失败, 请稍后重试'
+  }
+  if (failure) {
+    return failure
+  }
+
+  await delKv(input.email).catch(() => undefined)
 }
 
 export const POST = async (req: NextRequest) => {
