@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
 import { getUserInfoSchema } from '~/validations/user'
-import { getPatchVisibilityWhere } from '~/app/api/utils/getPatchVisibilityWhere'
-import { createAuthLoader } from '~/middleware/_verifyHeaderCookie'
+import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
 import { getUserPatchResource } from './service'
 
 export async function GET(req: NextRequest) {
@@ -10,17 +9,13 @@ export async function GET(req: NextRequest) {
   if (typeof input === 'string') {
     return NextResponse.json(input)
   }
-  const loadAuth = createAuthLoader(req)
-  const auth = await loadAuth()
-  if (!auth) {
+  const ctx = viewerContextFromRequest(req)
+  const viewer = await ctx.viewer()
+  if (!viewer) {
     return NextResponse.json('用户登录失效')
   }
-  const visibilityWhere = await getPatchVisibilityWhere(req, loadAuth)
+  const visibility = await ctx.visibility()
 
-  const response = await getUserPatchResource(
-    input,
-    visibilityWhere,
-    auth.payload
-  )
+  const response = await getUserPatchResource(input, visibility, viewer)
   return NextResponse.json(response)
 }

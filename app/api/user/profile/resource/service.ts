@@ -5,16 +5,20 @@ import {
   getResourceVisibilityWhere,
   type KunViewer
 } from '~/app/api/utils/contentVisibility'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import {
+  toPatchWhere,
+  type PatchVisibility
+} from '~/server/viewer/patchVisibility'
 import type { UserResource } from '~/types/api/user'
 
 export const getUserPatchResource = async (
   input: z.infer<typeof getUserInfoSchema>,
-  visibilityWhere: Prisma.patchWhereInput,
+  visibility: PatchVisibility,
   viewer: KunViewer
 ) => {
   const { uid, page, limit } = input
   const offset = (page - 1) * limit
+  const visibilityWhere = toPatchWhere(visibility)
   const resourceStatusWhere = getResourceVisibilityWhere(viewer)
 
   const [data, total] = await Promise.all([

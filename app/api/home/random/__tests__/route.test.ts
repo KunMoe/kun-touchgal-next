@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { countMock, findManyMock, findUniqueMock, findFirstMock, getWhereMock } =
-  vi.hoisted(() => ({
-    countMock: vi.fn(),
-    findManyMock: vi.fn(),
-    findUniqueMock: vi.fn(),
-    findFirstMock: vi.fn(),
-    getWhereMock: vi.fn()
-  }))
+const {
+  countMock,
+  findManyMock,
+  findUniqueMock,
+  findFirstMock,
+  visibilityMock
+} = vi.hoisted(() => ({
+  countMock: vi.fn(),
+  findManyMock: vi.fn(),
+  findUniqueMock: vi.fn(),
+  findFirstMock: vi.fn(),
+  visibilityMock: vi.fn()
+}))
 
 vi.mock('next/server', () => ({
   NextResponse: {
@@ -29,12 +34,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/getPatchVisibilityWhere', () => ({
-  getPatchVisibilityWhere: getWhereMock
-}))
-
-vi.mock('~/middleware/_verifyHeaderCookie', () => ({
-  createAuthLoader: vi.fn()
+vi.mock('~/server/viewer/fromRequest', () => ({
+  viewerContextFromRequest: () => ({ visibility: visibilityMock })
 }))
 
 import { GET } from '~/app/api/home/random/route'
@@ -46,7 +47,7 @@ const request = new Request('http://localhost') as unknown as Parameters<
 describe('/api/home/random', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    getWhereMock.mockResolvedValue({ content_limit: 'sfw' })
+    visibilityMock.mockResolvedValue({ contentLimit: 'sfw', blockedTagIds: [] })
     countMock.mockResolvedValue(10)
     findManyMock.mockResolvedValue([{ id: 42 }])
     findUniqueMock.mockResolvedValue({ unique_id: 'kun00042' })

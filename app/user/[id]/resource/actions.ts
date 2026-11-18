@@ -4,7 +4,7 @@ import * as z from 'zod'
 import { getUserInfoSchema } from '~/validations/user'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'
-import { getPatchVisibilityWhere } from '~/utils/actions/getPatchVisibilityWhere'
+import { getViewerContext } from '~/server/viewer/fromHeaders'
 import { getUserPatchResource } from '~/app/api/user/profile/resource/service'
 
 export const kunGetActions = async (
@@ -19,8 +19,8 @@ export const kunGetActions = async (
     return '用户登录失效'
   }
 
-  const visibilityWhere = await getPatchVisibilityWhere()
+  const visibility = await (await getViewerContext()).visibility()
 
-  const response = await getUserPatchResource(input, visibilityWhere, payload)
+  const response = await getUserPatchResource(input, visibility, payload)
   return response
 }
