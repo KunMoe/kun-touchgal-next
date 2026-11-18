@@ -67,6 +67,7 @@ import { deleteResource as adminDeleteResource } from '~/app/api/admin/resource/
 import {
   resourceLink,
   resourceRow,
+  s3EnqueuedKeys,
   seedResourceRemoval,
   shortResourceLabels
 } from '~/server/content/resource/__tests__/removalFixture'
@@ -173,9 +174,7 @@ describe('资源删除以锁下重读的 links 入队 S3 删除', () => {
 
     await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 7, role: 2 }))
 
-    expect(rec.argsOf('s3_deletion_outbox.createMany')).toEqual([
-      { data: [{ s3_key: 'k-5' }], skipDuplicates: true }
-    ])
+    expect(s3EnqueuedKeys(rec)).toEqual([['k-5']])
   })
 
   it('管理员删除的入队与审计都取锁下重读的行', async () => {
@@ -185,9 +184,7 @@ describe('资源删除以锁下重读的 links 入队 S3 删除', () => {
 
     await adminDeleteResource({ resourceIds: [1] }, 9)
 
-    expect(rec.argsOf('s3_deletion_outbox.createMany')).toEqual([
-      { data: [{ s3_key: 'k-5' }], skipDuplicates: true }
-    ])
+    expect(s3EnqueuedKeys(rec)).toEqual([['k-5']])
     expect(logContent()).toContain('renamed')
     // 审计里的链接已脱敏
     expect(logContent()).not.toContain('k-5')
@@ -223,7 +220,7 @@ describe('资源删除的清理顺序', () => {
       'patch_resource.findMany',
       'patch.update',
       'search_outbox.enqueue',
-      's3_deletion_outbox.createMany'
+      's3_deletion_outbox.enqueue'
     ])
     expect(rec.argsOf('moderation_appeal.deleteMany')).toEqual([
       {

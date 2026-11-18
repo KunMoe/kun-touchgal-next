@@ -70,7 +70,11 @@ import type {
   ResourceRemovalGuard,
   ResourceRemovalPlan
 } from '~/server/content/resource/remove'
-import { resourceRow, seedResourceRemoval } from './removalFixture'
+import {
+  resourceRow,
+  s3EnqueuedKeys,
+  seedResourceRemoval
+} from './removalFixture'
 import type { ResourceRowFixture } from './removalFixture'
 
 const USER_LOCK =
@@ -93,9 +97,11 @@ const shortLabels = () =>
         ? 'recalc.lock'
         : label.includes('INSERT INTO search_outbox')
           ? 'search_outbox.enqueue'
-          : label === PATCH_LOCK
-            ? 'patch.lock'
-            : label
+          : label.includes('INSERT INTO s3_deletion_outbox')
+            ? 's3_deletion_outbox.enqueue'
+            : label === PATCH_LOCK
+              ? 'patch.lock'
+              : label
     )
 
 const remove = (
@@ -145,7 +151,7 @@ describe('资源删除的语句顺序', () => {
       'patch_resource.findMany',
       'patch.update',
       'search_outbox.enqueue',
-      's3_deletion_outbox.createMany'
+      's3_deletion_outbox.enqueue'
     ])
     expect(rec.argsOf('user_message.deleteMany')).toEqual([
       {
@@ -179,9 +185,7 @@ describe('资源删除的语句顺序', () => {
 
     await remove([1, 2])
 
-    expect(rec.argsOf('s3_deletion_outbox.createMany')).toEqual([
-      { data: [{ s3_key: 'k-10' }, { s3_key: 'k-20' }], skipDuplicates: true }
-    ])
+    expect(s3EnqueuedKeys(rec)).toEqual([['k-10', 'k-20']])
   })
 
   it('批量删除按 id 升序锁资源行, 补丁按 id 升序重算', async () => {

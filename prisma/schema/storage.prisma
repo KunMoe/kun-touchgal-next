@@ -1,11 +1,17 @@
 // S3 删除写出箱：资源/补丁删除与复制失败清理待删除的 S3 key 在此排队，由单一 worker
 // (drainS3DeletionOutbox) 加锁串行消费——DeleteObject 幂等（删不存在的 key 也成功），
 // 至少一次投递即可。入队与业务行删除在同一事务原子提交，关闭「提交后进程崩溃 → 内存中
-// key 丢失 → DB 已删无法枚举 → 永久孤儿」窗口。s3_key 作主键：同 key 重复入队幂等合并。
+// key 丢失 → DB 已删无法枚举 → 永久孤儿」窗口。s3_key 作主键：同 key 重复入队合并为一行。
+// 一行是「删除候选」而不是删除指令：消费者删之前向 patch_resource_link 确认对象已无引用
+// (server/storage/references.ts)，仍被引用就只删这一行、不删对象。
 model s3_deletion_outbox {
   s3_key String @id
   // 处理失败累加，仅供观测/告警；不参与消费逻辑
   attempts Int @default(0)
+  // 每次重复入队自增，作为认领令牌：消费者只按 (s3_key, seq) 删行。判定「仍被引用」之后、
+  // 删行之前若有事务删掉了最后一个持有者并重新入队，seq 已变，这一行留到下一轮重判；
+  // 否则删除意图被合并吞掉，对象成为永久孤儿 (与 search_outbox 同形)
+  seq      Int @default(0)
 
   created DateTime @default(now())
   updated DateTime @updatedAt

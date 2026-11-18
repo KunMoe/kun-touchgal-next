@@ -2,6 +2,7 @@ import { prisma } from '~/prisma/index'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import { deleteFileFromS3 } from '~/lib/s3'
 import { withTaskLock } from '~/server/tasks/withTaskLock'
+import { isS3ObjectReferenced } from './references'
 
 const OUTBOX_DRAIN_BATCH_SIZE = 200
 const OUTBOX_LOCK_KEY = 's3:deletion:outbox:lock'
@@ -10,7 +11,9 @@ const OUTBOX_LOCK_TTL_SECONDS = 300
 // 删除写出箱入队：把待删除的 S3 key 持久化到出箱。client 传业务行删除所在事务的 tx，
 // 使入队与删除原子提交——提交后即便进程崩溃，删除意图也已落库，由 worker 兜底删除，
 // 关闭原「提交后 Promise.all 删 S3、崩溃即丢失内存中 key」的不可恢复窗口。
-// s3_key 主键 + skipDuplicates：同 key 重复入队幂等合并为一行。
+// 同 key 重复入队合并为一行并把 seq + 1：消费者按 (s3_key, seq) 删行，处理期间到达的
+// 入队不会被这一轮的删行带走 (见 drain 的注释)。updated 是 @updatedAt (应用层维护，
+// 原生 SQL 必须显式赋值)，时间写 UTC 墙钟与 Prisma 一致；形状照抄 enqueueSearchOutboxBatch
 export const enqueueS3Deletion = async (
   client: Prisma.TransactionClient,
   keys: string[]
@@ -18,17 +21,27 @@ export const enqueueS3Deletion = async (
   if (keys.length === 0) {
     return
   }
-  await client.s3_deletion_outbox.createMany({
-    data: keys.map((s3_key) => ({ s3_key })),
-    skipDuplicates: true
-  })
+  // 去重防同语句二次命中同行（21000 直接炸事务）；排序统一锁序，与并发入队互不死锁
+  const uniqueKeys = [...new Set(keys)].sort()
+  await client.$executeRaw`
+    INSERT INTO s3_deletion_outbox (s3_key, created, updated)
+    SELECT unnest(${uniqueKeys}::text[]),
+      now() AT TIME ZONE 'UTC', now() AT TIME ZONE 'UTC'
+    ON CONFLICT (s3_key) DO UPDATE
+      SET seq = s3_deletion_outbox.seq + 1, updated = now() AT TIME ZONE 'UTC'`
 }
 
 // 单一消费者：加锁保证任意时刻只有一个 drain 在跑（即时 kick 与定时任务共用同锁）。
-// 逐行 DeleteObject（幂等），成功即删行；失败累加 attempts 并滞留，等下一轮重试——
-// 至少一次投递，绝不因单次 S3 抖动或部分失败丢失删除意图。
-export const drainS3DeletionOutbox = async () => {
-  await withTaskLock(
+// 出箱的一行是删除候选：先向数据库确认对象已无引用 (isS3ObjectReferenced) 才 DeleteObject
+// （幂等）；仍被引用就不删对象，只删这一行。两种情况都按 (s3_key, seq) 删行：判定之后若有
+// 事务删掉最后一个持有者并重新入队，seq 已变，这一行留到下一轮重判；只按 s3_key 删的话，
+// 那次入队被合并吞掉，对象再无引用也再无出箱行，成为永久孤儿。删行若撞上那个事务未提交的
+// 行锁，会等它提交后按新 seq 重新判定，同样不命中。
+// 点查不加锁：引用集合只会原子地「非空 → 非空」或「非空 → 空」(写入不变量见 references.ts)，
+// 两个 drain 并发 (续锁失败) 时各自点查、幂等删除、CAS 删行，任意交错结果一致。
+// 删除失败累加 attempts 并滞留，等下一轮重试——至少一次投递。
+export const drainS3DeletionOutbox = async () =>
+  withTaskLock(
     {
       key: OUTBOX_LOCK_KEY,
       ttlSeconds: OUTBOX_LOCK_TTL_SECONDS,
@@ -38,14 +51,27 @@ export const drainS3DeletionOutbox = async () => {
       const rows = await prisma.s3_deletion_outbox.findMany({
         orderBy: { updated: 'asc' },
         take: OUTBOX_DRAIN_BATCH_SIZE,
-        select: { s3_key: true }
+        select: { s3_key: true, seq: true }
       })
 
+      let deleted = 0
+      let skippedReferenced = 0
       for (const row of rows) {
         try {
-          await deleteFileFromS3(row.s3_key)
+          if (await isS3ObjectReferenced(prisma, row.s3_key)) {
+            // 历史共享对象、重复提交的同一 link id、提交响应丢失后的 abandon 都会走到这里，
+            // 在 s3_key 回填完成之前是异常信号
+            // eslint-disable-next-line no-console
+            console.warn(
+              `S3 删除写出箱跳过 ${row.s3_key}：仍被资源链接引用，只移除出箱行`
+            )
+            skippedReferenced++
+          } else {
+            await deleteFileFromS3(row.s3_key)
+            deleted++
+          }
           await prisma.s3_deletion_outbox.deleteMany({
-            where: { s3_key: row.s3_key }
+            where: { s3_key: row.s3_key, seq: row.seq }
           })
         } catch (error) {
           // 失败不删行、累加 attempts 待下一轮重试。updateMany 会隐式刷新 @updatedAt，
@@ -66,9 +92,9 @@ export const drainS3DeletionOutbox = async () => {
         // 每处理一行续锁：drain 活跃期间租约不过期，杜绝锁 TTL 过期后第二个 drain 并发
         await renew()
       }
+      return { deleted, skippedReferenced }
     }
   )
-}
 
 // 即时消费：入队后立刻尝试 drain 一次，保持近实时删除；抢不到锁则由定时任务兜底。
 export const kickS3DeletionDrain = () => {

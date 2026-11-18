@@ -81,5 +81,13 @@ export const shortResourceLabels = (rec: RecordingTransaction) =>
               ? 'recalc.lock'
               : label.includes('INSERT INTO search_outbox')
                 ? 'search_outbox.enqueue'
-                : label
+                : label.includes('INSERT INTO s3_deletion_outbox')
+                  ? 's3_deletion_outbox.enqueue'
+                  : label
     )
+
+// 最近一次尝试里每次 S3 删除出箱入队的 key 列表 (原生 upsert 的唯一参数)
+export const s3EnqueuedKeys = (rec: RecordingTransaction) =>
+  (rec.attempts.at(-1)?.statements ?? [])
+    .filter((item) => item.label.includes('INSERT INTO s3_deletion_outbox'))
+    .map((item) => (item.args as unknown[])[0])

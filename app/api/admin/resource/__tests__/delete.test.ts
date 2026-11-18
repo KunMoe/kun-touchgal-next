@@ -65,6 +65,7 @@ import { deleteResource } from '~/app/api/admin/resource/delete'
 import {
   resourceLink,
   resourceRow,
+  s3EnqueuedKeys,
   seedResourceRemoval,
   shortResourceLabels
 } from '~/server/content/resource/__tests__/removalFixture'
@@ -139,7 +140,7 @@ describe('deleteResource 批量删除', () => {
       'patch_resource.findMany',
       'patch.update',
       'search_outbox.enqueue',
-      's3_deletion_outbox.createMany',
+      's3_deletion_outbox.enqueue',
       'admin_log.create'
     ])
     expect(rec.argsOf('patch_resource.deleteMany')).toEqual([
@@ -167,9 +168,7 @@ describe('deleteResource 批量删除', () => {
       .find((label) => label.includes('INSERT INTO search_outbox')) as string
     expect(rec.argsOf(enqueue)).toEqual([[[10, 20]]])
     // 入队在事务内 (审计日志之前), 与行删除原子提交
-    expect(rec.argsOf('s3_deletion_outbox.createMany')).toEqual([
-      { data: [{ s3_key: 'k-11' }, { s3_key: 'k-31' }], skipDuplicates: true }
-    ])
+    expect(s3EnqueuedKeys(rec)).toEqual([['k-11', 'k-31']])
   })
 
   it('提交后失效沿用单删闸门: 仅 status=0 的 patch 失效详情, section=patch 才失效列表, 2/3 失效作者 pending', async () => {
