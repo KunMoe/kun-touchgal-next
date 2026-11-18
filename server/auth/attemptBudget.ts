@@ -102,6 +102,11 @@ export const reserveAttempt = async (
   dims: readonly BudgetDimension[],
   guard?: BudgetGuard
 ): Promise<AttemptReservation> => {
+  // 没有维度就没有上限: 调用方漏传不能变成可以无限次尝试
+  if (!dims.length) {
+    throw new Error('attempt budget needs at least one dimension')
+  }
+
   const [status, ...rest] = await evalKvScript<number[]>(
     RESERVE_SCRIPT,
     keysOf(dims, guard),
