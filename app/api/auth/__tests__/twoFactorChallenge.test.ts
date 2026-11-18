@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { evalKvScriptMock, getKvMock, setKvIfAbsentMock } = vi.hoisted(() => ({
-  evalKvScriptMock: vi.fn(),
-  getKvMock: vi.fn(),
-  setKvIfAbsentMock: vi.fn()
-}))
+const { getKvMock, reserveAttemptMock, setKvIfAbsentMock, settleSuccessMock } =
+  vi.hoisted(() => ({
+    getKvMock: vi.fn(),
+    reserveAttemptMock: vi.fn(),
+    setKvIfAbsentMock: vi.fn(),
+    settleSuccessMock: vi.fn()
+  }))
 
 vi.mock('~/lib/redis', () => ({
-  evalKvScript: evalKvScriptMock,
   getKv: getKvMock,
   setKvIfAbsent: setKvIfAbsentMock
+}))
+
+vi.mock('~/server/auth/attemptBudget', () => ({
+  reserveAttempt: reserveAttemptMock,
+  settleSuccess: settleSuccessMock
 }))
 
 import {
@@ -19,9 +25,16 @@ import {
   reserveTwoFactorAttempt
 } from '~/app/api/auth/_twoFactorChallenge'
 
+// 预留与结算的脚本语义在真 Redis 上测 (twoFactorChallenge.redis.test.ts); 这里只看
+// 交给预算原语的键、阈值与 guard, 以及结果的翻译。键名是存量, 一个字都不能变
+
+const UID_IP_KEY = /^auth:2fa:uid-ip-attempts:7:[0-9a-f]{64}$/
+
 beforeEach(() => {
   vi.clearAllMocks()
   setKvIfAbsentMock.mockResolvedValue(true)
+  reserveAttemptMock.mockResolvedValue({ allowed: true, remaining: [4, 9, 4] })
+  settleSuccessMock.mockResolvedValue(true)
 })
 
 describe('2FA challenge', () => {
@@ -55,66 +68,119 @@ describe('2FA challenge', () => {
     )
   })
 
-  it('reserves challenge, uid, and ip budgets in one Redis script call', async () => {
-    evalKvScriptMock.mockResolvedValue([1, 4])
-
+  it('reserves the challenge, uid, and ip budgets in one call, guarded by the challenge', async () => {
     await expect(
       reserveTwoFactorAttempt('challenge-id', 7, '203.0.113.8')
     ).resolves.toEqual({ allowed: true, remainingAttempts: 4 })
 
-    const [, keys, args] = evalKvScriptMock.mock.calls[0]
-    expect(keys).toHaveLength(4)
-    expect(keys[0]).toBe('auth:2fa:challenge:challenge-id')
-    expect(keys[1]).toBe('auth:2fa:challenge-attempts:challenge-id')
-    expect(keys[2]).toBe('auth:2fa:uid-attempts:7')
-    expect(keys[3]).toMatch(/^auth:2fa:uid-ip-attempts:7:[0-9a-f]{64}$/)
-    expect(keys[3]).not.toContain('203.0.113.8')
-    expect(args).toEqual([7, 5, 10, 900, 5, 1, 600, 900])
+    expect(reserveAttemptMock).toHaveBeenCalledTimes(1)
+    const [dims, guard] = reserveAttemptMock.mock.calls[0]
+    expect(dims).toEqual([
+      {
+        key: 'auth:2fa:challenge-attempts:challenge-id',
+        limit: 5,
+        windowSeconds: 600,
+        expiresWithGuard: true
+      },
+      { key: 'auth:2fa:uid-attempts:7', limit: 10, windowSeconds: 900 },
+      {
+        key: expect.stringMatching(UID_IP_KEY),
+        limit: 5,
+        windowSeconds: 900
+      }
+    ])
+    expect(dims[2].key).not.toContain('203.0.113.8')
+    expect(guard).toEqual({
+      key: 'auth:2fa:challenge:challenge-id',
+      expected: '7'
+    })
+  })
+
+  it('reports what is left of the challenge, not of the tightest dimension', async () => {
+    reserveAttemptMock.mockResolvedValue({
+      allowed: true,
+      remaining: [3, 0, 1]
+    })
+
+    await expect(
+      reserveTwoFactorAttempt('challenge-id', 7, '203.0.113.8')
+    ).resolves.toEqual({ allowed: true, remainingAttempts: 3 })
+  })
+
+  it('has no IP dimension when the client IP is unknown', async () => {
+    await reserveTwoFactorAttempt('challenge-id', 7, '')
+
+    const [dims] = reserveAttemptMock.mock.calls[0]
+    expect(dims.map((dim: { key: string }) => dim.key)).toEqual([
+      'auth:2fa:challenge-attempts:challenge-id',
+      'auth:2fa:uid-attempts:7'
+    ])
   })
 
   it('isolates the same IP budget by user id', async () => {
-    evalKvScriptMock.mockResolvedValue([1, 4])
-
     await reserveTwoFactorAttempt('challenge-7', 7, '203.0.113.8')
     await reserveTwoFactorAttempt('challenge-8', 8, '203.0.113.8')
 
-    const firstKey = evalKvScriptMock.mock.calls[0][1][3]
-    const secondKey = evalKvScriptMock.mock.calls[1][1][3]
+    const firstKey = reserveAttemptMock.mock.calls[0][0][2].key
+    const secondKey = reserveAttemptMock.mock.calls[1][0][2].key
     expect(firstKey).toMatch(/^auth:2fa:uid-ip-attempts:7:/)
     expect(secondKey).toMatch(/^auth:2fa:uid-ip-attempts:8:/)
     expect(firstKey).not.toBe(secondKey)
   })
 
   it.each([
-    [0, 'expired'],
-    [-1, 'invalid'],
-    [2, 'challenge'],
-    [3, 'uid'],
-    [4, 'uidIp']
-  ] as const)(
-    'maps Redis status %s to %s rejection',
-    async (status, reason) => {
-      evalKvScriptMock.mockResolvedValue([status, 0])
+    [{ reason: 'guard-missing' }, 'expired'],
+    [{ reason: 'guard-mismatch' }, 'invalid'],
+    [
+      {
+        reason: 'exhausted',
+        dimension: 'auth:2fa:challenge-attempts:challenge-id'
+      },
+      'challenge'
+    ],
+    [{ reason: 'exhausted', dimension: 'auth:2fa:uid-attempts:7' }, 'uid']
+  ] as const)('maps %j to %s rejection', async (rejection, reason) => {
+    reserveAttemptMock.mockResolvedValue({ allowed: false, ...rejection })
 
-      await expect(
-        reserveTwoFactorAttempt('challenge-id', 7, '')
-      ).resolves.toEqual({ allowed: false, reason })
-    }
-  )
+    await expect(
+      reserveTwoFactorAttempt('challenge-id', 7, '203.0.113.8')
+    ).resolves.toEqual({ allowed: false, reason })
+  })
 
-  it('consumes the challenge and its attempt counter atomically', async () => {
-    evalKvScriptMock.mockResolvedValue(1)
+  it('maps an exhausted IP dimension to uidIp rejection', async () => {
+    reserveAttemptMock.mockImplementation(async (dims: { key: string }[]) => ({
+      allowed: false,
+      reason: 'exhausted',
+      dimension: dims[2].key
+    }))
 
+    await expect(
+      reserveTwoFactorAttempt('challenge-id', 7, '203.0.113.8')
+    ).resolves.toEqual({ allowed: false, reason: 'uidIp' })
+  })
+
+  it('consumes the challenge together with the counters of the succeeding request', async () => {
     await expect(
       consumeTwoFactorChallenge('challenge-id', 7, '203.0.113.8')
     ).resolves.toBe(true)
-    const [, keys, args] = evalKvScriptMock.mock.calls[0]
-    expect(keys).toEqual([
-      'auth:2fa:challenge:challenge-id',
+
+    const [dims, guard] = settleSuccessMock.mock.calls[0]
+    expect(dims.map((dim: { key: string }) => dim.key)).toEqual([
       'auth:2fa:challenge-attempts:challenge-id',
       'auth:2fa:uid-attempts:7',
-      expect.stringMatching(/^auth:2fa:uid-ip-attempts:7:[0-9a-f]{64}$/)
+      expect.stringMatching(UID_IP_KEY)
     ])
-    expect(args).toEqual([7, 1])
+    expect(guard).toEqual({
+      key: 'auth:2fa:challenge:challenge-id',
+      expected: '7'
+    })
+  })
+
+  it('reports a challenge that was already consumed or is not ours', async () => {
+    settleSuccessMock.mockResolvedValue(false)
+
+    await expect(
+      consumeTwoFactorChallenge('challenge-id', 7, '')
+    ).resolves.toBe(false)
   })
 })

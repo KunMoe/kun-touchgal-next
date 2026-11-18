@@ -1,5 +1,12 @@
 import { createHash } from 'crypto'
-import { evalKvScript, getKv, setKvIfAbsent } from '~/lib/redis'
+import { getKv, setKvIfAbsent } from '~/lib/redis'
+import { reserveAttempt, settleSuccess } from '~/server/auth/attemptBudget'
+import type { BudgetDimension, BudgetGuard } from '~/server/auth/attemptBudget'
+
+// 登录第二步的尝试预算。入口面是「已过密码与人机验证、持有一次性 challenge」, 与已登录后的
+// 二次验证 (server/auth/budgets.ts) 不共桶。预留与结算走 server/auth/attemptBudget, challenge
+// 是它的 guard: 不存在或不属于这个用户就不预留, 结算时连同计数一起删掉, 所以一个 challenge
+// 只能换一次会话。键名是存量, 逐字不可改 (上线瞬间仍在进行的登录要认得出自己的计数)
 
 export const TWO_FACTOR_CHALLENGE_TTL_SECONDS = 10 * 60
 export const TWO_FACTOR_CHALLENGE_MAX_ATTEMPTS = 5
@@ -9,81 +16,45 @@ const TWO_FACTOR_UID_MAX_ATTEMPTS = 10
 const TWO_FACTOR_UID_IP_WINDOW_SECONDS = 15 * 60
 const TWO_FACTOR_UID_IP_MAX_ATTEMPTS = 5
 
-const RESERVE_ATTEMPT_SCRIPT = `
-  local challengeUid = redis.call("get", KEYS[1])
-  if not challengeUid then
-    return {0, 0}
-  end
-  if challengeUid ~= ARGV[1] then
-    return {-1, 0}
-  end
-
-  local challengeAttempts = tonumber(redis.call("get", KEYS[2]) or "0")
-  if challengeAttempts >= tonumber(ARGV[2]) then
-    return {2, 0}
-  end
-
-  local uidAttempts = tonumber(redis.call("get", KEYS[3]) or "0")
-  if uidAttempts >= tonumber(ARGV[3]) then
-    return {3, 0}
-  end
-
-  local hasUidIp = ARGV[6] == "1"
-  if hasUidIp then
-    local uidIpAttempts = tonumber(redis.call("get", KEYS[4]) or "0")
-    if uidIpAttempts >= tonumber(ARGV[5]) then
-      return {4, 0}
-    end
-  end
-
-  challengeAttempts = redis.call("incr", KEYS[2])
-  if challengeAttempts == 1 then
-    local challengeTtl = redis.call("ttl", KEYS[1])
-    if challengeTtl > 0 then
-      redis.call("expire", KEYS[2], challengeTtl)
-    else
-      redis.call("expire", KEYS[2], ARGV[7])
-    end
-  end
-
-  uidAttempts = redis.call("incr", KEYS[3])
-  if uidAttempts == 1 then
-    redis.call("expire", KEYS[3], ARGV[4])
-  end
-
-  if hasUidIp then
-    local uidIpAttempts = redis.call("incr", KEYS[4])
-    if uidIpAttempts == 1 then
-      redis.call("expire", KEYS[4], ARGV[8])
-    end
-  end
-
-  return {1, tonumber(ARGV[2]) - challengeAttempts}
-`
-
-const CONSUME_CHALLENGE_SCRIPT = `
-  local challengeUid = redis.call("get", KEYS[1])
-  if challengeUid ~= ARGV[1] then
-    return 0
-  end
-  redis.call("del", KEYS[1], KEYS[2], KEYS[3])
-  if ARGV[2] == "1" then
-    redis.call("del", KEYS[4])
-  end
-  return 1
-`
-
 const getChallengeKey = (jti: string) => `auth:2fa:challenge:${jti}`
 const getChallengeAttemptsKey = (jti: string) =>
   `auth:2fa:challenge-attempts:${jti}`
 const getUidAttemptsKey = (uid: number) => `auth:2fa:uid-attempts:${uid}`
-const getUidIpAttemptsKey = (uid: number, ip: string) => {
-  if (!ip) {
-    return `auth:2fa:uid-ip-attempts:${uid}:none`
-  }
-  const digest = createHash('sha256').update(ip).digest('hex')
-  return `auth:2fa:uid-ip-attempts:${uid}:${digest}`
-}
+const getUidIpAttemptsKey = (uid: number, ip: string) =>
+  `auth:2fa:uid-ip-attempts:${uid}:${createHash('sha256').update(ip).digest('hex')}`
+
+const REJECTION_REASONS = ['challenge', 'uid', 'uidIp'] as const
+
+// 维度的顺序就是用完时上报的优先级; 取不到 IP 时不设第三个维度
+const budgetOf = (
+  jti: string,
+  uid: number,
+  ip: string
+): { dims: BudgetDimension[]; guard: BudgetGuard } => ({
+  guard: { key: getChallengeKey(jti), expected: String(uid) },
+  dims: [
+    {
+      key: getChallengeAttemptsKey(jti),
+      limit: TWO_FACTOR_CHALLENGE_MAX_ATTEMPTS,
+      windowSeconds: TWO_FACTOR_CHALLENGE_TTL_SECONDS,
+      expiresWithGuard: true
+    },
+    {
+      key: getUidAttemptsKey(uid),
+      limit: TWO_FACTOR_UID_MAX_ATTEMPTS,
+      windowSeconds: TWO_FACTOR_UID_WINDOW_SECONDS
+    },
+    ...(ip
+      ? [
+          {
+            key: getUidIpAttemptsKey(uid, ip),
+            limit: TWO_FACTOR_UID_IP_MAX_ATTEMPTS,
+            windowSeconds: TWO_FACTOR_UID_IP_WINDOW_SECONDS
+          }
+        ]
+      : [])
+  ]
+})
 
 export type TwoFactorAttemptReservation =
   | { allowed: true; remainingAttempts: number }
@@ -111,58 +82,31 @@ export const reserveTwoFactorAttempt = async (
   uid: number,
   ip: string
 ): Promise<TwoFactorAttemptReservation> => {
-  const result = await evalKvScript<number[]>(
-    RESERVE_ATTEMPT_SCRIPT,
-    [
-      getChallengeKey(jti),
-      getChallengeAttemptsKey(jti),
-      getUidAttemptsKey(uid),
-      getUidIpAttemptsKey(uid, ip)
-    ],
-    [
-      uid,
-      TWO_FACTOR_CHALLENGE_MAX_ATTEMPTS,
-      TWO_FACTOR_UID_MAX_ATTEMPTS,
-      TWO_FACTOR_UID_WINDOW_SECONDS,
-      TWO_FACTOR_UID_IP_MAX_ATTEMPTS,
-      ip ? 1 : 0,
-      TWO_FACTOR_CHALLENGE_TTL_SECONDS,
-      TWO_FACTOR_UID_IP_WINDOW_SECONDS
-    ]
-  )
+  const { dims, guard } = budgetOf(jti, uid, ip)
+  const reservation = await reserveAttempt(dims, guard)
 
-  const [status, remainingAttempts] = result
-  if (status === 1) {
-    return { allowed: true, remainingAttempts }
+  if (reservation.allowed) {
+    // 这个 challenge 自己还剩几次
+    return { allowed: true, remainingAttempts: reservation.remaining[0] }
   }
-
-  const reason =
-    status === 0
-      ? 'expired'
-      : status === -1
-        ? 'invalid'
-        : status === 2
-          ? 'challenge'
-          : status === 3
-            ? 'uid'
-            : 'uidIp'
-  return { allowed: false, reason }
+  if (reservation.reason === 'exhausted') {
+    const { dimension } = reservation
+    return {
+      allowed: false,
+      reason: REJECTION_REASONS[dims.findIndex((dim) => dim.key === dimension)]
+    }
+  }
+  return {
+    allowed: false,
+    reason: reservation.reason === 'guard-missing' ? 'expired' : 'invalid'
+  }
 }
 
-export const consumeTwoFactorChallenge = async (
+export const consumeTwoFactorChallenge = (
   jti: string,
   uid: number,
   ip: string
 ) => {
-  const result = await evalKvScript<number>(
-    CONSUME_CHALLENGE_SCRIPT,
-    [
-      getChallengeKey(jti),
-      getChallengeAttemptsKey(jti),
-      getUidAttemptsKey(uid),
-      getUidIpAttemptsKey(uid, ip)
-    ],
-    [uid, ip ? 1 : 0]
-  )
-  return result === 1
+  const { dims, guard } = budgetOf(jti, uid, ip)
+  return settleSuccess(dims, guard)
 }
