@@ -14,6 +14,7 @@ import {
   resolveCommentHtml,
   type StaleCommentHtml
 } from './html'
+import { can } from '~/constants/permission'
 import type { PatchComment } from '~/types/api/patch'
 
 // 共享缓存基线视角: status=0 公开可见, isLike 一律 false
@@ -30,7 +31,7 @@ type CommentLocator = {
 // 管理员可见他人待审核内容, 有自己待审 (status=1) 评论的用户可见自己的待审,
 // 两者响应都不同于公开基线, 必须绕过共享缓存走完整视角
 const shouldBypassCommentCache = async (patchId: number, viewer: KunViewer) => {
-  if (viewer.role >= 3) {
+  if (can(viewer, 'content.viewPending')) {
     return true
   }
   if (viewer.uid <= 0) {

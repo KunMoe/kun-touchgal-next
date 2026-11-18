@@ -7,6 +7,7 @@ import {
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { getPatchById } from './get'
 import { deletePatchById } from './delete'
+import { can } from '~/constants/permission'
 
 const uniqueIdSchema = z.object({
   uniqueId: z.string().min(8).max(8)
@@ -36,7 +37,7 @@ export const DELETE = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'galgame.delete')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 

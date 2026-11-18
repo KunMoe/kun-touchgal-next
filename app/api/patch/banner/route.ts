@@ -5,6 +5,7 @@ import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { updatePatchBannerSchema } from '~/validations/patch'
 import { uploadPatchBanner } from '~/app/api/edit/_upload'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
+import { can } from '~/constants/permission'
 
 const purgeCache = async (patchId: number) => {
   const imageBedUrl = process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL
@@ -54,7 +55,7 @@ export const POST = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 3) {
+  if (!can(payload, 'banner.edit')) {
     return NextResponse.json('本页面仅管理员可访问')
   }
 

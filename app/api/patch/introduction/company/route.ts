@@ -51,6 +51,7 @@ const handlePatchCompanyAction = (type: 'add' | 'delete') => {
 
 export const POST = createPatchRelationHandler({
   schema: patchCompanyChangeSchema,
+  capability: 'company.manage',
   parseBody: kunParsePostBody,
   mutate: handlePatchCompanyAction('add'),
   invalidateListCache: invalidateCompanyListCache
@@ -58,6 +59,7 @@ export const POST = createPatchRelationHandler({
 
 export const PUT = createPatchRelationHandler({
   schema: patchCompanyChangeSchema,
+  capability: 'company.manage',
   parseBody: kunParsePutBody,
   mutate: handlePatchCompanyAction('delete'),
   invalidateListCache: invalidateCompanyListCache

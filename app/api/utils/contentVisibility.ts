@@ -1,5 +1,6 @@
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { hasPendingResource } from '~/app/api/utils/pendingResourceCache'
+import { can } from '~/constants/permission'
 
 export interface KunViewer {
   uid: number
@@ -10,13 +11,13 @@ export interface KunViewer {
 export const isContentVisibleToViewer = (
   viewer: KunViewer | null,
   ownerId: number
-) => !!viewer && (viewer.role >= 3 || viewer.uid === ownerId)
+) => !!viewer && (can(viewer, 'content.viewPending') || viewer.uid === ownerId)
 
 // patch_comment / patch_rating 的可见性 WHERE 片段
 // status: 0 正常, 1 待审核 (仅作者与 role >= 3 可见),
 // 2 隐藏 (前台对所有人不可见, 含管理员, 仅 /admin 可管理)
 export const getCommentRatingVisibilityWhere = (viewer: KunViewer | null) => {
-  if (viewer && viewer.role >= 3) {
+  if (can(viewer, 'content.viewPending')) {
     return { status: { in: [0, 1] } }
   }
   if (viewer && viewer.uid > 0) {
@@ -29,7 +30,7 @@ export const getCommentRatingVisibilityWhere = (viewer: KunViewer | null) => {
 // status: 0 正常, 1 隐藏 (仅 /admin), 2 待初次审核, 3 待审核
 // (2/3 待审核仅作者与 role >= 3 可见; 1 隐藏对所有前台 viewer 不可见)
 export const getResourceVisibilityWhere = (viewer: KunViewer | null) => {
-  if (viewer && viewer.role >= 3) {
+  if (can(viewer, 'content.viewPending')) {
     return { status: { in: [0, 2, 3] } }
   }
   if (viewer && viewer.uid > 0) {
@@ -42,7 +43,7 @@ export const getResourceVisibilityWhere = (viewer: KunViewer | null) => {
 
 // 评论抓取递归 CTE 中的原生 SQL 片段 (语义同 getCommentRatingVisibilityWhere)
 export const getCommentVisibilitySql = (viewer: KunViewer | null) =>
-  viewer && viewer.role >= 3
+  can(viewer, 'content.viewPending')
     ? Prisma.sql`status IN (0, 1)`
     : Prisma.sql`(status = 0 OR (status = 1 AND user_id = ${viewer?.uid ?? 0}))`
 
@@ -53,7 +54,7 @@ export const shouldBypassSharedCache = async (viewer: KunViewer | null) => {
   if (!viewer) {
     return false
   }
-  if (viewer.role >= 3) {
+  if (can(viewer, 'content.viewPending')) {
     return true
   }
 

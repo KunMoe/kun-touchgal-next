@@ -5,6 +5,7 @@ import { patchCreateSchema, patchUpdateSchema } from '~/validations/edit'
 import { createGalgame } from './create'
 import { updateGalgame } from './update'
 import { normalizeStringArray } from '~/utils/normalizeStringArray'
+import { can } from '~/constants/permission'
 
 const checkStringArrayValid = (type: 'alias' | 'tag', aliasString: string) => {
   const label = type === 'alias' ? '别名' : '标签'
@@ -46,7 +47,7 @@ export const POST = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'galgame.create')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 
@@ -86,7 +87,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 3) {
+  if (!can(payload, 'galgame.rewrite')) {
     return NextResponse.json('本页面仅管理员可访问')
   }
 

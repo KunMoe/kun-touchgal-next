@@ -48,6 +48,7 @@ const handlePatchTagAction = (type: 'add' | 'delete') => {
 
 export const POST = createPatchRelationHandler({
   schema: patchTagChangeSchema,
+  capability: 'tag.manage',
   parseBody: kunParsePostBody,
   mutate: handlePatchTagAction('add'),
   invalidateListCache: invalidateTagListCache
@@ -55,6 +56,7 @@ export const POST = createPatchRelationHandler({
 
 export const PUT = createPatchRelationHandler({
   schema: patchTagChangeSchema,
+  capability: 'tag.manage',
   parseBody: kunParsePutBody,
   mutate: handlePatchTagAction('delete'),
   invalidateListCache: invalidateTagListCache

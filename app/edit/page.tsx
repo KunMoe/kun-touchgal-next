@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
+import { can } from '~/constants/permission'
 
 export default async function Kun() {
   const payload = await verifyHeaderCookie()
@@ -8,7 +9,7 @@ export default async function Kun() {
     redirect(`/login?from=${encodeURIComponent('/edit')}`)
   }
 
-  if (payload.role >= 4) {
+  if (can(payload, 'galgame.create')) {
     redirect('/edit/create')
   }
 

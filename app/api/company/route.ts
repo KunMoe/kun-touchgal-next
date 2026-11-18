@@ -20,6 +20,7 @@ import {
   enqueueSearchOutboxBatch,
   kickSearchOutboxDrain
 } from '~/server/search/sync'
+import { can } from '~/constants/permission'
 export const GET = async (req: NextRequest) => {
   const input = kunParseGetQuery(req, getCompanyByIdSchema)
   if (typeof input === 'string') {
@@ -120,7 +121,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 3) {
+  if (!can(payload, 'company.manage')) {
     return NextResponse.json('本页面仅管理员可访问')
   }
 
@@ -193,7 +194,7 @@ export const POST = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 3) {
+  if (!can(payload, 'company.manage')) {
     return NextResponse.json('本页面仅管理员可访问')
   }
 
@@ -211,7 +212,7 @@ export const DELETE = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 3) {
+  if (!can(payload, 'company.manage')) {
     return NextResponse.json('本页面仅管理员可访问')
   }
 

@@ -7,6 +7,7 @@ import { gatherAndEnsurePatchCompanies } from '../_gatherCompanies'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
 import { invalidatePatchRelationCaches } from '~/app/api/patch/introduction/_relationRoute'
 import { queueSearchSync } from '~/server/search/sync'
+import { can } from '~/constants/permission'
 
 const fetchCompanySchema = z.object({
   patchId: z.coerce.number().min(1).max(9999999)
@@ -22,7 +23,7 @@ export const POST = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 3) {
+  if (!can(payload, 'company.manage')) {
     return NextResponse.json('您没有权限执行此操作')
   }
 

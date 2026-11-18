@@ -16,6 +16,7 @@ import { createTag } from './create'
 import { updateTag } from './update'
 import { getTagById } from './get'
 import { deleteTag } from './delete'
+import { can } from '~/constants/permission'
 
 const tagIdSchema = z.object({
   tagId: z.coerce.number().min(1).max(9999999)
@@ -40,7 +41,7 @@ export const POST = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 3) {
+  if (!can(payload, 'tag.manage')) {
     return NextResponse.json('本页面仅管理员可访问')
   }
 
@@ -57,7 +58,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 3) {
+  if (!can(payload, 'tag.manage')) {
     return NextResponse.json('本页面仅管理员可访问')
   }
 
@@ -74,7 +75,7 @@ export const DELETE = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 3) {
+  if (!can(payload, 'tag.manage')) {
     return NextResponse.json('本页面仅管理员可访问')
   }
 

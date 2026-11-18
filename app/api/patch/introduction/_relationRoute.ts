@@ -4,7 +4,9 @@ import { prisma } from '~/prisma'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { queueSearchSync } from '~/server/search/sync'
+import { can } from '~/constants/permission'
 import type { NextRequest } from 'next/server'
+import type { KunCapability } from '~/constants/permission'
 
 // 关联变更后的缓存失效: 列表缓存 + 补丁详情缓存。后者会抛 (cache.ts 内 re-throw),
 // 前者内部吞错永不 reject, 故只有后者包 try。company/fetch 路由主流程是外部抓取
@@ -23,12 +25,13 @@ export const invalidatePatchRelationCaches = async (
 }
 
 // tag / company 各自 POST(增) 与 PUT(删) 共四个 handler 的公共编排:
-// 解析 -> 管理员门 -> 补丁存在性 -> 变更事务 -> 失效。
+// 解析 -> 能力门 -> 补丁存在性 -> 变更事务 -> 失效。
 // mutate 返回关系是否真的发生变化, 无变化则一处缓存都不动
 export const createPatchRelationHandler = <
   T extends z.ZodType<{ patchId: number }>
 >(options: {
   schema: T
+  capability: KunCapability
   parseBody: (req: NextRequest, schema: T) => Promise<z.infer<T> | string>
   mutate: (input: z.infer<T>) => Promise<boolean>
   invalidateListCache: () => Promise<void>
@@ -44,7 +47,7 @@ export const createPatchRelationHandler = <
     if (!payload) {
       return NextResponse.json('用户未登录')
     }
-    if (payload.role < 3) {
+    if (!can(payload, options.capability)) {
       return NextResponse.json('本页面仅管理员可访问')
     }
 

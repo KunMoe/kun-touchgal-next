@@ -178,11 +178,12 @@ describe('/edit/rewrite 预填来源', () => {
   })
 
   it('下发门槛与 /edit/rewrite 的准入一致', () => {
+    // 两处引用能力表里的同一项, 阈值只有一份
     expect(readSource('../../../../app/[id]/page.tsx')).toContain(
-      'canRewrite={!!payload && payload.role >= 3}'
+      "canRewrite={can(payload, 'galgame.rewrite')}"
     )
     expect(readSource('../../../../app/edit/rewrite/page.tsx')).toContain(
-      'if (!payload || payload.role < 3) {'
+      "if (!can(payload, 'galgame.rewrite')) {"
     )
   })
 })

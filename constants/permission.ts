@@ -41,9 +41,11 @@ export const can = (
   !!subject && subject.uid > 0 && subject.role >= KUN_CAPABILITY[capability]
 
 // 创作者是身份不是能力: 已经是创作者或以上的不需要再申请
+export const isCreatorRole = (role: number): boolean => role >= KUN_ROLE.CREATOR
+
 export const canApplyCreator = (
   subject: KunSubject | null | undefined
-): boolean => !!subject && subject.uid > 0 && subject.role < KUN_ROLE.CREATOR
+): boolean => !!subject && subject.uid > 0 && !isCreatorRole(subject.role)
 
 // 按权限从高到低排: 默认存储取允许的第一个。取值与 constants/resource.ts 的
 // SUPPORTED_RESOURCE_LINK 一致 (测试对照)

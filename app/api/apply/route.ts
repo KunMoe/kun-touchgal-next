@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
 import { createMessage } from '~/app/api/utils/message'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { isCreatorRole } from '~/constants/permission'
 
 const applyForCreator = async (uid: number) => {
   const user = await prisma.user.findUnique({
@@ -22,7 +23,7 @@ const applyForCreator = async (uid: number) => {
     return '您暂时不可以申请成为创作者, 您可以继续发布资源'
   }
 
-  if (user.role > 1) {
+  if (isCreatorRole(user.role)) {
     return '您已经是一名创作者了! 无需重复申请'
   }
 
