@@ -10,13 +10,13 @@ import {
 const {
   getTagByIdMock,
   getPatchByTagMock,
-  getPatchVisibilityContextMock,
+  listViewMock,
   verifyHeaderCookieMock,
   reactCacheEntriesMock
 } = vi.hoisted(() => ({
   getTagByIdMock: vi.fn(),
   getPatchByTagMock: vi.fn(),
-  getPatchVisibilityContextMock: vi.fn(),
+  listViewMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
   reactCacheEntriesMock: [] as Array<{
     fn: unknown
@@ -55,8 +55,8 @@ vi.mock('~/app/api/tag/galgame/service', () => ({
   getPatchByTag: getPatchByTagMock
 }))
 
-vi.mock('~/utils/actions/getPatchVisibilityContext', () => ({
-  getPatchVisibilityContext: getPatchVisibilityContextMock
+vi.mock('~/server/viewer/fromHeaders', () => ({
+  getViewerContext: async () => ({ listView: listViewMock })
 }))
 
 vi.mock('~/utils/actions/verifyHeaderCookie', async () => {
@@ -69,13 +69,16 @@ vi.mock('~/utils/actions/verifyHeaderCookie', async () => {
 
 import { kunGetTagMetadataActions, kunGetTagPageDataActions } from '../actions'
 
+const VIEW = {
+  kind: 'shared',
+  visibility: { contentLimit: 'sfw', blockedTagIds: [] },
+  cacheVariant: 'sfw:'
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   reactCacheEntriesMock.length = 0
-  getPatchVisibilityContextMock.mockResolvedValue({
-    blockedTagIds: [],
-    nsfwWhere: {}
-  })
+  listViewMock.mockResolvedValue(VIEW)
   verifyHeaderCookieMock.mockResolvedValue({ uid: 1 })
 })
 
@@ -105,7 +108,7 @@ describe('kunGetTagMetadataActions', () => {
     expect(pageResult).toBeNull()
     expect(verifyHeaderCookieMock).toHaveBeenCalledTimes(1)
     expect(getTagByIdMock).not.toHaveBeenCalled()
-    expect(getPatchVisibilityContextMock).not.toHaveBeenCalled()
+    expect(listViewMock).not.toHaveBeenCalled()
     expect(getPatchByTagMock).not.toHaveBeenCalled()
   })
 

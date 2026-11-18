@@ -53,16 +53,13 @@ vi.mock('~/server/search/filter-builder', () => ({
 }))
 
 import { getGalgame } from '~/app/api/galgame/service'
+import { toPublicListView } from '~/server/viewer/patchVisibility'
 
-const blockedTagWhere = (count: number) => ({
-  NOT: {
-    tag: {
-      some: {
-        tag_id: { in: Array.from({ length: count }, (_, index) => index + 1) }
-      }
-    }
-  }
-})
+const blockedView = (count: number) =>
+  toPublicListView({
+    contentLimit: null,
+    blockedTagIds: Array.from({ length: count }, (_, index) => index + 1)
+  })
 
 const INPUT = {
   selectedType: 'all',
@@ -77,11 +74,8 @@ const INPUT = {
   minRatingCount: 0
 } as const
 
-const VISIBILITY = {
-  visibilityWhere: {},
-  contentLimit: null,
-  blockedTagIds: []
-}
+// 分级不限、无屏蔽标签的共享视角
+const VIEW = toPublicListView({ contentLimit: null, blockedTagIds: [] })
 
 const EMPTY_RESPONSE = { galgames: [], total: 0 }
 const CACHED_RESPONSE = { galgames: [], total: 3 }
@@ -103,10 +97,7 @@ describe('getGalgame', () => {
   it('skips the shared cache entirely when any tag is blocked', async () => {
     isMeiliEnabledMock.mockReturnValue(true)
 
-    const response = await getGalgame(INPUT, {
-      ...VISIBILITY,
-      visibilityWhere: blockedTagWhere(1)
-    })
+    const response = await getGalgame(INPUT, blockedView(1))
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(queryGalgameIndexMock).toHaveBeenCalledTimes(1)
@@ -119,10 +110,7 @@ describe('getGalgame', () => {
   it('skips the shared cache for large blocked tag sets too', async () => {
     isMeiliEnabledMock.mockReturnValue(true)
 
-    const response = await getGalgame(INPUT, {
-      ...VISIBILITY,
-      visibilityWhere: blockedTagWhere(60)
-    })
+    const response = await getGalgame(INPUT, blockedView(60))
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(queryGalgameIndexMock).toHaveBeenCalledTimes(1)
@@ -133,7 +121,7 @@ describe('getGalgame', () => {
   it('returns cached response without querying or locking', async () => {
     getKvMock.mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
 
-    const response = await getGalgame(INPUT, VISIBILITY)
+    const response = await getGalgame(INPUT, VIEW)
 
     expect(response).toEqual(CACHED_RESPONSE)
     expect(acquireKvLockMock).not.toHaveBeenCalled()
@@ -146,7 +134,7 @@ describe('getGalgame', () => {
     acquireKvLockMock.mockResolvedValue('token-1')
     isMeiliEnabledMock.mockReturnValue(true)
 
-    const response = await getGalgame(INPUT, VISIBILITY)
+    const response = await getGalgame(INPUT, VIEW)
 
     const cacheKey = getRequestedCacheKey()
     expect(response).toEqual(EMPTY_RESPONSE)
@@ -171,7 +159,7 @@ describe('getGalgame', () => {
     isMeiliEnabledMock.mockReturnValue(true)
     queryGalgameIndexMock.mockRejectedValue(new Error('meili down'))
 
-    const response = await getGalgame(INPUT, VISIBILITY)
+    const response = await getGalgame(INPUT, VIEW)
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(patchFindManyMock).toHaveBeenCalledTimes(1)
@@ -189,7 +177,7 @@ describe('getGalgame', () => {
       .mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
     acquireKvLockMock.mockResolvedValue(null)
 
-    const response = await getGalgame(INPUT, VISIBILITY)
+    const response = await getGalgame(INPUT, VIEW)
 
     expect(response).toEqual(CACHED_RESPONSE)
     expect(patchFindManyMock).not.toHaveBeenCalled()
@@ -201,7 +189,7 @@ describe('getGalgame', () => {
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue(null)
 
-    const response = await getGalgame(INPUT, VISIBILITY)
+    const response = await getGalgame(INPUT, VIEW)
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(getKvMock).toHaveBeenCalledTimes(4)
@@ -219,7 +207,7 @@ describe('getGalgame', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValue(new Error('redis down'))
 
-    const response = await getGalgame(INPUT, VISIBILITY)
+    const response = await getGalgame(INPUT, VIEW)
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(acquireKvLockMock).not.toHaveBeenCalled()

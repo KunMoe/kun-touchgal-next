@@ -15,14 +15,19 @@ import {
   buildGalgameSearchSort
 } from '~/server/search/filter-builder'
 import { queryGalgameIndex } from '~/server/search/query'
-import type { PatchVisibilityContext } from '~/app/api/utils/getPatchVisibilityContext'
+import {
+  toPatchWhere,
+  toSearchVisibility,
+  type PatchVisibility,
+  type PublicListView
+} from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 
 const getPatchByCompanyFromSearch = async (
   input: z.infer<typeof getPatchByCompanySchema>,
   years: string[],
   months: string[],
-  visibility: PatchVisibilityContext
+  visibility: PatchVisibility
 ) => {
   const filter = buildGalgameSearchFilter({
     selectedType: input.selectedType,
@@ -31,8 +36,7 @@ const getPatchByCompanyFromSearch = async (
     years,
     months,
     minRatingCount: input.sortField === 'rating' ? input.minRatingCount : 0,
-    contentLimit: visibility.contentLimit,
-    blockedTagIds: visibility.blockedTagIds,
+    ...toSearchVisibility(visibility),
     companyId: input.companyId
   })
   if (filter === null) {
@@ -111,7 +115,7 @@ const queryPatchByCompany = async (
   input: z.infer<typeof getPatchByCompanySchema>,
   years: string[],
   months: string[],
-  visibility: PatchVisibilityContext
+  visibility: PatchVisibility
 ) => {
   if (isMeiliEnabled()) {
     try {
@@ -122,17 +126,12 @@ const queryPatchByCompany = async (
     }
   }
 
-  return legacyGetPatchByCompany(
-    input,
-    years,
-    months,
-    visibility.visibilityWhere
-  )
+  return legacyGetPatchByCompany(input, years, months, toPatchWhere(visibility))
 }
 
 export const getPatchByCompany = async (
   input: z.infer<typeof getPatchByCompanySchema>,
-  visibility: PatchVisibilityContext
+  view: PublicListView
 ) => {
   const years = parseGalgameFilterArray(input.yearString)
   const months = parseGalgameFilterArray(input.monthString)
@@ -146,7 +145,7 @@ export const getPatchByCompany = async (
     },
     years,
     months,
-    visibilityWhere: visibility.visibilityWhere,
-    query: () => queryPatchByCompany(input, years, months, visibility)
+    view,
+    query: () => queryPatchByCompany(input, years, months, view.visibility)
   })
 }

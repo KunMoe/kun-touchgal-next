@@ -15,14 +15,19 @@ import {
   buildGalgameSearchSort
 } from '~/server/search/filter-builder'
 import { queryGalgameIndex } from '~/server/search/query'
-import type { PatchVisibilityContext } from '~/app/api/utils/getPatchVisibilityContext'
+import {
+  toPatchWhere,
+  toSearchVisibility,
+  type PatchVisibility,
+  type PublicListView
+} from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 
 const getPatchByTagFromSearch = async (
   input: z.infer<typeof getPatchByTagSchema>,
   years: string[],
   months: string[],
-  visibility: PatchVisibilityContext
+  visibility: PatchVisibility
 ) => {
   const filter = buildGalgameSearchFilter({
     selectedType: input.selectedType,
@@ -31,8 +36,7 @@ const getPatchByTagFromSearch = async (
     years,
     months,
     minRatingCount: input.sortField === 'rating' ? input.minRatingCount : 0,
-    contentLimit: visibility.contentLimit,
-    blockedTagIds: visibility.blockedTagIds,
+    ...toSearchVisibility(visibility),
     tagId: input.tagId
   })
   if (filter === null) {
@@ -113,7 +117,7 @@ const queryPatchByTag = async (
   input: z.infer<typeof getPatchByTagSchema>,
   years: string[],
   months: string[],
-  visibility: PatchVisibilityContext
+  visibility: PatchVisibility
 ) => {
   if (isMeiliEnabled()) {
     try {
@@ -124,12 +128,12 @@ const queryPatchByTag = async (
     }
   }
 
-  return legacyGetPatchByTag(input, years, months, visibility.visibilityWhere)
+  return legacyGetPatchByTag(input, years, months, toPatchWhere(visibility))
 }
 
 export const getPatchByTag = async (
   input: z.infer<typeof getPatchByTagSchema>,
-  visibility: PatchVisibilityContext
+  view: PublicListView
 ) => {
   const years = parseGalgameFilterArray(input.yearString)
   const months = parseGalgameFilterArray(input.monthString)
@@ -143,7 +147,7 @@ export const getPatchByTag = async (
     },
     years,
     months,
-    visibilityWhere: visibility.visibilityWhere,
-    query: () => queryPatchByTag(input, years, months, visibility)
+    view,
+    query: () => queryPatchByTag(input, years, months, view.visibility)
   })
 }

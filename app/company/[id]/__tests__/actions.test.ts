@@ -10,12 +10,12 @@ import {
 const {
   getCompanyByIdMock,
   getPatchByCompanyMock,
-  getPatchVisibilityContextMock,
+  listViewMock,
   reactCacheEntriesMock
 } = vi.hoisted(() => ({
   getCompanyByIdMock: vi.fn(),
   getPatchByCompanyMock: vi.fn(),
-  getPatchVisibilityContextMock: vi.fn(),
+  listViewMock: vi.fn(),
   reactCacheEntriesMock: [] as Array<{
     fn: unknown
     args: unknown[]
@@ -53,8 +53,8 @@ vi.mock('~/app/api/company/galgame/service', () => ({
   getPatchByCompany: getPatchByCompanyMock
 }))
 
-vi.mock('~/utils/actions/getPatchVisibilityContext', () => ({
-  getPatchVisibilityContext: getPatchVisibilityContextMock
+vi.mock('~/server/viewer/fromHeaders', () => ({
+  getViewerContext: async () => ({ listView: listViewMock })
 }))
 
 import {
@@ -62,13 +62,16 @@ import {
   kunGetCompanyPageDataActions
 } from '../actions'
 
+const VIEW = {
+  kind: 'shared',
+  visibility: { contentLimit: 'sfw', blockedTagIds: [] },
+  cacheVariant: 'sfw:'
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   reactCacheEntriesMock.length = 0
-  getPatchVisibilityContextMock.mockResolvedValue({
-    blockedTagIds: [],
-    nsfwWhere: {}
-  })
+  listViewMock.mockResolvedValue(VIEW)
 })
 
 const patchParams = {

@@ -5,7 +5,7 @@ import { cache } from 'react'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'
 import { getTagById } from '~/app/api/tag/get'
 import { getPatchByTag } from '~/app/api/tag/galgame/service'
-import { getPatchVisibilityContext } from '~/utils/actions/getPatchVisibilityContext'
+import { getViewerContext } from '~/server/viewer/fromHeaders'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import { getPatchByTagSchema, getTagByIdSchema } from '~/validations/tag'
 
@@ -41,8 +41,9 @@ export const kunGetTagPageDataActions = async (
   }
 
   const tagPromise = getCachedTagById(input.tagId)
-  const responseResultPromise = getPatchVisibilityContext()
-    .then((visibility) => getPatchByTag(input, visibility))
+  const responseResultPromise = getViewerContext()
+    .then((ctx) => ctx.listView())
+    .then((view) => getPatchByTag(input, view))
     .then(
       (response) => ({ status: 'fulfilled' as const, response }),
       (error: unknown) => ({ status: 'rejected' as const, error })

@@ -16,7 +16,12 @@ import {
 } from '~/server/search/filter-builder'
 import { queryGalgameIndex } from '~/server/search/query'
 import type { GalgameListResponse } from '~/app/api/utils/galgameListCache'
-import type { PatchVisibilityContext } from '../utils/getPatchVisibilityContext'
+import {
+  toPatchWhere,
+  toSearchVisibility,
+  type PatchVisibility,
+  type PublicListView
+} from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 
 const GALGAME_LIST_CACHE_KEY_PREFIX = 'galgame:list'
@@ -25,7 +30,7 @@ const getGalgameFromSearch = async (
   input: z.infer<typeof galgameSchema>,
   years: string[],
   months: string[],
-  visibility: PatchVisibilityContext
+  visibility: PatchVisibility
 ): Promise<GalgameListResponse> => {
   const filter = buildGalgameSearchFilter({
     selectedType: input.selectedType,
@@ -35,8 +40,7 @@ const getGalgameFromSearch = async (
     months,
     // 列表端点的 minRatingCount 恒生效，与旧实现一致
     minRatingCount: input.minRatingCount,
-    contentLimit: visibility.contentLimit,
-    blockedTagIds: visibility.blockedTagIds
+    ...toSearchVisibility(visibility)
   })
   if (filter === null) {
     return { galgames: [], total: 0 }
@@ -113,7 +117,7 @@ const queryGalgameList = async (
   input: z.infer<typeof galgameSchema>,
   years: string[],
   months: string[],
-  visibility: PatchVisibilityContext
+  visibility: PatchVisibility
 ): Promise<GalgameListResponse> => {
   if (isMeiliEnabled()) {
     try {
@@ -123,12 +127,12 @@ const queryGalgameList = async (
       console.error('Meilisearch 列表查询失败，降级为 Prisma 实现:', error)
     }
   }
-  return getGalgameFromPrisma(input, years, months, visibility.visibilityWhere)
+  return getGalgameFromPrisma(input, years, months, toPatchWhere(visibility))
 }
 
 export const getGalgame = async (
   input: z.infer<typeof galgameSchema>,
-  visibility: PatchVisibilityContext
+  view: PublicListView
 ): Promise<GalgameListResponse> => {
   const years = parseGalgameFilterArray(input.yearString)
   const months = parseGalgameFilterArray(input.monthString)
@@ -138,7 +142,7 @@ export const getGalgame = async (
     input,
     years,
     months,
-    visibilityWhere: visibility.visibilityWhere,
-    query: () => queryGalgameList(input, years, months, visibility)
+    view,
+    query: () => queryGalgameList(input, years, months, view.visibility)
   })
 }

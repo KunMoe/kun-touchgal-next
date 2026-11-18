@@ -1,12 +1,8 @@
 import { createHash } from 'crypto'
 import { delKv, getKv, setKv, setKvIfAbsent } from '~/lib/redis'
 import { GALGAME_LIST_CACHE_DURATION } from '~/config/cache'
-import {
-  buildVisibilityCacheKey,
-  hasBlockedTagFilter
-} from './visibilityCacheKey'
 import { kunCacheSingleflight } from './cacheSingleflight'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { PublicListView } from '~/server/viewer/patchVisibility'
 
 const normalizeFilterValues = (values: string[]) => [...new Set(values)].sort()
 
@@ -36,7 +32,8 @@ interface WithGalgameListCacheOptions {
   input: GalgameListCacheKeyInput
   years: string[]
   months: string[]
-  visibilityWhere: Prisma.patchWhereInput
+  // 作品列表不含待审核内容, 没有 personal 视角
+  view: PublicListView
   query: () => Promise<GalgameListResponse>
 }
 
@@ -45,13 +42,15 @@ const logGalgameListCacheError = (message: string, error: unknown) => {
   console.error(message, error)
 }
 
-const getGalgameListCacheKey = ({
-  cacheKeyPrefix,
-  input,
-  years,
-  months,
-  visibilityWhere
-}: Omit<WithGalgameListCacheOptions, 'query'>) => {
+const getGalgameListCacheKey = (
+  {
+    cacheKeyPrefix,
+    input,
+    years,
+    months
+  }: Omit<WithGalgameListCacheOptions, 'query' | 'view'>,
+  cacheVariant: string
+) => {
   const parts = [
     input.selectedType,
     input.selectedLanguage,
@@ -63,7 +62,7 @@ const getGalgameListCacheKey = ({
     String(input.minRatingCount),
     normalizeFilterValues(years).join(','),
     normalizeFilterValues(months).join(','),
-    buildVisibilityCacheKey(visibilityWhere)
+    cacheVariant
   ].join('|')
   const hash = createHash('sha1').update(parts).digest('hex').slice(0, 16)
   return `${cacheKeyPrefix}:${hash}`
@@ -137,12 +136,12 @@ const setGalgameListCacheIfAbsent = async (
 export const withGalgameListCache = async (
   options: WithGalgameListCacheOptions
 ): Promise<GalgameListResponse> => {
-  // 带屏蔽标签的视角不参与共享缓存, 见 hasBlockedTagFilter
-  if (hasBlockedTagFilter(options.visibilityWhere)) {
+  // 只有 shared 视角读写共享缓存 (各视角的含义见 ListView)
+  if (options.view.kind !== 'shared') {
     return options.query()
   }
 
-  const cacheKey = getGalgameListCacheKey(options)
+  const cacheKey = getGalgameListCacheKey(options, options.view.cacheVariant)
 
   const cached = await getCachedGalgameList(cacheKey)
   if (cached.response) {

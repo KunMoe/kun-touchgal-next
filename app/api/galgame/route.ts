@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseGetQuery } from '../utils/parseQuery'
 import { galgameSchema } from '~/validations/galgame'
-import { getPatchVisibilityContext } from '~/app/api/utils/getPatchVisibilityContext'
-import { createAuthLoader } from '~/middleware/_verifyHeaderCookie'
+import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
 import { getGalgame } from './service'
 export const GET = async (req: NextRequest) => {
   const input = kunParseGetQuery(req, galgameSchema)
   if (typeof input === 'string') {
     return NextResponse.json(input)
   }
-  const loadAuth = createAuthLoader(req)
-  const visibility = await getPatchVisibilityContext(req, loadAuth)
+  const view = await viewerContextFromRequest(req).listView()
 
-  const response = await getGalgame(input, visibility)
+  const response = await getGalgame(input, view)
   return NextResponse.json(response)
 }

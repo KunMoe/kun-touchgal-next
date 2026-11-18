@@ -9,7 +9,7 @@ import {
   getCompanyByIdSchema,
   getPatchByCompanySchema
 } from '~/validations/company'
-import { getPatchVisibilityContext } from '~/utils/actions/getPatchVisibilityContext'
+import { getViewerContext } from '~/server/viewer/fromHeaders'
 
 const getCachedCompanyById = cache((companyId: number) =>
   getCompanyById({ companyId })
@@ -35,8 +35,9 @@ export const kunGetCompanyPageDataActions = async (
   }
 
   const companyPromise = getCachedCompanyById(input.companyId)
-  const responseResultPromise = getPatchVisibilityContext()
-    .then((visibility) => getPatchByCompany(input, visibility))
+  const responseResultPromise = getViewerContext()
+    .then((ctx) => ctx.listView())
+    .then((view) => getPatchByCompany(input, view))
     .then(
       (response) => ({ status: 'fulfilled' as const, response }),
       (error: unknown) => ({ status: 'rejected' as const, error })

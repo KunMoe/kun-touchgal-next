@@ -56,6 +56,7 @@ vi.mock('~/server/search/filter-builder', () => ({
 }))
 
 import { getPatchByTag } from '~/app/api/tag/galgame/service'
+import { toPublicListView } from '~/server/viewer/patchVisibility'
 
 const INPUT = {
   tagId: 17,
@@ -71,11 +72,8 @@ const INPUT = {
   minRatingCount: 0
 } as const
 
-const VISIBILITY = {
-  visibilityWhere: {},
-  contentLimit: null,
-  blockedTagIds: []
-}
+// 分级不限、无屏蔽标签的共享视角
+const VIEW = toPublicListView({ contentLimit: null, blockedTagIds: [] })
 
 const EMPTY_RESPONSE = { galgames: [], total: 0 }
 const CACHED_RESPONSE = { galgames: [], total: 3 }
@@ -98,7 +96,7 @@ describe('getPatchByTag', () => {
   it('returns cached response without querying or locking', async () => {
     getKvMock.mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
 
-    const response = await getPatchByTag(INPUT, VISIBILITY)
+    const response = await getPatchByTag(INPUT, VIEW)
 
     expect(response).toEqual(CACHED_RESPONSE)
     expect(getRequestedCacheKey()).toMatch(/^galgame:list:tag:17:/)
@@ -112,7 +110,7 @@ describe('getPatchByTag', () => {
     acquireKvLockMock.mockResolvedValue('token-1')
     isMeiliEnabledMock.mockReturnValue(true)
 
-    const response = await getPatchByTag(INPUT, VISIBILITY)
+    const response = await getPatchByTag(INPUT, VIEW)
 
     const cacheKey = getRequestedCacheKey()
     expect(response).toEqual(EMPTY_RESPONSE)
@@ -133,7 +131,7 @@ describe('getPatchByTag', () => {
     isMeiliEnabledMock.mockReturnValue(true)
     queryGalgameIndexMock.mockRejectedValue(new Error('meili down'))
 
-    const response = await getPatchByTag(INPUT, VISIBILITY)
+    const response = await getPatchByTag(INPUT, VIEW)
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(relationFindManyMock).toHaveBeenCalledTimes(1)
@@ -148,9 +146,9 @@ describe('getPatchByTag', () => {
   it('uses a different cache key per tag and ignores minRatingCount for non-rating sorts', async () => {
     getKvMock.mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
 
-    await getPatchByTag(INPUT, VISIBILITY)
-    await getPatchByTag({ ...INPUT, tagId: 18 }, VISIBILITY)
-    await getPatchByTag({ ...INPUT, minRatingCount: 10 }, VISIBILITY)
+    await getPatchByTag(INPUT, VIEW)
+    await getPatchByTag({ ...INPUT, tagId: 18 }, VIEW)
+    await getPatchByTag({ ...INPUT, minRatingCount: 10 }, VIEW)
 
     expect(getRequestedCacheKey(1)).toMatch(/^galgame:list:tag:18:/)
     expect(getRequestedCacheKey(1)).not.toBe(getRequestedCacheKey(0))

@@ -4,8 +4,12 @@ import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { prisma } from '~/prisma/index'
 import { parseSearchSuggestions, searchSchema } from '~/validations/search'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
-import { getPatchVisibilityContext } from '~/app/api/utils/getPatchVisibilityContext'
-import { createAuthLoader } from '~/middleware/_verifyHeaderCookie'
+import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
+import {
+  toPatchWhere,
+  toSearchVisibility,
+  type PatchVisibility
+} from '~/server/viewer/patchVisibility'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { isMeiliEnabled } from '~/lib/meilisearch'
 import {
@@ -20,7 +24,6 @@ import {
   resolveCompanyIdsByNames,
   resolveTagIdsByNames
 } from '~/server/search/resolve'
-import type { PatchVisibilityContext } from '~/app/api/utils/getPatchVisibilityContext'
 import type { SearchSuggestionType } from '~/types/api/search'
 import {
   buildGalgameDateFilter,
@@ -30,7 +33,7 @@ import {
 
 const searchGalgameWithMeili = async (
   input: z.infer<typeof searchSchema>,
-  visibility: PatchVisibilityContext,
+  visibility: PatchVisibility,
   query: SearchSuggestionType[]
 ) => {
   const {
@@ -108,8 +111,7 @@ const searchGalgameWithMeili = async (
     years: selectedYears,
     months: selectedMonths,
     minRatingCount: sortField === 'rating' ? minRatingCount : 0,
-    contentLimit: visibility.contentLimit,
-    blockedTagIds: visibility.blockedTagIds,
+    ...toSearchVisibility(visibility),
     includeTagIdGroups,
     includeCompanyIdGroups,
     excludeTagIds: excludeTagIdGroups.flat(),
@@ -388,8 +390,7 @@ export const POST = async (req: NextRequest) => {
   if (typeof query === 'string') {
     return NextResponse.json(query)
   }
-  const loadAuth = createAuthLoader(req)
-  const visibility = await getPatchVisibilityContext(req, loadAuth)
+  const visibility = await viewerContextFromRequest(req).visibility()
 
   if (isMeiliEnabled()) {
     try {
@@ -403,7 +404,7 @@ export const POST = async (req: NextRequest) => {
 
   const response = await legacySearchGalgame(
     input,
-    visibility.visibilityWhere,
+    toPatchWhere(visibility),
     query
   )
   return NextResponse.json(response)

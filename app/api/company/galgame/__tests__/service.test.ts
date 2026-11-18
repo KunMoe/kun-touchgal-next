@@ -53,6 +53,7 @@ vi.mock('~/server/search/filter-builder', () => ({
 }))
 
 import { getPatchByCompany } from '~/app/api/company/galgame/service'
+import { toPublicListView } from '~/server/viewer/patchVisibility'
 
 const INPUT = {
   companyId: 5,
@@ -68,11 +69,8 @@ const INPUT = {
   minRatingCount: 0
 } as const
 
-const VISIBILITY = {
-  visibilityWhere: {},
-  contentLimit: null,
-  blockedTagIds: []
-}
+// 分级不限、无屏蔽标签的共享视角
+const VIEW = toPublicListView({ contentLimit: null, blockedTagIds: [] })
 
 const EMPTY_RESPONSE = { galgames: [], total: 0 }
 const CACHED_RESPONSE = { galgames: [], total: 3 }
@@ -95,7 +93,7 @@ describe('getPatchByCompany', () => {
   it('returns cached response without querying or locking', async () => {
     getKvMock.mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
 
-    const response = await getPatchByCompany(INPUT, VISIBILITY)
+    const response = await getPatchByCompany(INPUT, VIEW)
 
     expect(response).toEqual(CACHED_RESPONSE)
     expect(getRequestedCacheKey()).toMatch(/^galgame:list:company:5:/)
@@ -109,7 +107,7 @@ describe('getPatchByCompany', () => {
     acquireKvLockMock.mockResolvedValue('token-1')
     isMeiliEnabledMock.mockReturnValue(true)
 
-    const response = await getPatchByCompany(INPUT, VISIBILITY)
+    const response = await getPatchByCompany(INPUT, VIEW)
 
     const cacheKey = getRequestedCacheKey()
     expect(response).toEqual(EMPTY_RESPONSE)
@@ -130,7 +128,7 @@ describe('getPatchByCompany', () => {
     isMeiliEnabledMock.mockReturnValue(true)
     queryGalgameIndexMock.mockRejectedValue(new Error('meili down'))
 
-    const response = await getPatchByCompany(INPUT, VISIBILITY)
+    const response = await getPatchByCompany(INPUT, VIEW)
 
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(patchFindManyMock).toHaveBeenCalledTimes(1)
@@ -145,9 +143,9 @@ describe('getPatchByCompany', () => {
   it('uses a different cache key per company and ignores minRatingCount for non-rating sorts', async () => {
     getKvMock.mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
 
-    await getPatchByCompany(INPUT, VISIBILITY)
-    await getPatchByCompany({ ...INPUT, companyId: 6 }, VISIBILITY)
-    await getPatchByCompany({ ...INPUT, minRatingCount: 10 }, VISIBILITY)
+    await getPatchByCompany(INPUT, VIEW)
+    await getPatchByCompany({ ...INPUT, companyId: 6 }, VIEW)
+    await getPatchByCompany({ ...INPUT, minRatingCount: 10 }, VIEW)
 
     expect(getRequestedCacheKey(1)).toMatch(/^galgame:list:company:6:/)
     expect(getRequestedCacheKey(1)).not.toBe(getRequestedCacheKey(0))
