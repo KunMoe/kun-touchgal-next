@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server'
 import { errors } from 'oidc-provider'
 import { getOidcProvider } from '~/lib/oidc/provider'
 import { buildRequestBridge } from '~/lib/oidc/webToNode'
-import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
+import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { OIDC_MOUNT_PATH } from '~/config/oidc'
 
 export const runtime = 'nodejs'
@@ -22,7 +22,7 @@ export const GET = async (
 ) => {
   const { uid } = await params
   const interactionPath = `${OIDC_MOUNT_PATH}/interaction/${uid}`
-  const payload = await verifyHeaderCookie()
+  const payload = await verifyHeaderCookie(req)
   if (!payload) {
     return NextResponse.redirect(
       new URL(`/login?from=${encodeURIComponent(interactionPath)}`, req.url)

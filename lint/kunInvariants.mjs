@@ -648,6 +648,39 @@ export const KUN_INVARIANTS = [
         "export const label = 'use server'"
       ]
     }
+  },
+  {
+    id: 'inv-viewer-01',
+    aliases: ['T05'],
+    statement:
+      'Route Handler 与 app/api 下的模块不得导入 server/viewer/fromHeaders 和 utils/actions 下读请求上下文的 helper, 请求视角经 server/viewer/fromRequest 建一次后往下传',
+    reason:
+      'fromHeaders 靠 React cache 让一次渲染共用同一个视角上下文, 而 cache 只在渲染过程中去重: Route Handler 里每调一次都会新建上下文并重新校验会话, 校验带登录会话的续期与清理 (Redis 读写)。app/api 下的 service 同时被路由与页面调用, 自己去取上下文就会落进这条路径, 所以只收调用方传进来的视角',
+    removeWhen: 'utils/actions 与 fromHeaders 不再依赖 React cache 去重',
+    files: ['app/api/**', 'app/**/route.ts'],
+    enforce: {
+      kind: 'import',
+      sources: [
+        /(^|\/)server\/viewer\/fromHeaders(\.[cm]?[jt]sx?)?$/,
+        // safeParseSchema 只是 zod 包装, 不读请求
+        /(^|\/)utils\/actions\/(?!safeParseSchema(\.[cm]?[jt]sx?)?$)/
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import { getViewerContext } from '~/server/viewer/fromHeaders'",
+        "import { getViewerContext } from '../../server/viewer/fromHeaders.ts'",
+        "import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'",
+        "import { parseSuperAdminAction } from '~/utils/actions/parseSuperAdminAction'"
+      ],
+      good: [
+        "import { viewerContextFromRequest } from '~/server/viewer/fromRequest'",
+        "import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'",
+        "import { safeParseSchema } from '~/utils/actions/safeParseSchema'",
+        "import type { ViewerContext } from '~/server/viewer/context'"
+      ]
+    }
   }
 ]
 

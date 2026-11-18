@@ -1,8 +1,5 @@
 import 'server-only'
+import { getViewerContext } from '~/server/viewer/fromHeaders'
 
-import { cache } from 'react'
-import { loadAuthUser } from './loadAuthUser'
-
-export const verifyHeaderCookie = cache(
-  async () => (await loadAuthUser())?.payload ?? null
-)
+export const verifyHeaderCookie = async () =>
+  (await getViewerContext()).viewer()

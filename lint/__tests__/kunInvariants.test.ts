@@ -174,6 +174,29 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
     }
   })
 
+  // app/api 之外的 Route Handler (OIDC) 同样不在渲染过程里; 页面与页面读取器正是 fromHeaders 的用户
+  it('inv-viewer-01 管 Route Handler 与 app/api, 不管页面', async () => {
+    const inv = KUN_INVARIANTS.find((item) => item.id === 'inv-viewer-01')
+    const [bad] = inv?.examples.bad ?? []
+    const reportsAt = (file: string) =>
+      reportsOf(eslint, bad, file, 'kun/inv-viewer-01')
+
+    for (const file of [
+      'app/api/home/service.ts',
+      'app/oidc/interaction/[uid]/confirm/route.ts'
+    ]) {
+      expect((await reportsAt(file)).length, file).toBeGreaterThan(0)
+    }
+    for (const file of [
+      'app/page.tsx',
+      'app/actions.ts',
+      'app/admin/layout.tsx',
+      'utils/actions/kunInvariantExample.ts'
+    ]) {
+      expect(await reportsAt(file), file).toEqual([])
+    }
+  })
+
   // 这正是不用核心 no-restricted-* 承载不变量的原因: flat config 里后出现的同名规则
   // 带选项即整体替换。每条不变量各占一个 id 之后, 别人再怎么用核心规则都盖不到它
   it('后来的核心 no-restricted-* 块覆盖不了已登记的不变量', async () => {

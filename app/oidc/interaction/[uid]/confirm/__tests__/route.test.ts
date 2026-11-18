@@ -45,7 +45,7 @@ vi.mock('~/lib/oidc/webToNode', () => ({
   buildRequestBridge: buildRequestBridgeMock
 }))
 
-vi.mock('~/utils/actions/verifyHeaderCookie', () => ({
+vi.mock('~/middleware/_verifyHeaderCookie', () => ({
   verifyHeaderCookie: verifyHeaderCookieMock
 }))
 

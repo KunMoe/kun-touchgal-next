@@ -53,7 +53,7 @@ export const removeBlockedTagId = (ids: number[], tagId: number) => {
 }
 
 export const buildBlockedTagWhere = (
-  blockedTagIds: number[]
+  blockedTagIds: readonly number[]
 ): Prisma.patchWhereInput => {
   if (!blockedTagIds.length) {
     return {}
