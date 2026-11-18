@@ -16,8 +16,8 @@ import type { StepUpPassed } from './stepUp'
 //
 // 发通知、验邮箱验证码、吊销会话都在路由那一层 (本目录不反向导入 app)。事务里没有网络 I/O
 
-export const EMAIL_CHANGE_WINDOW_SECONDS = 24 * 60 * 60
-const WINDOW_MS = EMAIL_CHANGE_WINDOW_SECONDS * 1000
+// 冷却期与撤销链接的有效期是同一个 24 小时
+const WINDOW_MS = 24 * 60 * 60 * 1000
 
 export const EMAIL_CHANGE_COOLDOWN_MESSAGE =
   '24 小时内只能修改一次邮箱, 请稍后再试'
