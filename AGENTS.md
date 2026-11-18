@@ -132,6 +132,7 @@ pnpm prisma:generate
 - 测试与实现同域放置，例如 `server/search/__tests__/filter-builder.test.ts`、`app/api/user/follow/__tests__/route.test.ts`、`app/api/patch/rating/__tests__/write-stat-transaction.test.ts`。
 - 现有模式使用 `describe`/`it`/`expect`、`vi.hoisted` + `vi.mock` 隔离 Prisma、Next、认证、缓存、S3 与搜索；fixture 通常内联，`beforeEach` 重置并设置确定性返回值。
 - 事务测试应验证可观察结果以及 lock/commit/rollback/retry 顺序；API 测试覆盖成功路径和业务错误字符串，不测试源码文本或实现细节。`server/content` 的命令测试用 `server/db/__tests__/recordingTransaction.ts`：它记录每次尝试的语句（含取锁 SQL）与提交 / 回滚，读取必须先配置，没配就抛错。入口测试要么同样用它端到端跑，要么在命令层 mock。
+- Lua 脚本（尝试预算等）的语义由真 Redis 契约测试守护：文件名 `*.redis.test.ts`，只在设了 `KUN_REDIS_CONTRACT_URL` 时运行，默认的 `pnpm test` 里整组跳过，CI 的 `redis-contract` job 执行。本地先起一个一次性容器 `docker run --rm -d --name kun-redis-contract -p 127.0.0.1:56379:6379 redis:8.0-alpine`（与生产同主次版本），再 `KUN_REDIS_CONTRACT_URL=redis://127.0.0.1:56379 pnpm exec vitest run redis.test`。入口 `lib/__tests__/redisContract.ts` 只认回环地址；用例不清库，只读写自己造的键（主体 id 取 int4 之外的随机数）。新增或改写 Lua 必须配这类用例：mock 掉 `~/lib/redis` 的测试证明不了脚本语义。
 - 修改行为后先运行对应文件：`pnpm test -- <path>`，再运行 `pnpm typecheck`。共享服务、事务或 CI 相关变更运行全量 `pnpm test`；路由、Next 配置、Prisma 或 standalone 变更再运行 `pnpm build`。
 - CI 在 Node 26 上依次执行复制 `.env.example`（须在安装前，postinstall 的 `prisma generate` 依赖 `KUN_DATABASE_URL`）、安装、`pnpm prisma:generate`、`pnpm lint`、`pnpm typecheck` 和 `pnpm test`。
 - 当前没有全局 test setup、快照、浏览器/E2E runner、真实集成数据库 harness 或覆盖率配置；没有数值覆盖率门槛。不要声称覆盖率或端到端验证，除非单独实际执行。
