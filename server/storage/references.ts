@@ -21,8 +21,9 @@ type RefDb = Pick<Prisma.TransactionClient, '$queryRaw'>
 // 只发生在没人入队过的新 key 上。今后写 S3 key 的地方 (差分更新、上传会话、版本化指针列)
 // 要守住这一条, 并在这里补上各自的持有者分支。
 //
-// s3_key 为空的历史行全部回填之后, 谓词收窄为 s3_key = key 的索引点查, 收窄单独发布。
-// 在那之前历史分支是顺序扫描, 每次点查在毫秒级。
+// s3_key 为空的历史行全部回填之后 (migration/backfillResourceLinkS3Key.ts 报告剩余 0 行),
+// 谓词收窄为 s3_key = key 的索引点查 (patch_resource_link_s3_key_idx), 收窄单独发布; 顺序
+// 反过来会让共享对象重新暴露。在那之前历史分支是顺序扫描, 每次点查在毫秒级。
 export const isS3ObjectReferenced = async (
   db: RefDb,
   key: string
@@ -39,3 +40,10 @@ export const isS3ObjectReferenced = async (
     ) AS referenced`
   return row.referenced
 }
+
+const LEGACY_RESOURCE_KEY = /\/(patch\/\d+\/resource\/.+)$/
+
+// 历史行的对象 key: content 里第一个「/patch/<数字>/resource/」之后 (含) 的尾段。与上面谓词的
+// 历史分支同义 (content 以 '/' + 返回值结尾), 回填 s3_key 以它为主公式。
+export const keyFromContent = (content: string): string | null =>
+  LEGACY_RESOURCE_KEY.exec(content)?.[1] ?? null

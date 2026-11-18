@@ -51,6 +51,9 @@ model patch_resource_link {
   updated DateTime @updatedAt
 
   @@index([resource_id, sort_order])
+  // S3 删除写出箱消费者的引用点查 (server/storage/references.ts)。不唯一: 历史共享对象回填后
+  // 几行共用一个 s3_key
+  @@index([s3_key])
 }
 
 model user_patch_resource_like_relation {
