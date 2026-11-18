@@ -133,18 +133,18 @@ import {
   frontResourceEditGuard,
   updatePatchResource
 } from '~/app/api/patch/resource/update'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
+import type { KunRole } from '~/constants/role'
 
 // 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫
 const updateResource = (
   input: Parameters<typeof updatePatchResource>[0],
   uid: number,
-  role: number
-) =>
-  updatePatchResource(
-    input,
-    { uid, role },
-    frontResourceEditGuard({ uid, role })
-  )
+  role: KunRole
+) => {
+  const actor = kunTestActor({ uid, role })
+  return updatePatchResource(input, actor, frontResourceEditGuard(actor))
+}
 
 const resourceInput = {
   patchId: 10,
@@ -231,7 +231,7 @@ describe('资源写入按 section 分派缓存失效', () => {
   it('创建 section=galgame 的公开资源只失效详情缓存', async () => {
     transactionResourceCreateMock.mockResolvedValue(buildStoredResource())
 
-    await createPatchResource(resourceInput, 7, 2)
+    await createPatchResource(resourceInput, kunTestActor({ uid: 7, role: 2 }))
 
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledWith(10)
@@ -243,7 +243,10 @@ describe('资源写入按 section 分派缓存失效', () => {
       buildStoredResource({ section: 'patch' })
     )
 
-    await createPatchResource({ ...resourceInput, section: 'patch' }, 7, 2)
+    await createPatchResource(
+      { ...resourceInput, section: 'patch' },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledTimes(1)
     expect(invalidatePatchResourceDetailCacheMock).toHaveBeenCalledWith(10)
@@ -255,7 +258,7 @@ describe('资源写入按 section 分派缓存失效', () => {
       buildStoredResource({ status: 2 })
     )
 
-    await createPatchResource(resourceInput, 7, 2)
+    await createPatchResource(resourceInput, kunTestActor({ uid: 7, role: 2 }))
 
     expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
     expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()

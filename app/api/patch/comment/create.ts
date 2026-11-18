@@ -14,6 +14,7 @@ import { invalidatePatchCommentCache } from './cache'
 import { prepareCommentContent } from './html'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import type { PatchComment } from '~/types/api/patch'
+import type { KunActor } from '~/constants/role'
 
 // 待审核 (status=1) 的评论不可回复; 隐藏 (status=2) 的评论前端不可见, 与不存在等同
 const replyParentError = (parent: { status: number } | null | undefined) => {
@@ -31,9 +32,9 @@ const replyParentError = (parent: { status: number } | null | undefined) => {
 
 export const createPatchComment = async (
   input: z.infer<typeof patchCommentCreateSchema>,
-  uid: number,
-  userRole: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
   let parentComment: { status: number; resource_id: number | null } | null =
     null
   if (input.parentId) {
@@ -58,7 +59,7 @@ export const createPatchComment = async (
       where: {
         id: resourceId,
         patch_id: input.patchId,
-        ...getResourceVisibilityWhere({ uid, role: userRole })
+        ...getResourceVisibilityWhere(actor)
       },
       select: { id: true }
     })
@@ -69,7 +70,7 @@ export const createPatchComment = async (
 
   const [prepared, moderation] = await Promise.all([
     prepareCommentContent(input.content),
-    planTextModeration(commentSubject(input.content), { userRole })
+    planTextModeration(commentSubject(input.content), { actor })
   ])
   if (typeof prepared === 'string') {
     return prepared

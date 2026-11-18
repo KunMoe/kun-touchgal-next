@@ -90,7 +90,7 @@ export const POST = async (req: NextRequest) => {
   }
 
   try {
-    const response = await createPatchResource(input, payload.uid, payload.role)
+    const response = await createPatchResource(input, payload)
     return NextResponse.json(response)
   } finally {
     try {
@@ -119,11 +119,10 @@ export const PUT = async (req: NextRequest) => {
     return NextResponse.json('仅超级管理员可使用 TouchGal 资源盘')
   }
 
-  const actor = { uid: payload.uid, role: payload.role }
   const response = await updatePatchResource(
     input,
-    actor,
-    frontResourceEditGuard(actor)
+    payload,
+    frontResourceEditGuard(payload)
   )
   return NextResponse.json(response)
 }
@@ -138,6 +137,6 @@ export const DELETE = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
 
-  const response = await deleteResource(input, payload.uid, payload.role)
+  const response = await deleteResource(input, payload)
   return NextResponse.json(response)
 }

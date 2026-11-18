@@ -5,12 +5,13 @@ import { sanitizeResourceLinksForAuditLog } from '~/app/api/patch/resource/_help
 import { patchResourceUpdateSchema } from '~/validations/patch'
 import { truncateLogContent } from '~/app/api/admin/_log'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
+import type { KunActor } from '~/constants/role'
 
 export const updatePatchResource = async (
   input: z.infer<typeof patchResourceUpdateSchema>,
-  uid: number,
-  role: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
   const admin = await prisma.user.findUnique({ where: { id: uid } })
   if (!admin) {
     return '未找到该管理员'
@@ -24,13 +25,11 @@ export const updatePatchResource = async (
     return '未找到该资源'
   }
 
-  // 以操作者的真实角色编辑: 送审豁免只看角色 (超级管理员豁免), 不由入口伪造。
+  // 以操作者本人编辑: 送审豁免只看会话里的角色 (超级管理员豁免), 入口伪造不了。
   // 后台可以编辑任何状态的资源, 包括隐藏的 (编辑后仍是隐藏)
-  const updatedResource = await updatePatchResourceByRole(
-    input,
-    { uid, role },
-    { statusIn: Object.values(RESOURCE_STATUS) }
-  )
+  const updatedResource = await updatePatchResourceByRole(input, actor, {
+    statusIn: Object.values(RESOURCE_STATUS)
+  })
   if (typeof updatedResource === 'string') {
     return updatedResource
   }

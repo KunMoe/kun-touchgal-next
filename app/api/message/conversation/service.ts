@@ -6,7 +6,9 @@ import {
   createConversationSchema
 } from '~/validations/conversation'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
+import { can } from '~/constants/permission'
 import type { Conversation } from '~/types/api/conversation'
+import type { KunActor } from '~/constants/role'
 
 export const getConversations = async (
   input: z.infer<typeof getConversationsSchema>,
@@ -64,9 +66,9 @@ const MOEMOEPOINT_COST = 10
 
 export const checkConversation = async (
   input: z.infer<typeof createConversationSchema>,
-  uid: number,
-  role: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
   const { targetUserId } = input
 
   if (targetUserId === uid) {
@@ -113,7 +115,7 @@ export const checkConversation = async (
     return { error: '对方已关闭私信功能' }
   }
 
-  const isPrivileged = role > 2
+  const isPrivileged = can(actor, 'message.skipPointsGate')
   const hasEnoughPoints = currentUser.moemoepoint >= MOEMOEPOINT_REQUIRED
 
   if (!isPrivileged && !hasEnoughPoints) {
@@ -133,9 +135,9 @@ export const checkConversation = async (
 
 export const getOrCreateConversation = async (
   input: z.infer<typeof createConversationSchema>,
-  uid: number,
-  role: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
   const { targetUserId } = input
 
   if (targetUserId === uid) {
@@ -197,7 +199,7 @@ export const getOrCreateConversation = async (
     return '对方已关闭私信功能'
   }
 
-  const isPrivileged = role > 2
+  const isPrivileged = can(actor, 'message.skipPointsGate')
   if (isPrivileged) {
     try {
       const created = await prisma.user_conversation.create({

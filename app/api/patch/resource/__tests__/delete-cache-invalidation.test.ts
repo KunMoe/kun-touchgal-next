@@ -62,6 +62,7 @@ vi.mock('~/server/storage/s3Outbox', async (importOriginal) => ({
 }))
 
 import { deleteResource } from '~/app/api/patch/resource/delete'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import { deleteResource as adminDeleteResource } from '~/app/api/admin/resource/delete'
 import {
   resourceLink,
@@ -96,7 +97,7 @@ describe('删除资源按删除瞬间状态分派缓存失效', () => {
   it('删除 section=galgame 的公开资源只失效详情缓存', async () => {
     seed(0, [resourceRow(1, { section: 'galgame' })])
 
-    await deleteResource({ resourceId: 1 }, 7, 2)
+    await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 7, role: 2 }))
 
     expect(resourceDetailMock.mock.calls).toEqual([[10]])
     expect(resourceListMock).not.toHaveBeenCalled()
@@ -105,7 +106,7 @@ describe('删除资源按删除瞬间状态分派缓存失效', () => {
   it('删除 section=patch 的公开资源两个缓存都失效', async () => {
     seed(0, [resourceRow(1)])
 
-    await deleteResource({ resourceId: 1 }, 7, 2)
+    await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 7, role: 2 }))
 
     expect(resourceDetailMock.mock.calls).toEqual([[10]])
     expect(resourceListMock).toHaveBeenCalledTimes(1)
@@ -115,7 +116,7 @@ describe('删除资源按删除瞬间状态分派缓存失效', () => {
   it('快照为待初审但删除时已通过审核, 仍失效详情缓存', async () => {
     seed(2, [resourceRow(1, { section: 'galgame' })])
 
-    await deleteResource({ resourceId: 1 }, 9, 3)
+    await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 9, role: 3 }))
 
     expect(resourceDetailMock.mock.calls).toEqual([[10]])
     expect(pendingResourceMock).not.toHaveBeenCalled()
@@ -124,7 +125,7 @@ describe('删除资源按删除瞬间状态分派缓存失效', () => {
   it('删除待审核资源失效作者的 pending 缓存而非详情缓存', async () => {
     seed(3, [resourceRow(1, { status: 3 })])
 
-    await deleteResource({ resourceId: 1 }, 9, 3)
+    await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 9, role: 3 }))
 
     expect(resourceDetailMock).not.toHaveBeenCalled()
     expect(resourceListMock).not.toHaveBeenCalled()
@@ -151,7 +152,7 @@ describe('删除资源按删除瞬间状态分派缓存失效', () => {
     kickSearchMock.mockImplementation(record)
     kickS3Mock.mockImplementation(record)
 
-    await deleteResource({ resourceId: 1 }, 7, 2)
+    await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 7, role: 2 }))
 
     expect(patchContentMock.mock.calls).toEqual([['patch-10']])
     expect(kickSearchMock).toHaveBeenCalledTimes(1)
@@ -170,7 +171,7 @@ describe('资源删除以锁下重读的 links 入队 S3 删除', () => {
       })
     ])
 
-    await deleteResource({ resourceId: 1 }, 7, 2)
+    await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 7, role: 2 }))
 
     expect(rec.argsOf('s3_deletion_outbox.createMany')).toEqual([
       { data: [{ s3_key: 'k-5' }], skipDuplicates: true }
@@ -201,7 +202,7 @@ describe('资源删除的清理顺序', () => {
   it('用户删除: 评论派生物在删除前, 资源自身的任务 / 申诉与孤儿举报在删除后', async () => {
     seed(0, [resourceRow(1)])
 
-    await deleteResource({ resourceId: 1 }, 7, 2)
+    await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 7, role: 2 }))
 
     expect(shortResourceLabels(rec)).toEqual([
       'lock user',

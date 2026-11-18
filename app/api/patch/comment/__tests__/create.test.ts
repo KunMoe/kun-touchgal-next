@@ -71,6 +71,7 @@ vi.mock('~/app/api/patch/cache', () => ({
 
 import { commentSubject } from '~/server/moderation/subject'
 import { createPatchComment } from '~/app/api/patch/comment/create'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const created = new Date('2026-01-01T00:00:00.000Z')
 const comment = {
@@ -130,11 +131,12 @@ describe('createPatchComment', () => {
         })
     )
 
-    const creation = createPatchComment(input, 7, 2)
+    const actor = kunTestActor({ uid: 7, role: 2 })
+    const creation = createPatchComment(input, actor)
 
     expect(planTextModerationMock).toHaveBeenCalledWith(
       commentSubject('comment'),
-      { userRole: 2 }
+      { actor }
     )
     expect(transactionMock).not.toHaveBeenCalled()
 
@@ -164,7 +166,10 @@ describe('createPatchComment', () => {
       '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
     )
 
-    const result = await createPatchComment(input, 7, 2)
+    const result = await createPatchComment(
+      input,
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(result).toBe(
       '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
@@ -176,23 +181,26 @@ describe('createPatchComment', () => {
   })
 
   it('评论创建后按 unique_id 失效补丁详情缓存 (M-05)', async () => {
-    await createPatchComment(input, 7, 2)
+    await createPatchComment(input, kunTestActor({ uid: 7, role: 2 }))
 
     expect(invalidateContentMock).toHaveBeenCalledWith('patch-10')
   })
 
   it('创建评论时把调用者角色透传给审核预筛', async () => {
-    await createPatchComment(input, 7, 3)
+    const actor = kunTestActor({ uid: 7, role: 3 })
+    await createPatchComment(input, actor)
 
     expect(planTextModerationMock).toHaveBeenCalledWith(
       commentSubject('comment'),
-      { userRole: 3 }
+      { actor }
     )
+    // 透传的就是调用方给的操作者 (同一对象)
+    expect(planTextModerationMock.mock.calls[0][1].actor).toBe(actor)
   })
 
   // 通知的对象与文案由 server/content/comment/publish 决定, 这里只管何时调用
   it('未被拦截时在两份缓存失效之后发通知', async () => {
-    await createPatchComment(input, 7, 2)
+    await createPatchComment(input, kunTestActor({ uid: 7, role: 2 }))
 
     expect(onCommentPublishedMock).toHaveBeenCalledWith(11)
     const notified = onCommentPublishedMock.mock.invocationCallOrder[0]
@@ -212,7 +220,10 @@ describe('createPatchComment', () => {
       dryRun: false
     })
 
-    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+    await createPatchComment(
+      { ...input, parentId: 6 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(onCommentPublishedMock).not.toHaveBeenCalled()
     // 待审评论照样失效缓存 (创建路径的既有行为)
@@ -239,7 +250,10 @@ describe('createPatchComment 事务内的行锁', () => {
   })
 
   it('回复: 先锁补丁行、再锁父评论, 然后才插入', async () => {
-    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+    await createPatchComment(
+      { ...input, parentId: 6 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(lockSql()).toEqual([PATCH_LOCK, PARENT_LOCK])
     expect(lockMock.mock.calls.map((call) => call[1])).toEqual([10, 6])
@@ -253,21 +267,27 @@ describe('createPatchComment 事务内的行锁', () => {
   it('回复资源评论区的评论: 资源行最先, 然后补丁行、父评论', async () => {
     parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: 5 })
 
-    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+    await createPatchComment(
+      { ...input, parentId: 6 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(lockSql()).toEqual([RESOURCE_LOCK, PATCH_LOCK, PARENT_LOCK])
     expect(lockMock.mock.calls.map((call) => call[1])).toEqual([5, 10, 6])
   })
 
   it('资源的一级评论只锁资源行', async () => {
-    await createPatchComment({ ...input, resourceId: 5 }, 7, 2)
+    await createPatchComment(
+      { ...input, resourceId: 5 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(lockSql()).toEqual([RESOURCE_LOCK])
     expect(createCommentMock).toHaveBeenCalledTimes(1)
   })
 
   it('补丁的一级评论不取任何行锁', async () => {
-    await createPatchComment(input, 7, 2)
+    await createPatchComment(input, kunTestActor({ uid: 7, role: 2 }))
 
     expect(lockMock).not.toHaveBeenCalled()
     expect(createCommentMock).toHaveBeenCalledTimes(1)
@@ -287,7 +307,10 @@ describe('createPatchComment 事务内的行锁', () => {
         dryRun: true
       })
 
-      const result = await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+      const result = await createPatchComment(
+        { ...input, parentId: 6 },
+        kunTestActor({ uid: 7, role: 2 })
+      )
 
       expect(result).toBe(message)
       expect(createCommentMock).not.toHaveBeenCalled()
@@ -301,7 +324,10 @@ describe('createPatchComment 事务内的行锁', () => {
     parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: 5 })
     locked.resource = []
 
-    const result = await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+    const result = await createPatchComment(
+      { ...input, parentId: 6 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(result).toBe('未找到该资源')
     expect(lockSql()).toEqual([RESOURCE_LOCK])
@@ -318,7 +344,7 @@ describe('createPatchComment 资源评论', () => {
   })
 
   it('顶层资源评论落库 resource_id 并发通知', async () => {
-    await createPatchComment(resourceInput, 7, 2)
+    await createPatchComment(resourceInput, kunTestActor({ uid: 7, role: 2 }))
 
     expect(resourceFindFirstMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -336,14 +362,17 @@ describe('createPatchComment 资源评论', () => {
   it('资源不可见或不属于该 patch 时返回错误字符串', async () => {
     resourceFindFirstMock.mockResolvedValue(null)
 
-    const result = await createPatchComment(resourceInput, 7, 2)
+    const result = await createPatchComment(
+      resourceInput,
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(result).toBe('未找到该资源')
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
   it('资源评论不失效补丁详情缓存 (资源评论不计入 _count.comment)', async () => {
-    await createPatchComment(resourceInput, 7, 2)
+    await createPatchComment(resourceInput, kunTestActor({ uid: 7, role: 2 }))
 
     expect(invalidateContentMock).not.toHaveBeenCalled()
   })
@@ -356,7 +385,10 @@ describe('createPatchComment 资源评论', () => {
       resource_id: 42
     })
 
-    await createPatchComment({ ...input, parentId: 6, resourceId: 5 }, 7, 2)
+    await createPatchComment(
+      { ...input, parentId: 6, resourceId: 5 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     // 父查询带 patch_id, 防跨补丁回复
     expect(parentFindFirstMock).toHaveBeenCalledWith(
@@ -381,7 +413,10 @@ describe('createPatchComment 资源评论', () => {
     parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: 42 })
     resourceFindFirstMock.mockResolvedValue(null)
 
-    const result = await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+    const result = await createPatchComment(
+      { ...input, parentId: 6 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(result).toBe('未找到该资源')
     expect(transactionMock).not.toHaveBeenCalled()
@@ -390,7 +425,10 @@ describe('createPatchComment 资源评论', () => {
   it('普通评论 (无 resourceId) 不查资源', async () => {
     parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: null })
 
-    await createPatchComment({ ...input, parentId: 6 }, 7, 2)
+    await createPatchComment(
+      { ...input, parentId: 6 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(resourceFindFirstMock).not.toHaveBeenCalled()
   })

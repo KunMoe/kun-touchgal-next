@@ -127,18 +127,18 @@ import {
   frontResourceEditGuard,
   updatePatchResource
 } from '~/app/api/patch/resource/update'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
+import type { KunRole } from '~/constants/role'
 
 // 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫
 const updateResource = (
   input: Parameters<typeof updatePatchResource>[0],
   uid: number,
-  role: number
-) =>
-  updatePatchResource(
-    input,
-    { uid, role },
-    frontResourceEditGuard({ uid, role })
-  )
+  role: KunRole
+) => {
+  const actor = kunTestActor({ uid, role })
+  return updatePatchResource(input, actor, frontResourceEditGuard(actor))
+}
 
 const resourceInput = {
   patchId: 10,
@@ -302,8 +302,7 @@ describe('资源写入 patch 绑定', () => {
           }
         ]
       },
-      7,
-      2
+      kunTestActor({ uid: 7, role: 2 })
     )
 
     expect(result).toBe('未找到该资源对应的 Galgame 信息, 请确认 Galgame 存在')
@@ -320,7 +319,7 @@ describe('资源写入 patch 绑定', () => {
     })
     resourceCountMock.mockResolvedValue(1)
 
-    await createPatchResource(resourceInput, 7, 2)
+    await createPatchResource(resourceInput, kunTestActor({ uid: 7, role: 2 }))
 
     expect(transactionResourceCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({

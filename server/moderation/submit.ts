@@ -4,11 +4,13 @@ import type {
   ModerationContentType,
   ModerationTextType
 } from '~/constants/moderation'
+import { can } from '~/constants/permission'
 import { getModerationConfig } from './config'
 import { isSubjectEmpty, subjectChanged } from './subject'
 import type { ModerationSubject } from './subject'
 import { encodeModerationPayload } from './taskCodec'
 import type { ModerationTaskBody, TextTaskExtras } from './taskCodec'
+import type { KunActor } from '~/constants/role'
 
 type ModerationClient = Prisma.TransactionClient | typeof prisma
 
@@ -41,14 +43,16 @@ export type ModerationPlan<T extends ModerationTextType> =
 
 // 第一段: 在事务外、任何不可回滚的副作用 (如 S3 绑定) 之前调用 —— 读审核配置可能因
 // Redis 故障抛错; 写内容行时又需要先知道 intercept。
-// 仅超级管理员 (role>=4) 豁免送审, 与审核后台的权限门槛一致; 豁免集中在此处并靠必传的
-// userRole 强制携带角色, 防止新增调用点漏加检查 (资源 create 路径曾因此漏过豁免)。
+// 仅有 moderation.skip 能力的操作者 (超级管理员) 豁免送审, 与审核后台的权限门槛一致;
+// 豁免集中在此处并靠必传的 actor 强制携带操作者, 防止新增调用点漏加检查 (资源 create
+// 路径曾因此漏过豁免)。actor 只能由会话构造, 调用点写不出字面量角色 (后台资源编辑曾以
+// 字面量 3 调用, 超级管理员因此被送审)。
 // previous 是编辑前的主体: 送审字段没有变化就不重审。能在本地判定的都排在读配置之前
 export const planTextModeration = async <T extends ModerationTextType>(
   subject: ModerationSubject<T>,
-  options: { userRole: number; previous?: ModerationSubject<T> }
+  options: { actor: KunActor; previous?: ModerationSubject<T> }
 ): Promise<ModerationPlan<T>> => {
-  if (options.userRole >= 4) {
+  if (can(options.actor, 'moderation.skip')) {
     return MODERATION_SKIP
   }
   if (options.previous && !subjectChanged(options.previous, subject)) {
@@ -70,9 +74,9 @@ export const planTextModeration = async <T extends ModerationTextType>(
 }
 
 export const preScreenMedia = async (
-  userRole: number
+  actor: KunActor
 ): Promise<ModerationPreScreen> => {
-  if (userRole >= 4) {
+  if (can(actor, 'moderation.skip')) {
     return MODERATION_SKIP
   }
   const config = await getModerationConfig()

@@ -10,12 +10,13 @@ import {
 } from '~/server/moderation/submit'
 import { ratingSubject } from '~/server/moderation/subject'
 import type { KunPatchRating } from '~/types/api/galgame'
+import type { KunActor } from '~/constants/role'
 
 export const createPatchRating = async (
   input: z.infer<typeof patchRatingCreateSchema>,
-  uid: number,
-  userRole: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
   const {
     patchId,
     recommend,
@@ -35,7 +36,7 @@ export const createPatchRating = async (
   }
 
   const moderation = await planTextModeration(ratingSubject(shortSummary), {
-    userRole
+    actor
   })
 
   const data = await prisma

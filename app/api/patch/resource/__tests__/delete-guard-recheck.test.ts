@@ -62,6 +62,7 @@ vi.mock('~/server/storage/s3Outbox', async (importOriginal) => ({
 }))
 
 import { deleteResource } from '~/app/api/patch/resource/delete'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import {
   resourceRow,
   seedResourceRemoval,
@@ -120,10 +121,12 @@ describe('删除资源的事务外预检', () => {
       2,
       '该资源正在审核中, 暂时无法删除'
     ]
-  ])('%s', async (_name, row, uid, role, message) => {
+  ] as const)('%s', async (_name, row, uid, role, message) => {
     seed(row, [])
 
-    expect(await deleteResource({ resourceId: 1 }, uid, role)).toBe(message)
+    expect(
+      await deleteResource({ resourceId: 1 }, kunTestActor({ uid, role }))
+    ).toBe(message)
     expect(rec.attempts).toHaveLength(0)
   })
 })
@@ -134,7 +137,10 @@ describe('删除资源在行锁下复检守卫', () => {
   it('快照公开但锁下已被隐藏, 拒绝删除, 不扣分', async () => {
     seed(snapshot(), [resourceRow(1, { status: 1 })])
 
-    const result = await deleteResource({ resourceId: 1 }, 7, 2)
+    const result = await deleteResource(
+      { resourceId: 1 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(result).toBe('未找到对应的资源')
     expect(rec.attempts[0].rolledBack).toBe(true)
@@ -145,7 +151,10 @@ describe('删除资源在行锁下复检守卫', () => {
   it('隐藏复检对管理员同样生效', async () => {
     seed(snapshot(), [resourceRow(1, { status: 1 })])
 
-    const result = await deleteResource({ resourceId: 1 }, 9, 3)
+    const result = await deleteResource(
+      { resourceId: 1 },
+      kunTestActor({ uid: 9, role: 3 })
+    )
 
     expect(result).toBe('未找到对应的资源')
     expectNoWrites()
@@ -154,7 +163,10 @@ describe('删除资源在行锁下复检守卫', () => {
   it('快照公开但锁下已转待审核, 非特权作者被拒', async () => {
     seed(snapshot(), [resourceRow(1, { status: 3 })])
 
-    const result = await deleteResource({ resourceId: 1 }, 7, 2)
+    const result = await deleteResource(
+      { resourceId: 1 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(result).toBe('该资源正在审核中, 暂时无法删除')
     expect(rec.attempts[0].rolledBack).toBe(true)
@@ -164,7 +176,10 @@ describe('删除资源在行锁下复检守卫', () => {
   it('锁下行已被并发删除', async () => {
     seed(snapshot(), [])
 
-    const result = await deleteResource({ resourceId: 1 }, 7, 2)
+    const result = await deleteResource(
+      { resourceId: 1 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(result).toBe('未找到对应的资源')
     expect(shortResourceLabels(rec)).toEqual(['lock user', 'lock resource'])
@@ -174,7 +189,10 @@ describe('删除资源在行锁下复检守卫', () => {
   it('锁下待审核不拦管理员, 保持事务外守卫语义', async () => {
     seed(snapshot(3), [resourceRow(1, { status: 3 })])
 
-    const result = await deleteResource({ resourceId: 1 }, 9, 3)
+    const result = await deleteResource(
+      { resourceId: 1 },
+      kunTestActor({ uid: 9, role: 3 })
+    )
 
     expect(result).toEqual({})
     expect(rec.attempts[0].committed).toBe(true)
@@ -190,7 +208,10 @@ describe('删除资源收回发布奖励', () => {
   it('先锁作者行再锁资源行, 删除之后扣 3 萌萌点并失效作者会话', async () => {
     seed(snapshot(), [resourceRow(1)])
 
-    const result = await deleteResource({ resourceId: 1 }, 7, 2)
+    const result = await deleteResource(
+      { resourceId: 1 },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(result).toEqual({})
     const labels = shortResourceLabels(rec)
@@ -208,7 +229,7 @@ describe('删除资源收回发布奖励', () => {
   it('管理员删除他人资源时扣作者的分', async () => {
     seed(snapshot(), [resourceRow(1)])
 
-    await deleteResource({ resourceId: 1 }, 9, 3)
+    await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 9, role: 3 }))
 
     expect(rec.argsOf('user.update')).toEqual([
       { where: { id: 7 }, data: { moemoepoint: { increment: -3 } } }

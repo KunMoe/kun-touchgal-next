@@ -40,6 +40,7 @@ vi.mock('~/server/content/rating/edit', () => ({
 
 import { ratingSubject } from '~/server/moderation/subject'
 import { updatePatchRating } from '~/app/api/patch/rating/update'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const input = {
   ratingId: 5,
@@ -87,16 +88,20 @@ beforeEach(() => {
 
 describe('updatePatchRating', () => {
   it('编辑评价时把编辑前的短评作为 previous 交给预筛, 由预筛判定是否重审', async () => {
-    await updatePatchRating(input, 7, 1)
+    const actor = kunTestActor({ uid: 7, role: 1 })
+    await updatePatchRating(input, actor)
 
     expect(planTextModerationMock).toHaveBeenCalledWith(
       ratingSubject('summary'),
-      { userRole: 1, previous: ratingSubject('before') }
+      { actor, previous: ratingSubject('before') }
     )
   })
 
   it('把各字段与预筛结果交给编辑命令, 在同一事务里读回写入后的行作为响应', async () => {
-    const result = await updatePatchRating(input, 7, 1)
+    const result = await updatePatchRating(
+      input,
+      kunTestActor({ uid: 7, role: 1 })
+    )
 
     expect(editRatingMock).toHaveBeenCalledWith(txContext, 5, {
       guard: { statusIn: [0], ownerUid: 7 },
@@ -134,9 +139,9 @@ describe('updatePatchRating', () => {
   it('编辑命令抛错 (如统计重算失败) 时原样抛出', async () => {
     editRatingMock.mockRejectedValue(new Error('rating stat failed'))
 
-    await expect(updatePatchRating(input, 7, 1)).rejects.toThrow(
-      'rating stat failed'
-    )
+    await expect(
+      updatePatchRating(input, kunTestActor({ uid: 7, role: 1 }))
+    ).rejects.toThrow('rating stat failed')
   })
 })
 
@@ -153,10 +158,12 @@ describe('updatePatchRating 事务外预检', () => {
       1,
       '您发布的评价正在审核中, 暂时无法修改'
     ]
-  ])('%s', async (_name, row, uid, role, message) => {
+  ] as const)('%s', async (_name, row, uid, role, message) => {
     findUniqueMock.mockResolvedValue(row)
 
-    expect(await updatePatchRating(input, uid, role)).toBe(message)
+    expect(await updatePatchRating(input, kunTestActor({ uid, role }))).toBe(
+      message
+    )
     expect(planTextModerationMock).not.toHaveBeenCalled()
     expect(transactionMock).not.toHaveBeenCalled()
   })
@@ -164,9 +171,9 @@ describe('updatePatchRating 事务外预检', () => {
   it('审核中的评价禁止作者再次修改, 不进入预筛', async () => {
     hasPendingModerationMock.mockResolvedValue(true)
 
-    expect(await updatePatchRating(input, 7, 1)).toBe(
-      '您发布的评价正在审核中, 暂时无法修改'
-    )
+    expect(
+      await updatePatchRating(input, kunTestActor({ uid: 7, role: 1 }))
+    ).toBe('您发布的评价正在审核中, 暂时无法修改')
     expect(transactionMock).not.toHaveBeenCalled()
   })
 })
@@ -174,7 +181,7 @@ describe('updatePatchRating 事务外预检', () => {
 // 预检读的是快照; 同一组条件作为守卫交给编辑命令在行锁下再判一次
 describe('updatePatchRating 给编辑命令的守卫', () => {
   it('管理员: 可以改他人公开或待审的评价, 隐藏的不行', async () => {
-    await updatePatchRating(input, 9, 3)
+    await updatePatchRating(input, kunTestActor({ uid: 9, role: 3 }))
 
     expect(editRatingMock.mock.calls[0][2].guard).toEqual({ statusIn: [0, 1] })
   })
@@ -191,7 +198,9 @@ describe('updatePatchRating 给编辑命令的守卫', () => {
   ])('行锁下守卫未通过 %o → %s', async (skipped, message) => {
     editRatingMock.mockResolvedValue({ row: undefined, skipped })
 
-    expect(await updatePatchRating(input, 7, 1)).toBe(message)
+    expect(
+      await updatePatchRating(input, kunTestActor({ uid: 7, role: 1 }))
+    ).toBe(message)
     expect(findUpdatedMock).not.toHaveBeenCalled()
   })
 })

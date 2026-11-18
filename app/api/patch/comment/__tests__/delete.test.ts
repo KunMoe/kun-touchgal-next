@@ -33,6 +33,7 @@ vi.mock('~/server/content/comment/publish', () => ({
 }))
 
 import { deleteComment } from '~/app/api/patch/comment/delete'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const locked = (status: number, overrides: Record<string, unknown> = {}) => ({
   id: 11,
@@ -92,10 +93,12 @@ describe('deleteComment 事务外预检', () => {
       1,
       '该评论正在审核中, 暂时无法删除'
     ]
-  ])('%s', async (_name, row, uid, role, message) => {
+  ] as const)('%s', async (_name, row, uid, role, message) => {
     seed(row, [])
 
-    expect(await deleteComment({ commentId: 11 }, uid, role)).toBe(message)
+    expect(
+      await deleteComment({ commentId: 11 }, kunTestActor({ uid, role }))
+    ).toBe(message)
     expect(rec.attempts).toHaveLength(0)
   })
 })
@@ -104,7 +107,10 @@ describe('deleteComment 删除', () => {
   it('作者删除自己的公开评论: 连同回复子树的通知、任务、申诉与孤儿举报', async () => {
     seed(snapshot(), [locked(0)], [locked(0), locked(0, { id: 12 })])
 
-    const result = await deleteComment({ commentId: 11 }, 7, 1)
+    const result = await deleteComment(
+      { commentId: 11 },
+      kunTestActor({ uid: 7, role: 1 })
+    )
 
     expect(result).toEqual({})
     expect(rec.attempts[0].committed).toBe(true)
@@ -144,7 +150,7 @@ describe('deleteComment 删除', () => {
   it('资源评论不计入评论数, 不失效补丁详情缓存', async () => {
     seed(snapshot(), [locked(0, { resource_id: 5 })])
 
-    await deleteComment({ commentId: 11 }, 7, 1)
+    await deleteComment({ commentId: 11 }, kunTestActor({ uid: 7, role: 1 }))
 
     expect(commentPageMock.mock.calls).toEqual([[10]])
     expect(patchContentMock).not.toHaveBeenCalled()
@@ -153,7 +159,9 @@ describe('deleteComment 删除', () => {
   it('管理员可以删除他人待审的评论', async () => {
     seed(snapshot(1), [locked(1)])
 
-    expect(await deleteComment({ commentId: 11 }, 9, 3)).toEqual({})
+    expect(
+      await deleteComment({ commentId: 11 }, kunTestActor({ uid: 9, role: 3 }))
+    ).toEqual({})
     expect(rec.labels()).toContain('patch_comment.deleteMany')
   })
 })
@@ -164,9 +172,9 @@ describe('deleteComment 行锁下复检', () => {
   it('快照公开, 锁下已被隐藏: 与不存在等同', async () => {
     seed(snapshot(), [locked(2)])
 
-    expect(await deleteComment({ commentId: 11 }, 7, 1)).toBe(
-      '未找到对应的评论'
-    )
+    expect(
+      await deleteComment({ commentId: 11 }, kunTestActor({ uid: 7, role: 1 }))
+    ).toBe('未找到对应的评论')
     expect(rec.attempts[0].rolledBack).toBe(true)
     expectNothingRemoved()
   })
@@ -174,27 +182,27 @@ describe('deleteComment 行锁下复检', () => {
   it('隐藏复检对管理员同样生效', async () => {
     seed(snapshot(), [locked(2)])
 
-    expect(await deleteComment({ commentId: 11 }, 9, 3)).toBe(
-      '未找到对应的评论'
-    )
+    expect(
+      await deleteComment({ commentId: 11 }, kunTestActor({ uid: 9, role: 3 }))
+    ).toBe('未找到对应的评论')
     expectNothingRemoved()
   })
 
   it('快照公开, 锁下已转待审: 作者被拒', async () => {
     seed(snapshot(), [locked(1)])
 
-    expect(await deleteComment({ commentId: 11 }, 7, 1)).toBe(
-      '该评论正在审核中, 暂时无法删除'
-    )
+    expect(
+      await deleteComment({ commentId: 11 }, kunTestActor({ uid: 7, role: 1 }))
+    ).toBe('该评论正在审核中, 暂时无法删除')
     expectNothingRemoved()
   })
 
   it('锁下行已不存在', async () => {
     seed(snapshot(), [])
 
-    expect(await deleteComment({ commentId: 11 }, 7, 1)).toBe(
-      '未找到对应的评论'
-    )
+    expect(
+      await deleteComment({ commentId: 11 }, kunTestActor({ uid: 7, role: 1 }))
+    ).toBe('未找到对应的评论')
     expectNothingRemoved()
   })
 })

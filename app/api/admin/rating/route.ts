@@ -44,7 +44,7 @@ export const PUT = async (req: NextRequest) => {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 
-  const response = await updateRating(input, payload.uid, payload.role)
+  const response = await updateRating(input, payload)
   return NextResponse.json(response)
 }
 

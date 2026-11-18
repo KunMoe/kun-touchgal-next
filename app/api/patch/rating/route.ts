@@ -47,7 +47,7 @@ export const POST = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
 
-  const response = await createPatchRating(input, payload.uid, payload.role)
+  const response = await createPatchRating(input, payload)
   return NextResponse.json(response)
 }
 
@@ -61,7 +61,7 @@ export const PUT = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
 
-  const response = await updatePatchRating(input, payload.uid, payload.role)
+  const response = await updatePatchRating(input, payload)
   return NextResponse.json(response)
 }
 
@@ -75,6 +75,6 @@ export const DELETE = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
 
-  const response = await deletePatchRating(input, payload.uid, payload.role)
+  const response = await deletePatchRating(input, payload)
   return NextResponse.json(response)
 }

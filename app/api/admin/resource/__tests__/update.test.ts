@@ -19,6 +19,7 @@ vi.mock('~/app/api/patch/resource/_helper', () => ({
 }))
 
 import { updatePatchResource } from '~/app/api/admin/resource/update'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const input = {
   resourceId: 3,
@@ -50,28 +51,34 @@ describe('后台 updatePatchResource', () => {
   it('管理员不存在', async () => {
     rec.on('user.findUnique', null)
 
-    expect(await updatePatchResource(input, 99, 4)).toBe('未找到该管理员')
+    expect(
+      await updatePatchResource(input, kunTestActor({ uid: 99, role: 4 }))
+    ).toBe('未找到该管理员')
     expect(updateByRoleMock).not.toHaveBeenCalled()
   })
 
   it('资源不存在', async () => {
     rec.on('patch_resource.findUnique', null)
 
-    expect(await updatePatchResource(input, 99, 4)).toBe('未找到该资源')
+    expect(
+      await updatePatchResource(input, kunTestActor({ uid: 99, role: 4 }))
+    ).toBe('未找到该资源')
     expect(updateByRoleMock).not.toHaveBeenCalled()
   })
 
   // 以前这里写死角色 3: 超级管理员在后台改资源文本会失去送审豁免, 公开资源被打成
   // 待审核, 审核任务挂到原作者名下
-  it('以操作者的真实角色编辑', async () => {
-    await updatePatchResource(input, 99, 4)
+  it.each([4, 3] as const)('以操作者的真实角色编辑 (role %i)', async (role) => {
+    const actor = kunTestActor({ uid: 99, role })
+    await updatePatchResource(input, actor)
 
-    expect(updateByRoleMock.mock.calls[0][1]).toEqual({ uid: 99, role: 4 })
+    // 交下去的就是调用方给的操作者 (同一对象), 不是入口按固定角色另造的
+    expect(updateByRoleMock.mock.calls[0][1]).toBe(actor)
   })
 
   // 后台表格里隐藏的资源也有「编辑」: 守卫包含隐藏态 (1), 编辑后仍是隐藏
   it('后台可以编辑任何状态的资源, 包括隐藏的', async () => {
-    await updatePatchResource(input, 99, 4)
+    await updatePatchResource(input, kunTestActor({ uid: 99, role: 4 }))
 
     expect(updateByRoleMock.mock.calls[0][2]).toEqual({
       statusIn: [0, 1, 2, 3]
@@ -81,12 +88,17 @@ describe('后台 updatePatchResource', () => {
   it('编辑用例返回业务错误时原样返回, 不记审计', async () => {
     updateByRoleMock.mockResolvedValue('未找到该资源')
 
-    expect(await updatePatchResource(input, 99, 4)).toBe('未找到该资源')
+    expect(
+      await updatePatchResource(input, kunTestActor({ uid: 99, role: 4 }))
+    ).toBe('未找到该资源')
     expect(rec.attempts).toHaveLength(0)
   })
 
   it('成功后记一条审计: 原资源与脱敏后的新资源', async () => {
-    const result = await updatePatchResource(input, 99, 4)
+    const result = await updatePatchResource(
+      input,
+      kunTestActor({ uid: 99, role: 4 })
+    )
 
     expect(result).toBe(updated)
     expect(rec.attempts[0].committed).toBe(true)

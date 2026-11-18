@@ -7,14 +7,15 @@ import { kunTx } from '~/server/db/tx'
 import { editComment } from '~/server/content/comment/edit'
 import { prepareCommentContent } from '~/app/api/patch/comment/html'
 import { truncateLogContent } from '~/app/api/admin/_log'
+import type { KunActor } from '~/constants/role'
 
 const adminUpdateCommentPreviewLimit = 100
 
 export const updateComment = async (
   input: z.infer<typeof patchCommentUpdateSchema>,
-  uid: number,
-  role: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
   const comment = await prisma.patch_comment.findUnique({
     where: { id: input.commentId }
   })
@@ -35,7 +36,7 @@ export const updateComment = async (
 
   // 送审与否只由操作者的真实角色决定 (超级管理员豁免), 后台入口不另开口子
   const moderation = await planTextModeration(commentSubject(content), {
-    userRole: role,
+    actor,
     previous: commentSubject(comment.content)
   })
 

@@ -8,16 +8,19 @@ import {
 import { ratingSubject } from '~/server/moderation/subject'
 import { kunTx } from '~/server/db/tx'
 import { RATING_STATUS } from '~/constants/contentStatus'
+import { can } from '~/constants/permission'
 import { editRating } from '~/server/content/rating/edit'
 import type { RatingStatus } from '~/constants/contentStatus'
 import type { ContentGuard } from '~/server/content/guard'
 import type { KunPatchRating } from '~/types/api/galgame'
+import type { KunActor } from '~/constants/role'
 
 export const updatePatchRating = async (
   input: z.infer<typeof patchRatingUpdateSchema>,
-  uid: number,
-  userRole: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
+  const canModerate = can(actor, 'content.moderateAny')
   const {
     ratingId,
     recommend,
@@ -35,32 +38,31 @@ export const updatePatchRating = async (
   if (!rating || rating.status === 2) {
     return '评价不存在'
   }
-  if (rating.user_id !== uid && userRole < 3) {
+  if (rating.user_id !== uid && !canModerate) {
     return '您没有权限更新该评价'
   }
   if (
-    userRole < 3 &&
+    !canModerate &&
     (await hasPendingModeration('rating', { contentId: ratingId }))
   ) {
     return '您发布的评价正在审核中, 暂时无法修改'
   }
   // 待审核 (status=1) 的评价禁止修改; hasPendingModeration 之外再兜底一层
-  if (userRole < 3 && rating.status === 1) {
+  if (!canModerate && rating.status === 1) {
     return '您发布的评价正在审核中, 暂时无法修改'
   }
 
   // 编辑评价文本后必须重新送审, 防止先发正常内容再改成违规绕过审核
   const moderation = await planTextModeration(ratingSubject(shortSummary), {
-    userRole,
+    actor,
     previous: ratingSubject(rating.short_summary)
   })
 
   // 上面判的是事务外快照。同一组条件交给命令在行锁下再判一次: 其间被管理员隐藏的
   // 评价不会被这次编辑写回待审核
-  const guard: ContentGuard<RatingStatus> =
-    userRole < 3
-      ? { statusIn: [RATING_STATUS.public], ownerUid: uid }
-      : { statusIn: [RATING_STATUS.public, RATING_STATUS.pending] }
+  const guard: ContentGuard<RatingStatus> = !canModerate
+    ? { statusIn: [RATING_STATUS.public], ownerUid: uid }
+    : { statusIn: [RATING_STATUS.public, RATING_STATUS.pending] }
 
   const data = await kunTx('rating.update', async (ctx) => {
     const { skipped } = await editRating(ctx, ratingId, {

@@ -41,6 +41,7 @@ vi.mock('~/app/api/patch/cache', () => ({
 }))
 
 import { createPatchRating } from '~/app/api/patch/rating/create'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const created = new Date('2026-01-01T00:00:00.000Z')
 
@@ -84,8 +85,7 @@ describe('createPatchRating 缓存失效 (M-05)', () => {
         shortSummary: 's',
         spoilerLevel: 'none'
       },
-      7,
-      2
+      kunTestActor({ uid: 7, role: 2 })
     )
 
     expect(recomputeMock).toHaveBeenCalledWith(10, tx)

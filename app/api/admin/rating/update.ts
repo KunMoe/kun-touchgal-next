@@ -5,12 +5,13 @@ import { planTextModeration } from '~/server/moderation/submit'
 import { ratingSubject } from '~/server/moderation/subject'
 import { kunTx } from '~/server/db/tx'
 import { editRating } from '~/server/content/rating/edit'
+import type { KunActor } from '~/constants/role'
 
 export const updateRating = async (
   input: z.infer<typeof patchRatingUpdateSchema>,
-  uid: number,
-  role: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
   const rating = await prisma.patch_rating.findUnique({
     where: { id: input.ratingId }
   })
@@ -25,7 +26,7 @@ export const updateRating = async (
   // 送审与否只由操作者的真实角色决定 (超级管理员豁免), 后台入口不另开口子
   const moderation = await planTextModeration(
     ratingSubject(input.shortSummary),
-    { userRole: role, previous: ratingSubject(rating.short_summary) }
+    { actor, previous: ratingSubject(rating.short_summary) }
   )
 
   // 后台编辑不设守卫: 隐藏、待审的评价都能改; 也不作废在途的审核任务

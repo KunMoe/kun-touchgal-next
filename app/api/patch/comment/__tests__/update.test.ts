@@ -42,6 +42,7 @@ vi.mock('~/server/content/comment/edit', () => ({
 
 import { commentSubject } from '~/server/moderation/subject'
 import { updateComment } from '~/app/api/patch/comment/update'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const stored = { id: 5, user_id: 7, content: 'before', status: 0 }
 const input = { commentId: 5, content: 'after', isSpoiler: false }
@@ -66,18 +67,19 @@ beforeEach(() => {
 describe('updateComment 送审', () => {
   // 先发正常内容再改成违规即可绕过审核, 所以编辑必须把新旧正文都交给预筛
   it('把编辑前的正文作为 previous 交给预筛, 由预筛判定是否重审', async () => {
-    await updateComment(input, 7, 1)
+    const actor = kunTestActor({ uid: 7, role: 1 })
+    await updateComment(input, actor)
 
     expect(planTextModerationMock).toHaveBeenCalledWith(
       commentSubject('after'),
-      { userRole: 1, previous: commentSubject('before') }
+      { actor, previous: commentSubject('before') }
     )
   })
 
   it('把预筛的结果原样交给编辑命令', async () => {
     planTextModerationMock.mockResolvedValue(INTERCEPT)
 
-    await updateComment(input, 7, 1)
+    await updateComment(input, kunTestActor({ uid: 7, role: 1 }))
 
     expect(editCommentMock.mock.calls[0][2].moderation).toBe(INTERCEPT)
   })
@@ -87,7 +89,7 @@ describe('updateComment 送审', () => {
       '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
     )
 
-    expect(await updateComment(input, 7, 1)).toBe(
+    expect(await updateComment(input, kunTestActor({ uid: 7, role: 1 }))).toBe(
       '评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'
     )
     expect(renderMock).toHaveBeenCalledWith('comment', 'after')
@@ -96,7 +98,7 @@ describe('updateComment 送审', () => {
   })
 
   it('正文与派生 HTML、版本一起交给编辑命令', async () => {
-    const result = await updateComment(input, 7, 1)
+    const result = await updateComment(input, kunTestActor({ uid: 7, role: 1 }))
 
     expect(editCommentMock).toHaveBeenCalledWith(txContext, 5, {
       guard: { statusIn: [0], ownerUid: 7 },
@@ -129,10 +131,12 @@ describe('updateComment 事务外预检', () => {
       1,
       '您发布的评论正在审核中, 暂时无法修改'
     ]
-  ])('%s', async (_name, row, uid, role, message) => {
+  ] as const)('%s', async (_name, row, uid, role, message) => {
     findCommentMock.mockResolvedValue(row)
 
-    expect(await updateComment(input, uid, role)).toBe(message)
+    expect(await updateComment(input, kunTestActor({ uid, role }))).toBe(
+      message
+    )
     expect(planTextModerationMock).not.toHaveBeenCalled()
     expect(transactionMock).not.toHaveBeenCalled()
   })
@@ -140,7 +144,7 @@ describe('updateComment 事务外预检', () => {
   it('审核中的评论禁止作者再次修改, 不进入预筛', async () => {
     hasPendingModerationMock.mockResolvedValue(true)
 
-    expect(await updateComment(input, 7, 1)).toBe(
+    expect(await updateComment(input, kunTestActor({ uid: 7, role: 1 }))).toBe(
       '您发布的评论正在审核中, 暂时无法修改'
     )
     expect(planTextModerationMock).not.toHaveBeenCalled()
@@ -151,7 +155,7 @@ describe('updateComment 事务外预检', () => {
 // 预检读的是快照; 同一组条件作为守卫交给编辑命令在行锁下再判一次
 describe('updateComment 给编辑命令的守卫', () => {
   it('作者: 只能改自己公开的评论', async () => {
-    await updateComment(input, 7, 1)
+    await updateComment(input, kunTestActor({ uid: 7, role: 1 }))
 
     expect(editCommentMock.mock.calls[0][2].guard).toEqual({
       statusIn: [0],
@@ -160,7 +164,7 @@ describe('updateComment 给编辑命令的守卫', () => {
   })
 
   it('管理员: 可以改他人公开或待审的评论, 隐藏的不行', async () => {
-    await updateComment(input, 9, 3)
+    await updateComment(input, kunTestActor({ uid: 9, role: 3 }))
 
     expect(editCommentMock.mock.calls[0][2].guard).toEqual({ statusIn: [0, 1] })
   })
@@ -177,6 +181,8 @@ describe('updateComment 给编辑命令的守卫', () => {
   ])('行锁下守卫未通过 %o → %s', async (skipped, message) => {
     editCommentMock.mockResolvedValue({ row: undefined, skipped })
 
-    expect(await updateComment(input, 7, 1)).toBe(message)
+    expect(await updateComment(input, kunTestActor({ uid: 7, role: 1 }))).toBe(
+      message
+    )
   })
 })

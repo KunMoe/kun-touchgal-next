@@ -46,6 +46,7 @@ vi.mock('~/server/content/comment/edit', () => ({
 
 import { commentSubject } from '~/server/moderation/subject'
 import { updateComment } from '~/app/api/admin/comment/update'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const created = new Date('2026-01-01T00:00:00.000Z')
 // content 顶到列上限, content_html 远超 admin_log.content 的 VarChar(10007)
@@ -84,8 +85,7 @@ describe('updateComment', () => {
     await expect(
       updateComment(
         { commentId: 1, content: 'new content', isSpoiler: false },
-        99,
-        4
+        kunTestActor({ uid: 99, role: 4 })
       )
     ).resolves.toEqual({})
 
@@ -112,18 +112,23 @@ describe('updateComment', () => {
   })
 
   // 送审豁免只看操作者的真实角色 (超级管理员豁免), 后台入口不另开口子
-  it('以操作者的真实角色与编辑前的正文交给预筛', async () => {
-    await updateComment(
-      { commentId: 1, content: 'new content', isSpoiler: false },
-      99,
-      4
-    )
+  it.each([4, 3] as const)(
+    '以操作者的真实角色与编辑前的正文交给预筛 (role %i)',
+    async (role) => {
+      const actor = kunTestActor({ uid: 99, role })
+      await updateComment(
+        { commentId: 1, content: 'new content', isSpoiler: false },
+        actor
+      )
 
-    expect(planTextModerationMock).toHaveBeenCalledWith(
-      commentSubject('new content'),
-      { userRole: 4, previous: commentSubject(longContent) }
-    )
-  })
+      expect(planTextModerationMock).toHaveBeenCalledWith(
+        commentSubject('new content'),
+        { actor, previous: commentSubject(longContent) }
+      )
+      // 交下去的就是调用方给的操作者 (同一对象), 不是入口按固定角色另造的
+      expect(planTextModerationMock.mock.calls[0][1].actor).toBe(actor)
+    }
+  )
 
   it('评论在行锁下已不存在时报未找到, 不记日志', async () => {
     editCommentMock.mockResolvedValue({
@@ -134,8 +139,7 @@ describe('updateComment', () => {
     await expect(
       updateComment(
         { commentId: 1, content: 'new content', isSpoiler: false },
-        99,
-        4
+        kunTestActor({ uid: 99, role: 4 })
       )
     ).resolves.toBe('未找到对应的评论')
     expect(createLogMock).not.toHaveBeenCalled()
@@ -147,7 +151,10 @@ describe('updateComment', () => {
     )
 
     await expect(
-      updateComment({ commentId: 1, content: 'deep', isSpoiler: false }, 99, 4)
+      updateComment(
+        { commentId: 1, content: 'deep', isSpoiler: false },
+        kunTestActor({ uid: 99, role: 4 })
+      )
     ).resolves.toBe('评论中的引用、列表、方括号等格式嵌套过多, 请精简后再提交')
 
     expect(transactionMock).not.toHaveBeenCalled()

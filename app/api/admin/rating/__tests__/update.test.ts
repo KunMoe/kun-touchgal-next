@@ -39,6 +39,7 @@ vi.mock('~/server/content/rating/edit', () => ({
 
 import { ratingSubject } from '~/server/moderation/subject'
 import { updateRating } from '~/app/api/admin/rating/update'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const created = new Date('2026-01-01T00:00:00.000Z')
 const SKIP = { queue: false, intercept: false, dryRun: false }
@@ -71,7 +72,10 @@ beforeEach(() => {
 describe('updateRating', () => {
   it('updates only short_summary, without a guard, and logs the old rating', async () => {
     await expect(
-      updateRating({ ratingId: 1, shortSummary: 'new' }, 99, 4)
+      updateRating(
+        { ratingId: 1, shortSummary: 'new' },
+        kunTestActor({ uid: 99, role: 4 })
+      )
     ).resolves.toEqual({})
 
     // 参数整体精确匹配: 只写短评; 后台编辑不设守卫 (隐藏、待审的评价都能改)
@@ -92,20 +96,29 @@ describe('updateRating', () => {
   })
 
   // 送审豁免只看操作者的真实角色 (超级管理员豁免), 后台入口不另开口子
-  it('以操作者的真实角色与编辑前的短评交给预筛', async () => {
-    await updateRating({ ratingId: 1, shortSummary: 'new' }, 99, 4)
+  it.each([4, 3] as const)(
+    '以操作者的真实角色与编辑前的短评交给预筛 (role %i)',
+    async (role) => {
+      const actor = kunTestActor({ uid: 99, role })
+      await updateRating({ ratingId: 1, shortSummary: 'new' }, actor)
 
-    expect(planTextModerationMock).toHaveBeenCalledWith(ratingSubject('new'), {
-      userRole: 4,
-      previous: ratingSubject('old')
-    })
-  })
+      expect(planTextModerationMock).toHaveBeenCalledWith(
+        ratingSubject('new'),
+        { actor, previous: ratingSubject('old') }
+      )
+      // 交下去的就是调用方给的操作者 (同一对象), 不是入口按固定角色另造的
+      expect(planTextModerationMock.mock.calls[0][1].actor).toBe(actor)
+    }
+  )
 
   it('returns an error message when the rating does not exist', async () => {
     findRatingMock.mockResolvedValue(null)
 
     await expect(
-      updateRating({ ratingId: 1, shortSummary: 'new' }, 99, 4)
+      updateRating(
+        { ratingId: 1, shortSummary: 'new' },
+        kunTestActor({ uid: 99, role: 4 })
+      )
     ).resolves.toBe('未找到对应的评价')
     expect(transactionMock).not.toHaveBeenCalled()
   })
@@ -117,7 +130,10 @@ describe('updateRating', () => {
     })
 
     await expect(
-      updateRating({ ratingId: 1, shortSummary: 'new' }, 99, 4)
+      updateRating(
+        { ratingId: 1, shortSummary: 'new' },
+        kunTestActor({ uid: 99, role: 4 })
+      )
     ).resolves.toBe('未找到对应的评价')
     expect(createLogMock).not.toHaveBeenCalled()
   })

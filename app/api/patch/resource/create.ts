@@ -21,13 +21,15 @@ import {
 } from '~/server/moderation/submit'
 import { resourceSubject } from '~/server/moderation/subject'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
+import { can } from '~/constants/permission'
 import type { PatchResource } from '~/types/api/patch'
+import type { KunActor } from '~/constants/role'
 
 export const createPatchResource = async (
   input: z.infer<typeof patchResourceCreateSchema>,
-  uid: number,
-  userRole: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
   const {
     patchId: inputPatchId,
     type,
@@ -59,7 +61,8 @@ export const createPatchResource = async (
     return '未找到该资源对应的 Galgame 信息, 请确认 Galgame 存在'
   }
   const patchId = currentPatch.id
-  const needApproval = resourceCount === 0 && userRole < 3
+  const needApproval =
+    resourceCount === 0 && !can(actor, 'resource.skipFirstApproval')
 
   // 渲染不出来的备注在落库前拒绝 (只检查: 备注的 HTML 不落库, 详情页读时渲染)
   const renderable = await renderKunMarkdownForWrite('note', input.note)
@@ -78,7 +81,7 @@ export const createPatchResource = async (
           modelName: model_name,
           links
         }),
-        { userRole }
+        { actor }
       )
 
   const preparedLinks: Array<{

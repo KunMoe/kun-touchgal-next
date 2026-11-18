@@ -57,6 +57,7 @@ import {
   getConversations,
   getOrCreateConversation
 } from '~/app/api/message/conversation/service'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const UID = 1
 const TARGET_UID = 2
@@ -90,8 +91,7 @@ describe('getOrCreateConversation', () => {
   it('扣费走带余额守卫的 updateMany, 而不是无谓词的 update', async () => {
     const result = await getOrCreateConversation(
       { targetUserId: TARGET_UID },
-      UID,
-      NORMAL_ROLE
+      kunTestActor({ uid: UID, role: NORMAL_ROLE })
     )
 
     expect(result).toEqual({ conversationId: 7, isNew: true })
@@ -110,8 +110,7 @@ describe('getOrCreateConversation', () => {
 
     const result = await getOrCreateConversation(
       { targetUserId: TARGET_UID },
-      UID,
-      NORMAL_ROLE
+      kunTestActor({ uid: UID, role: NORMAL_ROLE })
     )
 
     expect(result).toBe('萌萌点不足，发起私聊需要至少 20 萌萌点')
@@ -129,8 +128,7 @@ describe('getOrCreateConversation', () => {
 
     const result = await getOrCreateConversation(
       { targetUserId: TARGET_UID },
-      UID,
-      NORMAL_ROLE
+      kunTestActor({ uid: UID, role: NORMAL_ROLE })
     )
 
     // isNew 必须是 false: 本次请求没扣费, 客户端据此不弹「已消耗」提示
@@ -149,8 +147,7 @@ describe('getOrCreateConversation', () => {
 
     const result = await getOrCreateConversation(
       { targetUserId: TARGET_UID },
-      UID,
-      NORMAL_ROLE
+      kunTestActor({ uid: UID, role: NORMAL_ROLE })
     )
 
     // isNew 必须是 false: 扣费与 create 同事务已整条回滚, 客户端据此不弹「已消耗」提示
@@ -168,8 +165,7 @@ describe('getOrCreateConversation', () => {
 
     const result = await getOrCreateConversation(
       { targetUserId: TARGET_UID },
-      UID,
-      PRIVILEGED_ROLE
+      kunTestActor({ uid: UID, role: PRIVILEGED_ROLE })
     )
 
     expect(result).toEqual({ conversationId: 9, isNew: false })
@@ -180,7 +176,10 @@ describe('getOrCreateConversation', () => {
     conversationCreateMock.mockRejectedValue(new Error('boom'))
 
     await expect(
-      getOrCreateConversation({ targetUserId: TARGET_UID }, UID, NORMAL_ROLE)
+      getOrCreateConversation(
+        { targetUserId: TARGET_UID },
+        kunTestActor({ uid: UID, role: NORMAL_ROLE })
+      )
     ).rejects.toThrow('boom')
   })
 })

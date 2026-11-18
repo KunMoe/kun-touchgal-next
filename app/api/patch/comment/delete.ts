@@ -2,11 +2,13 @@ import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { COMMENT_STATUS } from '~/constants/contentStatus'
+import { can } from '~/constants/permission'
 import {
   executeCommentRemoval,
   planCommentRemoval
 } from '~/server/content/comment/remove'
 import type { CommentRemovalGuard } from '~/server/content/comment/remove'
+import type { KunActor } from '~/constants/role'
 
 const commentIdSchema = z.object({
   commentId: z.coerce
@@ -17,9 +19,10 @@ const commentIdSchema = z.object({
 
 export const deleteComment = async (
   input: z.infer<typeof commentIdSchema>,
-  uid: number,
-  userRole: number
+  actor: KunActor
 ) => {
+  const { uid } = actor
+  const canModerate = can(actor, 'content.moderateAny')
   const comment = await prisma.patch_comment.findUnique({
     where: {
       id: input.commentId
@@ -35,20 +38,19 @@ export const deleteComment = async (
     return '未找到对应的评论'
   }
 
-  if (comment.user_id !== uid && userRole < 3) {
+  if (comment.user_id !== uid && !canModerate) {
     return '您没有权限删除该评论'
   }
   // 待审核 (status=1) 的评论禁止作者删除; 管理员可删
-  if (userRole < 3 && comment.status === 1) {
+  if (!canModerate && comment.status === 1) {
     return '该评论正在审核中, 暂时无法删除'
   }
 
   // 上面判的是事务外快照。同一组条件交给命令在行锁下再判一次: 其间被管理员隐藏或
   // 被送审的评论不会被作者删掉
-  const guard: CommentRemovalGuard =
-    userRole < 3
-      ? { statusIn: [COMMENT_STATUS.public], ownerUid: uid }
-      : { statusIn: [COMMENT_STATUS.public, COMMENT_STATUS.pending] }
+  const guard: CommentRemovalGuard = !canModerate
+    ? { statusIn: [COMMENT_STATUS.public], ownerUid: uid }
+    : { statusIn: [COMMENT_STATUS.public, COMMENT_STATUS.pending] }
 
   const failure = await kunTx('comment.delete', async (ctx) => {
     const plan = await planCommentRemoval(ctx, [comment.id], guard)

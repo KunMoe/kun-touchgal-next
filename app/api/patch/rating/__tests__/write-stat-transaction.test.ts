@@ -43,6 +43,7 @@ vi.mock('~/server/moderation/submit', () => ({
 
 import { ratingSubject } from '~/server/moderation/subject'
 import { createPatchRating } from '~/app/api/patch/rating/create'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const ratingInput = {
   recommend: 'yes',
@@ -113,7 +114,7 @@ describe('public patch rating write transactions', () => {
   it('recomputes rating stats before the create transaction commits', async () => {
     findUniqueMock.mockResolvedValueOnce(null)
 
-    await createPatchRating(createInput, 7, 2)
+    await createPatchRating(createInput, kunTestActor({ uid: 7, role: 2 }))
 
     expect(recomputeOneMock).toHaveBeenCalledWith(10, transactionClient)
     expect(events).toEqual([
@@ -127,30 +128,33 @@ describe('public patch rating write transactions', () => {
     findUniqueMock.mockResolvedValueOnce(null)
     recomputeOneMock.mockRejectedValueOnce(new Error('rating stat failed'))
 
-    await expect(createPatchRating(createInput, 7, 2)).rejects.toThrow(
-      'rating stat failed'
-    )
+    await expect(
+      createPatchRating(createInput, kunTestActor({ uid: 7, role: 2 }))
+    ).rejects.toThrow('rating stat failed')
     expect(events).toEqual(['transaction-start', 'transaction-rollback'])
   })
 
   it('创建评价时把调用者角色透传给审核预筛', async () => {
     findUniqueMock.mockResolvedValueOnce(null)
 
-    await createPatchRating(createInput, 7, 3)
+    const actor = kunTestActor({ uid: 7, role: 3 })
+    await createPatchRating(createInput, actor)
 
     expect(planTextModerationMock).toHaveBeenCalledWith(
       ratingSubject('summary'),
-      { userRole: 3 }
+      { actor }
     )
+    // 透传的就是调用方给的操作者 (同一对象)
+    expect(planTextModerationMock.mock.calls[0][1].actor).toBe(actor)
   })
 
   it('并发重复评价撞唯一约束时返回业务错误而非抛出', async () => {
     findUniqueMock.mockResolvedValueOnce(null)
     createMock.mockRejectedValueOnce(prismaKnownError('P2002'))
 
-    await expect(createPatchRating(createInput, 7, 2)).resolves.toBe(
-      '您已经评价过该游戏'
-    )
+    await expect(
+      createPatchRating(createInput, kunTestActor({ uid: 7, role: 2 }))
+    ).resolves.toBe('您已经评价过该游戏')
     expect(events).toEqual(['transaction-start', 'transaction-rollback'])
   })
 
@@ -158,17 +162,17 @@ describe('public patch rating write transactions', () => {
     findUniqueMock.mockResolvedValueOnce(null)
     createMock.mockRejectedValueOnce(prismaKnownError('P2003'))
 
-    await expect(createPatchRating(createInput, 7, 2)).resolves.toBe(
-      '未找到 Galgame'
-    )
+    await expect(
+      createPatchRating(createInput, kunTestActor({ uid: 7, role: 2 }))
+    ).resolves.toBe('未找到 Galgame')
   })
 
   it('无关的 prisma 错误继续抛出', async () => {
     findUniqueMock.mockResolvedValueOnce(null)
     createMock.mockRejectedValueOnce(new Error('connection lost'))
 
-    await expect(createPatchRating(createInput, 7, 2)).rejects.toThrow(
-      'connection lost'
-    )
+    await expect(
+      createPatchRating(createInput, kunTestActor({ uid: 7, role: 2 }))
+    ).rejects.toThrow('connection lost')
   })
 })

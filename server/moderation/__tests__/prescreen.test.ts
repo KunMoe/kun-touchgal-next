@@ -25,6 +25,7 @@ import {
   preScreenMedia
 } from '~/server/moderation/submit'
 import type { QueuedModerationPlan } from '~/server/moderation/submit'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import {
   bioSubject,
   commentSubject,
@@ -42,14 +43,20 @@ const subject = commentSubject('一段需要审核的正文内容')
 
 describe('审核预筛选角色豁免: 仅超级管理员 (role>=4) 跳过', () => {
   it('role 4 文本预筛直接放行, 不读审核配置', async () => {
-    expect(await planTextModeration(subject, { userRole: 4 })).toBe(
-      MODERATION_SKIP
-    )
+    expect(
+      await planTextModeration(subject, {
+        actor: kunTestActor({ uid: 1, role: 4 })
+      })
+    ).toBe(MODERATION_SKIP)
     expect(getModerationConfigMock).not.toHaveBeenCalled()
   })
 
   it('role 3 管理员不豁免, 文本正常送审并拦截, 计划携带主体', async () => {
-    expect(await planTextModeration(subject, { userRole: 3 })).toEqual({
+    expect(
+      await planTextModeration(subject, {
+        actor: kunTestActor({ uid: 1, role: 3 })
+      })
+    ).toEqual({
       queue: true,
       intercept: true,
       dryRun: false,
@@ -58,12 +65,14 @@ describe('审核预筛选角色豁免: 仅超级管理员 (role>=4) 跳过', () 
   })
 
   it('role 4 媒体预筛直接放行, 不读审核配置', async () => {
-    expect(await preScreenMedia(4)).toBe(MODERATION_SKIP)
+    expect(await preScreenMedia(kunTestActor({ uid: 1, role: 4 }))).toBe(
+      MODERATION_SKIP
+    )
     expect(getModerationConfigMock).not.toHaveBeenCalled()
   })
 
   it('role 3 管理员媒体预筛正常送审', async () => {
-    expect(await preScreenMedia(3)).toEqual({
+    expect(await preScreenMedia(kunTestActor({ uid: 1, role: 3 }))).toEqual({
       queue: true,
       intercept: true,
       dryRun: false
@@ -73,9 +82,11 @@ describe('审核预筛选角色豁免: 仅超级管理员 (role>=4) 跳过', () 
   it('审核开关关闭时任何角色都放行', async () => {
     getModerationConfigMock.mockResolvedValue({ enabled: false, dryRun: false })
 
-    expect(await planTextModeration(subject, { userRole: 1 })).toBe(
-      MODERATION_SKIP
-    )
+    expect(
+      await planTextModeration(subject, {
+        actor: kunTestActor({ uid: 1, role: 1 })
+      })
+    ).toBe(MODERATION_SKIP)
   })
 })
 
@@ -83,7 +94,11 @@ describe('planTextModeration', () => {
   it('灰度 (dryRun) 时排队但不拦截', async () => {
     getModerationConfigMock.mockResolvedValue({ enabled: true, dryRun: true })
 
-    expect(await planTextModeration(subject, { userRole: 1 })).toEqual({
+    expect(
+      await planTextModeration(subject, {
+        actor: kunTestActor({ uid: 1, role: 1 })
+      })
+    ).toEqual({
       queue: true,
       intercept: false,
       dryRun: true,
@@ -93,7 +108,7 @@ describe('planTextModeration', () => {
 
   it('送审字段与编辑前相同则不重审, 也不读审核配置', async () => {
     const plan = await planTextModeration(subject, {
-      userRole: 1,
+      actor: kunTestActor({ uid: 1, role: 1 }),
       previous: commentSubject('一段需要审核的正文内容')
     })
 
@@ -103,7 +118,7 @@ describe('planTextModeration', () => {
 
   it('送审字段有变化则重审', async () => {
     const plan = await planTextModeration(subject, {
-      userRole: 1,
+      actor: kunTestActor({ uid: 1, role: 1 }),
       previous: commentSubject('编辑前的正文')
     })
 
@@ -115,13 +130,15 @@ describe('planTextModeration', () => {
     ['纯空白', ' \n\t '],
     ['只有不可见字符', '\u200B\u3164\uFEFF']
   ])('没有可见文字 (%s) 时不送审, 也不读审核配置', async (_name, text) => {
-    expect(await planTextModeration(bioSubject(text), { userRole: 1 })).toBe(
-      MODERATION_SKIP
-    )
+    expect(
+      await planTextModeration(bioSubject(text), {
+        actor: kunTestActor({ uid: 1, role: 1 })
+      })
+    ).toBe(MODERATION_SKIP)
     expect(
       await planTextModeration(
         resourceSubject({ name: text, note: text, modelName: '', links: [] }),
-        { userRole: 1 }
+        { actor: kunTestActor({ uid: 1, role: 1 }) }
       )
     ).toBe(MODERATION_SKIP)
     expect(getModerationConfigMock).not.toHaveBeenCalled()
@@ -130,9 +147,9 @@ describe('planTextModeration', () => {
   it('读配置抛错时原样抛出, 调用点须把预筛排在不可回滚的副作用之前', async () => {
     getModerationConfigMock.mockRejectedValue(new Error('redis down'))
 
-    await expect(planTextModeration(subject, { userRole: 1 })).rejects.toThrow(
-      'redis down'
-    )
+    await expect(
+      planTextModeration(subject, { actor: kunTestActor({ uid: 1, role: 1 }) })
+    ).rejects.toThrow('redis down')
   })
 })
 

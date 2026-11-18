@@ -14,6 +14,6 @@ export const GET = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
 
-  const response = await checkConversation(input, payload.uid, payload.role)
+  const response = await checkConversation(input, payload)
   return NextResponse.json(response)
 }

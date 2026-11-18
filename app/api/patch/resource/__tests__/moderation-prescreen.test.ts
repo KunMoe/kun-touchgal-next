@@ -112,18 +112,18 @@ import {
   frontResourceEditGuard,
   updatePatchResource
 } from '~/app/api/patch/resource/update'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
+import type { KunRole } from '~/constants/role'
 
 // 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫
 const updateResource = (
   input: Parameters<typeof updatePatchResource>[0],
   uid: number,
-  role: number
-) =>
-  updatePatchResource(
-    input,
-    { uid, role },
-    frontResourceEditGuard({ uid, role })
-  )
+  role: KunRole
+) => {
+  const actor = kunTestActor({ uid, role })
+  return updatePatchResource(input, actor, frontResourceEditGuard(actor))
+}
 
 const resourceInput = {
   patchId: 10,
@@ -225,7 +225,7 @@ const storedExternalLink = {
 describe('资源审核预筛选: 送审标题、介绍、模型型号与各条链接的自由文本', () => {
   // 链接文本、大小、提取码、解压码向所有访客展示, 与标题、介绍一样要过审 (X09-03)
   it('只有外链、标题介绍全空的资源也要送审', async () => {
-    await createPatchResource(resourceInput, 7, 2)
+    await createPatchResource(resourceInput, kunTestActor({ uid: 7, role: 2 }))
 
     expect(createdTaskData().payload.segments).toEqual([
       LINK_SEGMENT,
@@ -259,8 +259,7 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
           }
         ]
       },
-      7,
-      2
+      kunTestActor({ uid: 7, role: 2 })
     )
 
     expect(createdTaskData().payload.segments).toEqual([
@@ -274,7 +273,10 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
   })
 
   it('创建含标题的资源: 任务携带主体段与资源名, 资源进入待审核', async () => {
-    await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 2)
+    await createPatchResource(
+      { ...resourceInput, name: 'Patch v1' },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(createdTaskData()).toMatchObject({
       content_type: 'resource',
@@ -308,13 +310,11 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
         type: ['ai'],
         modelName: 'GPT-4o'
       },
-      7,
-      2
+      kunTestActor({ uid: 7, role: 2 })
     )
     await createPatchResource(
       { ...resourceInput, name: 'Patch v1', modelName: 'GPT-4o' },
-      7,
-      2
+      kunTestActor({ uid: 7, role: 2 })
     )
 
     expect(taskCreateMock.mock.calls[0][0].data.payload.segments).toEqual([
@@ -351,8 +351,7 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
           }
         ]
       },
-      7,
-      2
+      kunTestActor({ uid: 7, role: 2 })
     )
 
     expect(createdTaskData().payload.segments).toEqual([
@@ -366,7 +365,10 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
   })
 
   it('超级管理员 (role 4) 创建资源不送审', async () => {
-    await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 4)
+    await createPatchResource(
+      { ...resourceInput, name: 'Patch v1' },
+      kunTestActor({ uid: 7, role: 4 })
+    )
 
     expect(getModerationConfigMock).not.toHaveBeenCalled()
     expect(taskCreateMock).not.toHaveBeenCalled()
@@ -508,7 +510,10 @@ describe('首个资源人工审批通知', () => {
   it('首个资源提交后通知上传者并在写入后失效其未读缓存', async () => {
     resourceCountMock.mockResolvedValue(0)
 
-    await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 2)
+    await createPatchResource(
+      { ...resourceInput, name: 'Patch v1' },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     // 首个资源走人工审批流, 不送 AI 审核
     expect(getModerationConfigMock).not.toHaveBeenCalled()
@@ -523,7 +528,10 @@ describe('首个资源人工审批通知', () => {
   })
 
   it('非首个资源不发通知也不失效未读缓存', async () => {
-    await createPatchResource({ ...resourceInput, name: 'Patch v1' }, 7, 2)
+    await createPatchResource(
+      { ...resourceInput, name: 'Patch v1' },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(createMessageMock).not.toHaveBeenCalled()
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
@@ -536,7 +544,10 @@ describe('渲染不出来的资源介绍', () => {
   const note = `${'>'.repeat(300)} x`
 
   it('创建时被拒, 不预筛、不绑定、不写库', async () => {
-    const result = await createPatchResource({ ...resourceInput, note }, 7, 2)
+    const result = await createPatchResource(
+      { ...resourceInput, note },
+      kunTestActor({ uid: 7, role: 2 })
+    )
 
     expect(result).toBe(
       '资源备注中的引用、列表、方括号等格式嵌套过多, 请精简后再提交'

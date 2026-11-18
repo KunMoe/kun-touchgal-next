@@ -26,7 +26,7 @@ export const POST = async (req: NextRequest) => {
   }
 
   const moderation = await planTextModeration(bioSubject(input.bio), {
-    userRole: payload.role
+    actor: payload
   })
 
   if (moderation.intercept) {

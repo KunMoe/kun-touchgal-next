@@ -22,10 +22,12 @@ import {
 import { resourceSubject } from '~/server/moderation/subject'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
+import { can } from '~/constants/permission'
 import { markResourcePendingReview } from '~/server/content/resource/edit'
 import type { ResourceStatus } from '~/constants/contentStatus'
 import type { ContentGuard } from '~/server/content/guard'
 import type { PatchResource } from '~/types/api/patch'
+import type { KunActor } from '~/constants/role'
 
 // 守卫是入口算好的数据: 允许编辑的状态, 以及是否要求作者本人。同一份守卫在事务外的
 // 快照上判一次 (快速失败), 在行锁下再判一次
@@ -52,11 +54,10 @@ const resourceEditGuardError = (
 
 // 前台入口的守卫: 作者只能改自己已上线的资源; 管理员还可以改待初审、待审核的。
 // 隐藏的资源只在后台管理, 对前台与不存在等同
-export const frontResourceEditGuard = (actor: {
-  uid: number
-  role: number
-}): ContentGuard<ResourceStatus> =>
-  actor.role < 3
+export const frontResourceEditGuard = (
+  actor: KunActor
+): ContentGuard<ResourceStatus> =>
+  !can(actor, 'content.moderateAny')
     ? { statusIn: [RESOURCE_STATUS.public], ownerUid: actor.uid }
     : {
         statusIn: [
@@ -68,7 +69,7 @@ export const frontResourceEditGuard = (actor: {
 
 export const updatePatchResource = async (
   input: z.infer<typeof patchResourceUpdateSchema>,
-  actor: { uid: number; role: number },
+  actor: KunActor,
   guard: ContentGuard<ResourceStatus>
 ) => {
   const {
@@ -138,7 +139,7 @@ export const updatePatchResource = async (
             links
           }),
           {
-            userRole: actor.role,
+            actor,
             previous: resourceSubject({
               name: resource.name,
               note: resource.note,

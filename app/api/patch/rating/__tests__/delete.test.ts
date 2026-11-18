@@ -30,6 +30,7 @@ vi.mock('~/server/content/comment/publish', () => ({
 }))
 
 import { deletePatchRating } from '~/app/api/patch/rating/delete'
+import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 
 const locked = (status: number) => ({
   id: 5,
@@ -91,10 +92,12 @@ describe('deletePatchRating 事务外预检', () => {
       1,
       '该评价正在审核中, 暂时无法删除'
     ]
-  ])('%s', async (_name, row, uid, role, message) => {
+  ] as const)('%s', async (_name, row, uid, role, message) => {
     seed(row, [])
 
-    expect(await deletePatchRating({ ratingId: 5 }, uid, role)).toBe(message)
+    expect(
+      await deletePatchRating({ ratingId: 5 }, kunTestActor({ uid, role }))
+    ).toBe(message)
     expect(rec.attempts).toHaveLength(0)
   })
 })
@@ -107,7 +110,10 @@ describe('deletePatchRating 删除', () => {
       cacheSeesCommit.push(rec.attempts[0].committed)
     })
 
-    const result = await deletePatchRating({ ratingId: 5 }, 7, 1)
+    const result = await deletePatchRating(
+      { ratingId: 5 },
+      kunTestActor({ uid: 7, role: 1 })
+    )
 
     expect(result).toEqual({})
     // 举报外键 SET NULL: 删除后按 NULL 目标清理级联置空的孤儿 (锁序一致);
@@ -133,7 +139,12 @@ describe('deletePatchRating 删除', () => {
   it('管理员可以删除他人待审的评价: 待审评价不计入统计, 不重算也不失效缓存', async () => {
     seed(snapshot(1), [locked(1)])
 
-    expect(await deletePatchRating({ ratingId: 5 }, 9, 3)).toEqual({})
+    expect(
+      await deletePatchRating(
+        { ratingId: 5 },
+        kunTestActor({ uid: 9, role: 3 })
+      )
+    ).toEqual({})
     expect(rec.labels()).toContain('patch_rating.deleteMany')
     expect(shortLabels()).not.toContain('stat.upsert')
     expect(patchContentMock).not.toHaveBeenCalled()
@@ -145,9 +156,9 @@ describe('deletePatchRating 删除', () => {
       throw new Error('rating stat failed')
     })
 
-    await expect(deletePatchRating({ ratingId: 5 }, 7, 1)).rejects.toThrow(
-      'rating stat failed'
-    )
+    await expect(
+      deletePatchRating({ ratingId: 5 }, kunTestActor({ uid: 7, role: 1 }))
+    ).rejects.toThrow('rating stat failed')
     expect(rec.attempts[0].rolledBack).toBe(true)
     expect(patchContentMock).not.toHaveBeenCalled()
   })
@@ -159,7 +170,12 @@ describe('deletePatchRating 行锁下复检', () => {
   it('快照公开, 锁下已被隐藏: 与不存在等同', async () => {
     seed(snapshot(), [locked(2)])
 
-    expect(await deletePatchRating({ ratingId: 5 }, 7, 1)).toBe('评价不存在')
+    expect(
+      await deletePatchRating(
+        { ratingId: 5 },
+        kunTestActor({ uid: 7, role: 1 })
+      )
+    ).toBe('评价不存在')
     expect(rec.attempts[0].rolledBack).toBe(true)
     expectNothingRemoved()
   })
@@ -167,23 +183,36 @@ describe('deletePatchRating 行锁下复检', () => {
   it('隐藏复检对管理员同样生效', async () => {
     seed(snapshot(), [locked(2)])
 
-    expect(await deletePatchRating({ ratingId: 5 }, 9, 3)).toBe('评价不存在')
+    expect(
+      await deletePatchRating(
+        { ratingId: 5 },
+        kunTestActor({ uid: 9, role: 3 })
+      )
+    ).toBe('评价不存在')
     expectNothingRemoved()
   })
 
   it('快照公开, 锁下已转待审: 作者被拒', async () => {
     seed(snapshot(), [locked(1)])
 
-    expect(await deletePatchRating({ ratingId: 5 }, 7, 1)).toBe(
-      '该评价正在审核中, 暂时无法删除'
-    )
+    expect(
+      await deletePatchRating(
+        { ratingId: 5 },
+        kunTestActor({ uid: 7, role: 1 })
+      )
+    ).toBe('该评价正在审核中, 暂时无法删除')
     expectNothingRemoved()
   })
 
   it('锁下行已不存在', async () => {
     seed(snapshot(), [])
 
-    expect(await deletePatchRating({ ratingId: 5 }, 7, 1)).toBe('评价不存在')
+    expect(
+      await deletePatchRating(
+        { ratingId: 5 },
+        kunTestActor({ uid: 7, role: 1 })
+      )
+    ).toBe('评价不存在')
     expectNothingRemoved()
   })
 })
