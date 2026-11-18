@@ -60,6 +60,11 @@ overrides:
   prosemirror-model: '>=1.25.8'
   prosemirror-view: '>=1.42.3'
   source-map-js: '>=1.2.2 <2'
+  # markdown 解析里两处平方级耗时, 上游已在这两个版本修掉: 整理列表时反复挪动全文的事件数组
+  # (from-markdown), 以及全文表格共用一张线性查找的编辑表 (gfm-table)。10 万字符的简介
+  # 分别要 8 秒与 27 秒。渲染输出不变 (profileLock.test.ts 守着)
+  mdast-util-from-markdown: '>=2.1.0 <3'
+  micromark-extension-gfm-table: '>=2.1.2 <3'
   # react-aria 家族钉回 HeroUI 2.8.1 发布时（2025-07-15）的版本：caret 解析到单包壳会让同一模块出现两份实例，
   # FocusScope / OverlayContext 等全局状态随之分裂（嵌套菜单被父菜单误判失焦关闭）。升级 HeroUI 时整段删除重算
   '@react-aria/button': '3.13.3'

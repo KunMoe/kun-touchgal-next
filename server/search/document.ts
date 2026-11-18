@@ -4,6 +4,7 @@ import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
 import { unified } from 'unified'
 import { convert } from 'html-to-text'
+import { kunListItemHandler } from '~/app/api/utils/render/listItemHandler'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 
 export const SEARCH_INTRODUCTION_MAX_LENGTH = 2000
@@ -92,7 +93,7 @@ export interface GalgameSearchCountsDoc {
 const markdownProcessor = unified()
   .use(remarkParse)
   .use(remarkGfm)
-  .use(remarkRehype)
+  .use(remarkRehype, { handlers: { listItem: kunListItemHandler } })
   .use(rehypeStringify)
   .freeze()
 

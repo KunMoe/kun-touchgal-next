@@ -210,6 +210,34 @@ describe('renderKunMarkdown 残余成本', () => {
   })
 })
 
+// 解析库里有过三处平方级的耗时: 整理列表、判断列表松紧、处理表格。它们生成的树很浅,
+// 每行也只有一个标记, 预算里的熔断与结构上限都看不见; 10 万字符的简介分别要 8 秒
+// 到 27 秒。前两处靠升级依赖、第三处靠 listItemHandler.ts 消掉。
+// 下面的输入在修掉之后各自不到 1 秒; 任何一处退回去都会超过用例的时限
+describe('长文档的渲染耗时随长度线性增长', () => {
+  const fill = (unit: string) => unit.repeat(Math.floor(100007 / unit.length))
+
+  it.each([
+    ['空列表项', fill('-\n')],
+    ['带内容的列表项', fill('- a\n')],
+    ['单列表格', `|a|\n|-|\n${fill('|a|\n')}`],
+    [
+      '连写的小表格',
+      fill(
+        '|a|b|c|d|e|f|g|h|i|j|\n|-|-|-|-|-|-|-|-|-|-|\n|1|2|3|4|5|6|7|8|9|0|\n\n'
+      )
+    ]
+  ])(
+    '10 万字符的%s',
+    async (_name, markdown) => {
+      const result = await renderKunMarkdown('introduction', markdown)
+
+      expect(result.ok).toBe(true)
+    },
+    4000
+  )
+})
+
 describe('renderKunMarkdown 缓存', () => {
   beforeEach(enableCache)
 

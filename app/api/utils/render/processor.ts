@@ -5,6 +5,7 @@ import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
 import { unified } from 'unified'
 import { remarkKunDirectives } from '~/utils/markdown/kunDialect'
+import { kunListItemHandler } from './listItemHandler'
 import { KUN_MARKDOWN_PROFILES } from './profiles'
 import { rehypeKunFootnoteScope } from './rehypeKunFootnoteScope'
 import { rehypeKunImageLoading } from './rehypeKunImageLoading'
@@ -44,7 +45,9 @@ const createProcessor = (
   }
 
   // 转成 HTML 树。净化之前的插件看到的仍是不可信内容
-  processor.use(remarkRehype).use(remarkKunExternalLinks)
+  processor
+    .use(remarkRehype, { handlers: { listItem: kunListItemHandler } })
+    .use(remarkKunExternalLinks)
   processor.use(rehypeKunFootnoteScope)
 
   // 净化是最后一个处理不可信内容的阶段, 排在它后面的插件不得再引入用户可控的属性
