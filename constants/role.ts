@@ -34,7 +34,9 @@ declare const kunActorBrand: unique symbol
 
 // 已经过会话校验的操作者。品牌只存在于编译期, 唯一的构造点是 app/api/utils/jwt.ts 的
 // verifyAndLoadUser: 手写的 { uid, role: 3 } 赋不进来, 所以签名收 KunActor 的服务拿不到
-// 调用点伪造的角色。展开后覆写 role 与 `as KunActor` 类型上拦不住, 由 lint 封住
+// 调用点随手写的角色。它防的是写错, 不是安全边界: `as KunActor`、展开后覆写 role、在
+// 测试之外借用测试辅助这几种顺手的写法由 lint 拦 (kun/inv-authz-02..04), 刻意绕过的
+// 写法 (类型别名、any、Object.assign) 拦不住
 export type KunActor = KunSubject & {
   readonly role: KunRole
   readonly name: string

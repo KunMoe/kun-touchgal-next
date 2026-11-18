@@ -145,7 +145,7 @@ export const getPatchResource = async (
   const { patchId } = input
   const uid = viewer?.uid ?? 0
 
-  // 可见集不同于公开集的 viewer (role>=3 / 持有待审核资源的作者) 不走共享缓存
+  // 可见集不同于公开集的 viewer (有 content.viewPending 能力 / 持有待审核资源的作者) 不走共享缓存
   if (await shouldBypassSharedCache(viewer)) {
     const data = await prisma.patch_resource.findMany({
       where: { patch_id: patchId, ...getResourceVisibilityWhere(viewer) },

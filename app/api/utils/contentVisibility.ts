@@ -7,14 +7,14 @@ export interface KunViewer {
   role: number
 }
 
-// 待审核内容仅作者与 role >= 3 可见
+// 待审核内容仅作者与有 content.viewPending 能力的角色可见
 export const isContentVisibleToViewer = (
   viewer: KunViewer | null,
   ownerId: number
 ) => !!viewer && (can(viewer, 'content.viewPending') || viewer.uid === ownerId)
 
 // patch_comment / patch_rating 的可见性 WHERE 片段
-// status: 0 正常, 1 待审核 (仅作者与 role >= 3 可见),
+// status: 0 正常, 1 待审核 (仅作者与有 content.viewPending 能力的角色可见),
 // 2 隐藏 (前台对所有人不可见, 含管理员, 仅 /admin 可管理)
 export const getCommentRatingVisibilityWhere = (viewer: KunViewer | null) => {
   if (can(viewer, 'content.viewPending')) {
@@ -28,7 +28,7 @@ export const getCommentRatingVisibilityWhere = (viewer: KunViewer | null) => {
 
 // patch_resource 的可见性 WHERE 片段
 // status: 0 正常, 1 隐藏 (仅 /admin), 2 待初次审核, 3 待审核
-// (2/3 待审核仅作者与 role >= 3 可见; 1 隐藏对所有前台 viewer 不可见)
+// (2/3 待审核仅作者与有 content.viewPending 能力的角色可见; 1 隐藏对所有前台 viewer 不可见)
 export const getResourceVisibilityWhere = (viewer: KunViewer | null) => {
   if (can(viewer, 'content.viewPending')) {
     return { status: { in: [0, 2, 3] } }

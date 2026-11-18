@@ -47,7 +47,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - 客户端访问内部 API 一律走 `utils/kunFetch.ts`（自带 `credentials: 'include'` 与 `x-requested-with: kun-fetch`），不要手写重复 fetch；用 `kunErrorHandler` / `kunErrorHandlerAsync` 处理 `string | T` 返回值。
 - 响应约定：业务错误返回 `NextResponse.json('错误消息')`（字符串），成功返回 typed JSON。
 - 评论 / 评价 / 资源的物理删除与 `status` 写入只走 `server/content/**` 的命令，在 `kunTx`（`server/db/tx.ts`）里调用；事务里的业务失败用 `ctx.fail`，不要 `return` 字符串（等于提交）。lint 的 `kun/inv-content-05/06` 执法。
-- 权限判断走 `constants/permission.ts` 的 `can(subject, capability)` 与属性谓词，不写角色数字比较；需要操作者的服务收 `KunActor`（`constants/role.ts`，只由 `verifyAndLoadUser` 构造），路由把会话 payload 原样下传。lint 的 `kun/inv-authz-01..03` 执法。
+- 权限判断走 `constants/permission.ts` 的 `can(subject, capability)` 与属性谓词，不写角色数字比较；需要操作者的服务收 `KunActor`（`constants/role.ts`，只由 `verifyAndLoadUser` 构造），路由把会话 payload 原样下传。lint 的 `kun/inv-authz-01..04` 执法。
 - 项目自有 helper / export 多带 `kun` 前缀；跨组件、需持久化的状态放 `store/*`（Zustand）。
 - 缓存 TTL 常量在 `config/cache.ts`，Redis key 统一经 `lib/redis.ts` 前缀。
 - 代码风格（Prettier）：单引号、无分号、2 空格缩进、无尾逗号。

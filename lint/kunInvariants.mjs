@@ -568,6 +568,8 @@ export const KUN_INVARIANTS = [
     reason:
       '{ ...actor, role: 4 } 不需要断言就能得到带品牌的 KunActor (展开保留品牌, TS 不拦), 角色被换掉而 inv-authz-02 看不到',
     removeWhen: 'KunActor 品牌被移除, 或改为不可展开的类实例',
+    // KunActor 只在服务端流动; 客户端的表单与 store 更新 ({ ...user, role }) 与它无关
+    files: ['app/**', 'server/**', 'middleware/**', 'utils/**', 'lib/**'],
     // 测试的输入夹具常写 { ...baseInput, role: 2 }; 测试要的 actor 走 __tests__/kunTestActor.ts
     ignores: ['app/api/utils/jwt.ts', '**/__tests__/**'],
     // 只认写在展开之后的 role 键 (写在展开之前的会被展开盖掉, 换不掉角色): 会话 DTO
@@ -594,6 +596,30 @@ export const KUN_INVARIANTS = [
         'export const nested = (payload: any) => ({ ...payload, user: { role: 4 } })',
         'export const flag = (payload: any, role: string) => ({ ...payload, [role]: true })',
         'export const strip = ({ role, ...rest }: any) => ({ ...rest })'
+      ]
+    }
+  },
+  {
+    id: 'inv-authz-04',
+    statement: 'kunTestActor 只许在 __tests__ 下导入',
+    reason:
+      '它是测试里构造 KunActor 的入口, 任何 uid 与角色都能造出带品牌的操作者; 生产代码导入它等于绕过会话校验, 而且是最顺手的一种绕法',
+    removeWhen: 'KunActor 品牌被移除',
+    ignores: ['**/__tests__/**'],
+    enforce: {
+      kind: 'import',
+      sources: [/(^|\/)__tests__\/kunTestActor(\.ts)?$/]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'",
+        "import { kunTestActor } from './utils/__tests__/kunTestActor.ts'",
+        "export { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'"
+      ],
+      good: [
+        "import type { KunActor } from '~/constants/role'",
+        "import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'"
       ]
     }
   }

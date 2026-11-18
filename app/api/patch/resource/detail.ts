@@ -33,7 +33,7 @@ export interface PatchResourceDetail {
 const OTHER_RESOURCES_TAKE = 12
 
 // 资源详情页专用: 单行查询不走共享缓存 (note 的 markdown 渲染自带内容级缓存),
-// 可见性与列表一致——status 2/3 仅作者与 role >= 3 可见, 1 前台不可见
+// 可见性与列表一致——status 2/3 仅作者与有 content.viewPending 能力的角色可见, 1 前台不可见
 export const getPatchResourceDetail = async (
   resourceId: number,
   viewer: KunViewer | null
