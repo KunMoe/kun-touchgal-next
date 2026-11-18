@@ -142,3 +142,50 @@ export const revertEmailChange = async (
   }
   return { status: 'reverted', uid: row.user_id, oldEmail: row.old_email }
 }
+
+// 过渡 (与撤销路由里读 Redis 的那一段一起删): 台账上线之前的那次变更, 状态只在 Redis 里,
+// 冷却看不到它。账号若在上线之后又从那次变更后的邮箱改走了一次, 发往最初邮箱的旧链接照样
+// 把邮箱恢复回去, 并把后面那一跳记为已撤销 —— 否则跨上线边界的两跳仍会让第一条链接作废
+export const revertLegacyEmailChange = async (legacy: {
+  uid: number
+  oldEmail: string
+  newEmail: string
+}): Promise<EmailChangeRevert> => {
+  const now = new Date()
+  const failure = await kunTx('email.revertLegacy', async (ctx) => {
+    const direct = await ctx.tx.user.updateMany({
+      where: { id: legacy.uid, email: legacy.newEmail },
+      data: { email: legacy.oldEmail }
+    })
+    if (direct.count) {
+      return
+    }
+
+    const next = await ctx.tx.user_email_change.findFirst({
+      where: {
+        user_id: legacy.uid,
+        old_email: legacy.newEmail,
+        reverted: null
+      },
+      orderBy: { id: 'desc' }
+    })
+    if (!next) {
+      return ctx.fail('superseded')
+    }
+    const claimed = await ctx.tx.user_email_change.updateMany({
+      where: { id: next.id, reverted: null },
+      data: { reverted: now }
+    })
+    const chained = await ctx.tx.user.updateMany({
+      where: { id: legacy.uid, email: next.new_email },
+      data: { email: legacy.oldEmail }
+    })
+    if (!claimed.count || !chained.count) {
+      ctx.fail('superseded')
+    }
+  })
+
+  return failure === 'superseded'
+    ? { status: 'superseded' }
+    : { status: 'reverted', uid: legacy.uid, oldEmail: legacy.oldEmail }
+}

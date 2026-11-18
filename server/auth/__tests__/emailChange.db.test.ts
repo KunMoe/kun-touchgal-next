@@ -410,5 +410,80 @@ describe.skipIf(!dbContractUrl)(
         expect((await ledgerOf(user.id))[0].reverted).toBeNull()
       })
     })
+
+    // 过渡: 台账上线之前的那次变更只在 Redis 里, 这里拿到的是它的 uid 与新旧邮箱
+    describe('reverting a change that predates the ledger', () => {
+      it('restores the old address while the account is still on the new one', async () => {
+        const old = address('a')
+        const user = await newUser(address('b'))
+
+        await expect(
+          emailChange.revertLegacyEmailChange({
+            uid: user.id,
+            oldEmail: old,
+            newEmail: user.email
+          })
+        ).resolves.toEqual({ status: 'reverted', uid: user.id, oldEmail: old })
+        expect(await emailOf(user.id)).toBe(old)
+      })
+
+      // 第二跳发生在台账上线之后: 冷却没看到第一跳, 没能拦住它
+      it('follows one later recorded change back to the original address', async () => {
+        const a = address('a')
+        const user = await newUser(address('b'))
+        const c = address('c')
+        const second = await change(user.id, user.email, c)
+        expect(second.failure).toBeUndefined()
+
+        await expect(
+          emailChange.revertLegacyEmailChange({
+            uid: user.id,
+            oldEmail: a,
+            newEmail: user.email
+          })
+        ).resolves.toEqual({ status: 'reverted', uid: user.id, oldEmail: a })
+
+        expect(await emailOf(user.id)).toBe(a)
+        expect((await ledgerOf(user.id))[0].reverted).toBeInstanceOf(Date)
+        // 后一跳自己的链接随之作废, 冷却仍在
+        await expect(
+          emailChange.revertEmailChange(second.token)
+        ).resolves.toEqual({ status: 'not-found' })
+        expect((await change(user.id, a, address('d'))).failure).toBe(
+          emailChange.EMAIL_CHANGE_COOLDOWN_MESSAGE
+        )
+      })
+
+      it('leaves the account alone when it moved on without a recorded change', async () => {
+        const user = await newUser(address('elsewhere'))
+
+        await expect(
+          emailChange.revertLegacyEmailChange({
+            uid: user.id,
+            oldEmail: address('a'),
+            newEmail: address('b')
+          })
+        ).resolves.toEqual({ status: 'superseded' })
+        expect(await emailOf(user.id)).toBe(user.email)
+      })
+
+      it('throws when the original address now belongs to another account, and undoes nothing else', async () => {
+        const taken = await newUser()
+        const user = await newUser(address('b'))
+        const c = address('c')
+        await change(user.id, user.email, c)
+
+        await expect(
+          emailChange.revertLegacyEmailChange({
+            uid: user.id,
+            oldEmail: taken.email,
+            newEmail: user.email
+          })
+        ).rejects.toMatchObject({ code: 'P2002' })
+
+        expect(await emailOf(user.id)).toBe(c)
+        expect((await ledgerOf(user.id))[0].reverted).toBeNull()
+      })
+    })
   }
 )

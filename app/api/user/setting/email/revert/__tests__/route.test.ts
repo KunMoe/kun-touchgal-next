@@ -243,12 +243,32 @@ describe('POST /api/user/setting/email/revert', () => {
     db.insertUser(makeUser({ id: 8, name: 'other', email: OLD_EMAIL }))
 
     const response = await postForm({ token: TOKEN })
+    const html = await response.text()
 
     expect(response.status).toBe(500)
-    expect(await titleOf(response)).toBe('撤销失败')
+    expect(html).toContain('<title>撤销失败</title>')
+    // 重试没有用, 直说要找管理员
+    expect(html).toContain('已被其他账户使用')
     expect(db.user(UID)?.email).toBe(NEW_EMAIL)
     expect(db.emailChanges()[0].reverted).toBeNull()
     expect(session.revokedUids).toEqual([])
+  })
+
+  it('asks to try again, without using the token up, when the database fails', async () => {
+    recordChange(TOKEN)
+    db.failNextWrite(new Error('connection reset'))
+
+    const failed = await postForm({ token: TOKEN })
+    const html = await failed.text()
+
+    expect(failed.status).toBe(500)
+    expect(html).toContain('请稍后重新打开邮件里的撤销链接')
+    expect(html).not.toContain('已被其他账户使用')
+    expect(db.user(UID)?.email).toBe(NEW_EMAIL)
+
+    const retried = await postForm({ token: TOKEN })
+    expect(retried.status).toBe(200)
+    expect(db.user(UID)?.email).toBe(OLD_EMAIL)
   })
 
   it('still reports the restored address when signing the sessions out fails', async () => {
@@ -348,7 +368,7 @@ describe('POST /api/user/setting/email/revert: link issued before the ledger', (
     ['form', () => postForm({ token: TOKEN })],
     ['JSON', () => postJson({ token: TOKEN })]
   ])(
-    'restores the old address from a %s body without any session',
+    'restores the old address from a %s body without any session, and signs every session out too',
     async (_label, send) => {
       putRevert(TOKEN)
 
@@ -360,8 +380,7 @@ describe('POST /api/user/setting/email/revert: link issued before the ledger', (
       expect(html).toContain(`账户邮箱已恢复为 ${OLD_EMAIL}`)
       expect(db.user(UID)?.email).toBe(OLD_EMAIL)
       expect(kv.get(`${REVERT_PREFIX}${TOKEN}`)).toBeNull()
-      // 旧路径原样保留: 不登出会话
-      expect(session.revokedUids).toEqual([])
+      expect(session.revokedUids).toEqual([UID])
     }
   )
 
@@ -377,6 +396,39 @@ describe('POST /api/user/setting/email/revert: link issued before the ledger', (
     expect(first.status).toBe(200)
     expect(replay.status).toBe(400)
     expect(await titleOf(replay)).toBe('撤销链接已失效')
+  })
+
+  // 跨上线边界的两跳: 第一跳在台账上线之前 (状态只在 Redis, 冷却看不到), 第二跳在之后。
+  // 发往最初邮箱的旧链接仍要把邮箱恢复回去
+  it('follows a later recorded change back to the original address', async () => {
+    const LATER_EMAIL = 'later@example.com'
+    const LATER_TOKEN = 'later-token'
+    putRevert(TOKEN)
+    db.patchUser(UID, { email: LATER_EMAIL })
+    db.insertEmailChange({
+      user_id: UID,
+      old_email: NEW_EMAIL,
+      new_email: LATER_EMAIL,
+      revert_token_hash: createHash('sha256').update(LATER_TOKEN).digest('hex'),
+      created: FIXED_NOW,
+      expires: new Date(FIXED_NOW.getTime() + DAY_MS),
+      reverted: null
+    })
+
+    const response = await postForm({ token: TOKEN })
+
+    expect(response.status).toBe(200)
+    expect(await titleOf(response)).toBe('邮箱已恢复')
+    expect(db.user(UID)?.email).toBe(OLD_EMAIL)
+    expect(db.emailChanges()[0].reverted).toEqual(FIXED_NOW)
+    expect(kv.get(`${REVERT_PREFIX}${TOKEN}`)).toBeNull()
+    expect(session.revokedUids).toEqual([UID])
+    expect(db.transactions).toEqual([{ committed: true }])
+
+    // 后一跳自己的撤销链接 (在改走邮箱的人手里) 随之作废
+    const later = await postForm({ token: LATER_TOKEN })
+    expect(later.status).toBe(400)
+    expect(db.user(UID)?.email).toBe(OLD_EMAIL)
   })
 
   it('answers 400 无需撤销 and burns the token when the account moved on', async () => {
@@ -430,6 +482,39 @@ describe('email change followed by revert (end to end)', () => {
     const notice = mail.outbox.find((sent) => sent.to.includes(address))
     return notice?.plain.match(/revert\?token=([^\s]+)/)?.[1] ?? ''
   }
+
+  // 复核给出的场景: 第一跳发生在台账上线之前, 只在 Redis 里留下一条记录
+  it('still recovers the account when the first hop predates the ledger', async () => {
+    db.reset()
+    db.insertUser(
+      makeUser({ id: UID, email: 'b@example.com', password: passwordHash })
+    )
+    session.signIn(UID, KUN_ROLE.USER)
+    mail.install()
+    putRevert('legacy-t1', {
+      uid: UID,
+      oldEmail: 'a@example.com',
+      newEmail: 'b@example.com',
+      createdAt: FIXED_NOW.toISOString()
+    })
+
+    // 冷却看不到 Redis 里的上一跳, 第二跳拦不住
+    expect(await change('c@example.com')).toEqual({})
+    expect(db.user(UID)?.email).toBe('c@example.com')
+
+    session.signOut()
+    const response = await postForm({ token: 'legacy-t1' })
+
+    expect(response.status).toBe(200)
+    expect(db.user(UID)?.email).toBe('a@example.com')
+    expect(session.revokedUids).toEqual([UID])
+
+    // 撤回之后冷却仍在
+    session.signIn(UID, KUN_ROLE.USER)
+    expect(await change('d@example.com')).toBe(
+      '24 小时内只能修改一次邮箱, 请稍后再试'
+    )
+  })
 
   // P07-01 / X07-01: 入侵者把邮箱从 A 改到 B 再改到 C, 发往 A 的撤销链接曾就此命中 0 行而作废,
   // 账号从「可自助夺回」变成「只能找管理员」

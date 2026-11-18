@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server'
-import { prisma } from '~/prisma/index'
 import { delKv, getKv } from '~/lib/redis'
 import { deleteKunToken } from '~/app/api/utils/jwt'
 import {
   findRevertibleEmailChange,
-  revertEmailChange
+  revertEmailChange,
+  revertLegacyEmailChange
 } from '~/server/auth/emailChange'
+import type { EmailChangeRevert } from '~/server/auth/emailChange'
 import {
   createEmailChangeRevertConfirmResponse,
   createEmailChangeRevertKey,
@@ -27,12 +28,27 @@ const expiredLink = () =>
     400
   )
 
+// 旧邮箱在这期间被别的账号占用了: 重试没有用, 只能找管理员
+const oldEmailTaken = () =>
+  createEmailChangeRevertResponse(
+    '撤销失败',
+    '无法恢复旧邮箱: 它已被其他账户使用, 请联系管理员处理。',
+    500
+  )
+
+// 其它失败不消耗链接, 可以重试
 const revertFailed = () =>
   createEmailChangeRevertResponse(
     '撤销失败',
-    '无法恢复旧邮箱。旧邮箱可能已被其他账户使用, 请联系管理员处理。',
+    '暂时无法恢复旧邮箱, 请稍后重新打开邮件里的撤销链接。',
     500
   )
+
+const isUniqueViolation = (error: unknown) =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  error.code === 'P2002'
 
 const getTokenFromBody = async (req: NextRequest) => {
   const contentType = req.headers.get('content-type') || ''
@@ -48,8 +64,9 @@ const getTokenFromBody = async (req: NextRequest) => {
 }
 
 // 过渡: 台账 (user_email_change) 上线之前发出的撤销链接, 状态还在 Redis 里, 最长活 24 小时。
-// 台账里查不到的令牌回落到这里, 行为与上线前逐字相同。上线满 24 小时并再发一版之后,
-// 把本段连同 _emailChange.ts 里的 createEmailChangeRevertKey / EmailChangeRevertPayload 一起删掉
+// 台账里查不到的令牌回落到这里。上线满 24 小时并再发一版之后, 把本函数、两处对它的调用、
+// server/auth/emailChange.ts 的 revertLegacyEmailChange 连同 _emailChange.ts 里的
+// createEmailChangeRevertKey / EmailChangeRevertPayload 一起删掉
 const getLegacyRevertPayload = async (token: string) => {
   const revertKey = createEmailChangeRevertKey(token)
   const value = await getKv(revertKey)
@@ -67,37 +84,6 @@ const getLegacyRevertPayload = async (token: string) => {
     return { payload: isValid ? payload : null, revertKey }
   } catch {
     return { payload: null, revertKey }
-  }
-}
-
-const revertLegacyEmailChange = async (token: string) => {
-  const { payload, revertKey } = await getLegacyRevertPayload(token)
-  if (!payload) {
-    return expiredLink()
-  }
-
-  try {
-    const result = await prisma.user.updateMany({
-      where: { id: payload.uid, email: payload.newEmail },
-      data: { email: payload.oldEmail }
-    })
-
-    await delKv(revertKey)
-
-    if (result.count === 0) {
-      return createEmailChangeRevertResponse(
-        '无需撤销',
-        '账户邮箱当前不是这次变更后的邮箱, 撤销链接已失效。',
-        400
-      )
-    }
-
-    return createEmailChangeRevertResponse(
-      '邮箱已恢复',
-      `账户邮箱已恢复为 ${payload.oldEmail}。建议您立即修改密码并检查 2FA 设置。`
-    )
-  } catch {
-    return revertFailed()
   }
 }
 
@@ -125,17 +111,22 @@ export const POST = async (req: NextRequest) => {
     return invalidLink()
   }
 
-  let result
+  let result: EmailChangeRevert
   try {
     result = await revertEmailChange(token)
-  } catch {
-    return revertFailed()
+    if (result.status === 'not-found') {
+      const legacy = await getLegacyRevertPayload(token)
+      if (!legacy.payload) {
+        return expiredLink()
+      }
+      result = await revertLegacyEmailChange(legacy.payload)
+      await delKv(legacy.revertKey)
+    }
+  } catch (error) {
+    return isUniqueViolation(error) ? oldEmailTaken() : revertFailed()
   }
 
-  if (result.status === 'not-found') {
-    return revertLegacyEmailChange(token)
-  }
-  if (result.status === 'superseded') {
+  if (result.status !== 'reverted') {
     return createEmailChangeRevertResponse(
       '无需撤销',
       '账户邮箱当前不是这次变更后的邮箱, 可能已由管理员修改。如有疑问请联系管理员。',

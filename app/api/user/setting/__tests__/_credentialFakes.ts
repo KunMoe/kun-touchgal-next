@@ -259,23 +259,50 @@ const createFakeDb = () => {
     // 只实现 server/auth/emailChange.ts 用到的四种形状
     user_email_change: strict('prisma.user_email_change', {
       findFirst: async (args: {
-        where: { user_id: number; created: { gt: Date } }
+        where: Record<string, unknown>
         select?: Record<string, unknown>
+        orderBy?: Record<string, unknown>
       }) => {
         queries.push('user_email_change.findFirst')
-        const { user_id, created, ...rest } = args.where
-        const after = created?.gt
+        const { user_id, created, old_email, reverted, ...rest } = args.where
+        if (typeof user_id !== 'number' || Object.keys(rest).length) {
+          return unsupported('user_email_change.findFirst where', args.where)
+        }
+
+        // 冷却: { user_id, created: { gt } }
+        if (created !== undefined) {
+          const after = (created as { gt?: unknown }).gt
+          if (
+            !(after instanceof Date) ||
+            Object.keys(created as object).length !== 1 ||
+            old_email !== undefined ||
+            reverted !== undefined ||
+            args.orderBy
+          ) {
+            return unsupported('user_email_change.findFirst where', args.where)
+          }
+          const row = emailChanges.find(
+            (change) => change.user_id === user_id && change.created > after
+          )
+          return row ? structuredClone(row) : null
+        }
+
+        // 旧链接顺着后一跳撤回: { user_id, old_email, reverted: null }, 取最新的一行
         if (
-          typeof user_id !== 'number' ||
-          !(after instanceof Date) ||
-          Object.keys(created).length !== 1 ||
-          Object.keys(rest).length
+          typeof old_email !== 'string' ||
+          reverted !== null ||
+          JSON.stringify(args.orderBy) !== '{"id":"desc"}'
         ) {
           return unsupported('user_email_change.findFirst where', args.where)
         }
-        const row = emailChanges.find(
-          (change) => change.user_id === user_id && change.created > after
-        )
+        const row = emailChanges
+          .filter(
+            (change) =>
+              change.user_id === user_id &&
+              change.old_email === old_email &&
+              change.reverted === null
+          )
+          .sort((a, b) => b.id - a.id)[0]
         return row ? structuredClone(row) : null
       },
       findUnique: async (args: { where: { revert_token_hash: string } }) => {
