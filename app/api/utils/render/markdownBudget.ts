@@ -27,9 +27,12 @@ const DASH = 45
 const DOT = 46
 const DIGIT_0 = 48
 const DIGIT_9 = 57
+const COLON = 58
 const GREATER_THAN = 62
 const BRACKET_OPEN = 91
+const BACKSLASH = 92
 const BRACKET_CLOSE = 93
+const CARET = 94
 const UNDERSCORE = 95
 const BOM = 0xfeff
 
@@ -37,7 +40,8 @@ const isBlank = (code: number) => code === SPACE || code === TAB
 const isDigit = (code: number) => code >= DIGIT_0 && code <= DIGIT_9
 
 export interface MarkdownCost {
-  // 单行行首连续的容器标记 (引用 `>`、列表 `-` `*` `+` `1.`) 个数的最大值
+  // 单行行首连续的容器标记 (引用 `>`、列表 `-` `*` `+` `1.`、脚注定义 `[^名字]:`)
+  // 个数的最大值
   maxLineContainerMarkers: number
   // 同一段 (空行分隔) 内 `[` 个数与 `]` 个数中较大者的最大值
   maxParagraphBrackets: number
@@ -136,6 +140,21 @@ export const measureMarkdownCost = (markdown: string): MarkdownCost => {
         markers++
         index++
         continue
+      }
+      // 脚注定义 `[^名字]:` 也是容器, 它后面同一行可以接着写引用、列表的标记。名字里
+      // `\[` `\\` `\]` 是转义, 不结束名字; 其余要求 (非空、不含空白) 这里不查,
+      // 只会多数
+      if (code === BRACKET_OPEN && markdown.charCodeAt(index + 1) === CARET) {
+        let close = index + 2
+        while (close < end && markdown.charCodeAt(close) !== BRACKET_CLOSE) {
+          close += markdown.charCodeAt(close) === BACKSLASH ? 2 : 1
+        }
+        if (close < end && markdown.charCodeAt(close + 1) === COLON) {
+          markers++
+          index = close + 2
+          continue
+        }
+        break
       }
       if (code === DASH || code === ASTERISK || code === PLUS) {
         const after = index + 1
