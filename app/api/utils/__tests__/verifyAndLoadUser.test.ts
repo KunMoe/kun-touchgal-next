@@ -123,6 +123,29 @@ describe('verifyAndLoadUser 用户缓存', () => {
     expect(result?.payload).toMatchObject({ uid: 7, name: 'kun-new', role: 2 })
   })
 
+  it('角色以库或缓存里的为准, 不采信 JWT 里的 claim; 域外的值回落为普通用户', async () => {
+    verifyMock.mockReturnValue({ ...payload, role: 4 })
+    getCachedAuthUserMock.mockResolvedValue({
+      id: 7,
+      name: 'kun',
+      role: 3,
+      status: 0,
+      blocked_tag_ids: []
+    })
+    expect((await verifyKunTokenWithUser(token))?.payload.role).toBe(3)
+
+    for (const role of [0, 5, -1]) {
+      getCachedAuthUserMock.mockResolvedValue({
+        id: 7,
+        name: 'kun',
+        role,
+        status: 0,
+        blocked_tag_ids: []
+      })
+      expect((await verifyKunTokenWithUser(token))?.payload.role).toBe(1)
+    }
+  })
+
   it('缓存命中且 status===2 时仍拒绝并注销 token, 不查库', async () => {
     getCachedAuthUserMock.mockResolvedValue({
       id: 7,

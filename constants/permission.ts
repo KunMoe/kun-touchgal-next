@@ -1,0 +1,135 @@
+import { KUN_ROLE } from './role'
+import type { KunRole, KunSubject } from './role'
+
+// 能力 → 最低角色。每条权限规则只在这里有一份: 服务端执法、客户端的显隐与置灰都调
+// 下面的函数, 调整阈值只改这张表里的一行。posts/notice/role.mdx 的总览表由
+// constants/__tests__/permission-matrix.test.ts 逐格对照, 两边必须一起改。
+// 表里不放文案: can() 只回答是否, 拒绝文案留在各调用点
+export const KUN_CAPABILITY = {
+  'admin.access': KUN_ROLE.SUPER_ADMIN,
+  'role.assign': KUN_ROLE.SUPER_ADMIN,
+  'galgame.create': KUN_ROLE.SUPER_ADMIN,
+  'galgame.delete': KUN_ROLE.SUPER_ADMIN,
+  'galgame.rewrite': KUN_ROLE.ADMIN,
+  'banner.edit': KUN_ROLE.ADMIN,
+  'tag.manage': KUN_ROLE.ADMIN,
+  'company.manage': KUN_ROLE.ADMIN,
+  // 编辑 / 删除他人的评论、评价、资源
+  'content.moderateAny': KUN_ROLE.ADMIN,
+  // 看得到他人待审核的内容
+  'content.viewPending': KUN_ROLE.ADMIN,
+  'resource.skipFirstApproval': KUN_ROLE.ADMIN,
+  // 发布的资源归入「官方」一栏
+  'resource.officialBadge': KUN_ROLE.ADMIN,
+  'storage.s3': KUN_ROLE.CREATOR,
+  'storage.s3InGalgame': KUN_ROLE.SUPER_ADMIN,
+  'storage.touchgal': KUN_ROLE.SUPER_ADMIN,
+  'upload.skipCaptcha': KUN_ROLE.ADMIN,
+  'upload.skipPointsGate': KUN_ROLE.ADMIN,
+  'message.skipPointsGate': KUN_ROLE.ADMIN,
+  // 与审核后台的门槛一致: 豁免送审的人必须自己能复核
+  'moderation.skip': KUN_ROLE.SUPER_ADMIN
+} as const satisfies Record<string, KunRole>
+
+export type KunCapability = keyof typeof KUN_CAPABILITY
+
+// 游客 (没有 subject, 或 uid 为 0 的客户端初始态) 没有任何能力
+export const can = (
+  subject: KunSubject | null | undefined,
+  capability: KunCapability
+): boolean =>
+  !!subject && subject.uid > 0 && subject.role >= KUN_CAPABILITY[capability]
+
+// 创作者是身份不是能力: 已经是创作者或以上的不需要再申请
+export const canApplyCreator = (
+  subject: KunSubject | null | undefined
+): boolean => !!subject && subject.uid > 0 && subject.role < KUN_ROLE.CREATOR
+
+// 按权限从高到低排: 默认存储取允许的第一个。取值与 constants/resource.ts 的
+// SUPPORTED_RESOURCE_LINK 一致 (测试对照)
+export const KUN_LINK_STORAGES = ['touchgal', 's3', 'user'] as const
+
+export type KunLinkStorage = (typeof KUN_LINK_STORAGES)[number]
+
+const isLinkStorageAllowed = (
+  subject: KunSubject | null | undefined,
+  section: string,
+  storage: string
+): boolean => {
+  switch (storage) {
+    case 'user':
+      return true
+    case 's3':
+      // 补丁分区之外 (Galgame 本体) 的对象存储另有更高的门槛
+      return can(
+        subject,
+        section === 'patch' ? 'storage.s3' : 'storage.s3InGalgame'
+      )
+    case 'touchgal':
+      return can(subject, 'storage.touchgal')
+    default:
+      return false
+  }
+}
+
+// 存储 × 分区 × 角色
+export const allowedLinkStorages = (
+  subject: KunSubject | null | undefined,
+  section: string
+): readonly KunLinkStorage[] =>
+  KUN_LINK_STORAGES.filter((storage) =>
+    isLinkStorageAllowed(subject, section, storage)
+  )
+
+export const defaultLinkStorage = (
+  subject: KunSubject | null | undefined,
+  section: string
+): KunLinkStorage => allowedLinkStorages(subject, section)[0] ?? 'user'
+
+export interface KunLinkStorageState {
+  section: string
+  links: readonly { id?: number; storage: string }[]
+}
+
+// 按 delta 判定: 只看新增的链接, 以及存储或所在分区有变化的链接, 返回第一个不被允许的
+// 存储。规则收紧之前留下的存量链接原样保存不算违规, 否则持有者连别的字段都改不了
+export const findDisallowedLinkStorage = (
+  subject: KunSubject | null | undefined,
+  next: KunLinkStorageState,
+  previous?: KunLinkStorageState
+): string | null => {
+  const unchanged = new Map<number, string>()
+  if (previous && previous.section === next.section) {
+    for (const link of previous.links) {
+      if (link.id !== undefined) {
+        unchanged.set(link.id, link.storage)
+      }
+    }
+  }
+  for (const link of next.links) {
+    if (link.id !== undefined && unchanged.get(link.id) === link.storage) {
+      continue
+    }
+    if (!isLinkStorageAllowed(subject, next.section, link.storage)) {
+      return link.storage
+    }
+  }
+  return null
+}
+
+// 能被授予的角色; 超级管理员不在其中
+export const KUN_GRANTABLE_ROLES = [
+  KUN_ROLE.USER,
+  KUN_ROLE.CREATOR,
+  KUN_ROLE.ADMIN
+] as const
+
+// 按 delta 判定: 角色没有变化恒放行 (表单整体提交, role 恒定携带), 否则操作者要有
+// 授予角色的能力, 且目标角色可被授予
+export const canAssignRole = (
+  subject: KunSubject | null | undefined,
+  change: { current: number; next: number }
+): boolean =>
+  change.next === change.current ||
+  (can(subject, 'role.assign') &&
+    KUN_GRANTABLE_ROLES.some((role) => role === change.next))

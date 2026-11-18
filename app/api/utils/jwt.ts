@@ -21,6 +21,8 @@ import {
   invalidateUserSession,
   setCachedAuthUser
 } from '~/app/api/user/session/cache'
+import { toKunRole } from '~/constants/role'
+import type { KunActor } from '~/constants/role'
 import type { LoginSession } from '~/types/api/session'
 
 export interface KunGalgameStatelessPayload {
@@ -489,10 +491,14 @@ const verifyAndLoadUser = async (refreshToken: string) => {
       await setCachedAuthUser(payload.uid, user, scope).catch(() => undefined)
     }
 
-    return {
-      payload: { ...payload, name: user.name, role: user.role },
-      user
-    }
+    // KunActor 的唯一构造点: 角色取自库或鉴权缓存 (不采信 JWT 里的 claim), 域外的值
+    // 回落为普通用户。别处要拿操作者只能从这里往下传, 不能自己拼
+    const actor = {
+      ...payload,
+      name: user.name,
+      role: toKunRole(user.role)
+    } as KunGalgamePayload & KunActor
+    return { payload: actor, user }
   } catch (error) {
     return null
   }
