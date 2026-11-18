@@ -44,7 +44,7 @@ vi.mock('~/app/api/user/session/cache', () => ({
   invalidateUserSession: invalidateUserSessionMock
 }))
 
-import { POST } from '~/app/api/user/setting/blocked-tag/route'
+import { DELETE, POST } from '~/app/api/user/setting/blocked-tag/route'
 
 const range = (length: number, from = 1) =>
   Array.from({ length }, (_, index) => index + from)
@@ -55,6 +55,11 @@ const createRequest = (tagId: number) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ tagId })
   }) as unknown as Parameters<typeof POST>[0]
+
+const createDeleteRequest = (tagId: number) =>
+  new Request(`http://localhost/api/user/setting/blocked-tag?tagId=${tagId}`, {
+    method: 'DELETE'
+  }) as unknown as Parameters<typeof DELETE>[0]
 
 const givenBlockedTagIds = (ids: number[]) => {
   userFindUniqueMock.mockResolvedValue({ blocked_tag_ids: ids })
@@ -109,5 +114,50 @@ describe('POST /api/user/setting/blocked-tag', () => {
 
     expect(body).toEqual({ blockedTagIds: range(MAX_BLOCKED_TAG_IDS) })
     expect(invalidateUserSessionMock).toHaveBeenCalledWith(7)
+  })
+})
+
+// 服务端的屏蔽列表只取鉴权结果 (库或鉴权缓存), 不再有 cookie 副本垫着:
+// 写库之后不让鉴权缓存失效, 屏蔽与取消屏蔽就要等缓存过期才生效
+describe('屏蔽列表改动后让鉴权缓存失效', () => {
+  it('屏蔽: 先写库, 再失效该用户的鉴权缓存', async () => {
+    givenBlockedTagIds([1, 2])
+
+    const response = await POST(createRequest(3))
+
+    expect(await response.json()).toEqual({ blockedTagIds: [1, 2, 3] })
+    expect(invalidateUserSessionMock).toHaveBeenCalledTimes(1)
+    expect(invalidateUserSessionMock).toHaveBeenCalledWith(7)
+    expect(userUpdateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUserSessionMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('取消屏蔽: 先写库, 再失效该用户的鉴权缓存', async () => {
+    givenBlockedTagIds([1, 2, 3])
+
+    const response = await DELETE(createDeleteRequest(2))
+
+    expect(await response.json()).toEqual({ blockedTagIds: [1, 3] })
+    expect(userUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { blocked_tag_ids: { set: [1, 3] } }
+      })
+    )
+    expect(invalidateUserSessionMock).toHaveBeenCalledTimes(1)
+    expect(invalidateUserSessionMock).toHaveBeenCalledWith(7)
+    expect(userUpdateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateUserSessionMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('未登录时不写库也不动缓存', async () => {
+    verifyHeaderCookieMock.mockResolvedValue(null)
+
+    const response = await DELETE(createDeleteRequest(2))
+
+    expect(await response.json()).toBe('用户未登录')
+    expect(userUpdateMock).not.toHaveBeenCalled()
+    expect(invalidateUserSessionMock).not.toHaveBeenCalled()
   })
 })

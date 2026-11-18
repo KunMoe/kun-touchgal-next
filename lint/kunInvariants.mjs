@@ -698,7 +698,7 @@ export const KUN_INVARIANTS = [
     id: 'inv-viewer-02',
     aliases: ['T05'],
     statement:
-      '设置 store 写出的 cookie (kun-patch-setting-store|state|data|…) 的名字只许写在 server/viewer/context.ts: 服务端只在这一处读分级设置, 屏蔽标签那份副本不读',
+      '设置 store 写出的 cookie (kun-patch-setting-store|state|data|…) 的名字只许写在 server/viewer/context.ts: 服务端只在这一处读分级设置, 旧版本客户端留下的屏蔽标签副本不读',
     reason:
       '这些 cookie 没有签名。分级设置只能对有效会话采信; 屏蔽列表的权威值在库里, 鉴权时已经加载, 服务端不接受客户端带来的副本 (副本曾被采信, 为此攒下一串先解析后验签、坏值与空值区分、int4 过滤之类的手工守卫)。此前 Route Handler 与页面各有一族 helper 各读一遍, 三次可见性缺陷都是一侧改了另一侧没改 (匿名请求带 kunNsfwEnable=all 曾经 /api 拿到 NSFW 列表 52 天)。再出现第二个读取点, 两边就又得靠注释保持一致。本条按字符串字面量认名字, 防的是顺手再写一个读取点; 把名字拆开拼出来它看不到',
     removeWhen: '服务端不再读设置 store 的 cookie',

@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { useSettingStore } from './settingStore'
 
 export interface UserState {
   uid: number
@@ -46,23 +45,12 @@ const initialUserStore: UserState = {
   delaySeconds: 5
 }
 
-const syncBlockedTagCache = (blockedTagIds: number[]) => {
-  const { data, setData } = useSettingStore.getState()
-  setData({ ...data, kunBlockedTagIds: blockedTagIds })
-}
-
 export const useUserStore = create<UserStore>()(
   persist(
     (set) => ({
       user: initialUserStore,
-      setUser: (user: UserState) => {
-        syncBlockedTagCache(user.blockedTagIds)
-        set({ user })
-      },
-      logout: () => {
-        syncBlockedTagCache([])
-        set({ user: initialUserStore })
-      }
+      setUser: (user: UserState) => set({ user }),
+      logout: () => set({ user: initialUserStore })
     }),
     {
       name: 'kun-patch-user-store',

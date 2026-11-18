@@ -12,7 +12,7 @@ import {
 
 const KUN_AUTH_TOKEN_COOKIE = 'kun-galgame-patch-moe-token'
 // 设置 store (zustand persist) 写出的分级设置 cookie。服务端只在本文件读它 (kun/inv-viewer-02 执法)。
-// 同一个 store 还会写出屏蔽标签的副本, 服务端不读: 屏蔽列表只取鉴权结果
+// 旧版本的客户端还把屏蔽标签写成同前缀的 cookie, 残留的那份服务端不读: 屏蔽列表只取鉴权结果
 const KUN_NSFW_SETTING_COOKIE =
   'kun-patch-setting-store|state|data|kunNsfwEnable'
 
