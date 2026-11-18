@@ -21,6 +21,7 @@ import {
 } from '@prosemirror-adapter/react'
 
 import { kunDirectives } from './plugins/components/kunDirectives'
+import { configureKunWriteBack } from './plugins/components/writeBack'
 import { KunMilkdownPluginsMenu } from './plugins/Menu'
 import {
   kunUploader,
@@ -97,6 +98,7 @@ export const EditorProvider = ({
 
   const editor = useEditor((root) =>
     Editor.make()
+      .config(configureKunWriteBack)
       .config((ctx) => {
         ctx.set(rootCtx, root)
         ctx.set(defaultValueCtx, valueMarkdown)

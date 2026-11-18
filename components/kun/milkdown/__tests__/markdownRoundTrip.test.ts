@@ -10,6 +10,7 @@ import { gfm } from '@milkdown/preset-gfm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { kunMarkdownCorpus } from '~/app/api/utils/render/__tests__/fixtures/markdownCorpus'
 import { renderKunMarkdown } from '~/app/api/utils/render/renderKunMarkdown'
+import { configureKunWriteBack } from '../plugins/components/writeBack'
 import { kunDirectives } from '../plugins/components/kunDirectives'
 import { kunLinkNode } from '../plugins/components/link/linkPlugin'
 import { videoNode } from '../plugins/components/video/videoPlugin'
@@ -60,6 +61,7 @@ beforeAll(async () => {
     }
 
     Editor.make()
+      .config(configureKunWriteBack)
       .use(commonmark)
       .use(gfm)
       .use([kunDirectives].flat())
@@ -178,12 +180,51 @@ describe('编辑器不认识的写法', () => {
   })
 })
 
+// 列表项的第一块不是段落时, 编辑器会在它前面补一个空段落 (文档结构要求列表项以
+// 段落开头)。这个空段落曾被写成 <br />, 发布端把它连同紧跟的下一行读成一个 HTML 块,
+// 而原始 HTML 不输出 —— 保存一次, 那一块就从页面上消失了
+describe('列表项的第一块不是段落', () => {
+  it.each([
+    ['引用', '- > 引用里的话\n- 下一项'],
+    ['标题', '- ## 小标题\n- 下一项'],
+    ['嵌套列表', '- - 里层\n- 下一项'],
+    ['代码块', '- ```\n  code\n  ```\n- 下一项'],
+    ['短代码', '- ::kun-link{href="https://a.example" text="正版"}\n- 下一项'],
+    ['有序列表里的引用', '1. > 引用\n2. 下一项'],
+    ['第一块之后还有内容', '- > 引用\n\n  正文\n- 下一项']
+  ])('%s: 写回后发布结果不变, 再存一次也不变', async (_name, markdown) => {
+    const written = roundTrip(markdown)
+
+    expect(written).not.toContain('<br')
+    expect(await publish(written)).toBe(await publish(markdown))
+    expect(roundTrip(written)).toBe(written)
+  })
+
+  // 用户自己留的空行不受影响: 仍按原样保留
+  it('列表项之外的空段落照旧写成占位', () => {
+    expect(roundTrip('第一段\n\n<br />\n\n第二段')).toBe(
+      '第一段\n\n<br />\n\n第二段\n'
+    )
+  })
+})
+
+// 尖括号自动链接里的字符都是字面的, 反斜杠不是转义。序列化器却照正文的规则给它
+// 再加一个反斜杠: 每保存一次, 地址里的反斜杠就翻一倍, 发布出来的链接跟着变
+describe('自动链接里的反斜杠', () => {
+  it.each([
+    'https://www.example.com/work/=/product\\_id/RJ274004.html',
+    '<https://www.example.com/a\\_b>',
+    '<https://www.example.com/a\\\\_b*c>'
+  ])('%s 写回后地址不变, 再存一次也不变', async (markdown) => {
+    const written = roundTrip(markdown)
+
+    expect(await publish(written)).toBe(await publish(markdown))
+    expect(roundTrip(written)).toBe(written)
+  })
+})
+
 // 编辑器写回后发布结果会变的语料。修好之后这里的条目要删掉
 const KNOWN_DIVERGENCE = new Set([
-  // 既有行为, 与方言无关: 列表项的第一块不是段落时 (短代码、引用、标题都算),
-  // 编辑器补一个空段落并写成 <br />; 发布端把 <br /> 连同下一行读成一个 HTML 块,
-  // 而原始 HTML 不输出, 那一块随之消失
-  'directive-in-list',
   // 紧凑列表里, 还原出的原文行与下一行本是两段、中间却没有空行。markdown 写不出
   // 这种结构, 写回时只能补上空行, 整张列表因此变松散 (段落之间多了间距, 文字不变)
   'directive-restored-in-tight-list'
