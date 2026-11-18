@@ -54,6 +54,7 @@ vi.mock('~/app/api/user/session/cache', () => ({
 }))
 
 import {
+  checkConversation,
   getConversations,
   getOrCreateConversation
 } from '~/app/api/message/conversation/service'
@@ -182,6 +183,93 @@ describe('getOrCreateConversation', () => {
       )
     ).rejects.toThrow('boom')
   })
+
+  // message.skipPointsGate 的边界: 创作者 (role 2) 与普通用户一样受萌萌点门槛约束并付费,
+  // 管理员 (role 3) 起免门槛免费
+  it.each([
+    { role: 1, pays: true },
+    { role: 2, pays: true },
+    { role: 3, pays: false },
+    { role: 4, pays: false }
+  ] as const)('萌萌点 20 时 role $role 是否扣费', async ({ role, pays }) => {
+    const result = await getOrCreateConversation(
+      { targetUserId: TARGET_UID },
+      kunTestActor({ uid: UID, role })
+    )
+
+    expect(result).toEqual({ conversationId: 7, isNew: true })
+    if (pays) {
+      expect(userUpdateManyMock).toHaveBeenCalledWith({
+        where: { id: UID, moemoepoint: { gte: 20 } },
+        data: { moemoepoint: { decrement: 10 } }
+      })
+    } else {
+      expect(userUpdateManyMock).not.toHaveBeenCalled()
+    }
+  })
+
+  it.each([
+    { role: 1, expected: '萌萌点不足，发起私聊需要至少 20 萌萌点' },
+    { role: 2, expected: '萌萌点不足，发起私聊需要至少 20 萌萌点' },
+    { role: 3, expected: { conversationId: 7, isNew: true } },
+    { role: 4, expected: { conversationId: 7, isNew: true } }
+  ] as const)('萌萌点 19 时 role $role 的结果', async ({ role, expected }) => {
+    userFindUniqueMock.mockImplementation(
+      ({ where }: { where: { id: number } }) =>
+        where.id === UID
+          ? Promise.resolve({ moemoepoint: 19 })
+          : Promise.resolve({ id: TARGET_UID, allow_private_message: true })
+    )
+
+    const result = await getOrCreateConversation(
+      { targetUserId: TARGET_UID },
+      kunTestActor({ uid: UID, role })
+    )
+
+    expect(result).toEqual(expected)
+  })
+})
+
+describe('checkConversation 萌萌点门槛的角色边界 (message.skipPointsGate)', () => {
+  const INSUFFICIENT = { error: '萌萌点不足，发起私聊需要至少 20 萌萌点' }
+  const preview = (needsPayment: boolean, currentPoints: number) => ({
+    exists: false,
+    needsPayment,
+    cost: 10,
+    currentPoints,
+    targetUserName: 'target'
+  })
+
+  it.each([
+    { role: 1, points: 19, expected: INSUFFICIENT },
+    { role: 2, points: 19, expected: INSUFFICIENT },
+    { role: 2, points: 20, expected: preview(true, 20) },
+    { role: 3, points: 19, expected: preview(false, 19) },
+    { role: 4, points: 19, expected: preview(false, 19) }
+  ] as const)(
+    'role $role 萌萌点 $points 的预检结果',
+    async ({ role, points, expected }) => {
+      vi.resetAllMocks()
+      userFindUniqueMock.mockImplementation(
+        ({ where }: { where: { id: number } }) =>
+          where.id === UID
+            ? Promise.resolve({ moemoepoint: points })
+            : Promise.resolve({
+                id: TARGET_UID,
+                name: 'target',
+                allow_private_message: true
+              })
+      )
+      conversationFindUniqueMock.mockResolvedValue(null)
+
+      const result = await checkConversation(
+        { targetUserId: TARGET_UID },
+        kunTestActor({ uid: UID, role })
+      )
+
+      expect(result).toEqual(expected)
+    }
+  )
 })
 
 describe('getConversations', () => {

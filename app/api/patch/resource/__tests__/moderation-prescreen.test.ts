@@ -536,6 +536,40 @@ describe('首个资源人工审批通知', () => {
     expect(createMessageMock).not.toHaveBeenCalled()
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
   })
+
+  // resource.skipFirstApproval 的边界: 管理员 (role 3) 起首个资源不走人工审批 (status 2);
+  // role 3 仍要过 AI 预筛 (进 status 3), 只有超级管理员免送审直接公开
+  it.each([
+    { role: 1, status: 2, notified: true },
+    { role: 2, status: 2, notified: true },
+    { role: 3, status: 3, notified: false },
+    { role: 4, status: 0, notified: false }
+  ] as const)(
+    '首个资源: role $role 落库 status $status',
+    async ({ role, status, notified }) => {
+      resourceCountMock.mockResolvedValue(0)
+
+      await createPatchResource(
+        {
+          ...resourceInput,
+          name: 'Patch v1',
+          links: [{ ...externalLink, storage: 'user' }]
+        },
+        kunTestActor({ uid: 7, role })
+      )
+
+      expect(transactionResourceCreateMock.mock.calls[0][0].data.status).toBe(
+        status
+      )
+      if (notified) {
+        expect(createMessageMock).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'system', recipient_id: 7 })
+        )
+      } else {
+        expect(createMessageMock).not.toHaveBeenCalled()
+      }
+    }
+  )
 })
 
 // 嵌套超出渲染预算的 markdown 详情页渲染不出来 (只能降级成纯文本), 所以落库前就拒绝;
