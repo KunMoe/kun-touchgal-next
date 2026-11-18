@@ -161,6 +161,15 @@ const hasClobberingName = (tag: HtmlTag) =>
     return value !== undefined && !value.startsWith(CLOBBER_PREFIX)
   })
 
+// 同一份输出里 id 不重复: 重复时页内链接只会落到第一个上
+const hasDuplicateId = (tags: HtmlTag[]) => {
+  const ids = tags.flatMap((tag) => {
+    const id = tag.attributes.get('id')
+    return id === undefined ? [] : [id]
+  })
+  return new Set(ids).size !== ids.length
+}
+
 // 管线自己生成的页内链接 (脚注的引用与回链) 要能在同一份输出里找到对应的 id。
 // 用户手写的 #片段 可以指向页面上任何地方, 不归这一条管
 const hasDanglingFragment = (tags: HtmlTag[]) => {
@@ -204,6 +213,9 @@ export const findInvariantViolations = (html: string): KunCorpusInvariant[] => {
   }
   if (tags.some(hasClobberingName)) {
     violations.push('dom-clobbering')
+  }
+  if (hasDuplicateId(tags)) {
+    violations.push('duplicate-id')
   }
   if (hasDanglingFragment(tags)) {
     violations.push('fragment-target')

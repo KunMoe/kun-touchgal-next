@@ -11,6 +11,7 @@ import { unified } from 'unified'
 import { visit } from 'unist-util-visit'
 import { getKunMarkdownProcessor } from '~/app/api/utils/render/processor'
 import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
+import { rehypeKunFootnoteScope } from '~/app/api/utils/render/rehypeKunFootnoteScope'
 import { rehypeKunImageLoading } from '~/app/api/utils/render/rehypeKunImageLoading'
 import { remarkKunExternalLinks } from '~/app/api/utils/render/remarkKunExternalLinks'
 import { remarkKunLink } from '~/app/api/utils/render/remarkKunLink'
@@ -45,8 +46,9 @@ import type { Node } from 'unist'
 //   新   = 现在的管线 (只认整行短代码, 认不出的按原文; 容器写法就是普通文字)
 // 文首≠新 的差异只应来自「不合格的整行指令或容器写法」, 文中找不到就算「其他」。
 //
-// 五条管线用的是同一份净化策略与外链插件: 同批上线的白名单恢复 (任务列表的勾选、
-// 表格对齐、列表起始编号、链接标题、脚注锚点) 对所有内容生效, 不在这份对照里
+// 五条管线用的是同一份净化策略、外链插件与脚注锚点插件: 同批上线的白名单恢复
+// (任务列表的勾选、表格对齐、列表起始编号、链接标题、脚注锚点) 对所有内容生效,
+// 不在这份对照里
 
 const BATCH_SIZE = 500
 const SAMPLE_LIMIT = 20
@@ -136,6 +138,7 @@ const buildLegacy = (
   }
 
   processor.use(remarkRehype).use(remarkKunExternalLinks)
+  processor.use(rehypeKunFootnoteScope)
   processor.use(rehypeSanitize, KUN_MARKDOWN_PROFILES[profile].schema)
   processor.use(rehypeKunImageLoading)
   if (profile === 'introduction') {

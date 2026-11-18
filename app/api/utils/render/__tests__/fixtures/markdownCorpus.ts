@@ -23,6 +23,7 @@ export type KunCorpusInvariant =
   | 'inline-style'
   | 'unsafe-url'
   | 'dom-clobbering'
+  | 'duplicate-id'
   | 'fragment-target'
 
 // 整段输出, 或 (输出很长时) 必须包含 / 不得包含的片段
@@ -175,7 +176,7 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'xss-footnote-id',
     tags: ['xss'],
     markdown: '脚注[^body] [^__proto__]\n\n[^body]: x\n\n[^__proto__]: y',
-    html: '<p>脚注<sup><a href="#user-content-fn-body" id="user-content-fnref-body">1</a></sup> <sup><a href="#user-content-fn-__proto__" id="user-content-fnref-__proto__">2</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li id="user-content-fn-body">\n<p>x <a href="#user-content-fnref-body" class="data-footnote-backref">↩</a></p>\n</li>\n<li id="user-content-fn-__proto__">\n<p>y <a href="#user-content-fnref-__proto__" class="data-footnote-backref">↩</a></p>\n</li>\n</ol>\n</section>'
+    html: '<p>脚注<sup><a href="#user-content-fn-02cec4d83b77f45d-body" id="user-content-fnref-02cec4d83b77f45d-body">1</a></sup> <sup><a href="#user-content-fn-02cec4d83b77f45d-__proto__" id="user-content-fnref-02cec4d83b77f45d-__proto__">2</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li id="user-content-fn-02cec4d83b77f45d-body">\n<p>x <a href="#user-content-fnref-02cec4d83b77f45d-body" class="data-footnote-backref">↩</a></p>\n</li>\n<li id="user-content-fn-02cec4d83b77f45d-__proto__">\n<p>y <a href="#user-content-fnref-02cec4d83b77f45d-__proto__" class="data-footnote-backref">↩</a></p>\n</li>\n</ol>\n</section>'
   },
   {
     id: 'xss-html-comment',
@@ -686,13 +687,13 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'gfm-footnote',
     tags: ['gfm'],
     markdown: '脚注[^1]\n\n[^1]: 注释',
-    html: '<p>脚注<sup><a href="#user-content-fn-1" id="user-content-fnref-1">1</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li id="user-content-fn-1">\n<p>注释 <a href="#user-content-fnref-1" class="data-footnote-backref">↩</a></p>\n</li>\n</ol>\n</section>'
+    html: '<p>脚注<sup><a href="#user-content-fn-3014e7039c11724b-1" id="user-content-fnref-3014e7039c11724b-1">1</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li id="user-content-fn-3014e7039c11724b-1">\n<p>注释 <a href="#user-content-fnref-3014e7039c11724b-1" class="data-footnote-backref">↩</a></p>\n</li>\n</ol>\n</section>'
   },
   {
     id: 'gfm-footnote-repeated',
     tags: ['gfm'],
     markdown: '甲[^注] 乙[^注] 丙[^b]\n\n[^注]: 说明\n\n[^b]: 另一条',
-    html: '<p>甲<sup><a href="#user-content-fn-%E6%B3%A8" id="user-content-fnref-%E6%B3%A8">1</a></sup> 乙<sup><a href="#user-content-fn-%E6%B3%A8" id="user-content-fnref-%E6%B3%A8-2">1</a></sup> 丙<sup><a href="#user-content-fn-b" id="user-content-fnref-b">2</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li id="user-content-fn-%E6%B3%A8">\n<p>说明 <a href="#user-content-fnref-%E6%B3%A8" class="data-footnote-backref">↩</a> <a href="#user-content-fnref-%E6%B3%A8-2" class="data-footnote-backref">↩<sup>2</sup></a></p>\n</li>\n<li id="user-content-fn-b">\n<p>另一条 <a href="#user-content-fnref-b" class="data-footnote-backref">↩</a></p>\n</li>\n</ol>\n</section>'
+    html: '<p>甲<sup><a href="#user-content-fn-0cb7b643115157be-%E6%B3%A8" id="user-content-fnref-0cb7b643115157be-%E6%B3%A8">1</a></sup> 乙<sup><a href="#user-content-fn-0cb7b643115157be-%E6%B3%A8" id="user-content-fnref-0cb7b643115157be-%E6%B3%A8-2">1</a></sup> 丙<sup><a href="#user-content-fn-0cb7b643115157be-b" id="user-content-fnref-0cb7b643115157be-b">2</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li id="user-content-fn-0cb7b643115157be-%E6%B3%A8">\n<p>说明 <a href="#user-content-fnref-0cb7b643115157be-%E6%B3%A8" class="data-footnote-backref">↩</a> <a href="#user-content-fnref-0cb7b643115157be-%E6%B3%A8-2" class="data-footnote-backref">↩<sup>2</sup></a></p>\n</li>\n<li id="user-content-fn-0cb7b643115157be-b">\n<p>另一条 <a href="#user-content-fnref-0cb7b643115157be-b" class="data-footnote-backref">↩</a></p>\n</li>\n</ol>\n</section>'
   },
   {
     id: 'gfm-link-fragment',

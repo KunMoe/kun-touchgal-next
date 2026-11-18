@@ -97,6 +97,10 @@ describe('净化不变量检测器', () => {
       ['forbidden-element', 'unsafe-url']
     ],
     ['<img id="body" src="/a.png">', ['dom-clobbering']],
+    [
+      '<li id="user-content-fn-1">a</li><li id="user-content-fn-1">b</li>',
+      ['duplicate-id']
+    ],
     ['<img name="getElementById" src="/a.png">', ['dom-clobbering']],
     ['<a href="#user-content-fn-9">a</a>', ['fragment-target']],
     [
