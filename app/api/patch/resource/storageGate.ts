@@ -16,6 +16,14 @@ type StoredLink = Required<SubmittedLink>
 
 const LINK_FIELDS = ['content', 'size', 'code', 'password'] as const
 
+// 提交的链接已经过校验, 库里的行未必 (导入、手工写入): 校验层会 trim 提取码
+// (validations/patch.ts), 所以拿库里的值比较之前先按同样的方式处理, 否则带首尾空白的
+// 旧提取码永远算不成原样带回
+const asValidated = (
+  field: (typeof LINK_FIELDS)[number],
+  stored: StoredLink
+) => (field === 'code' ? stored.code.trim() : stored[field])
+
 // 链接是不是原样带回的。归存储所有的字段不许动: 对象存储是对象本身 (带了新的上传 token
 // 就是换了对象), 其余存储是申诉也不许改的那些字段 —— TouchGal 资源盘是全部字段。
 // 两处读同一张可改字段表, 「这条链接的哪些部分归存储所有」只有一份
@@ -30,7 +38,8 @@ const isCarriedBack = (link: SubmittedLink, stored: StoredLink) => {
   return (
     link.hash === stored.hash &&
     LINK_FIELDS.every(
-      (field) => editable.includes(field) || link[field] === stored[field]
+      (field) =>
+        editable.includes(field) || link[field] === asValidated(field, stored)
     )
   )
 }

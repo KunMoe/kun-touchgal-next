@@ -427,6 +427,8 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
   // 「原样带回」才算存量: 归存储所有的字段动过, 或同一行被提交了不止一次, 都按新链接判
   it.each([
     ['地址', { content: 'https://evil.example.com/file' }],
+    ['地址 (只多了一个空格)', { content: 'https://example.com/stored ' }],
+    ['解压码 (只多了一个空格)', { password: ' ' }],
     ['大小', { size: '999GB' }],
     ['提取码', { code: 'evil' }],
     ['解压码', { password: 'evil' }],
@@ -444,6 +446,25 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
 
     expect(result).toBe(TOUCHGAL_ERROR)
     expectNoSideEffects()
+  })
+
+  // 校验层会 trim 提取码; 库里不经校验写入的旧值带首尾空白时, 表单带回来的是 trim 过的
+  it('库里的提取码带首尾空白: 原样带回仍算存量, 不误拒只改了别处的保存', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('galgame', [
+        { ...storedLink(5, 'touchgal'), code: ' abcd\u3000' }
+      ])
+    )
+
+    const result = await frontUpdate(
+      buildInput('galgame', [{ ...kept(5, 'touchgal'), code: 'abcd' }], {
+        name: '改了名字'
+      }),
+      99,
+      3
+    )
+
+    expect(result).toBe(PASSED_GATE)
   })
 
   it('同一条既有 TouchGal 链接不能靠重复提交 id 克隆成多条', async () => {
