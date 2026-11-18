@@ -62,8 +62,8 @@ export const drainS3DeletionOutbox = async () =>
       for (const row of rows) {
         try {
           if (await isS3ObjectReferenced(prisma, row.s3_key)) {
-            // 历史共享对象、重复提交的同一 link id、提交响应丢失后的 abandon 都会走到这里，
-            // 在 s3_key 回填完成之前是异常信号
+            // 历史共享对象 (重复提交留下的同 key 资源)、重复提交的同一 link id、提交响应
+            // 丢失后的 abandon 都会走到这里
             // eslint-disable-next-line no-console
             console.warn(
               `S3 删除写出箱跳过 ${row.s3_key}：仍被资源链接引用，只移除出箱行`

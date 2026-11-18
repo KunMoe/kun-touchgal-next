@@ -3,8 +3,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { dbContractUrl, openDbContract } from '~/server/db/__tests__/dbContract'
 
 // s3_key 回填在真实 PostgreSQL 上的行为 (运行方式见 server/db/__tests__/dbContract.ts)。
-// 回填之后引用谓词要收窄为 s3_key = key: 回填若写错一行, 收窄后会把仍在用的对象判成无引用。
-// 这里钉住「回填前被引用且存在的对象, 回填后在收窄的谓词下仍被引用」
+// 回填之后引用谓词收窄为 s3_key = key (server/storage/references.ts): 回填若写错一行, 收窄后
+// 会把仍在用的对象判成无引用。这里钉住「回填前按收窄之前的谓词被引用且存在的对象, 回填后在
+// 现行谓词下仍被引用」
 
 const { existingObjects } = vi.hoisted(() => ({
   existingObjects: new Set<string>()
@@ -87,13 +88,22 @@ describe.skipIf(!dbContractUrl)(
         }
       })
 
-    const narrowedReferenced = async (key: string) => {
+    // 收窄之前的谓词: 历史行 (s3_key 为空) 按 content 尾段认领
+    const legacyReferenced = async (key: string) => {
       const [row] = await prisma.$queryRaw<{ referenced: boolean }[]>`
         SELECT EXISTS (
-          SELECT 1 FROM patch_resource_link WHERE s3_key = ${key}::text
+          SELECT 1 FROM patch_resource_link
+          WHERE s3_key = ${key}::text
+            OR (
+              s3_key = ''
+              AND storage = 's3'
+              AND right(content, char_length(${key}::text) + 1) = '/' || ${key}::text
+            )
         ) AS referenced`
       return row.referenced
     }
+    const narrowedReferenced = (key: string) =>
+      references.isS3ObjectReferenced(prisma, key)
 
     it('回填前被引用且存在的对象, 回填后在收窄的谓词下仍被引用; 第二遍什么也不做', async () => {
       const patch = await newPatch()
@@ -155,7 +165,7 @@ describe.skipIf(!dbContractUrl)(
 
       const before = new Map<string, boolean>()
       for (const key of keys) {
-        before.set(key, await references.isS3ObjectReferenced(prisma, key))
+        before.set(key, await legacyReferenced(key))
       }
 
       const first = await backfill.backfillResourceLinkS3Key({ write: true })
@@ -182,16 +192,18 @@ describe.skipIf(!dbContractUrl)(
         ''
       ])
 
-      // 收窄的谓词与回填后的当前谓词, 都不能把回填前在用的对象判成无引用
+      // 现行 (收窄后) 的谓词不能把回填前在用的对象判成无引用
       for (const key of keys) {
         if (before.get(key) && existingObjects.has(key)) {
-          expect({
+          expect({ key, narrowed: await narrowedReferenced(key) }).toEqual({
             key,
-            narrowed: await narrowedReferenced(key),
-            current: await references.isS3ObjectReferenced(prisma, key)
-          }).toEqual({ key, narrowed: true, current: true })
+            narrowed: true
+          })
         }
       }
+      // 自检: 回填前确实有在用的历史对象被收窄前的谓词认领, 上面的循环不是空转
+      expect(before.get(shared)).toBe(true)
+      expect(before.get(crossPatch)).toBe(true)
       // 只按 hash 还原的那个对象此前没有声明的持有者, 回填后有了 (只会多保护, 不会少)
       expect(before.get(resolvedOnly)).toBe(false)
       expect(await narrowedReferenced(resolvedOnly)).toBe(true)

@@ -12,8 +12,8 @@ import {
 import { dbContractUrl, openDbContract } from '~/server/db/__tests__/dbContract'
 
 // S3 删除写出箱在真实 PostgreSQL 上的行为 (运行方式见 server/db/__tests__/dbContract.ts)。
-// 引用谓词的 content 尾段、upsert 换发 seq、判定之后的 (s3_key, seq) 删行撞上未提交的重新
-// 入队: 这三件事 mock 测不出来
+// 引用谓词的整段相等、upsert 换发 seq、判定之后的 (s3_key, seq) 删行撞上未提交的重新入队:
+// 这三件事 mock 测不出来
 
 const { deleteFileFromS3Mock } = vi.hoisted(() => ({
   deleteFileFromS3Mock: vi.fn()
@@ -87,11 +87,12 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
     return key
   }
 
-  // 历史形态: s3_key 为空, 对象 key 只能从 content 尾段还原 (hash 可能已被写空)
+  // 回填之后的形态: storage = 's3' 的行都带 s3_key, content 是「存储地址/对象 key」
   const newLink = async (
     link: { content: string; s3_key?: string; storage?: string },
     status = 0
   ) => {
+    const storage = link.storage ?? 's3'
     const resource = await prisma.patch_resource.create({
       data: {
         section: 'galgame',
@@ -100,8 +101,12 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
         status,
         links: {
           create: {
-            storage: link.storage ?? 's3',
-            s3_key: link.s3_key ?? '',
+            storage,
+            s3_key:
+              link.s3_key ??
+              (storage === 's3'
+                ? link.content.slice(STORAGE_URL.length + 1)
+                : ''),
             content: link.content
           }
         }
@@ -120,34 +125,29 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
   describe('isS3ObjectReferenced', () => {
     it('s3_key 精确相等算引用', async () => {
       const key = newKey()
-      await newLink({ content: `${STORAGE_URL}/${key}`, s3_key: key })
-
-      expect(await isReferenced(key)).toBe(true)
-    })
-
-    it('历史行按 content 尾段算引用, 不看 hash', async () => {
-      const key = newKey()
       await newLink({ content: `${STORAGE_URL}/${key}` })
 
       expect(await isReferenced(key)).toBe(true)
     })
 
-    it('旧代码写进别的游戏前缀的对象, 按 content 尾段仍认得出持有者', async () => {
-      const key = newKey(patchId + 1)
-      await newLink({ content: `${STORAGE_URL}/${key}` })
-
-      expect(await isReferenced(key)).toBe(true)
-    })
-
-    it('尾段要在 / 边界上整段相等: patch/1 与 patch/11 互不认领', async () => {
+    it('只认整段相等: 别的 key 的前缀、后缀不算', async () => {
       const segment = randomUUID()
-      const shortKey = `patch/1/resource/${segment}/file.zip`
       const longKey = `patch/11/resource/${segment}/file.zip`
       await newLink({ content: `${STORAGE_URL}/${longKey}` })
 
-      expect(await isReferenced(shortKey)).toBe(false)
+      expect(await isReferenced(`patch/1/resource/${segment}/file.zip`)).toBe(
+        false
+      )
       expect(await isReferenced(`1/resource/${segment}/file.zip`)).toBe(false)
+      expect(await isReferenced(`patch/11/resource/${segment}`)).toBe(false)
       expect(await isReferenced(longKey)).toBe(true)
+    })
+
+    it('s3_key 为空的行不算引用: 收窄之后历史形态必须已经回填完', async () => {
+      const key = newKey()
+      await newLink({ content: `${STORAGE_URL}/${key}`, s3_key: '' })
+
+      expect(await isReferenced(key)).toBe(false)
     })
 
     it('content 恰为桶地址的外链行不算引用', async () => {
@@ -164,7 +164,7 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
       expect(await isReferenced(key)).toBe(true)
     })
 
-    it('最后一个持有者删掉之后判为无引用', async () => {
+    it('共享对象的最后一个持有者删掉之后判为无引用', async () => {
       const key = newKey()
       const first = await newLink({ content: `${STORAGE_URL}/${key}` })
       const second = await newLink({ content: `${STORAGE_URL}/${key}` })
