@@ -2,13 +2,15 @@ import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { getTagSchema } from '~/validations/tag'
 import { getCachedTagList, getTagListCacheKey, setTagListCache } from '../cache'
+import type { PatchVisibility } from '~/server/viewer/patchVisibility'
 
 export const getTag = async (
   input: z.infer<typeof getTagSchema>,
-  blockedTagIds: number[] = []
+  visibility: PatchVisibility
 ) => {
   const { page, limit } = input
-  // 带屏蔽标签的视角不参与共享缓存 (键数量由未验签 cookie 决定, 见 hasBlockedTagFilter)
+  const { blockedTagIds } = visibility
+  // 带屏蔽标签的视角不参与共享缓存: 屏蔽标签取自客户端的镜像 cookie, 进了键就由客户端决定键的数量
   const cacheKey =
     blockedTagIds.length > 0
       ? null
@@ -20,7 +22,7 @@ export const getTag = async (
 
   const offset = (page - 1) * limit
   const where = blockedTagIds.length
-    ? { id: { notIn: blockedTagIds } }
+    ? { id: { notIn: [...blockedTagIds] } }
     : undefined
 
   const [data, total] = await Promise.all([

@@ -27,6 +27,7 @@ vi.mock('~/prisma/index', () => ({
 
 import { invalidateTagListCache } from '~/app/api/tag/cache'
 import { getTag } from '~/app/api/tag/all/service'
+import { PUBLIC_VISIBILITY } from '~/server/viewer/patchVisibility'
 
 const TAGS = [{ id: 1, name: 'ADV', count: 7, alias: ['AVG'] }]
 const RESPONSE = { tags: TAGS, total: 1 }
@@ -42,7 +43,13 @@ describe('getTag', () => {
   })
 
   it('skips the shared cache but still applies blocked tags when any tag is blocked', async () => {
-    const response = await getTag({ page: 1, limit: 100 }, [8, 9])
+    const response = await getTag(
+      { page: 1, limit: 100 },
+      {
+        contentLimit: 'sfw',
+        blockedTagIds: [8, 9]
+      }
+    )
 
     expect(response).toEqual(RESPONSE)
     expect(findManyMock).toHaveBeenCalledWith(
@@ -53,7 +60,7 @@ describe('getTag', () => {
   })
 
   it('queries the selected page and writes the response for 300 seconds on cache miss', async () => {
-    const response = await getTag({ page: 2, limit: 100 }, [])
+    const response = await getTag({ page: 2, limit: 100 }, PUBLIC_VISIBILITY)
 
     expect(response).toEqual(RESPONSE)
     expect(findManyMock).toHaveBeenCalledWith({
@@ -81,7 +88,7 @@ describe('getTag', () => {
       .mockResolvedValueOnce('version-1')
       .mockResolvedValueOnce(JSON.stringify(RESPONSE))
 
-    const response = await getTag({ page: 1, limit: 100 }, [])
+    const response = await getTag({ page: 1, limit: 100 }, PUBLIC_VISIBILITY)
 
     expect(response).toEqual(RESPONSE)
     expect(findManyMock).not.toHaveBeenCalled()
@@ -90,9 +97,9 @@ describe('getTag', () => {
   })
 
   it('isolates the cache key by page and limit', async () => {
-    await getTag({ page: 1, limit: 100 }, [])
-    await getTag({ page: 2, limit: 100 }, [])
-    await getTag({ page: 1, limit: 50 }, [])
+    await getTag({ page: 1, limit: 100 }, PUBLIC_VISIBILITY)
+    await getTag({ page: 2, limit: 100 }, PUBLIC_VISIBILITY)
+    await getTag({ page: 1, limit: 50 }, PUBLIC_VISIBILITY)
 
     const cacheKeys = [1, 3, 5].map(
       (callIndex) => getKvMock.mock.calls[callIndex][0] as string
@@ -104,7 +111,7 @@ describe('getTag', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValueOnce(new Error('redis down'))
 
-    const response = await getTag({ page: 1, limit: 100 }, [])
+    const response = await getTag({ page: 1, limit: 100 }, PUBLIC_VISIBILITY)
 
     expect(response).toEqual(RESPONSE)
     expect(findManyMock).toHaveBeenCalledTimes(1)
@@ -118,7 +125,7 @@ describe('getTag', () => {
       .mockResolvedValueOnce('version-1')
       .mockRejectedValueOnce(new Error('redis down'))
 
-    const response = await getTag({ page: 1, limit: 100 }, [])
+    const response = await getTag({ page: 1, limit: 100 }, PUBLIC_VISIBILITY)
 
     expect(response).toEqual(RESPONSE)
     expect(findManyMock).toHaveBeenCalledTimes(1)
@@ -129,7 +136,7 @@ describe('getTag', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockResolvedValueOnce('version-1').mockResolvedValueOnce('{')
 
-    const response = await getTag({ page: 1, limit: 100 }, [])
+    const response = await getTag({ page: 1, limit: 100 }, PUBLIC_VISIBILITY)
 
     const cacheKey = getKvMock.mock.calls[1][0] as string
     expect(response).toEqual(RESPONSE)
@@ -145,7 +152,9 @@ describe('getTag', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     setKvMock.mockRejectedValueOnce(new Error('redis down'))
 
-    await expect(getTag({ page: 1, limit: 100 }, [])).resolves.toEqual(RESPONSE)
+    await expect(
+      getTag({ page: 1, limit: 100 }, PUBLIC_VISIBILITY)
+    ).resolves.toEqual(RESPONSE)
   })
 
   it('bumps the version and absorbs Redis invalidation failures', async () => {

@@ -2,18 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { getAuthenticatedBlockedTagIds } from '~/app/api/utils/getBlockedTagIds'
+import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
 import { searchTagSchema } from '~/validations/search'
 
 const searchTag = async (
   input: z.infer<typeof searchTagSchema>,
-  blockedTagIds: number[] = []
+  blockedTagIds: readonly number[]
 ) => {
   const { query } = input
 
   const tags = await prisma.patch_tag.findMany({
     where: {
-      ...(blockedTagIds.length ? { id: { notIn: blockedTagIds } } : {}),
+      ...(blockedTagIds.length ? { id: { notIn: [...blockedTagIds] } } : {}),
       OR: query.map((q) => ({
         OR: [
           { name: { contains: q, mode: 'insensitive' } },
@@ -40,10 +40,11 @@ export const POST = async (req: NextRequest) => {
     return NextResponse.json(input)
   }
 
-  const blockedTagIds = await getAuthenticatedBlockedTagIds(req)
-  if (!blockedTagIds) {
+  const ctx = viewerContextFromRequest(req)
+  if (!(await ctx.viewer())) {
     return NextResponse.json('用户未登录')
   }
+  const { blockedTagIds } = await ctx.visibility()
   const response = await searchTag(input, blockedTagIds)
   return NextResponse.json(response)
 }

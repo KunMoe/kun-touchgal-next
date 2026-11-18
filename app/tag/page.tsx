@@ -3,14 +3,14 @@ import { kunMetadata } from './metadata'
 import { kunGetActions } from './actions'
 import { ErrorComponent } from '~/components/error/ErrorComponent'
 import { Suspense } from 'react'
-import { getAuthenticatedBlockedTagIds } from '~/utils/actions/getBlockedTagIds'
+import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = kunMetadata
 
 export default async function Kun() {
-  const auth = await getAuthenticatedBlockedTagIds()
-  if (!auth) {
+  const payload = await verifyHeaderCookie()
+  if (!payload) {
     return (
       <Suspense>
         <Container initialTags={[]} initialTotal={0} />
@@ -18,13 +18,10 @@ export default async function Kun() {
     )
   }
 
-  const response = await kunGetActions(
-    {
-      page: 1,
-      limit: 100
-    },
-    auth.blockedTagIds
-  )
+  const response = await kunGetActions({
+    page: 1,
+    limit: 100
+  })
   if (typeof response === 'string') {
     return <ErrorComponent error={response} />
   }
@@ -34,7 +31,7 @@ export default async function Kun() {
       <Container
         initialTags={response.tags}
         initialTotal={response.total}
-        uid={auth.payload.uid}
+        uid={payload.uid}
       />
     </Suspense>
   )

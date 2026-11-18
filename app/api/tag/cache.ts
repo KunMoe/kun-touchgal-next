@@ -39,7 +39,7 @@ export const invalidateTagListCache = async () => {
 
 export const getTagListCacheKey = async (
   input: TagListCacheInput,
-  blockedTagIds: number[]
+  blockedTagIds: readonly number[]
 ) => {
   let version = '0'
 
