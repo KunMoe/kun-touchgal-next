@@ -24,6 +24,7 @@ import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkd
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import { can } from '~/constants/permission'
 import { markResourcePendingReview } from '~/server/content/resource/edit'
+import { linkStorageGateError } from './storageGate'
 import type { ResourceStatus } from '~/constants/contentStatus'
 import type { ContentGuard } from '~/server/content/guard'
 import type { PatchResource } from '~/types/api/patch'
@@ -109,6 +110,16 @@ export const updatePatchResource = async (
 
   if (inputPatchId !== resource.patch_id) {
     return '资源与 Galgame 不匹配'
+  }
+  // 按编辑前的分区与链接做 delta: 原样带回来的存量链接不判, 所以管理员能保存含既有
+  // TouchGal 链接的资源; 必须先于下面的 S3 重绑
+  const storageError = linkStorageGateError(
+    actor,
+    { section: input.section, links },
+    { section: resource.section, links: resource.links }
+  )
+  if (storageError) {
+    return storageError
   }
   const patchId = resource.patch_id
   const currentPatch = await prisma.patch.findUnique({

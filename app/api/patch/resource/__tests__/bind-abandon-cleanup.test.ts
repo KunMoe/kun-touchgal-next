@@ -137,7 +137,8 @@ import {
 import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import type { KunRole } from '~/constants/role'
 
-// 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫
+// 按前台入口的方式调用: 操作者, 加前台入口为它算出的守卫。
+// 夹具用创作者 (role 2) 在补丁分区上传: 这是允许新用对象存储的最低角色与分区
 const updateResource = (
   input: Parameters<typeof updatePatchResource>[0],
   uid: number,
@@ -160,7 +161,7 @@ const s3Link = (hash: string, overrides: Record<string, unknown> = {}) => ({
 const buildUpdateInput = (overrides: Record<string, unknown> = {}) => ({
   resourceId: 1,
   patchId: 10,
-  section: 'galgame',
+  section: 'patch',
   name: 'New name',
   note: '',
   links: [],
@@ -174,7 +175,7 @@ const buildUpdateInput = (overrides: Record<string, unknown> = {}) => ({
 
 const buildCreateInput = (overrides: Record<string, unknown> = {}) => ({
   patchId: 10,
-  section: 'galgame',
+  section: 'patch',
   name: 'Res',
   note: '',
   links: [],
@@ -189,7 +190,7 @@ const buildCreateInput = (overrides: Record<string, unknown> = {}) => ({
 const buildSnapshot = (overrides: Record<string, unknown> = {}) => ({
   id: 1,
   status: 0,
-  section: 'galgame',
+  section: 'patch',
   user_id: 7,
   patch_id: 10,
   name: 'Old name',
@@ -202,7 +203,7 @@ const buildSnapshot = (overrides: Record<string, unknown> = {}) => ({
 const buildRow = (overrides: Record<string, unknown> = {}) => ({
   id: 1,
   status: 0,
-  section: 'galgame',
+  section: 'patch',
   user_id: 7,
   patch_id: 10,
   name: 'Res',
@@ -244,7 +245,7 @@ beforeEach(() => {
   })
   invalidatePatchContentCacheMock.mockResolvedValue(undefined)
   recalcPatchTypeMock.mockResolvedValue('kun-10')
-  transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'galgame' }])
+  transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'patch' }])
   transactionLinkFindManyMock.mockResolvedValue([])
 })
 
@@ -260,7 +261,7 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     const input = buildUpdateInput({
       links: [s3Link('token-a'), s3Link('token-b')]
     })
-    const result = await updateResource(input, 7, 1)
+    const result = await updateResource(input, 7, 2)
 
     expect(result).toBe('您今日的上传大小已达到 5GB 限额')
     expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
@@ -280,7 +281,7 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     const input = buildUpdateInput({
       links: [s3Link('token-a'), s3Link('token-b')]
     })
-    await expect(updateResource(input, 7, 1)).rejects.toThrow('copy timeout')
+    await expect(updateResource(input, 7, 2)).rejects.toThrow('copy timeout')
 
     expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
       [{ content: 'c-a', s3Key: 'k-a' }],
@@ -297,7 +298,7 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     const input = buildUpdateInput({
       links: [s3Link('token-a'), s3Link('', { id: 5, content: 'old-c' })]
     })
-    const result = await updateResource(input, 7, 1)
+    const result = await updateResource(input, 7, 2)
 
     expect(result).toBe('请先上传资源文件')
     expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
@@ -314,7 +315,7 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     transactionMock.mockRejectedValue(new Error('db down'))
 
     const input = buildUpdateInput({ links: [s3Link('token-a')] })
-    await expect(updateResource(input, 7, 1)).rejects.toThrow('db down')
+    await expect(updateResource(input, 7, 2)).rejects.toThrow('db down')
 
     expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
       [{ content: 'c-a', s3Key: 'k-a' }],
@@ -328,7 +329,7 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     planTextModerationMock.mockRejectedValue(new Error('redis down'))
 
     const input = buildUpdateInput({ links: [s3Link('token-a')] })
-    await expect(updateResource(input, 7, 1)).rejects.toThrow('redis down')
+    await expect(updateResource(input, 7, 2)).rejects.toThrow('redis down')
 
     expect(bindUploadedResourceMock).not.toHaveBeenCalled()
   })
@@ -343,7 +344,7 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     transactionResourceUpdateMock.mockResolvedValue(buildRow())
 
     const input = buildUpdateInput({ links: [s3Link('token-a')] })
-    const result = await updateResource(input, 7, 1)
+    const result = await updateResource(input, 7, 2)
 
     expect(typeof result).not.toBe('string')
     expect(abandonBoundResourceObjectsMock).not.toHaveBeenCalled()
@@ -361,7 +362,7 @@ describe('创建资源循环早退时清理已绑定对象', () => {
     })
     const result = await createPatchResource(
       input,
-      kunTestActor({ uid: 7, role: 1 })
+      kunTestActor({ uid: 7, role: 2 })
     )
 
     expect(result).toBe('上传 token 已过期或不存在, 请重新上传文件')
@@ -381,7 +382,7 @@ describe('创建资源循环早退时清理已绑定对象', () => {
       links: [s3Link('token-a'), s3Link('token-b')]
     })
     await expect(
-      createPatchResource(input, kunTestActor({ uid: 7, role: 1 }))
+      createPatchResource(input, kunTestActor({ uid: 7, role: 2 }))
     ).rejects.toThrow('copy timeout')
 
     expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
@@ -399,7 +400,7 @@ describe('创建资源循环早退时清理已绑定对象', () => {
     })
     const result = await createPatchResource(
       input,
-      kunTestActor({ uid: 7, role: 1 })
+      kunTestActor({ uid: 7, role: 2 })
     )
 
     expect(result).toBe('请先上传资源文件')
@@ -416,7 +417,7 @@ describe('创建资源循环早退时清理已绑定对象', () => {
 
     const input = buildCreateInput({ links: [s3Link('token-a')] })
     await expect(
-      createPatchResource(input, kunTestActor({ uid: 7, role: 1 }))
+      createPatchResource(input, kunTestActor({ uid: 7, role: 2 }))
     ).rejects.toThrow('db down')
 
     expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
@@ -436,7 +437,7 @@ describe('创建资源循环早退时清理已绑定对象', () => {
     const input = buildCreateInput({ links: [s3Link('token-a')] })
     const result = await createPatchResource(
       input,
-      kunTestActor({ uid: 7, role: 1 })
+      kunTestActor({ uid: 7, role: 2 })
     )
 
     expect(typeof result).not.toBe('string')

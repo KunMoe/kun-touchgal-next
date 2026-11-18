@@ -322,11 +322,12 @@ describe('更新资源在行锁下复检守卫', () => {
   // 复检拦截时 bind 已完成 (对象复制到 finalKey, staging 与 token 已删):
   // return 字符串会提交事务且不走 .catch 的 abandon 兜底, 已重绑对象
   // 必须随本事务入队清理, 否则成无 DB 引用的永久公开孤儿
+  // 新上传对象存储的用例以创作者 (role 2) 在补丁分区提交: 这是允许新用对象存储的最低角色与分区
   it('复检拦截时已重绑的 s3 对象随本事务入队清理', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
-    transactionQueryRawMock.mockResolvedValue([
-      { status: 1, section: 'galgame' }
-    ])
+    resourceFindUniqueMock.mockResolvedValue(
+      buildSnapshot({ section: 'patch' })
+    )
+    transactionQueryRawMock.mockResolvedValue([{ status: 1, section: 'patch' }])
     bindUploadedResourceMock.mockResolvedValue({
       downloadLink: 'new-c',
       s3Key: 'new-k',
@@ -334,6 +335,7 @@ describe('更新资源在行锁下复检守卫', () => {
     })
 
     const input = buildInput({
+      section: 'patch',
       links: [
         {
           storage: 's3',
@@ -345,7 +347,7 @@ describe('更新资源在行锁下复检守卫', () => {
         }
       ]
     })
-    const result = await updateResource(input, 7, 1)
+    const result = await updateResource(input, 7, 2)
 
     expect(result).toBe('未找到该资源')
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
@@ -356,10 +358,10 @@ describe('更新资源在行锁下复检守卫', () => {
   })
 
   it('待审核复检拦截同样入队清理已重绑对象', async () => {
-    resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
-    transactionQueryRawMock.mockResolvedValue([
-      { status: 3, section: 'galgame' }
-    ])
+    resourceFindUniqueMock.mockResolvedValue(
+      buildSnapshot({ section: 'patch' })
+    )
+    transactionQueryRawMock.mockResolvedValue([{ status: 3, section: 'patch' }])
     bindUploadedResourceMock.mockResolvedValue({
       downloadLink: 'new-c',
       s3Key: 'new-k',
@@ -367,6 +369,7 @@ describe('更新资源在行锁下复检守卫', () => {
     })
 
     const input = buildInput({
+      section: 'patch',
       links: [
         {
           storage: 's3',
@@ -378,7 +381,7 @@ describe('更新资源在行锁下复检守卫', () => {
         }
       ]
     })
-    const result = await updateResource(input, 7, 1)
+    const result = await updateResource(input, 7, 2)
 
     expect(result).toBe('您发布的资源正在审核中, 暂时无法修改')
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
@@ -416,6 +419,7 @@ describe('更新资源在行锁下重算 links diff', () => {
   it('保留型 s3 链接锁下已被并发重建, 返回冲突并清理本次重绑对象', async () => {
     resourceFindUniqueMock.mockResolvedValue(
       buildSnapshot({
+        section: 'patch',
         links: [
           {
             id: 5,
@@ -430,9 +434,7 @@ describe('更新资源在行锁下重算 links diff', () => {
         ]
       })
     )
-    transactionQueryRawMock.mockResolvedValue([
-      { status: 0, section: 'galgame' }
-    ])
+    transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'patch' }])
     // 锁下集合已无 id=5: 并发编辑已 deleteMany + create 整体换行
     transactionLinkFindManyMock.mockResolvedValue([])
     bindUploadedResourceMock.mockResolvedValue({
@@ -442,6 +444,7 @@ describe('更新资源在行锁下重算 links diff', () => {
     })
 
     const input = buildInput({
+      section: 'patch',
       links: [
         {
           storage: 's3',
@@ -462,7 +465,7 @@ describe('更新资源在行锁下重算 links diff', () => {
         }
       ]
     })
-    const result = await updateResource(input, 7, 1)
+    const result = await updateResource(input, 7, 2)
 
     expect(result).toBe('该资源的链接已被修改, 请刷新后重试')
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()

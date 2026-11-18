@@ -67,7 +67,6 @@ const LOCK_TOKEN = 'lock-token'
 const LOCK_KEY = `lock:patch:resource:create:${UID}`
 const RESOURCE_ID = 9
 
-const TOUCHGAL_ERROR = '仅超级管理员可使用 TouchGal 资源盘'
 const MOEMOEPOINT_ERROR = '仅限萌萌点大于 20 的用户才可以发布资源'
 const PENDING_ERROR =
   '您有至少一个 Galgame 资源在待审核阶段, 请等待审核结束后再发布资源'
@@ -169,33 +168,22 @@ describe('POST /api/patch/resource 解析与鉴权', () => {
   })
 })
 
-describe('POST /api/patch/resource TouchGal 资源盘闸门 (按会话 payload.role)', () => {
-  it.each([1, 2, 3])(
-    'role %i 提交 touchgal 链接被拒, 先于查用户行',
+// 存储 × 分区 × 角色由 service 按 delta 执法 (见 storage-gate.test.ts)。路由不再自己判一遍:
+// 这里只钉「路由不拦, 原样交给 service」
+describe('POST /api/patch/resource 不在路由上判存储', () => {
+  it.each([1, 2, 3, 4])(
+    'role %i 提交 touchgal 链接: 路由不拦, 交给 service 判定',
     async (role) => {
       verifyHeaderCookieMock.mockResolvedValue(asPayload(role))
-      userFindUniqueMock.mockResolvedValue(asUserRow({ role, moemoepoint: 0 }))
+      userFindUniqueMock.mockResolvedValue(asUserRow({ role }))
       const res = await POST(
         jsonRequest('POST', createBody({ links: [touchgalLink()] }))
       )
 
-      expect(await res.json()).toBe(TOUCHGAL_ERROR)
-      expect(userFindUniqueMock).not.toHaveBeenCalled()
-      expect(acquireKvLockMock).not.toHaveBeenCalled()
-      expect(createPatchResourceMock).not.toHaveBeenCalled()
+      expect(await res.json()).toEqual({ id: 1, name: 'created' })
+      expect(createPatchResourceMock).toHaveBeenCalledTimes(1)
     }
   )
-
-  it('role 4 提交 touchgal 链接通过闸门', async () => {
-    verifyHeaderCookieMock.mockResolvedValue(asPayload(4))
-    userFindUniqueMock.mockResolvedValue(asUserRow({ role: 4 }))
-    const res = await POST(
-      jsonRequest('POST', createBody({ links: [touchgalLink()] }))
-    )
-
-    expect(await res.json()).toEqual({ id: 1, name: 'created' })
-    expect(createPatchResourceMock).toHaveBeenCalledTimes(1)
-  })
 
   it.each([1, 2, 3, 4])('role %i 不含 touchgal 链接时通过', async (role) => {
     verifyHeaderCookieMock.mockResolvedValue(asPayload(role))
@@ -204,36 +192,6 @@ describe('POST /api/patch/resource TouchGal 资源盘闸门 (按会话 payload.r
 
     expect(await res.json()).toEqual({ id: 1, name: 'created' })
     expect(createPatchResourceMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('整份链接列表里混入一条 touchgal 即拒 (role 3)', async () => {
-    verifyHeaderCookieMock.mockResolvedValue(asPayload(3))
-    const res = await POST(
-      jsonRequest('POST', createBody({ links: [userLink(), touchgalLink()] }))
-    )
-
-    expect(await res.json()).toBe(TOUCHGAL_ERROR)
-  })
-
-  it('会话 role 4、库内 role 1: 按会话放行 touchgal', async () => {
-    verifyHeaderCookieMock.mockResolvedValue(asPayload(4))
-    userFindUniqueMock.mockResolvedValue(asUserRow({ role: 1 }))
-    const res = await POST(
-      jsonRequest('POST', createBody({ links: [touchgalLink()] }))
-    )
-
-    expect(await res.json()).toEqual({ id: 1, name: 'created' })
-  })
-
-  it('会话 role 3、库内 role 4: 按会话拒绝 touchgal', async () => {
-    verifyHeaderCookieMock.mockResolvedValue(asPayload(3))
-    userFindUniqueMock.mockResolvedValue(asUserRow({ role: 4 }))
-    const res = await POST(
-      jsonRequest('POST', createBody({ links: [touchgalLink()] }))
-    )
-
-    expect(await res.json()).toBe(TOUCHGAL_ERROR)
-    expect(userFindUniqueMock).not.toHaveBeenCalled()
   })
 })
 
@@ -400,28 +358,26 @@ describe('PUT /api/patch/resource 闸门', () => {
     expect(updatePatchResourceMock).not.toHaveBeenCalled()
   })
 
-  it.each([1, 2, 3])('role %i 提交 touchgal 链接被拒', async (role) => {
-    verifyHeaderCookieMock.mockResolvedValue(asPayload(role))
-    const res = await PUT(
-      jsonRequest('PUT', updateBody({ links: [touchgalLink({ id: 5 })] }))
-    )
+  it.each([1, 2, 3, 4])(
+    'role %i 提交 touchgal 链接: 路由不拦, 原样带回的存量链接由 service 按 delta 判定',
+    async (role) => {
+      verifyHeaderCookieMock.mockResolvedValue(asPayload(role))
+      const body = updateBody({
+        links: [
+          userLink({ id: 4, content: 'https://pan.example.com/s/edited' }),
+          touchgalLink({ id: 5 })
+        ]
+      })
+      const res = await PUT(jsonRequest('PUT', body))
 
-    expect(await res.json()).toBe(TOUCHGAL_ERROR)
-    expect(updatePatchResourceMock).not.toHaveBeenCalled()
-  })
-
-  it('role 4 提交 touchgal 链接通过', async () => {
-    verifyHeaderCookieMock.mockResolvedValue(asPayload(4))
-    const res = await PUT(
-      jsonRequest('PUT', updateBody({ links: [touchgalLink({ id: 5 })] }))
-    )
-
-    expect(await res.json()).toEqual({ id: RESOURCE_ID, name: 'updated' })
-    expect(updatePatchResourceMock).toHaveBeenCalledTimes(1)
-  })
+      expect(await res.json()).toEqual({ id: RESOURCE_ID, name: 'updated' })
+      expect(updatePatchResourceMock).toHaveBeenCalledTimes(1)
+      expect(updatePatchResourceMock.mock.calls[0][0]).toEqual(body)
+    }
+  )
 
   it.each([1, 2, 3, 4])(
-    'role %i 不含 touchgal 链接时直接交给 service (路由不再有其他角色闸门)',
+    'role %i 不含 touchgal 链接时直接交给 service (路由没有角色闸门)',
     async (role) => {
       verifyHeaderCookieMock.mockResolvedValue(asPayload(role))
       const res = await PUT(jsonRequest('PUT', updateBody()))
@@ -431,24 +387,6 @@ describe('PUT /api/patch/resource 闸门', () => {
       expect(updatePatchResourceMock.mock.calls[0][0]).toEqual(updateBody())
     }
   )
-
-  it('闸门判整份链接列表: role 3 只改别的链接、touchgal 链接原样保留 (带 id) 也被拒', async () => {
-    verifyHeaderCookieMock.mockResolvedValue(asPayload(3))
-    const res = await PUT(
-      jsonRequest(
-        'PUT',
-        updateBody({
-          links: [
-            userLink({ id: 4, content: 'https://pan.example.com/s/edited' }),
-            touchgalLink({ id: 5 })
-          ]
-        })
-      )
-    )
-
-    expect(await res.json()).toBe(TOUCHGAL_ERROR)
-    expect(updatePatchResourceMock).not.toHaveBeenCalled()
-  })
 
   it('PUT 不查用户行、不看萌萌点与待审资源、不加锁', async () => {
     userFindUniqueMock.mockResolvedValue(asUserRow({ moemoepoint: 0 }))

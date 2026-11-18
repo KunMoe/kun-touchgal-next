@@ -158,7 +158,7 @@ const resourceInput = {
   modelName: '',
   links: [
     {
-      storage: 'mega',
+      storage: 'user',
       hash: '',
       content: 'https://example.com/file',
       size: '1 MB',

@@ -50,13 +50,6 @@ export const POST = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (
-    !can(payload, 'storage.touchgal') &&
-    input.links.some((link) => link.storage === 'touchgal')
-  ) {
-    return NextResponse.json('仅超级管理员可使用 TouchGal 资源盘')
-  }
-
   const user = await prisma.user.findUnique({ where: { id: payload.uid } })
   if (!user) {
     return NextResponse.json('未找到该用户')
@@ -114,13 +107,6 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (
-    !can(payload, 'storage.touchgal') &&
-    input.links.some((link) => link.storage === 'touchgal')
-  ) {
-    return NextResponse.json('仅超级管理员可使用 TouchGal 资源盘')
-  }
-
   const response = await updatePatchResource(
     input,
     payload,

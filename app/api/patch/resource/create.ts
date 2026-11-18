@@ -22,6 +22,7 @@ import {
 import { resourceSubject } from '~/server/moderation/subject'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import { can } from '~/constants/permission'
+import { linkStorageGateError } from './storageGate'
 import type { PatchResource } from '~/types/api/patch'
 import type { KunActor } from '~/constants/role'
 
@@ -43,6 +44,14 @@ export const createPatchResource = async (
   // 联动字段随所选平台/类型归一: 未含对应平台/类型时不落库残值
   const emulator_type = platform.includes('emulator') ? emulatorType : []
   const model_name = type.includes('ai') ? modelName : ''
+
+  const storageError = linkStorageGateError(actor, {
+    section: input.section,
+    links
+  })
+  if (storageError) {
+    return storageError
+  }
 
   const [currentPatch, resourceCount] = await Promise.all([
     prisma.patch.findUnique({

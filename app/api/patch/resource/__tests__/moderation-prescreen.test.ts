@@ -137,7 +137,7 @@ const resourceInput = {
   modelName: '',
   links: [
     {
-      storage: 'mega',
+      storage: 'user',
       hash: '',
       content: 'https://example.com/file',
       size: '1 MB',
@@ -481,7 +481,7 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
   it('送审字段与库中一致时不重审, 也不读审核配置; 只换外链的存储类型这类枚举值同理', async () => {
     resourceFindUniqueMock.mockResolvedValue({
       ...storedResource,
-      links: [storedExternalLink]
+      links: [{ ...storedExternalLink, storage: 'touchgal' }]
     })
 
     await updateResource(
