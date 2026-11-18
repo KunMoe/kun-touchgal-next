@@ -33,8 +33,8 @@ const ANONYMOUS_SESSION: ViewerSession = { kind: 'anonymous' }
 // Route Handler 经 fromRequest、页面经 fromHeaders 各建一个, 建好后往下传;
 // 同一个上下文里会话至多校验一次 (校验带 Redis 读写, 见 verifyKunTokenPayload)
 export const createViewerContext = (cookieHeader: string) => {
-  // 服务端读这三个 cookie 只在这里解码, 与 proxy 用同一个 parseCookies:
-  // 畸形转义回落原值, 回落后的 token 校验不过, 回落后的设置值不被采信
+  // 服务端读这三个 cookie 只在这里解码, 与 proxy 用同一个 parseCookies。畸形转义回落原值:
+  // 回落后的 token 校验不过, 分级设置不在枚举里, 镜像则看原值还能不能解析成数组
   const cookies = parseCookies(cookieHeader)
   const token = cookies[KUN_AUTH_TOKEN_COOKIE]
 
@@ -63,8 +63,8 @@ export const createViewerContext = (cookieHeader: string) => {
     }
 
     const nsfwSetting = cookies[KUN_NSFW_SETTING_COOKIE]
-    // null 是镜像不可用 (没有这个 cookie、畸形转义、坏 JSON、不是数组), 以库里的为准;
-    // [] 是合法的镜像 (用户清空了屏蔽列表), 不能当成不可用
+    // 解析不出数组 (没有这个 cookie、坏 JSON、不是数组) 时是 null, 以库里的为准。
+    // 解析得出数组就采信, 其中不合法的元素被丢掉: [] 是合法的镜像 (用户清空了屏蔽列表)
     const mirrored = parseBlockedTagIds(cookies[KUN_BLOCKED_TAG_MIRROR_COOKIE])
     return {
       contentLimit:

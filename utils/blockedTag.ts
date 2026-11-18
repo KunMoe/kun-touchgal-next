@@ -12,8 +12,8 @@ export const MAX_BLOCKED_TAG_IDS = 400
 // (同类先例见 validations/edit.ts 的 bangumi_id / steam_id)
 const INT4_MAX = 2147483647
 
-// null = 镜像 cookie 不可用 (畸形转义 / 坏 JSON / 非数组), 调用方须回落 DB,
-// 与 next/headers 对畸形值的丢弃语义对齐; 回落 [] 会把 DB 里的屏蔽列表短路掉。
+// null = 镜像 cookie 解析不出数组 (空值 / 坏 JSON / 非数组; 畸形转义经 parseCookies 回落的
+// 原值多半也在此列), 调用方须回落 DB; 回落 [] 会把 DB 里的屏蔽列表短路掉。
 // 空数组是合法缓存值 (用户未屏蔽任何标签), 不能与坏缓存混为一谈
 export const parseBlockedTagIds = (value?: string | null) => {
   if (!value) {
