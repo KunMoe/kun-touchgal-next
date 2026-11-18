@@ -67,7 +67,7 @@ export const EditBanner = ({ patch }: PatchHeaderBannerProps) => {
 
   return (
     <>
-      {(user.uid === patch.user.id || can(user, 'banner.edit')) && (
+      {can(user, 'banner.edit') && (
         <Button
           color="default"
           variant="shadow"
