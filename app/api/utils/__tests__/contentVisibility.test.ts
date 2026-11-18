@@ -61,13 +61,9 @@ describe('getListResourceStatusWhere', () => {
   const visibility = { contentLimit: 'sfw', blockedTagIds: [] } as const
 
   it('shared 与 filtered 视角只看公开资源', () => {
-    expect(
-      getListResourceStatusWhere({
-        kind: 'shared',
-        visibility,
-        cacheVariant: 'sfw:'
-      })
-    ).toEqual({ status: 0 })
+    expect(getListResourceStatusWhere({ kind: 'shared', visibility })).toEqual({
+      status: 0
+    })
     expect(
       getListResourceStatusWhere({
         kind: 'filtered',

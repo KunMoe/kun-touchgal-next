@@ -9,7 +9,11 @@ import {
 } from './cache'
 import { getListResourceStatusWhere } from '~/app/api/utils/contentVisibility'
 import { kunCacheSingleflight } from '~/app/api/utils/cacheSingleflight'
-import { toPatchWhere, type ListView } from '~/server/viewer/patchVisibility'
+import {
+  toCacheVariant,
+  toPatchWhere,
+  type ListView
+} from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { PatchResource, ResourceListResponse } from '~/types/api/resource'
 
@@ -114,7 +118,7 @@ export const getPatchResource = async (
   // 只有 shared 视角读写共享缓存 (各视角的含义见 ListView)
   const cacheKey =
     view.kind === 'shared'
-      ? await getResourceListCacheKey(input, view.cacheVariant)
+      ? await getResourceListCacheKey(input, toCacheVariant(view))
       : null
 
   const cached = await getCachedResourceList(cacheKey)

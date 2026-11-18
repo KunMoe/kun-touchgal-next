@@ -5,7 +5,11 @@ import { HOME_CACHE_DURATION } from '~/config/cache'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 import { kunCacheSingleflight } from '~/app/api/utils/cacheSingleflight'
 import { getListResourceStatusWhere } from '~/app/api/utils/contentVisibility'
-import { toPatchWhere, type ListView } from '~/server/viewer/patchVisibility'
+import {
+  toCacheVariant,
+  toPatchWhere,
+  type ListView
+} from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { HomeResource } from '~/types/api/home'
 
@@ -180,7 +184,7 @@ export const getHomeData = async (view: ListView): Promise<HomeResponse> => {
     return queryHomeData(visibilityWhere, statusWhere)
   }
 
-  const cacheKey = getHomeCacheKey(view.cacheVariant)
+  const cacheKey = getHomeCacheKey(toCacheVariant(view))
   const cached = await getCachedHomeData(cacheKey)
   if (cached.response) {
     return cached.response

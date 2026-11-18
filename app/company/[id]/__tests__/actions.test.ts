@@ -64,8 +64,7 @@ import {
 
 const VIEW = {
   kind: 'shared',
-  visibility: { contentLimit: 'sfw', blockedTagIds: [] },
-  cacheVariant: 'sfw:'
+  visibility: { contentLimit: 'sfw', blockedTagIds: [] }
 }
 
 beforeEach(() => {

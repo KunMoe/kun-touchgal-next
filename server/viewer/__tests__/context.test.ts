@@ -234,19 +234,18 @@ describe('listView', () => {
 
     expect(view).toEqual({
       kind: 'shared',
-      visibility: { contentLimit: 'sfw', blockedTagIds: [] },
-      cacheVariant: 'sfw:'
+      visibility: { contentLimit: 'sfw', blockedTagIds: [] }
     })
     expect(hasPendingResourceMock).not.toHaveBeenCalled()
   })
 
   it.each([
-    ['sfw', 'sfw', 'sfw:'],
-    ['nsfw', 'nsfw', 'nsfw:'],
-    ['all', null, 'all:']
+    ['sfw', 'sfw'],
+    ['nsfw', 'nsfw'],
+    ['all', null]
   ] as const)(
     '普通用户按分级设置 %s 落到各自的共享视角',
-    async (nsfw, contentLimit, cacheVariant) => {
+    async (nsfw, contentLimit) => {
       const ctx = createViewerContext(
         cookieHeader({ [TOKEN]: 'good', [NSFW]: nsfw, [MIRROR]: '[]' })
       )
@@ -255,8 +254,7 @@ describe('listView', () => {
         ctx.listView({ personalizedByPendingResource: true })
       ).resolves.toEqual({
         kind: 'shared',
-        visibility: { contentLimit, blockedTagIds: [] },
-        cacheVariant
+        visibility: { contentLimit, blockedTagIds: [] }
       })
       expect(hasPendingResourceMock).toHaveBeenCalledWith(7)
     }
@@ -292,8 +290,7 @@ describe('listView', () => {
 
     await expect(ctx.listView()).resolves.toEqual({
       kind: 'shared',
-      visibility: { contentLimit: null, blockedTagIds: [] },
-      cacheVariant: 'all:'
+      visibility: { contentLimit: null, blockedTagIds: [] }
     })
     expect(hasPendingResourceMock).not.toHaveBeenCalled()
 
@@ -339,8 +336,7 @@ describe('listView', () => {
       ctx.listView({ personalizedByPendingResource: true })
     ).resolves.toEqual({
       kind: 'shared',
-      visibility: { contentLimit: 'sfw', blockedTagIds: [] },
-      cacheVariant: 'sfw:'
+      visibility: { contentLimit: 'sfw', blockedTagIds: [] }
     })
     expect(hasPendingResourceMock).not.toHaveBeenCalled()
   })

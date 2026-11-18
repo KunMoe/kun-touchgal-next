@@ -2,7 +2,10 @@ import { createHash } from 'crypto'
 import { delKv, getKv, setKv, setKvIfAbsent } from '~/lib/redis'
 import { GALGAME_LIST_CACHE_DURATION } from '~/config/cache'
 import { kunCacheSingleflight } from './cacheSingleflight'
-import type { PublicListView } from '~/server/viewer/patchVisibility'
+import {
+  toCacheVariant,
+  type PublicListView
+} from '~/server/viewer/patchVisibility'
 
 const normalizeFilterValues = (values: string[]) => [...new Set(values)].sort()
 
@@ -141,7 +144,7 @@ export const withGalgameListCache = async (
     return options.query()
   }
 
-  const cacheKey = getGalgameListCacheKey(options, options.view.cacheVariant)
+  const cacheKey = getGalgameListCacheKey(options, toCacheVariant(options.view))
 
   const cached = await getCachedGalgameList(cacheKey)
   if (cached.response) {

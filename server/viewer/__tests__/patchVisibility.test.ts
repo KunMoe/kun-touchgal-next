@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PUBLIC_VISIBILITY,
+  toCacheVariant,
   toPatchWhere,
   toPublicListView,
   toSearchVisibility,
@@ -57,62 +58,81 @@ describe('toSearchVisibility', () => {
 })
 
 describe('toPublicListView', () => {
+  it.each(LIMITS)('无屏蔽标签的 %s 视角可共享', (contentLimit) => {
+    expect(toPublicListView({ contentLimit, blockedTagIds: [] })).toEqual({
+      kind: 'shared',
+      visibility: { contentLimit, blockedTagIds: [] }
+    })
+  })
+
+  it.each(LIMITS)('带任何屏蔽标签的 %s 视角都不可共享', (contentLimit) => {
+    for (const blockedTagIds of [
+      [1],
+      [9, 3],
+      Array.from({ length: 400 }, (_, i) => i + 1)
+    ]) {
+      expect(toPublicListView({ contentLimit, blockedTagIds })).toEqual({
+        kind: 'filtered',
+        visibility: { contentLimit, blockedTagIds }
+      })
+    }
+  })
+})
+
+describe('toCacheVariant', () => {
   // 键里的视角段必须与此前由 where 反推出来的逐字节相同, 否则上线即全量冷启动
   it.each([
     ['sfw', 'sfw:'],
     ['nsfw', 'nsfw:'],
     [null, 'all:']
-  ] as const)(
-    '无屏蔽标签的 %s 视角可共享, 视角段是 %s',
-    (contentLimit, variant) => {
-      const view = toPublicListView({ contentLimit, blockedTagIds: [] })
+  ] as const)('%s 的共享视角对应视角段 %s', (contentLimit, variant) => {
+    const view = toPublicListView({ contentLimit, blockedTagIds: [] })
 
-      expect(view).toEqual({
-        kind: 'shared',
-        visibility: { contentLimit, blockedTagIds: [] },
-        cacheVariant: variant
-      })
+    expect(view.kind === 'shared' && toCacheVariant(view)).toBe(variant)
+  })
+
+  // 视角段只从视角自己的 visibility 算: 手写的 shared 视角也拿不到与查询条件不一致的键
+  it('手写的 shared 视角, 键与查询条件仍出自同一个 visibility', () => {
+    const handBuilt: ListView = {
+      kind: 'shared',
+      visibility: { contentLimit: null, blockedTagIds: [] }
     }
-  )
 
-  it.each(LIMITS)(
-    '带任何屏蔽标签的 %s 视角都不可共享, 也没有视角段',
-    (contentLimit) => {
-      for (const blockedTagIds of [
-        [1],
-        [9, 3],
-        Array.from({ length: 400 }, (_, i) => i + 1)
-      ]) {
-        const view = toPublicListView({ contentLimit, blockedTagIds })
+    expect(toCacheVariant(handBuilt)).toBe('all:')
+    expect(toPatchWhere(handBuilt.visibility)).toEqual({})
+  })
+})
 
-        expect(view).toEqual({
-          kind: 'filtered',
-          visibility: { contentLimit, blockedTagIds }
-        })
-        expect(view).not.toHaveProperty('cacheVariant')
-      }
-    }
-  )
-
-  it('类型上: shared 没有 viewer, 屏蔽标签只能为空; 作品列表拿不到 personal', () => {
+describe('类型约束', () => {
+  it('shared 没有 viewer, 屏蔽标签只能为空; 只有 shared 有视角段; 作品列表拿不到 personal', () => {
     const shared: ListView = {
       kind: 'shared',
-      visibility: { contentLimit: 'sfw', blockedTagIds: [] },
-      cacheVariant: 'sfw:'
+      visibility: { contentLimit: 'sfw', blockedTagIds: [] }
     }
     // @ts-expect-error 带屏蔽标签的视角不能标成 shared
     const withBlockedTags: ListView = {
       kind: 'shared',
-      visibility: { contentLimit: 'sfw', blockedTagIds: [1] },
-      cacheVariant: 'sfw:'
+      visibility: { contentLimit: 'sfw', blockedTagIds: [1] }
     }
     const withViewer: ListView = {
       kind: 'shared',
       visibility: { contentLimit: 'sfw', blockedTagIds: [] },
-      cacheVariant: 'sfw:',
       // @ts-expect-error shared 分支没有 viewer 字段
       viewer: { uid: 1, role: 4 }
     }
+    const filtered: ListView = {
+      kind: 'filtered',
+      visibility: { contentLimit: 'sfw', blockedTagIds: [1] }
+    }
+    const personal: ListView = {
+      kind: 'personal',
+      visibility: { contentLimit: 'sfw', blockedTagIds: [] },
+      viewer: { uid: 1, role: 4 }
+    }
+    // @ts-expect-error filtered 视角没有共享缓存的视角段
+    toCacheVariant(filtered)
+    // @ts-expect-error personal 视角没有共享缓存的视角段
+    toCacheVariant(personal)
     const view = toPublicListView(PUBLIC_VISIBILITY)
     // @ts-expect-error toPublicListView 的结果里没有 personal
     const isPersonal = view.kind === 'personal'
