@@ -89,11 +89,11 @@ const rows: Array<{ viewer: MatrixViewer; patch: object; status: object }> = [
   { viewer: V.userSfw, patch: SFW, status: ownStatus(11) },
   { viewer: V.userAll, patch: ALL, status: ownStatus(12) },
   { viewer: V.userNsfw, patch: NSFW_ONLY, status: ownStatus(13) },
-  { viewer: V.blockerMirror, patch: SFW_BLOCK_7_8, status: ownStatus(21) },
+  { viewer: V.blockerMirror, patch: SFW_BLOCK_10_20, status: ownStatus(21) },
   { viewer: V.blockerDb, patch: SFW_BLOCK_10_20, status: ownStatus(22) },
   { viewer: V.blockerBadEscape, patch: SFW_BLOCK_10_20, status: ownStatus(23) },
   { viewer: V.blockerBadJson, patch: SFW_BLOCK_10_20, status: ownStatus(24) },
-  { viewer: V.emptyMirror, patch: SFW, status: ownStatus(25) },
+  { viewer: V.mirrorOnly, patch: SFW, status: ownStatus(25) },
   { viewer: V.pendingAuthor, patch: SFW, status: ownStatus(31) },
   { viewer: V.admin, patch: SFW, status: ADMIN_STATUS },
   { viewer: V.adminBlocker, patch: SFW_BLOCK_7_8, status: ADMIN_STATUS }

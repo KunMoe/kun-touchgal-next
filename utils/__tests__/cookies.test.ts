@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import Cookies from 'js-cookie'
 import { parseCookies } from '~/utils/cookies'
-import { parseBlockedTagIds } from '~/utils/blockedTag'
 
 // store/_cookie.ts 经 Cookies.set 写入, 值由同一个 converter 编码。
 // 取 converter 而非自己拼字符串, 是为了让下面的断言跟着 js-cookie 的实现走
@@ -16,14 +15,6 @@ describe('parseCookies', () => {
     // 这条是白名单快照: 升级 js-cookie 后若失败, 说明本修复的前提已经变了
     expect(written).toBe('[1%2C2%2C3]')
     expect(parseCookies(`kun=${written}`).kun).toBe('[1,2,3]')
-  })
-
-  // 多标签屏蔽曾在此静默失效: JSON.parse 抛错被 catch 吃掉, 回落成空列表
-  it('keeps multi-id blocked tag lists parseable end to end', () => {
-    const key = 'kun-patch-setting-store|state|data|kunBlockedTagIds'
-    const cookies = parseCookies(`${key}=${write(JSON.stringify([1, 2, 3]))}`)
-
-    expect(parseBlockedTagIds(cookies[key])).toEqual([1, 2, 3])
   })
 
   // 服务端 token 经 encodeURIComponent 写入 (@edge-runtime/cookies stringifyCookie),

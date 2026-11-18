@@ -52,15 +52,15 @@ const MIRROR = 'kun-patch-setting-store|state|data|kunBlockedTagIds'
 
 const DB_BLOCKED = [10, 20]
 
-const sessionOf = (role: number) => ({
+const sessionOf = (role: number, blocked: number[] = DB_BLOCKED) => ({
   payload: { iss: '', aud: '', jti: 'j', uid: 7, name: 'kun', role },
-  user: { id: 7, name: 'kun', role, status: 0, blocked_tag_ids: DB_BLOCKED }
+  user: { id: 7, name: 'kun', role, status: 0, blocked_tag_ids: blocked }
 })
 
-// 只有 'good' 这个 token 对应一个有效会话
-const useSession = (role = 1) => {
+// 只有 'good' 这个 token 对应一个有效会话; blocked 是库里的屏蔽列表
+const useSession = (role = 1, blocked: number[] = DB_BLOCKED) => {
   verifyKunTokenWithUserMock.mockImplementation(async (token: string) =>
-    token === 'good' ? sessionOf(role) : null
+    token === 'good' ? sessionOf(role, blocked) : null
   )
 }
 
@@ -159,22 +159,19 @@ describe('visibility', () => {
     ['ALL', 'sfw']
   ] as const
 
-  const MIRROR_CASES = [
-    [undefined, DB_BLOCKED],
-    ['', DB_BLOCKED],
-    // 空数组是合法镜像: 用户清空了屏蔽列表, 不回落库里的值
-    ['[]', []],
-    ['[7%2C8]', [7, 8]],
-    ['%5B7%2C8%5D', [7, 8]],
-    // 归一化: 去重、丢掉非正整数与越过 int4 的值
-    ['[8%2C"8"%2C0%2C-1%2C1.5%2C2147483648%2C7]', [8, 7]],
-    // 畸形转义回落原值后解析失败、坏 JSON、不是数组: 镜像不可用, 以库为准
-    ['%2', DB_BLOCKED],
-    ['100%', DB_BLOCKED],
-    ['kun', DB_BLOCKED],
-    ['{"a":1}', DB_BLOCKED],
-    // 未编码的逗号本身就是合法 cookie 字符
-    ['[7,8]', [7, 8]]
+  // 客户端的设置 store 仍会把屏蔽列表写成 cookie; 服务端不读它, 无论里面是什么
+  const MIRROR_VALUES = [
+    undefined,
+    '',
+    '[]',
+    '[7%2C8]',
+    '%5B7%2C8%5D',
+    '[7,8]',
+    '["1%"]',
+    '%2',
+    '100%',
+    'kun',
+    '{"a":1}'
   ] as const
 
   const TOKEN_CASES = [
@@ -186,21 +183,22 @@ describe('visibility', () => {
 
   const matrix = TOKEN_CASES.flatMap(([token, authenticated]) =>
     NSFW_CASES.flatMap(([nsfw, contentLimit]) =>
-      MIRROR_CASES.map(([mirror, blockedTagIds]) => ({
+      MIRROR_VALUES.map((mirror) => ({
         header: cookieHeader({
           [TOKEN]: token,
           [NSFW]: nsfw,
           [MIRROR]: mirror
         }),
         expected: authenticated
-          ? { contentLimit, blockedTagIds }
+          ? { contentLimit, blockedTagIds: DB_BLOCKED }
           : { contentLimit: 'sfw', blockedTagIds: [] },
         verifications: token ? 1 : 0
       }))
     )
   )
 
-  // 会话 × 分级设置 × 屏蔽标签镜像的全组合: 无效会话一律是公开视角, 与两个设置 cookie 无关
+  // 会话 × 分级设置 × 客户端带来的屏蔽列表副本的全组合: 无效会话一律是公开视角;
+  // 有效会话的屏蔽列表恒取鉴权结果, 与那份副本无关
   it(`全组合 ${matrix.length} 例与预期一致, 每例至多校验一次会话`, async () => {
     for (const { header, expected, verifications } of matrix) {
       verifyKunTokenWithUserMock.mockClear()
@@ -215,13 +213,11 @@ describe('visibility', () => {
   })
 
   it('同名 cookie 重复时取最后一个', async () => {
-    const ctx = createViewerContext(
-      `${TOKEN}=good; ${NSFW}=all; ${NSFW}=nsfw; ${MIRROR}=[1]; ${MIRROR}=[2]`
-    )
+    const ctx = createViewerContext(`${TOKEN}=good; ${NSFW}=all; ${NSFW}=nsfw`)
 
     await expect(ctx.visibility()).resolves.toEqual({
       contentLimit: 'nsfw',
-      blockedTagIds: [2]
+      blockedTagIds: DB_BLOCKED
     })
   })
 })
@@ -246,8 +242,9 @@ describe('listView', () => {
   ] as const)(
     '普通用户按分级设置 %s 落到各自的共享视角',
     async (nsfw, contentLimit) => {
+      useSession(1, [])
       const ctx = createViewerContext(
-        cookieHeader({ [TOKEN]: 'good', [NSFW]: nsfw, [MIRROR]: '[]' })
+        cookieHeader({ [TOKEN]: 'good', [NSFW]: nsfw })
       )
 
       await expect(
@@ -260,32 +257,42 @@ describe('listView', () => {
     }
   )
 
-  it.each([
-    ['镜像', '[8%2C7]', [8, 7]],
-    ['库', undefined, DB_BLOCKED]
-  ] as const)(
-    '屏蔽标签来自%s: filtered, 不带视角段',
-    async (_, mirror, blockedTagIds) => {
+  it('库里有屏蔽标签: filtered; cookie 里的副本再怎么写也不算', async () => {
+    const expected = {
+      kind: 'filtered',
+      visibility: { contentLimit: 'sfw', blockedTagIds: DB_BLOCKED }
+    }
+
+    for (const mirror of [undefined, '[]', '[8%2C7]']) {
       const ctx = createViewerContext(
         cookieHeader({ [TOKEN]: 'good', [MIRROR]: mirror })
       )
-      const expected = {
-        kind: 'filtered',
-        visibility: { contentLimit: 'sfw', blockedTagIds }
-      }
 
-      await expect(ctx.listView()).resolves.toEqual(expected)
+      await expect(ctx.listView(), String(mirror)).resolves.toEqual(expected)
       await expect(
-        ctx.listView({ personalizedByPendingResource: true })
+        ctx.listView({ personalizedByPendingResource: true }),
+        String(mirror)
       ).resolves.toEqual(expected)
     }
-  )
+  })
+
+  it('库里没有屏蔽标签: cookie 里带着副本也仍是 shared', async () => {
+    useSession(1, [])
+    const ctx = createViewerContext(
+      cookieHeader({ [TOKEN]: 'good', [MIRROR]: '[7%2C8]' })
+    )
+
+    await expect(ctx.listView()).resolves.toEqual({
+      kind: 'shared',
+      visibility: { contentLimit: 'sfw', blockedTagIds: [] }
+    })
+  })
 
   it('有待审核资源的作者: 只有声明了 personalizedByPendingResource 才是 personal', async () => {
-    useSession(2)
+    useSession(2, [])
     hasPendingResourceMock.mockResolvedValue(true)
     const ctx = createViewerContext(
-      cookieHeader({ [TOKEN]: 'good', [NSFW]: 'all', [MIRROR]: '[]' })
+      cookieHeader({ [TOKEN]: 'good', [NSFW]: 'all' })
     )
 
     await expect(ctx.listView()).resolves.toEqual({
@@ -299,23 +306,21 @@ describe('listView', () => {
     ).resolves.toEqual({
       kind: 'personal',
       visibility: { contentLimit: null, blockedTagIds: [] },
-      viewer: sessionOf(2).payload
+      viewer: sessionOf(2, []).payload
     })
     expect(hasPendingResourceMock).toHaveBeenCalledWith(7)
   })
 
   it('管理员: personal, 不必查待审核资源; 屏蔽标签照带', async () => {
-    useSession(3)
-    const ctx = createViewerContext(
-      cookieHeader({ [TOKEN]: 'good', [MIRROR]: '[7%2C8]' })
-    )
+    useSession(3, [7, 8])
+    const ctx = createViewerContext(cookieHeader({ [TOKEN]: 'good' }))
 
     await expect(
       ctx.listView({ personalizedByPendingResource: true })
     ).resolves.toEqual({
       kind: 'personal',
       visibility: { contentLimit: 'sfw', blockedTagIds: [7, 8] },
-      viewer: sessionOf(3).payload
+      viewer: sessionOf(3, [7, 8]).payload
     })
     expect(hasPendingResourceMock).not.toHaveBeenCalled()
 
@@ -388,7 +393,10 @@ describe('两个适配器', () => {
       first.visibility()
     ])
     expect(payload).toEqual(sessionOf(1).payload)
-    expect(visibility).toEqual({ contentLimit: 'sfw', blockedTagIds: [7, 8] })
+    expect(visibility).toEqual({
+      contentLimit: 'sfw',
+      blockedTagIds: DB_BLOCKED
+    })
     expect(headersMock).toHaveBeenCalledTimes(1)
     expect(cookiesMock).not.toHaveBeenCalled()
     expect(verifyKunTokenWithUserMock).toHaveBeenCalledTimes(1)

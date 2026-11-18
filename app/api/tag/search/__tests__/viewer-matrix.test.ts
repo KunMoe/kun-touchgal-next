@@ -82,14 +82,14 @@ const rows: Row[] = [
   { viewer: V.userSfw, where: { OR: KEYWORD_OR } },
   { viewer: V.userAll, where: { OR: KEYWORD_OR } },
   { viewer: V.userNsfw, where: { OR: KEYWORD_OR } },
-  // 镜像 [] 是合法缓存, 不回落 DB 的 [10, 20]
-  { viewer: V.emptyMirror, where: { OR: KEYWORD_OR } },
+  // DB 里没有屏蔽: cookie 里那份 [7, 8] 的副本不被采信
+  { viewer: V.mirrorOnly, where: { OR: KEYWORD_OR } },
   { viewer: V.pendingAuthor, where: { OR: KEYWORD_OR } },
   { viewer: V.admin, where: { OR: KEYWORD_OR } },
-  // notIn 原样沿用解析出的顺序 (镜像 [8,7] 不排序)
+  // 屏蔽列表取 DB 的 [10, 20], cookie 里的 [8, 7] 不被采信; notIn 原样沿用 DB 里的顺序
   {
     viewer: V.blockerMirror,
-    where: { id: { notIn: [8, 7] }, OR: KEYWORD_OR }
+    where: { id: { notIn: [10, 20] }, OR: KEYWORD_OR }
   },
   {
     viewer: V.blockerDb,

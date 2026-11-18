@@ -160,7 +160,7 @@ const superAdminRows: SuperAdminRow[] = [
   { viewer: V.superAdminSfw, nsfw: SFW },
   { viewer: V.superAdminNsfw, nsfw: NSFW_ONLY },
   { viewer: V.superAdminAll, nsfw: ALL },
-  // 镜像 [7,8] 不进后台列表: where 里没有 NOT
+  // 屏蔽标签 [7,8] 不进后台列表: where 里没有 NOT
   { viewer: V.superAdminBlocker, nsfw: ALL }
 ]
 

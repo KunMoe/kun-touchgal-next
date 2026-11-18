@@ -121,7 +121,7 @@ const rows: HomeRow[] = [
   },
   {
     viewer: V.blockerMirror,
-    patch: SFW_BLOCK_7_8,
+    patch: SFW_BLOCK_10_20,
     status: PUBLIC_STATUS,
     redis: []
   },
@@ -144,7 +144,7 @@ const rows: HomeRow[] = [
     redis: []
   },
   {
-    viewer: V.emptyMirror,
+    viewer: V.mirrorOnly,
     patch: SFW,
     status: PUBLIC_STATUS,
     redis: sharedMissTrace(HOME_SFW_KEY, HOME_TTL)

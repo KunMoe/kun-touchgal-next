@@ -153,7 +153,7 @@ const createdRows: ResourceRow[] = [
   {
     viewer: V.blockerMirror,
     sortField: 'created',
-    patch: SFW_BLOCK_7_8,
+    patch: SFW_BLOCK_10_20,
     status: PUBLIC_STATUS,
     redis: []
   },
@@ -179,7 +179,7 @@ const createdRows: ResourceRow[] = [
     redis: []
   },
   {
-    viewer: V.emptyMirror,
+    viewer: V.mirrorOnly,
     sortField: 'created',
     patch: SFW,
     status: PUBLIC_STATUS,
@@ -227,7 +227,7 @@ const downloadRows: ResourceRow[] = [
   {
     viewer: V.blockerMirror,
     sortField: 'download',
-    patch: SFW_BLOCK_7_8,
+    patch: SFW_BLOCK_10_20,
     status: PUBLIC_STATUS,
     redis: []
   },

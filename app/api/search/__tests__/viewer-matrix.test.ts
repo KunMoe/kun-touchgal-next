@@ -126,8 +126,8 @@ const rows: SearchRow[] = [
   { viewer: V.userNsfw, patch: NSFW_ONLY, filter: 'contentLimit = "nsfw"' },
   {
     viewer: V.blockerMirror,
-    patch: SFW_BLOCK_7_8,
-    filter: 'contentLimit = "sfw" AND NOT tagIds IN [7, 8]'
+    patch: SFW_BLOCK_10_20,
+    filter: 'contentLimit = "sfw" AND NOT tagIds IN [10, 20]'
   },
   {
     viewer: V.blockerDb,
@@ -144,7 +144,7 @@ const rows: SearchRow[] = [
     patch: SFW_BLOCK_10_20,
     filter: 'contentLimit = "sfw" AND NOT tagIds IN [10, 20]'
   },
-  { viewer: V.emptyMirror, patch: SFW, filter: 'contentLimit = "sfw"' },
+  { viewer: V.mirrorOnly, patch: SFW, filter: 'contentLimit = "sfw"' },
   { viewer: V.pendingAuthor, patch: SFW, filter: 'contentLimit = "sfw"' },
   { viewer: V.admin, patch: SFW, filter: 'contentLimit = "sfw"' },
   {

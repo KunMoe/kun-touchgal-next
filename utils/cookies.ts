@@ -9,8 +9,9 @@ const decodeCookieValue = (value: string) => {
   }
 }
 
-// 必须与 next/headers 的 cookies() 和 store/_cookie.ts 保持同一套解码:
-// js-cookie 写入时不解回 %2C, decodeURI 也不解, 会让含逗号的 JSON 值解析失败
+// 服务端 (server/viewer 与 proxy) 经这里读 token 与分级设置, 两者的值里都没有逗号和 %。
+// 解码仍与 store/_cookie.ts 的写入保持同一套 (decodeURIComponent): js-cookie 写入时不解回
+// %2C, 换成 decodeURI 会让含逗号的值读不回来
 export const parseCookies = (cookieString: string) => {
   const cookiesKv: { [key: string]: string } = {}
   cookieString &&

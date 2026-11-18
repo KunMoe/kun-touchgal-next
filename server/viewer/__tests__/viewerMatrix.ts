@@ -108,13 +108,12 @@ export const V = {
   userSfw: loggedIn('user-sfw', buildSession(11, 1)),
   userAll: loggedIn('user-all', buildSession(12, 1), { nsfw: 'all' }),
   userNsfw: loggedIn('user-nsfw', buildSession(13, 1), { nsfw: 'nsfw' }),
-  // 镜像故意乱序; 镜像胜过 DB: 结果为 [7, 8]
+  // 屏蔽列表只取鉴权结果 (DB), cookie 里的副本不被采信。副本与 DB 不同: 结果为 DB 的 [10, 20]
   blockerMirror: loggedIn('blocker-mirror', buildSession(21, 1, [10, 20]), {
     mirror: '[8%2C7]'
   }),
   blockerDb: loggedIn('blocker-db', buildSession(22, 1, [10, 20])),
-  // 畸形转义: API 侧 parseCookies 回落原值后 JSON 解析失败, RSC 侧 RequestCookies
-  // 直接丢弃该 cookie; 两条路都落到 DB [10, 20]
+  // 副本是畸形转义 / 坏 JSON: 同样无关, 结果为 DB 的 [10, 20]
   blockerBadEscape: loggedIn(
     'blocker-bad-escape',
     buildSession(23, 1, [10, 20]),
@@ -123,16 +122,14 @@ export const V = {
   blockerBadJson: loggedIn('blocker-bad-json', buildSession(24, 1, [10, 20]), {
     mirror: 'kun'
   }),
-  // 空数组是合法缓存 (没有屏蔽任何标签), 不回落 DB
-  emptyMirror: loggedIn('empty-mirror', buildSession(25, 1, [10, 20]), {
-    mirror: '[]'
+  // DB 里没有屏蔽, cookie 里却带着一份副本: 不被采信, 与 user-sfw 同视角
+  mirrorOnly: loggedIn('mirror-only', buildSession(25, 1), {
+    mirror: '[7%2C8]'
   }),
   // role 2 且 hasPendingResource → true (见 PENDING_RESOURCE_UIDS)
   pendingAuthor: loggedIn('pending-author', buildSession(31, 2)),
   admin: loggedIn('admin', buildSession(41, 3)),
-  adminBlocker: loggedIn('admin-blocker', buildSession(42, 3), {
-    mirror: '[7%2C8]'
-  }),
+  adminBlocker: loggedIn('admin-blocker', buildSession(42, 3, [7, 8])),
   superAdminSfw: loggedIn('super-admin-sfw', buildSession(51, 4), {
     nsfw: 'sfw'
   }),
@@ -142,10 +139,11 @@ export const V = {
   superAdminAll: loggedIn('super-admin-all', buildSession(53, 4), {
     nsfw: 'all'
   }),
-  superAdminBlocker: loggedIn('super-admin-blocker', buildSession(54, 4), {
-    nsfw: 'all',
-    mirror: '[7%2C8]'
-  })
+  superAdminBlocker: loggedIn(
+    'super-admin-blocker',
+    buildSession(54, 4, [7, 8]),
+    { nsfw: 'all' }
+  )
 } satisfies Record<string, MatrixViewer>
 
 export const PENDING_RESOURCE_UIDS = new Set([31])

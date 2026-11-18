@@ -120,8 +120,8 @@ const sharedRows: SharedRow[] = [
   { viewer: V.userSfw, uid: 11 },
   { viewer: V.userAll, uid: 12 },
   { viewer: V.userNsfw, uid: 13 },
-  // 镜像 [] 是合法缓存, 不回落 DB 的 [10, 20]
-  { viewer: V.emptyMirror, uid: 25 },
+  // DB 里没有屏蔽: cookie 里那份 [7, 8] 的副本不被采信
+  { viewer: V.mirrorOnly, uid: 25 },
   // 标签列表与 NSFW / 待审资源 / 角色无关
   { viewer: V.pendingAuthor, uid: 31 },
   { viewer: V.admin, uid: 41 }
@@ -133,9 +133,9 @@ interface BlockedRow {
   notIn: number[]
 }
 
-// 带屏蔽标签: 不进共享缓存 (零 Redis 交互), notIn 原样沿用解析出的顺序 (不排序)
+// 带屏蔽标签: 不进共享缓存 (零 Redis 交互), notIn 原样沿用 DB 里的顺序 (不排序)
 const blockedRows: BlockedRow[] = [
-  { viewer: V.blockerMirror, uid: 21, notIn: [8, 7] },
+  { viewer: V.blockerMirror, uid: 21, notIn: [10, 20] },
   { viewer: V.blockerDb, uid: 22, notIn: [10, 20] },
   { viewer: V.blockerBadEscape, uid: 23, notIn: [10, 20] },
   { viewer: V.blockerBadJson, uid: 24, notIn: [10, 20] },

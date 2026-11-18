@@ -67,11 +67,11 @@ const rows: Array<{ viewer: MatrixViewer; visibility: object }> = [
   { viewer: V.userSfw, visibility: SFW },
   { viewer: V.userAll, visibility: ALL },
   { viewer: V.userNsfw, visibility: NSFW_ONLY },
-  { viewer: V.blockerMirror, visibility: SFW_BLOCK_7_8 },
+  { viewer: V.blockerMirror, visibility: SFW_BLOCK_10_20 },
   { viewer: V.blockerDb, visibility: SFW_BLOCK_10_20 },
   { viewer: V.blockerBadEscape, visibility: SFW_BLOCK_10_20 },
   { viewer: V.blockerBadJson, visibility: SFW_BLOCK_10_20 },
-  { viewer: V.emptyMirror, visibility: SFW },
+  { viewer: V.mirrorOnly, visibility: SFW },
   { viewer: V.pendingAuthor, visibility: SFW },
   { viewer: V.admin, visibility: SFW },
   { viewer: V.adminBlocker, visibility: SFW_BLOCK_7_8 }

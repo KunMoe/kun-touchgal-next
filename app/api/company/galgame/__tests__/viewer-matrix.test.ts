@@ -160,8 +160,9 @@ const rows: CompanyRow[] = [
   },
   {
     viewer: V.blockerMirror,
-    patch: SFW_BLOCK_7_8,
-    filter: 'contentLimit = "sfw" AND NOT tagIds IN [7, 8] AND companyIds = 8',
+    patch: SFW_BLOCK_10_20,
+    filter:
+      'contentLimit = "sfw" AND NOT tagIds IN [10, 20] AND companyIds = 8',
     key: null
   },
   {
@@ -186,7 +187,7 @@ const rows: CompanyRow[] = [
     key: null
   },
   {
-    viewer: V.emptyMirror,
+    viewer: V.mirrorOnly,
     patch: SFW,
     filter: 'contentLimit = "sfw" AND companyIds = 8',
     key: COMPANY_SFW_KEY

@@ -1,6 +1,5 @@
 import 'server-only'
 import { parseCookies } from '~/utils/cookies'
-import { parseBlockedTagIds } from '~/utils/blockedTag'
 import { verifyKunTokenWithUser } from '~/app/api/utils/jwt'
 import { shouldBypassSharedCache } from '~/app/api/utils/contentVisibility'
 import {
@@ -12,12 +11,10 @@ import {
 } from './patchVisibility'
 
 const KUN_AUTH_TOKEN_COOKIE = 'kun-galgame-patch-moe-token'
-// 设置 store (zustand persist) 写出的两个镜像 cookie: 分级设置, 用户屏蔽的标签 id。
-// 服务端只在本文件读它们 (kun/inv-viewer-02 执法)
+// 设置 store (zustand persist) 写出的分级设置 cookie。服务端只在本文件读它 (kun/inv-viewer-02 执法)。
+// 同一个 store 还会写出屏蔽标签的副本, 服务端不读: 屏蔽列表只取鉴权结果
 const KUN_NSFW_SETTING_COOKIE =
   'kun-patch-setting-store|state|data|kunNsfwEnable'
-const KUN_BLOCKED_TAG_MIRROR_COOKIE =
-  'kun-patch-setting-store|state|data|kunBlockedTagIds'
 
 type VerifiedSession = NonNullable<
   Awaited<ReturnType<typeof verifyKunTokenWithUser>>
@@ -33,8 +30,8 @@ const ANONYMOUS_SESSION: ViewerSession = Object.freeze({ kind: 'anonymous' })
 // Route Handler 经 fromRequest、页面经 fromHeaders 各建一个, 建好后往下传;
 // 同一个上下文里会话至多校验一次 (校验带 Redis 读写, 见 verifyKunTokenPayload)
 export const createViewerContext = (cookieHeader: string) => {
-  // 服务端读这三个 cookie 只在这里解码, 与 proxy 用同一个 parseCookies。畸形转义回落原值:
-  // 回落后的 token 校验不过, 分级设置不在枚举里, 镜像则看原值还能不能解析成数组
+  // 服务端读这两个 cookie 只在这里解码, 与 proxy 用同一个 parseCookies。畸形转义回落原值:
+  // 回落后的 token 校验不过, 回落后的分级设置不在枚举里
   const cookies = parseCookies(cookieHeader)
   const token = cookies[KUN_AUTH_TOKEN_COOKIE]
 
@@ -55,21 +52,19 @@ export const createViewerContext = (cookieHeader: string) => {
   }
 
   const visibility = async (): Promise<PatchVisibility> => {
-    // 两个设置 cookie 都没有签名, 只对有效会话采信; 否则任何人都能凭自己写的 cookie
-    // 拿到 NSFW 列表, 或让屏蔽标签进入查询条件
+    // 分级设置 cookie 没有签名, 只对有效会话采信; 否则任何人都能凭自己写的 cookie 拿到 NSFW 列表
     const current = await session()
     if (current.kind !== 'authenticated') {
       return PUBLIC_VISIBILITY
     }
 
     const nsfwSetting = cookies[KUN_NSFW_SETTING_COOKIE]
-    // 解析不出数组 (没有这个 cookie、坏 JSON、不是数组) 时是 null, 以库里的为准。
-    // 解析得出数组就采信, 其中不合法的元素被丢掉: [] 是合法的镜像 (用户清空了屏蔽列表)
-    const mirrored = parseBlockedTagIds(cookies[KUN_BLOCKED_TAG_MIRROR_COOKIE])
     return {
       contentLimit:
         nsfwSetting === 'all' ? null : nsfwSetting === 'nsfw' ? 'nsfw' : 'sfw',
-      blockedTagIds: mirrored ?? current.user.blocked_tag_ids
+      // 屏蔽列表只取鉴权结果 (库或鉴权缓存, 改屏蔽时由 invalidateUserSession 失效),
+      // 不接受客户端带来的副本: 鉴权本来就把它加载出来了, 副本只会更旧
+      blockedTagIds: current.user.blocked_tag_ids
     }
   }
 

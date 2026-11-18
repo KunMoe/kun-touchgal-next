@@ -149,9 +149,9 @@ const rows: GalgameRow[] = [
   },
   {
     viewer: V.blockerMirror,
-    patch: SFW_BLOCK_7_8,
+    patch: SFW_BLOCK_10_20,
     filter:
-      'ratingCount >= 10 AND contentLimit = "sfw" AND NOT tagIds IN [7, 8]',
+      'ratingCount >= 10 AND contentLimit = "sfw" AND NOT tagIds IN [10, 20]',
     key: null
   },
   {
@@ -176,7 +176,7 @@ const rows: GalgameRow[] = [
     key: null
   },
   {
-    viewer: V.emptyMirror,
+    viewer: V.mirrorOnly,
     patch: SFW,
     filter: 'ratingCount >= 10 AND contentLimit = "sfw"',
     key: GALGAME_SFW_KEY
