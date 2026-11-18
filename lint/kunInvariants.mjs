@@ -608,13 +608,14 @@ export const KUN_INVARIANTS = [
     ignores: ['**/__tests__/**'],
     enforce: {
       kind: 'import',
-      sources: [/(^|\/)__tests__\/kunTestActor(\.ts)?$/]
+      sources: [/(^|\/)__tests__\/kunTestActor(\.[cm]?[jt]sx?)?$/]
     },
     examples: {
       file: 'app/api/kunInvariantExample.ts',
       bad: [
         "import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'",
         "import { kunTestActor } from './utils/__tests__/kunTestActor.ts'",
+        "import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor.js'",
         "export { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'"
       ],
       good: [

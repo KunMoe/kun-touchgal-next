@@ -148,6 +148,32 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
     }
   )
 
+  // KunActor 只在服务端流动: 客户端的表单与 store 更新 ({ ...user, role }) 不归这条管。
+  // 作用域收窄或放宽都会让这条变红
+  it('inv-authz-03 只在服务端目录执法', async () => {
+    const inv = KUN_INVARIANTS.find((item) => item.id === 'inv-authz-03')
+    const [bad] = inv?.examples.bad ?? []
+    const reportsAt = (file: string) =>
+      reportsOf(eslint, bad, file, 'kun/inv-authz-03')
+
+    for (const file of [
+      'components/kun/KunInvariantExample.tsx',
+      'store/kunInvariantExample.ts',
+      'hooks/kunInvariantExample.ts'
+    ]) {
+      expect(await reportsAt(file), file).toEqual([])
+    }
+    for (const file of [
+      'app/api/kunInvariantExample.ts',
+      'server/kunInvariantExample.ts',
+      'middleware/kunInvariantExample.ts',
+      'utils/actions/kunInvariantExample.ts',
+      'lib/kunInvariantExample.ts'
+    ]) {
+      expect((await reportsAt(file)).length, file).toBeGreaterThan(0)
+    }
+  })
+
   // 这正是不用核心 no-restricted-* 承载不变量的原因: flat config 里后出现的同名规则
   // 带选项即整体替换。每条不变量各占一个 id 之后, 别人再怎么用核心规则都盖不到它
   it('后来的核心 no-restricted-* 块覆盖不了已登记的不变量', async () => {
