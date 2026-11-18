@@ -7,7 +7,6 @@ import { kunCookieOptions } from '~/app/api/utils/cookieOptions'
 import { prisma } from '~/prisma/index'
 import { getRedirectConfig } from '~/app/api/admin/setting/redirect/getRedirectConfig'
 import { updateUserLastLoginTime } from '~/app/api/user/status/service'
-import { Totp } from 'time2fa'
 import { parseCookies } from '~/utils/cookies'
 import { verify2FA } from '~/app/api/utils/verify2FA'
 import { verifyLogin2FASchema } from '~/validations/auth'
@@ -16,7 +15,11 @@ import {
   consumeTwoFactorChallenge,
   reserveTwoFactorAttempt
 } from '~/app/api/auth/_twoFactorChallenge'
-import { consumeTwoFactorBackupCode } from '~/app/api/utils/twoFactorBackupCode'
+import {
+  checkTotp,
+  SECOND_FACTOR_FAILURE_MESSAGE
+} from '~/server/auth/secondFactor'
+import { consumeTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'
 import type { TwoFactorAttemptReservation } from '~/app/api/auth/_twoFactorChallenge'
 import type { UserState } from '~/store/userStore'
 
@@ -36,19 +39,15 @@ const verifyLogin2FA = async (
     return '用户未启用 2FA'
   }
 
-  let isValid = false
-
   if (isBackupCode) {
-    isValid = await consumeTwoFactorBackupCode(uid, token)
+    if (!(await consumeTwoFactorBackupCode(uid, token))) {
+      return SECOND_FACTOR_FAILURE_MESSAGE.invalid
+    }
   } else {
-    isValid = Totp.validate({
-      passcode: token,
-      secret: user.two_factor_secret
-    })
-  }
-
-  if (!isValid) {
-    return '验证码无效'
+    const totp = await checkTotp(uid, user.two_factor_secret, token)
+    if (totp !== 'ok') {
+      return SECOND_FACTOR_FAILURE_MESSAGE[totp]
+    }
   }
 
   const cookie = await cookies()

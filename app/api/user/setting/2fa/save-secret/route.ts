@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { toDataURL } from 'qrcode'
-import { Totp } from 'time2fa'
+import { createTotpKey } from '~/server/auth/secondFactor'
 
 const saveSecret = async (uid: number) => {
   const user = await prisma.user.findUnique({
@@ -19,10 +19,7 @@ const saveSecret = async (uid: number) => {
     return '请先关闭现有 2FA 后再重新设置'
   }
 
-  const key = Totp.generateKey({
-    issuer: kunMoyuMoe.titleShort,
-    user: user.name || uid.toString()
-  })
+  const key = createTotpKey(kunMoyuMoe.titleShort, user.name || uid.toString())
   const qrCodeUrl = await toDataURL(key.url)
 
   const updateResult = await prisma.user.updateMany({

@@ -1,15 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Totp } from 'time2fa'
 import { prisma } from '~/prisma/index'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { disableUser2FASchema } from '~/validations/user'
 import { disable2FA } from '../disable'
-import { consumeTwoFactorBackupCode } from '~/app/api/utils/twoFactorBackupCode'
+import {
+  SECOND_FACTOR_FAILURE_MESSAGE,
+  verifySecondFactor
+} from '~/server/auth/secondFactor'
 
 const verifyAndDisable2FA = async (
   uid: number,
-  input: { token: string; isBackupCode: boolean }
+  input: { token: string; isBackupCode: boolean },
+  ip: string
 ) => {
   const user = await prisma.user.findUnique({
     where: { id: uid },
@@ -28,23 +32,27 @@ const verifyAndDisable2FA = async (
   }
 
   if (input.isBackupCode) {
+    // 备份码的消费与关闭在同一个事务里: 关闭失败时备份码不能白白作废
     const result = await prisma.$transaction(async (tx) => {
-      const isValid = await consumeTwoFactorBackupCode(uid, input.token, tx)
-      if (!isValid) {
-        return null
-      }
-      return disable2FA(uid, tx)
+      const verified = await verifySecondFactor(
+        uid,
+        { kind: 'backup', code: input.token },
+        { ip, db: tx }
+      )
+      return verified.ok ? disable2FA(uid, tx) : verified
     })
-    return result ?? '验证码无效'
+    return 'ok' in result
+      ? SECOND_FACTOR_FAILURE_MESSAGE[result.reason]
+      : result
   }
 
-  const isValid = Totp.validate({
-    passcode: input.token,
-    secret: user.two_factor_secret
-  })
-
-  if (!isValid) {
-    return '验证码无效'
+  const verified = await verifySecondFactor(
+    uid,
+    { kind: 'totp', code: input.token },
+    { ip }
+  )
+  if (!verified.ok) {
+    return SECOND_FACTOR_FAILURE_MESSAGE[verified.reason]
   }
 
   return disable2FA(uid)
@@ -61,6 +69,10 @@ export const POST = async (req: NextRequest) => {
     return NextResponse.json(input)
   }
 
-  const result = await verifyAndDisable2FA(payload.uid, input)
+  const result = await verifyAndDisable2FA(
+    payload.uid,
+    input,
+    getRemoteIp(req.headers)
+  )
   return NextResponse.json(result)
 }

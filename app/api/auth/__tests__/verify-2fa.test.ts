@@ -11,7 +11,7 @@ const {
   kunParsePostBodyMock,
   parseCookiesMock,
   reserveAttemptMock,
-  totpValidateMock,
+  checkTotpMock,
   updateLastLoginMock,
   verify2FAMock
 } = vi.hoisted(() => ({
@@ -25,7 +25,7 @@ const {
   kunParsePostBodyMock: vi.fn(),
   parseCookiesMock: vi.fn(),
   reserveAttemptMock: vi.fn(),
-  totpValidateMock: vi.fn(),
+  checkTotpMock: vi.fn(),
   updateLastLoginMock: vi.fn(),
   verify2FAMock: vi.fn()
 }))
@@ -71,8 +71,12 @@ vi.mock('~/app/api/user/status/service', () => ({
   updateUserLastLoginTime: updateLastLoginMock
 }))
 
-vi.mock('time2fa', () => ({
-  Totp: { validate: totpValidateMock }
+vi.mock('~/server/auth/secondFactor', () => ({
+  checkTotp: checkTotpMock,
+  SECOND_FACTOR_FAILURE_MESSAGE: {
+    invalid: '验证码无效',
+    replayed: '该验证码已经使用过, 请等身份验证器显示新的验证码后再试'
+  }
 }))
 
 vi.mock('~/utils/cookies', () => ({
@@ -92,7 +96,7 @@ vi.mock('~/app/api/auth/_twoFactorChallenge', () => ({
   reserveTwoFactorAttempt: reserveAttemptMock
 }))
 
-vi.mock('~/app/api/utils/twoFactorBackupCode', () => ({
+vi.mock('~/server/auth/twoFactorBackupCode', () => ({
   consumeTwoFactorBackupCode: consumeBackupCodeMock
 }))
 
@@ -143,7 +147,7 @@ beforeEach(() => {
     remainingAttempts: 4
   })
   findUniqueMock.mockResolvedValue(user)
-  totpValidateMock.mockReturnValue(false)
+  checkTotpMock.mockResolvedValue('invalid')
   consumeChallengeMock.mockResolvedValue(true)
   generateKunTokenMock.mockResolvedValue('access-token')
   getRedirectConfigMock.mockResolvedValue({})
@@ -174,7 +178,7 @@ describe('POST /api/auth/verify-2fa', () => {
     findUniqueMock
       .mockImplementationOnce(() => firstUserRead.promise)
       .mockResolvedValueOnce(user)
-    totpValidateMock.mockReturnValueOnce(false).mockReturnValueOnce(true)
+    checkTotpMock.mockResolvedValueOnce('invalid').mockResolvedValueOnce('ok')
 
     const earlierCorrectRequest = POST(createRequest())
     const fifthFailedResponse = await POST(createRequest())
@@ -202,7 +206,7 @@ describe('POST /api/auth/verify-2fa', () => {
   })
 
   it('consumes the challenge before issuing the access session', async () => {
-    totpValidateMock.mockReturnValue(true)
+    checkTotpMock.mockResolvedValue('ok')
 
     const response = await POST(createRequest())
     const body = await response.json()
@@ -224,7 +228,7 @@ describe('POST /api/auth/verify-2fa', () => {
   })
 
   it('does not issue a second session when the same token is replayed', async () => {
-    totpValidateMock.mockReturnValue(true)
+    checkTotpMock.mockResolvedValue('ok')
     consumeChallengeMock
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false)
@@ -237,6 +241,55 @@ describe('POST /api/auth/verify-2fa', () => {
       '2FA 临时令牌已失效, 请重新登录'
     )
     expect(generateKunTokenMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('checks the TOTP code for this user against the stored secret', async () => {
+    checkTotpMock.mockResolvedValue('ok')
+
+    await POST(createRequest())
+
+    expect(checkTotpMock).toHaveBeenCalledWith(7, 'ABCDEFGHIJKLMN12', '123456')
+    expect(consumeBackupCodeMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a code whose time step was already used, without consuming the challenge', async () => {
+    checkTotpMock.mockResolvedValue('replayed')
+
+    const response = await POST(createRequest())
+
+    await expect(response.json()).resolves.toBe(
+      '该验证码已经使用过, 请等身份验证器显示新的验证码后再试'
+    )
+    expect(consumeChallengeMock).not.toHaveBeenCalled()
+    expect(generateKunTokenMock).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the used time step cannot be recorded', async () => {
+    checkTotpMock.mockRejectedValue(new Error('redis unavailable'))
+
+    const response = await POST(createRequest())
+
+    await expect(response.json()).resolves.toBe(
+      '2FA 验证服务暂不可用, 请稍后重试'
+    )
+    expect(consumeChallengeMock).not.toHaveBeenCalled()
+    expect(generateKunTokenMock).not.toHaveBeenCalled()
+  })
+
+  it('takes a backup code through the atomic consume, not the TOTP check', async () => {
+    kunParsePostBodyMock.mockResolvedValue({
+      token: '654321',
+      isBackupCode: true
+    })
+    consumeBackupCodeMock.mockResolvedValueOnce(false).mockResolvedValue(true)
+
+    const rejected = await POST(createRequest())
+    const accepted = await POST(createRequest())
+
+    await expect(rejected.json()).resolves.toBe('验证码无效')
+    expect(await accepted.json()).toMatchObject({ uid: 7 })
+    expect(consumeBackupCodeMock).toHaveBeenCalledWith(7, '654321')
+    expect(checkTotpMock).not.toHaveBeenCalled()
   })
 
   it('fails closed when Redis cannot reserve an attempt', async () => {

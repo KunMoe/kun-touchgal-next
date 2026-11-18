@@ -720,6 +720,30 @@ export const KUN_INVARIANTS = [
         "export const storeName = 'kun-patch-setting-store'"
       ]
     }
+  },
+  {
+    id: 'inv-auth-01',
+    aliases: ['T07'],
+    statement:
+      'time2fa 只许在 server/auth/secondFactor.ts 里导入, 其余一律用它导出的 checkTotp / verifySecondFactor / verifyEnrollmentCode / issueBackupCodes / createTotpKey',
+    reason:
+      'time2fa 的 validate 是纯函数, 只回布尔值: 不登记已用的时间步, 漂移窗口只能逐处传参, 也不计尝试次数。曾有 4 处裸调用, 每处都缺这三样 (同一个码在它的 30 秒内可跨入口重放, 跨步长到达的正确码被拒, 设置页可以无限次猜); 「防 2FA 暴力破解」那次修复改了两个设置页路由, 预算却只接到了登录一处',
+    removeWhen: '全仓不再使用 time2fa',
+    // 测试要自己算出真实的验证码
+    ignores: ['server/auth/secondFactor.ts', '**/__tests__/**'],
+    enforce: { kind: 'import', sources: ['time2fa'] },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import { Totp } from 'time2fa'",
+        "import { generateBackupCodes } from 'time2fa'",
+        "export { Hotp } from 'time2fa'"
+      ],
+      good: [
+        "import { verifySecondFactor } from '~/server/auth/secondFactor'",
+        "import { toDataURL } from 'qrcode'"
+      ]
+    }
   }
 ]
 

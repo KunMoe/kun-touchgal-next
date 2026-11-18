@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
-  consumeBackupCodeMock,
   disable2FAMock,
   findUniqueMock,
   transactionMock,
-  verifyHeaderCookieMock
+  verifyHeaderCookieMock,
+  verifySecondFactorMock
 } = vi.hoisted(() => ({
-  consumeBackupCodeMock: vi.fn(),
   disable2FAMock: vi.fn(),
   findUniqueMock: vi.fn(),
   transactionMock: vi.fn(),
-  verifyHeaderCookieMock: vi.fn()
+  verifyHeaderCookieMock: vi.fn(),
+  verifySecondFactorMock: vi.fn()
 }))
 
 const transactionClient = {
@@ -40,12 +40,14 @@ vi.mock('~/middleware/_verifyHeaderCookie', () => ({
   verifyHeaderCookie: verifyHeaderCookieMock
 }))
 
-vi.mock('time2fa', () => ({
-  Totp: { validate: vi.fn() }
-}))
-
-vi.mock('~/app/api/utils/twoFactorBackupCode', () => ({
-  consumeTwoFactorBackupCode: consumeBackupCodeMock
+vi.mock('~/server/auth/secondFactor', () => ({
+  verifySecondFactor: verifySecondFactorMock,
+  SECOND_FACTOR_FAILURE_MESSAGE: {
+    invalid: '验证码无效',
+    replayed: '该验证码已经使用过, 请等身份验证器显示新的验证码后再试',
+    locked: '验证尝试次数过多, 请 15 分钟后再试',
+    unavailable: '验证服务暂不可用, 请稍后重试'
+  }
 }))
 
 vi.mock('~/app/api/user/setting/2fa/disable', () => ({
@@ -59,6 +61,7 @@ const createRequest = (
 ) =>
   new Request('http://localhost/api/user/setting/2fa/disable', {
     method: 'POST',
+    headers: { 'x-real-ip': '203.0.113.8' },
     body: JSON.stringify(body)
   }) as unknown as Parameters<typeof POST>[0]
 
@@ -73,7 +76,7 @@ beforeEach(() => {
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
       callback(transactionClient)
   )
-  consumeBackupCodeMock.mockResolvedValue(true)
+  verifySecondFactorMock.mockResolvedValue({ ok: true })
   disable2FAMock.mockResolvedValue({ success: true, message: '2FA 已禁用' })
 })
 
@@ -86,25 +89,63 @@ describe('POST /api/user/setting/2fa/disable', () => {
       message: '2FA 已禁用'
     })
     expect(transactionMock).toHaveBeenCalledTimes(1)
-    expect(consumeBackupCodeMock).toHaveBeenCalledWith(
+    expect(verifySecondFactorMock).toHaveBeenCalledWith(
       7,
-      '123456',
-      transactionClient
+      { kind: 'backup', code: '123456' },
+      { ip: '203.0.113.8', db: transactionClient }
     )
     expect(disable2FAMock).toHaveBeenCalledWith(7, transactionClient)
-    expect(consumeBackupCodeMock.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(verifySecondFactorMock.mock.invocationCallOrder[0]).toBeLessThan(
       disable2FAMock.mock.invocationCallOrder[0]
     )
   })
 
   it('does not disable 2FA when the backup code is invalid', async () => {
-    consumeBackupCodeMock.mockResolvedValue(false)
+    verifySecondFactorMock.mockResolvedValue({ ok: false, reason: 'invalid' })
 
     const response = await POST(createRequest())
 
     await expect(response.json()).resolves.toBe('验证码无效')
     expect(disable2FAMock).not.toHaveBeenCalled()
   })
+
+  it('verifies a TOTP code outside any transaction before disabling', async () => {
+    const response = await POST(
+      createRequest({ token: '123456', isBackupCode: false })
+    )
+
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      message: '2FA 已禁用'
+    })
+    expect(verifySecondFactorMock).toHaveBeenCalledWith(
+      7,
+      { kind: 'totp', code: '123456' },
+      { ip: '203.0.113.8' }
+    )
+    expect(transactionMock).not.toHaveBeenCalled()
+    expect(disable2FAMock).toHaveBeenCalledWith(7)
+  })
+
+  it.each([
+    ['replayed', '该验证码已经使用过, 请等身份验证器显示新的验证码后再试'],
+    ['locked', '验证尝试次数过多, 请 15 分钟后再试'],
+    ['unavailable', '验证服务暂不可用, 请稍后重试']
+  ])(
+    'keeps 2FA on when the check is %s, for either kind of code',
+    async (reason, message) => {
+      verifySecondFactorMock.mockResolvedValue({ ok: false, reason })
+
+      const viaTotp = await POST(
+        createRequest({ token: '123456', isBackupCode: false })
+      )
+      const viaBackup = await POST(createRequest())
+
+      await expect(viaTotp.json()).resolves.toBe(message)
+      await expect(viaBackup.json()).resolves.toBe(message)
+      expect(disable2FAMock).not.toHaveBeenCalled()
+    }
+  )
 
   it('rejects an invalid token with the shared parser message', async () => {
     const response = await POST(

@@ -1,7 +1,6 @@
 import { prisma } from '~/prisma/index'
 import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
-import { Totp } from 'time2fa'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
@@ -9,6 +8,10 @@ import { resetEmailSchema } from '~/validations/user'
 import { verifyPassword } from '~/app/api/utils/algorithm'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { delKv, setKv } from '~/lib/redis'
+import {
+  SECOND_FACTOR_FAILURE_MESSAGE,
+  verifySecondFactor
+} from '~/server/auth/secondFactor'
 import {
   createEmailChangeRevertKey,
   EMAIL_CHANGE_REVERT_TTL_SECONDS,
@@ -64,7 +67,11 @@ const validateEmailChangeTarget = async (
   }
 }
 
-const verifyTotpChallenge = (user: EmailChangeUser, token?: string) => {
+const verifyTotpChallenge = async (
+  user: EmailChangeUser,
+  ip: string,
+  token?: string
+) => {
   if (!user.two_factor_secret) {
     return '未找到 2FA 密钥'
   }
@@ -73,12 +80,15 @@ const verifyTotpChallenge = (user: EmailChangeUser, token?: string) => {
     return '请输入 2FA 验证码'
   }
 
-  const isTotpValid = Totp.validate({
-    passcode: token,
-    secret: user.two_factor_secret
-  })
-  if (!isTotpValid) {
-    return '2FA 验证码无效'
+  const verified = await verifySecondFactor(
+    user.id,
+    { kind: 'totp', code: token },
+    { ip }
+  )
+  if (!verified.ok) {
+    return verified.reason === 'invalid'
+      ? '2FA 验证码无效'
+      : SECOND_FACTOR_FAILURE_MESSAGE[verified.reason]
   }
 }
 
@@ -98,10 +108,11 @@ const verifyPasswordChallenge = async (
 
 const verifyEmailChangeChallenge = async (
   user: EmailChangeUser,
-  input: ResetEmailInput
+  input: ResetEmailInput,
+  ip: string
 ) => {
   if (user.enable_2fa) {
-    return verifyTotpChallenge(user, input.totp)
+    return verifyTotpChallenge(user, ip, input.totp)
   }
 
   return verifyPasswordChallenge(user, input.currentPassword)
@@ -171,7 +182,8 @@ const updateEmail = async (req: NextRequest) => {
   if (!payload) {
     return '用户未登录'
   }
-  if (!getRemoteIp(req.headers)) {
+  const ip = getRemoteIp(req.headers)
+  if (!ip) {
     return '读取请求头失败'
   }
 
@@ -185,7 +197,7 @@ const updateEmail = async (req: NextRequest) => {
     return targetError
   }
 
-  const challengeError = await verifyEmailChangeChallenge(user, input)
+  const challengeError = await verifyEmailChangeChallenge(user, input, ip)
   if (challengeError) {
     return challengeError
   }
