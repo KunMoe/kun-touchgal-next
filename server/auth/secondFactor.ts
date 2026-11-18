@@ -4,10 +4,9 @@ import { setKvIfAbsent } from '~/lib/redis'
 import { reserveAttempt, settleSuccess } from './attemptBudget'
 import { stepUpSecondFactorDims } from './budgets'
 import {
-  consumeTwoFactorBackupCode,
-  hashTwoFactorBackupCode
+  hashTwoFactorBackupCode,
+  matchesTwoFactorBackupCode
 } from './twoFactorBackupCode'
-import type { Prisma } from '~/prisma/generated/prisma/client'
 
 // 第二因子 (TOTP 与备份码) 的唯一校验点, 也是全仓唯一允许 import time2fa 的文件
 // (kun/inv-auth-01)。time2fa 的 validate 是纯函数, 只回布尔值: 没有地方登记已用的时间步,
@@ -42,8 +41,6 @@ export type SecondFactorProof = { kind: 'totp' | 'backup'; code: string }
 
 export interface SecondFactorContext {
   ip: string
-  // 备份码的消费要与随后的状态变更同一个事务时传入
-  db?: Prisma.TransactionClient
 }
 
 // 返回命中的时间步 (计数器), 都不中返回 null。先比当前步, 再比前一步与后一步
@@ -94,7 +91,6 @@ const unavailable = (stage: string, error: unknown): SecondFactorResult => {
 }
 
 // 预留 → 校验 → 结算。只把 Redis 的异常转成 unavailable; check 里的数据库异常照常抛出
-// (事务里吞掉它, 外层会带着一个已中止的事务继续走)
 const withinStepUpBudget = async (
   uid: number,
   ip: string,
@@ -114,7 +110,7 @@ const withinStepUpBudget = async (
 
   const result = await check()
   if (result.ok) {
-    // 证明已经成立 (备份码可能已被消费): 清不掉计数只是此前的失败没被勾销, 不能因此判失败
+    // 证明已经成立: 清不掉计数只是此前的失败没被勾销, 不能因此判失败
     await settleSuccess(dims).catch((error) => unavailable('settle', error))
   }
   return result
@@ -134,25 +130,34 @@ const checkTotpResult = async (
   return outcome === 'ok' ? { ok: true } : { ok: false, reason: outcome }
 }
 
-// 已启用 2FA 的账号的二次验证: TOTP 或一个备份码 (备份码即用即废)
+// 已启用 2FA 的账号的二次验证: TOTP 或一个备份码。
+// 备份码在这里只校验、不消费: 它由随后的状态变更在自己的事务里消费 (stepUp.ts 的
+// consumeStepUpBackupCode), 变更没做成就不该白白作废 —— 备份码只有 10 个, 用它的人多半
+// 已经没有身份验证器了。TOTP 的时间步则当场登记, 失败了等下一个码即可
 export const verifySecondFactor = (
   uid: number,
   proof: SecondFactorProof,
   ctx: SecondFactorContext
 ) =>
   withinStepUpBudget(uid, ctx.ip, async () => {
-    const db = ctx.db ?? prisma
+    const user = await prisma.user.findUnique({
+      where: { id: uid },
+      select: {
+        enable_2fa: true,
+        two_factor_secret: true,
+        two_factor_backup: true
+      }
+    })
+    if (!user?.enable_2fa) {
+      return { ok: false, reason: 'invalid' }
+    }
+
     if (proof.kind === 'backup') {
-      return (await consumeTwoFactorBackupCode(uid, proof.code, db))
+      return matchesTwoFactorBackupCode(user.two_factor_backup, proof.code)
         ? { ok: true }
         : { ok: false, reason: 'invalid' }
     }
-
-    const user = await db.user.findUnique({
-      where: { id: uid },
-      select: { enable_2fa: true, two_factor_secret: true }
-    })
-    if (!user?.enable_2fa || !user.two_factor_secret) {
+    if (!user.two_factor_secret) {
       return { ok: false, reason: 'invalid' }
     }
     return checkTotpResult(uid, user.two_factor_secret, proof.code)

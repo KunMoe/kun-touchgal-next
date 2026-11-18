@@ -51,13 +51,8 @@ const updateEmail = async (req: NextRequest) => {
     return '新邮箱不能与当前邮箱相同'
   }
 
-  const stepUp = await requireStepUp(payload.uid, 'email.change', input, {
-    ip
-  })
-  if (!stepUp.ok) {
-    return stepUp.message
-  }
-
+  // 冷却与邮箱验证码排在二次验证之前: 这两项只看账号自己的状态与请求本身, 不透露目标邮箱
+  // 注册没有; 排在后面的话, 冷却期内或验证码输错一次, 刚用掉的 TOTP 时间步就白白作废
   if (await isEmailChangeCoolingDown(payload.uid)) {
     return EMAIL_CHANGE_COOLDOWN_MESSAGE
   }
@@ -65,6 +60,13 @@ const updateEmail = async (req: NextRequest) => {
   const isCodeValid = await verifyVerificationCode(input.email, input.code)
   if (!isCodeValid) {
     return '您的验证码无效, 请重新输入'
+  }
+
+  const stepUp = await requireStepUp(payload.uid, 'email.change', input, {
+    ip
+  })
+  if (!stepUp.ok) {
+    return stepUp.message
   }
 
   // 查重排在两道证明之后: 没证明身份、没收到新邮箱的验证码, 就问不出一个邮箱注册没有

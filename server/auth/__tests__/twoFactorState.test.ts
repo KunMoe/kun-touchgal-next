@@ -209,19 +209,23 @@ describe('confirmEnrollment', () => {
 })
 
 describe('disableTwoFactor', () => {
+  const BACKUP = ['0123456789', '654321']
   const enabled = () =>
     makeUser({
       enable_2fa: true,
       two_factor_secret: TOTP_SECRET,
-      two_factor_backup: ['h1:a', 'h1:b']
+      two_factor_backup: BACKUP.map(hashTwoFactorBackupCode)
     })
+
+  const inTx = <T>(run: (tx: never) => Promise<T>) =>
+    fakes.db.client.$transaction(run) as Promise<T>
 
   it('clears the secret and the backup codes of an account with 2FA on', async () => {
     fakes.db.insertUser(enabled())
 
-    await expect(disableTwoFactor(passed('twoFactor.disable'))).resolves.toBe(
-      true
-    )
+    await expect(
+      inTx((tx) => disableTwoFactor(passed('twoFactor.disable'), tx))
+    ).resolves.toBe('disabled')
     expect(fakes.db.user(7)).toMatchObject({
       enable_2fa: false,
       two_factor_secret: '',
@@ -229,14 +233,44 @@ describe('disableTwoFactor', () => {
     })
   })
 
-  it('reports false and writes nothing when 2FA is not on', async () => {
+  it('reports not-enabled and writes nothing when 2FA is not on', async () => {
     fakes.db.insertUser(makeUser({ two_factor_secret: TOTP_SECRET }))
 
-    await expect(disableTwoFactor(passed('twoFactor.disable'))).resolves.toBe(
-      false
-    )
+    await expect(
+      inTx((tx) => disableTwoFactor(passed('twoFactor.disable'), tx))
+    ).resolves.toBe('not-enabled')
     // 待确认的密钥不归「关闭」管
     expect(fakes.db.user(7)?.two_factor_secret).toBe(TOTP_SECRET)
+  })
+
+  // 用备份码证明的: 备份码在关闭的那个事务里消费
+  it('uses up the backup code that proved the request, then disables', async () => {
+    fakes.db.insertUser(enabled())
+    const proved = { ...passed('twoFactor.disable'), backupCode: BACKUP[0] }
+
+    await expect(inTx((tx) => disableTwoFactor(proved, tx))).resolves.toBe(
+      'disabled'
+    )
+    const writes = fakes.db.queries.filter(
+      (query) => !query.endsWith('findUnique')
+    )
+    expect(writes).toEqual(['$executeRaw', 'user.updateMany'])
+  })
+
+  it('refuses when that backup code was used by another request in the meantime', async () => {
+    fakes.db.insertUser(enabled())
+    fakes.db.patchUser(7, {
+      two_factor_backup: [hashTwoFactorBackupCode(BACKUP[1])]
+    })
+    const proved = { ...passed('twoFactor.disable'), backupCode: BACKUP[0] }
+
+    await expect(inTx((tx) => disableTwoFactor(proved, tx))).resolves.toBe(
+      'backup-code-gone'
+    )
+    expect(fakes.db.user(7)).toMatchObject({
+      enable_2fa: true,
+      two_factor_backup: [hashTwoFactorBackupCode(BACKUP[1])]
+    })
   })
 
   it('lets an admin override target another user, inside the given transaction', async () => {
@@ -244,7 +278,7 @@ describe('disableTwoFactor', () => {
     fakes.db.insertUser(makeUser({ id: 1, name: 'admin', email: 'a@x.io' }))
 
     await expect(
-      fakes.db.client.$transaction(async (tx: never) => {
+      inTx(async (tx) => {
         await disableTwoFactor(
           { kind: 'admin-override', adminUid: 1, uid: 7 },
           tx

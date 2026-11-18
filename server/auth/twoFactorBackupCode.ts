@@ -21,6 +21,10 @@ export const hashTwoFactorBackupCode = (code: string) =>
     .update(code)
     .digest('hex')}`
 
+// 只看在不在, 不消费。存量里有明文也有哈希, 与下面消费语句认的两种形态一致
+export const matchesTwoFactorBackupCode = (stored: string[], code: string) =>
+  stored.includes(code) || stored.includes(hashTwoFactorBackupCode(code))
+
 export const consumeTwoFactorBackupCode = async (
   uid: number,
   token: string,

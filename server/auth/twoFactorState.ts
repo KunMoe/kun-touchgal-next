@@ -6,12 +6,14 @@ import {
   SECOND_FACTOR_FAILURE_MESSAGE,
   verifyEnrollmentCode
 } from './secondFactor'
+import { consumeStepUpBackupCode } from './stepUp'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { StepUpPassed } from './stepUp'
 
-// 2FA 的三次状态迁移 (生成待确认的密钥 → 确认启用 → 关闭)。全仓对 enable_2fa、
-// two_factor_secret、two_factor_backup 的写入只在这里, 而且一律是带前置状态的条件更新:
-// 平铺 WHERE 的 updateMany 在并发下由数据库重新判定, 命中 0 行就是状态已经被别的请求改了。
+// 2FA 的三次状态迁移 (生成待确认的密钥 → 确认启用 → 关闭)。应用对 enable_2fa、
+// two_factor_secret 的写入只在这里, two_factor_backup 除了逐个消费 (twoFactorBackupCode.ts)
+// 也只在这里; 一律是带前置状态的条件更新: 平铺 WHERE 的 updateMany 在并发下由数据库重新
+// 判定, 命中 0 行就是状态已经被别的请求改了。
 // two_factor_secret 的值只在本文件与 secondFactor.ts 里被解读
 
 export const TWO_FACTOR_STATE_CHANGED = '当前 2FA 状态已变化，请刷新后重试'
@@ -98,16 +100,22 @@ export const confirmEnrollment = async (
 }
 
 // 关闭只有两种授权: 本人刚通过二次验证, 或管理员代为关闭 (由后台路由鉴权并写审计日志)。
-// 返回 false 表示该账号此刻并未启用
+// 必须在事务里调: 本人用备份码证明时, 备份码的消费与关闭要么都做、要么都不做。
+//   backup-code-gone: 备份码在校验之后被别的请求先用掉了
+//   not-enabled: 该账号此刻并未启用
 export const disableTwoFactor = async (
   by:
     | StepUpPassed<'twoFactor.disable'>
     | { kind: 'admin-override'; adminUid: number; uid: number },
-  db: Prisma.TransactionClient = prisma
-) => {
-  const updated = await db.user.updateMany({
+  tx: Prisma.TransactionClient
+): Promise<'disabled' | 'backup-code-gone' | 'not-enabled'> => {
+  if (!('kind' in by) && !(await consumeStepUpBackupCode(by, tx))) {
+    return 'backup-code-gone'
+  }
+
+  const updated = await tx.user.updateMany({
     where: { id: by.uid, enable_2fa: true },
     data: { enable_2fa: false, two_factor_secret: '', two_factor_backup: [] }
   })
-  return updated.count === 1
+  return updated.count === 1 ? 'disabled' : 'not-enabled'
 }

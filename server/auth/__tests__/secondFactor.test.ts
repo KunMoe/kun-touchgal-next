@@ -2,13 +2,11 @@ import { createHmac } from 'crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
-  consumeBackupCodeMock,
   findUniqueMock,
   reserveAttemptMock,
   setKvIfAbsentMock,
   settleSuccessMock
 } = vi.hoisted(() => ({
-  consumeBackupCodeMock: vi.fn(),
   findUniqueMock: vi.fn(),
   reserveAttemptMock: vi.fn(),
   setKvIfAbsentMock: vi.fn(),
@@ -24,13 +22,6 @@ vi.mock('~/prisma/index', () => ({
 vi.mock('~/server/auth/attemptBudget', () => ({
   reserveAttempt: reserveAttemptMock,
   settleSuccess: settleSuccessMock
-}))
-
-vi.mock('~/server/auth/twoFactorBackupCode', async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import('~/server/auth/twoFactorBackupCode')
-  >()),
-  consumeTwoFactorBackupCode: consumeBackupCodeMock
 }))
 
 import {
@@ -69,7 +60,11 @@ const SECRET = 'JBSWY3DPEHPK3PXP'
 const STEP = 59_000_000
 const NOW = STEP * 30_000 + 12_000
 
-const enabledUser = { enable_2fa: true, two_factor_secret: SECRET }
+const enabledUser = {
+  enable_2fa: true,
+  two_factor_secret: SECRET,
+  two_factor_backup: [] as string[]
+}
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -221,7 +216,6 @@ describe('verifySecondFactor', () => {
     ).resolves.toEqual({ ok: false, reason: 'locked' })
 
     expect(findUniqueMock).not.toHaveBeenCalled()
-    expect(consumeBackupCodeMock).not.toHaveBeenCalled()
     expect(setKvIfAbsentMock).not.toHaveBeenCalled()
   })
 
@@ -260,8 +254,8 @@ describe('verifySecondFactor', () => {
   })
 
   it.each([
-    ['2FA is not enabled', { enable_2fa: false, two_factor_secret: SECRET }],
-    ['the secret is empty', { enable_2fa: true, two_factor_secret: '' }],
+    ['2FA is not enabled', { ...enabledUser, enable_2fa: false }],
+    ['the secret is empty', { ...enabledUser, two_factor_secret: '' }],
     ['the user is gone', null]
   ])('treats a TOTP code as wrong when %s', async (_, user) => {
     findUniqueMock.mockResolvedValue(user)
@@ -274,29 +268,34 @@ describe('verifySecondFactor', () => {
     expect(settleSuccessMock).not.toHaveBeenCalled()
   })
 
-  it('consumes a backup code on the given transaction client', async () => {
-    const tx = { user: { findUnique: vi.fn() } }
-    consumeBackupCodeMock.mockResolvedValue(true)
+  // 备份码在这里只校验: 它由随后的状态变更在自己的事务里消费, 变更没做成就不该作废
+  it('accepts a backup code that is on file without using it up', async () => {
+    findUniqueMock.mockResolvedValue({
+      ...enabledUser,
+      two_factor_backup: [
+        hashTwoFactorBackupCode('0123456789'),
+        // 还没迁成哈希的存量明文
+        '654321'
+      ]
+    })
 
-    await expect(
-      verifySecondFactor(
-        7,
-        { kind: 'backup', code: '123456' },
-        { ...ctx, db: tx as never }
-      )
-    ).resolves.toEqual({ ok: true })
+    for (const code of ['0123456789', '654321']) {
+      await expect(
+        verifySecondFactor(7, { kind: 'backup', code }, ctx)
+      ).resolves.toEqual({ ok: true })
+    }
 
-    expect(consumeBackupCodeMock).toHaveBeenCalledExactlyOnceWith(
-      7,
-      '123456',
-      tx
-    )
-    expect(settleSuccessMock).toHaveBeenCalledTimes(1)
+    // 只读了库: 没有任何写入的入口被调用
+    expect(findUniqueMock).toHaveBeenCalledTimes(2)
+    expect(settleSuccessMock).toHaveBeenCalledTimes(2)
     expect(setKvIfAbsentMock).not.toHaveBeenCalled()
   })
 
   it('keeps the reservation charged for a wrong backup code', async () => {
-    consumeBackupCodeMock.mockResolvedValue(false)
+    findUniqueMock.mockResolvedValue({
+      ...enabledUser,
+      two_factor_backup: [hashTwoFactorBackupCode('0123456789')]
+    })
 
     await expect(
       verifySecondFactor(7, { kind: 'backup', code: '123456' }, ctx)
@@ -304,18 +303,28 @@ describe('verifySecondFactor', () => {
     expect(settleSuccessMock).not.toHaveBeenCalled()
   })
 
-  // 备份码此时已被消费: 清不掉计数不能让这次验证判失败
-  it('still succeeds when the counters cannot be cleared afterwards', async () => {
-    consumeBackupCodeMock.mockResolvedValue(true)
-    settleSuccessMock.mockRejectedValue(new Error('redis unavailable'))
+  it('does not take a backup code of an account without 2FA', async () => {
+    findUniqueMock.mockResolvedValue({
+      ...enabledUser,
+      enable_2fa: false,
+      two_factor_backup: [hashTwoFactorBackupCode('0123456789')]
+    })
 
     await expect(
-      verifySecondFactor(7, { kind: 'backup', code: '123456' }, ctx)
-    ).resolves.toEqual({ ok: true })
+      verifySecondFactor(7, { kind: 'backup', code: '0123456789' }, ctx)
+    ).resolves.toEqual({ ok: false, reason: 'invalid' })
+  })
+
+  it('still succeeds when the counters cannot be cleared afterwards', async () => {
+    settleSuccessMock.mockRejectedValue(new Error('redis unavailable'))
+
+    await expect(verifySecondFactor(7, totp(), ctx)).resolves.toEqual({
+      ok: true
+    })
   })
 
   it('lets a database failure surface instead of reporting a wrong code', async () => {
-    consumeBackupCodeMock.mockRejectedValue(new Error('connection lost'))
+    findUniqueMock.mockRejectedValue(new Error('connection lost'))
 
     await expect(
       verifySecondFactor(7, { kind: 'backup', code: '123456' }, ctx)

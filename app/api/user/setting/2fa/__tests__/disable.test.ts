@@ -140,7 +140,8 @@ describe('POST /api/user/setting/2fa/disable', () => {
 
       expect(await read(response)).toBe(INVALID)
       expect(db.user(UID)).toMatchObject(enabledRow())
-      expect(db.transactions).toEqual([{ committed: false }])
+      // 二次验证没过就不开事务
+      expect(db.transactions).toEqual([])
     })
 
     // 启用了但密钥是空的 (坏数据): 没有哪个验证码能对上, 仍可用备份码关闭
@@ -255,6 +256,27 @@ describe('POST /api/user/setting/2fa/disable', () => {
 
       expect(await read(response)).toBe(INVALID)
       expect(db.user(UID)).toMatchObject(enabledRow())
+      expect(db.transactions).toEqual([])
+    })
+
+    // 校验通过之后、事务里消费之前, 同一个备份码被另一个请求先用掉了 (例如拿去登录)
+    it('refuses when the backup code is used by another request in the meantime', async () => {
+      db.interceptNextWrite(() => {
+        db.patchUser(UID, {
+          two_factor_backup: [hashTwoFactorBackupCode(BACKUP_CODES[1])]
+        })
+      })
+
+      const response = await post({
+        token: BACKUP_CODES[0],
+        isBackupCode: true
+      })
+
+      expect(await read(response)).toBe(INVALID)
+      expect(db.user(UID)).toMatchObject({
+        enable_2fa: true,
+        two_factor_backup: [hashTwoFactorBackupCode(BACKUP_CODES[1])]
+      })
       expect(db.transactions).toEqual([{ committed: false }])
     })
 
@@ -342,6 +364,17 @@ describe('POST /api/user/setting/2fa/disable', () => {
 
       expect(await read(response)).toBe('验证服务暂不可用, 请稍后重试')
       expect(db.user(UID)).toMatchObject(enabledRow())
+    })
+
+    // 被锁之后的请求不该再占一个数据库事务 (Redis 往返都在事务之外)
+    it('opens no transaction for a locked-out request', async () => {
+      for (let i = 0; i < 5; i++) {
+        await post({ token: String(900000 + i), isBackupCode: true })
+      }
+
+      await post({ token: BACKUP_CODES[0], isBackupCode: true })
+
+      expect(db.transactions).toEqual([])
     })
   })
 })

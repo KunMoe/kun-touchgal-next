@@ -6,6 +6,7 @@ import {
   SECOND_FACTOR_FAILURE_MESSAGE,
   verifySecondFactor
 } from './secondFactor'
+import { consumeTwoFactorBackupCode } from './twoFactorBackupCode'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { SecondFactorProof } from './secondFactor'
 
@@ -40,6 +41,9 @@ declare const stepUpBrand: unique symbol
 export type StepUpPassed<A extends SensitiveAction> = {
   readonly uid: number
   readonly action: A
+  // 第二因子是备份码时, 它已校验但还没消费: 收这个值的状态迁移函数要在自己的事务里
+  // 调 consumeStepUpBackupCode
+  readonly backupCode?: string
   readonly [stepUpBrand]: true
 }
 
@@ -59,8 +63,6 @@ export type StepUpResult<A extends SensitiveAction> =
 
 export interface StepUpContext {
   ip: string
-  // 备份码的消费要与随后的状态变更同一个事务时传入
-  db?: Prisma.TransactionClient
 }
 
 const fail = (reason: StepUpFailureReason, message: string) =>
@@ -79,7 +81,8 @@ const secondFactorProofOf = (proof: StepUpProof): SecondFactorProof | null => {
 }
 
 // 顺序固定: 预算 → 读凭据 → 校验。先过密码, 再过第二因子: 密码不对时不消耗第二因子的额度,
-// 也不透露第二因子对不对。调用方必须把它排在任何「目标是否可用」的查询之前
+// 也不透露第二因子对不对。调用方必须把它排在任何「目标是否可用」的查询之前。
+// 这里没有任何库写入, 不要放进事务里调 (中间有 Redis 往返)
 export const requireStepUp = async <A extends SensitiveAction>(
   uid: number,
   action: A,
@@ -108,7 +111,7 @@ export const requireStepUp = async <A extends SensitiveAction>(
     }
   }
 
-  const user = await (ctx.db ?? prisma).user.findUnique({
+  const user = await prisma.user.findUnique({
     where: { id: uid },
     select: { password: true, enable_2fa: true }
   })
@@ -127,6 +130,7 @@ export const requireStepUp = async <A extends SensitiveAction>(
     })
   }
 
+  let backupCode: string | undefined
   if (
     policy.secondFactor === 'required' ||
     (policy.secondFactor === 'if-enabled' && user.enable_2fa)
@@ -148,7 +152,28 @@ export const requireStepUp = async <A extends SensitiveAction>(
           : SECOND_FACTOR_FAILURE_MESSAGE[verified.reason]
       )
     }
+    if (secondFactor.kind === 'backup') {
+      backupCode = secondFactor.code
+    }
   }
 
-  return { ok: true, passed: { uid, action } as StepUpPassed<A> }
+  return {
+    ok: true,
+    passed: {
+      uid,
+      action,
+      ...(backupCode && { backupCode })
+    } as StepUpPassed<A>
+  }
 }
+
+export const STEP_UP_BACKUP_CODE_GONE = '2FA 验证码无效'
+
+// 与它所授权的变更同一个事务: 变更回滚, 备份码也回来。返回 false 表示这个码在校验之后
+// 被别的请求先用掉了, 调用方应让事务失败 (文案用 STEP_UP_BACKUP_CODE_GONE)
+export const consumeStepUpBackupCode = async (
+  passed: StepUpPassed<SensitiveAction>,
+  tx: Prisma.TransactionClient
+) =>
+  !passed.backupCode ||
+  consumeTwoFactorBackupCode(passed.uid, passed.backupCode, tx)

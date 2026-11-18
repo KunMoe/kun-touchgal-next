@@ -1,5 +1,13 @@
 import { randomUUID } from 'crypto'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi
+} from 'vitest'
 import { dbContractUrl, openDbContract } from '~/server/db/__tests__/dbContract'
 import type { StepUpPassed } from '~/server/auth/stepUp'
 
@@ -13,11 +21,17 @@ describe.skipIf(!dbContractUrl)(
   () => {
     let prisma: Awaited<ReturnType<typeof openDbContract>>
     let emailChange: typeof import('~/server/auth/emailChange')
+    let backupCodes: typeof import('~/server/auth/twoFactorBackupCode')
     let createdUserIds: number[] = []
 
     beforeAll(async () => {
+      vi.stubEnv(
+        'KUN_TWO_FACTOR_BACKUP_PEPPER',
+        'test-only-two-factor-backup-pepper-1234567890'
+      )
       prisma = await openDbContract()
       emailChange = await import('~/server/auth/emailChange')
+      backupCodes = await import('~/server/auth/twoFactorBackupCode')
     })
 
     afterEach(async () => {
@@ -28,6 +42,7 @@ describe.skipIf(!dbContractUrl)(
 
     afterAll(async () => {
       await prisma?.$disconnect()
+      vi.unstubAllEnvs()
     })
 
     const address = (label: string) => `${label}-${randomUUID()}@example.com`
@@ -205,6 +220,91 @@ describe.skipIf(!dbContractUrl)(
 
         expect(await emailOf(user.id)).toBe(user.email)
         expect(await ledgerOf(user.id)).toEqual([])
+      })
+
+      // 用备份码通过二次验证的: 备份码在提交的那个事务里消费, 提交没成它就还在
+      describe('with a backup code as the second factor', () => {
+        const CODES = ['0123456789', '654321']
+
+        const newUserWith2FA = async () => {
+          const user = await newUser()
+          await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              enable_2fa: true,
+              two_factor_backup: CODES.map(backupCodes.hashTwoFactorBackupCode)
+            }
+          })
+          return user
+        }
+
+        const changeWith = (
+          uid: number,
+          oldEmail: string,
+          backupCode: string
+        ) =>
+          emailChange.commitEmailChange(
+            { ...passed(uid), backupCode },
+            {
+              oldEmail,
+              newEmail: address('b'),
+              revertTokenHash: emailChange.issueRevertToken().hash
+            }
+          )
+
+        const storedCodes = async (uid: number) =>
+          (await prisma.user.findUniqueOrThrow({ where: { id: uid } }))
+            .two_factor_backup
+
+        it('uses the code up together with the change', async () => {
+          const user = await newUserWith2FA()
+
+          await expect(
+            changeWith(user.id, user.email, CODES[0])
+          ).resolves.toBeUndefined()
+
+          expect(await emailOf(user.id)).not.toBe(user.email)
+          expect(await storedCodes(user.id)).toEqual([
+            backupCodes.hashTwoFactorBackupCode(CODES[1])
+          ])
+        })
+
+        it('keeps the code when the change is refused', async () => {
+          const user = await newUserWith2FA()
+          const first = await change(user.id, user.email, address('b'))
+          expect(first.failure).toBeUndefined()
+
+          await expect(
+            changeWith(user.id, await emailOf(user.id), CODES[0])
+          ).resolves.toBe(emailChange.EMAIL_CHANGE_COOLDOWN_MESSAGE)
+
+          expect(await storedCodes(user.id)).toHaveLength(2)
+        })
+
+        it('undoes the change when the code is no longer on file', async () => {
+          const user = await newUserWith2FA()
+
+          await expect(
+            changeWith(user.id, user.email, '9999999999')
+          ).resolves.toBe('2FA 验证码无效')
+
+          expect(await emailOf(user.id)).toBe(user.email)
+          expect(await ledgerOf(user.id)).toEqual([])
+          expect(await storedCodes(user.id)).toHaveLength(2)
+        })
+
+        it('lets only one of two concurrent changes spend the same code', async () => {
+          const user = await newUserWith2FA()
+
+          const results = await Promise.all([
+            changeWith(user.id, user.email, CODES[0]),
+            changeWith(user.id, user.email, CODES[0])
+          ])
+
+          expect(results.filter((result) => !result)).toHaveLength(1)
+          expect(await storedCodes(user.id)).toHaveLength(1)
+          expect(await ledgerOf(user.id)).toHaveLength(1)
+        })
       })
 
       it('drops the ledger rows together with the user', async () => {

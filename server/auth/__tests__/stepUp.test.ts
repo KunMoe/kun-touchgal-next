@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
+  consumeBackupCodeMock,
   findUniqueMock,
   reserveAttemptMock,
   settleSuccessMock,
   verifyPasswordMock,
   verifySecondFactorMock
 } = vi.hoisted(() => ({
+  consumeBackupCodeMock: vi.fn(),
   findUniqueMock: vi.fn(),
   reserveAttemptMock: vi.fn(),
   settleSuccessMock: vi.fn(),
@@ -27,6 +29,10 @@ vi.mock('~/server/auth/algorithm', () => ({
   verifyPassword: verifyPasswordMock
 }))
 
+vi.mock('~/server/auth/twoFactorBackupCode', () => ({
+  consumeTwoFactorBackupCode: consumeBackupCodeMock
+}))
+
 vi.mock('~/server/auth/secondFactor', () => ({
   verifySecondFactor: verifySecondFactorMock,
   SECOND_FACTOR_FAILURE_MESSAGE: {
@@ -37,7 +43,11 @@ vi.mock('~/server/auth/secondFactor', () => ({
   }
 }))
 
-import { requireStepUp, STEP_UP_POLICY } from '~/server/auth/stepUp'
+import {
+  consumeStepUpBackupCode,
+  requireStepUp,
+  STEP_UP_POLICY
+} from '~/server/auth/stepUp'
 
 const ctx = { ip: '203.0.113.8' }
 const user = (enable_2fa: boolean) => ({ password: 'stored-hash', enable_2fa })
@@ -260,10 +270,10 @@ describe('requireStepUp: email.change (password, plus a second factor if 2FA is 
     }
   )
 
-  it('takes a backup code as the second factor', async () => {
+  it('takes a backup code as the second factor and hands it on, still unused', async () => {
     findUniqueMock.mockResolvedValue(user(true))
 
-    await requireStepUp(
+    const result = await requireStepUp(
       7,
       'email.change',
       { currentPassword: 'x', totp: '', backupCode: '654321' },
@@ -275,6 +285,33 @@ describe('requireStepUp: email.change (password, plus a second factor if 2FA is 
       { kind: 'backup', code: '654321' },
       ctx
     )
+    expect(result).toEqual({
+      ok: true,
+      passed: { uid: 7, action: 'email.change', backupCode: '654321' }
+    })
+    expect(consumeBackupCodeMock).not.toHaveBeenCalled()
+  })
+
+  it('carries no backup code when the proof was a TOTP code or none was needed', async () => {
+    findUniqueMock.mockResolvedValue(user(true))
+    const withTotp = await requireStepUp(7, 'email.change', proof, ctx)
+    findUniqueMock.mockResolvedValue(user(false))
+    const passwordOnly = await requireStepUp(
+      7,
+      'email.change',
+      { currentPassword: 'x', backupCode: '654321' },
+      ctx
+    )
+
+    expect(withTotp).toEqual({
+      ok: true,
+      passed: { uid: 7, action: 'email.change' }
+    })
+    // 没启用 2FA 的账号用不着第二因子: 顺手带来的备份码不往下传
+    expect(passwordOnly).toEqual({
+      ok: true,
+      passed: { uid: 7, action: 'email.change' }
+    })
   })
 
   it.each([
@@ -318,22 +355,52 @@ describe('requireStepUp: twoFactor.disable (second factor only)', () => {
     expect(verifySecondFactorMock).not.toHaveBeenCalled()
   })
 
-  it('reads the credential and checks the proof on the given transaction client', async () => {
-    const tx = {
-      user: { findUnique: vi.fn().mockResolvedValue(user(true)) }
-    }
-    const txCtx = { ip: '', db: tx as never }
+  it('reads the credential outside any transaction', async () => {
+    findUniqueMock.mockResolvedValue(user(true))
 
-    await expect(
-      requireStepUp(7, 'twoFactor.disable', { backupCode: '654321' }, txCtx)
-    ).resolves.toMatchObject({ ok: true })
+    await requireStepUp(7, 'twoFactor.disable', { backupCode: '654321' }, ctx)
 
-    expect(tx.user.findUnique).toHaveBeenCalledTimes(1)
-    expect(findUniqueMock).not.toHaveBeenCalled()
-    expect(verifySecondFactorMock).toHaveBeenCalledWith(
+    expect(findUniqueMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('consumeStepUpBackupCode', () => {
+  const tx = { marker: 'tx' } as never
+
+  it('uses the backup code up on the transaction of the change it authorized', async () => {
+    findUniqueMock.mockResolvedValue(user(true))
+    consumeBackupCodeMock.mockResolvedValueOnce(true).mockResolvedValue(false)
+    const result = await requireStepUp(
       7,
-      { kind: 'backup', code: '654321' },
-      txCtx
+      'twoFactor.disable',
+      { backupCode: '654321' },
+      ctx
     )
+    if (!result.ok) {
+      throw new Error('step-up should pass')
+    }
+
+    await expect(consumeStepUpBackupCode(result.passed, tx)).resolves.toBe(true)
+    // 校验之后被别的请求先用掉了
+    await expect(consumeStepUpBackupCode(result.passed, tx)).resolves.toBe(
+      false
+    )
+    expect(consumeBackupCodeMock).toHaveBeenCalledWith(7, '654321', tx)
+  })
+
+  it('has nothing to do when the proof was not a backup code', async () => {
+    findUniqueMock.mockResolvedValue(user(true))
+    const result = await requireStepUp(
+      7,
+      'twoFactor.disable',
+      { totp: '123456' },
+      ctx
+    )
+    if (!result.ok) {
+      throw new Error('step-up should pass')
+    }
+
+    await expect(consumeStepUpBackupCode(result.passed, tx)).resolves.toBe(true)
+    expect(consumeBackupCodeMock).not.toHaveBeenCalled()
   })
 })

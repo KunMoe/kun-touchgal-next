@@ -39,11 +39,11 @@ const disableUser2FAByAdmin = async (
   }
 
   const failure = await kunTx('admin.user.twoFactor.disable', async (ctx) => {
-    const disabled = await disableTwoFactor(
+    const outcome = await disableTwoFactor(
       { kind: 'admin-override', adminUid, uid: input.uid },
       ctx.tx
     )
-    if (!disabled) {
+    if (outcome !== 'disabled') {
       ctx.fail('该用户尚未启用两步验证')
     }
 

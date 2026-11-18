@@ -209,14 +209,24 @@ describe('POST /api/user/setting/email: request gates', () => {
     expect(db.user(8)?.email).toBe(TAKEN_EMAIL)
   })
 
-  // P07-08: 查重曾排在身份证明之前, 只凭会话就能探测一个地址注册没有。现在被占地址与
-  // 空闲地址在证明身份、并交出发往该地址的验证码之前, 回答逐字相同
+  // P07-08: 查重曾排在身份证明之前, 只凭会话就能探测一个地址注册没有。现在回答只取决于
+  // 「有没有发往该地址的验证码」和「身份证明」, 与地址注册没有无关, 直到两样都交齐
   it('answers a taken and a free address alike until identity and the mailed code are proven', async () => {
     const ask = async (overrides: EmailBody) => [
       await read(await post({ code: CODE, ...overrides, email: TAKEN_EMAIL })),
       await read(await post({ code: CODE, ...overrides, email: NEW_EMAIL }))
     ]
 
+    // 被占地址的验证码在它主人的邮箱里, 拿不到: 与任何一个没发过码的空闲地址回答相同
+    kv.entries.delete(NEW_EMAIL)
+    expect(await ask({ currentPassword: PASSWORD })).toEqual([
+      CODE_INVALID,
+      CODE_INVALID
+    ])
+
+    // 假设两个地址的验证码都拿到了: 身份没证明之前回答仍然相同
+    kv.put(NEW_EMAIL, CODE, 600)
+    kv.put(TAKEN_EMAIL, CODE, 600)
     expect(await ask({})).toEqual(['请输入当前密码', '请输入当前密码'])
     expect(await ask({ currentPassword: WRONG_PASSWORD })).toEqual([
       '当前密码输入错误',
@@ -227,10 +237,6 @@ describe('POST /api/user/setting/email: request gates', () => {
       '请输入 2FA 验证码',
       '请输入 2FA 验证码'
     ])
-
-    // 身份已证明, 但没有发往被占地址的那封验证码 (它在地址主人的邮箱里)
-    const proven = await post(totpBody({ email: TAKEN_EMAIL }))
-    expect(await read(proven)).toBe(CODE_INVALID)
     expect(db.user(UID)?.email).toBe(OLD_EMAIL)
   })
 })
@@ -292,7 +298,7 @@ describe('POST /api/user/setting/email: identity proof', () => {
     expect(db.user(UID)?.email).toBe(NEW_EMAIL)
   })
 
-  it('accepts a backup code as the second factor and uses it up', async () => {
+  it('accepts a backup code as the second factor and uses it up with the change', async () => {
     use2FA()
 
     const wrong = await post(totpBody({ totp: '', backupCode: '999999' }))
@@ -305,6 +311,92 @@ describe('POST /api/user/setting/email: identity proof', () => {
     expect(db.user(UID)).toMatchObject({
       email: NEW_EMAIL,
       two_factor_backup: [hashTwoFactorBackupCode(BACKUP_CODES[1])]
+    })
+    // 备份码的消费与改邮箱在同一个已提交的事务里
+    expect(db.transactions).toEqual([{ committed: true }])
+  })
+
+  // 备份码只有 10 个, 用它的人多半已经没有身份验证器: 变更没做成就不能白白作废
+  describe('a backup code survives a change that does not go through', () => {
+    const backupBody = (overrides: EmailBody = {}) =>
+      totpBody({ totp: '', backupCode: BACKUP_CODES[0], ...overrides })
+    const expectBackupCodesIntact = () =>
+      expect(db.user(UID)).toMatchObject({
+        email: OLD_EMAIL,
+        two_factor_backup: BACKUP_CODES.map(hashTwoFactorBackupCode)
+      })
+
+    beforeEach(() => {
+      use2FA()
+    })
+
+    it('during the cooldown', async () => {
+      db.insertEmailChange({
+        user_id: UID,
+        old_email: 'earlier@example.com',
+        new_email: OLD_EMAIL,
+        revert_token_hash: 'a'.repeat(64),
+        created: new Date(FIXED_NOW.getTime() - 60_000),
+        expires: new Date(FIXED_NOW.getTime() + 86_340_000),
+        reverted: null
+      })
+
+      const response = await post(backupBody())
+
+      expect(await read(response)).toBe('24 小时内只能修改一次邮箱, 请稍后再试')
+      expectBackupCodesIntact()
+    })
+
+    it('with a wrong email verification code', async () => {
+      const response = await post(backupBody({ code: 'Zzz9999' }))
+
+      expect(await read(response)).toBe(CODE_INVALID)
+      expectBackupCodesIntact()
+    })
+
+    it('when the new address turns out to be taken', async () => {
+      kv.put(TAKEN_EMAIL, CODE, 600)
+
+      const response = await post(backupBody({ email: TAKEN_EMAIL }))
+
+      expect(await read(response)).toBe('该邮箱已被使用')
+      expectBackupCodesIntact()
+    })
+
+    it('when the notice to the old address cannot be sent', async () => {
+      mail.setMode('http-error')
+
+      const response = await post(backupBody())
+
+      expect(await read(response)).toBe(NOTICE_FAILED)
+      expectBackupCodesIntact()
+    })
+
+    it('when the commit fails', async () => {
+      db.interceptNextWrite(() =>
+        db.insertUser(makeUser({ id: 9, name: 'racer', email: NEW_EMAIL }))
+      )
+
+      const response = await post(backupBody())
+
+      expect(await read(response)).toBe('更新邮箱失败, 请稍后重试')
+      expectBackupCodesIntact()
+    })
+
+    // 校验通过之后、提交之前, 同一个备份码被另一个请求先用掉了
+    it('and a code used elsewhere in the meantime stops the change', async () => {
+      mail.onSend(() => {
+        db.patchUser(UID, {
+          two_factor_backup: [hashTwoFactorBackupCode(BACKUP_CODES[1])]
+        })
+      })
+
+      const response = await post(backupBody())
+
+      expect(await read(response)).toBe('2FA 验证码无效')
+      expect(db.user(UID)?.email).toBe(OLD_EMAIL)
+      expect(db.emailChanges()).toEqual([])
+      expect(db.transactions).toEqual([{ committed: false }])
     })
   })
 
@@ -347,20 +439,25 @@ describe('POST /api/user/setting/email: identity proof', () => {
     }
   )
 
-  // X07-05: 同一个时间步的验证码只认一次
-  it('rejects the same TOTP code a second time within its step', async () => {
+  // X07-05: 同一个时间步的验证码只认一次, 登记与登录、设置页的其它入口共用
+  it('rejects a TOTP code whose time step was already used elsewhere', async () => {
     use2FA()
-    const code = totpAt(TOTP_SECRET)
-    kv.put('third@example.com', CODE, 600)
+    kv.put(`auth:totp:used:${UID}:${Math.floor(Date.now() / 30_000)}`, '1', 120)
 
-    const first = await post(totpBody({ totp: code }))
-    const second = await post(
-      totpBody({ email: 'third@example.com', totp: code })
-    )
+    const response = await post(totpBody())
 
-    expect(await read(first)).toEqual({})
-    expect(await read(second)).toBe(REPLAYED)
-    expect(db.user(UID)?.email).toBe(NEW_EMAIL)
+    expect(await read(response)).toBe(REPLAYED)
+    expect(db.user(UID)?.email).toBe(OLD_EMAIL)
+  })
+
+  it('records the TOTP time step it accepted', async () => {
+    use2FA()
+
+    await post(totpBody())
+
+    expect(
+      kv.get(`auth:totp:used:${UID}:${Math.floor(Date.now() / 30_000)}`)
+    ).toEqual({ value: '1', ttl: 120 })
   })
 
   it('locks the second factor after five wrong codes from one IP, without touching the password bucket', async () => {
@@ -413,6 +510,15 @@ describe('POST /api/user/setting/email: identity proof', () => {
 })
 
 describe('POST /api/user/setting/email: verification code', () => {
+  it('checks the mailed code before the identity proof, and charges no attempt for a wrong one', async () => {
+    const response = await post(
+      passwordBody({ code: 'Zzz9999', currentPassword: WRONG_PASSWORD })
+    )
+
+    expect(await read(response)).toBe(CODE_INVALID)
+    expect([...budget.counts.keys()]).toEqual([])
+  })
+
   it('does not consume the verification code when the identity proof fails', async () => {
     const response = await post(
       passwordBody({ currentPassword: WRONG_PASSWORD })
@@ -423,7 +529,7 @@ describe('POST /api/user/setting/email: verification code', () => {
     expect(mail.outbox).toEqual([])
   })
 
-  it('checks the code stored under the bare new address after the proof', async () => {
+  it('checks the code stored under the bare new address', async () => {
     const wrong = await post(passwordBody({ code: 'Zzz9999' }))
     kv.entries.delete(NEW_EMAIL)
     const missing = await post(passwordBody())
@@ -574,14 +680,16 @@ describe('POST /api/user/setting/email: 24-hour cooldown', () => {
     expect(kv.get(THIRD_EMAIL)?.value).toBe(CODE)
   })
 
-  it('asks for the identity proof before saying anything about the cooldown', async () => {
+  // 冷却只看账号自己的状态, 排在二次验证之前: 冷却期内不必白白交出密码与验证码
+  it('says so before asking for any identity proof, and charges no attempt', async () => {
     await post(passwordBody())
 
     const response = await post(
       passwordBody({ email: THIRD_EMAIL, currentPassword: WRONG_PASSWORD })
     )
 
-    expect(await read(response)).toBe('当前密码输入错误')
+    expect(await read(response)).toBe(COOLDOWN)
+    expect([...budget.counts.keys()]).toEqual([])
   })
 
   it('counts a change that was reverted', async () => {

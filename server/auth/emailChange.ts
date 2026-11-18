@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'crypto'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
+import { consumeStepUpBackupCode, STEP_UP_BACKUP_CODE_GONE } from './stepUp'
 import type { StepUpPassed } from './stepUp'
 
 // 自助改邮箱的台账 (user_email_change, 一行是一次变更) 与建立在它上面的两条规则:
@@ -66,6 +67,11 @@ export const commitEmailChange = (
     })
     if (recent) {
       ctx.fail(EMAIL_CHANGE_COOLDOWN_MESSAGE)
+    }
+
+    // 用备份码证明的, 到这一步才消费: 前面任何一处没过, 备份码都还在
+    if (!(await consumeStepUpBackupCode(passed, ctx.tx))) {
+      ctx.fail(STEP_UP_BACKUP_CODE_GONE)
     }
 
     await ctx.tx.user_email_change.create({
