@@ -7,7 +7,7 @@ import {
   kunUpdatePatchViewsActions
 } from './actions'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
-import { getNSFWHeader } from '~/utils/actions/getNSFWHeader'
+import { getViewerContext } from '~/server/viewer/fromHeaders'
 import { getPatchPageTitle } from '~/utils/patch/getPatchPageTitle'
 import { after } from 'next/server'
 import { notFound } from 'next/navigation'
@@ -16,8 +16,8 @@ import type { Metadata } from 'next'
 
 const isValidPatchId = (id: string) => /^[A-Za-z0-9]{8}$/.test(id)
 
-const isNsfwAllowed = (nsfwHeader: { content_limit?: string }) =>
-  nsfwHeader.content_limit !== 'sfw'
+const isNsfwAllowed = async () =>
+  (await (await getViewerContext()).visibility()).contentLimit !== 'sfw'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -31,9 +31,9 @@ export const generateMetadata = async ({
     return {}
   }
 
-  const [pageData, nsfwHeader] = await Promise.all([
+  const [pageData, nsfwAllowed] = await Promise.all([
     kunGetPatchPageDataActions(id),
-    getNSFWHeader()
+    isNsfwAllowed()
   ])
   if (typeof pageData === 'string') {
     return {}
@@ -42,7 +42,7 @@ export const generateMetadata = async ({
   return generateKunMetadataTemplate(
     pageData.patch,
     pageData.intro,
-    isNsfwAllowed(nsfwHeader)
+    nsfwAllowed
   )
 }
 
@@ -52,12 +52,11 @@ export default async function Kun({ params }: Props) {
     notFound()
   }
 
-  const [pageData, payload, nsfwHeader] = await Promise.all([
+  const [pageData, payload, nsfwAllowed] = await Promise.all([
     kunGetPatchPageDataActions(id),
     verifyHeaderCookie(),
-    getNSFWHeader()
+    isNsfwAllowed()
   ])
-  const nsfwAllowed = isNsfwAllowed(nsfwHeader)
   if (typeof pageData === 'string') {
     return <ErrorComponent error={pageData} />
   }

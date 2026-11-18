@@ -1,11 +1,15 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminResourcePaginationSchema } from '~/validations/admin'
+import {
+  toPatchWhere,
+  type ContentLimit
+} from '~/server/viewer/patchVisibility'
 import type { AdminResource } from '~/types/api/admin'
 
 export const getPatchResource = async (
   input: z.infer<typeof adminResourcePaginationSchema>,
-  nsfwEnable: Record<string, string | undefined>
+  contentLimit: ContentLimit | null
 ) => {
   const { page, limit, search, searchType, userId } = input
   const offset = (page - 1) * limit
@@ -53,7 +57,8 @@ export const getPatchResource = async (
   const where = {
     ...searchFilter,
     ...(userId ? { user_id: userId } : {}),
-    patch: nsfwEnable
+    // 后台列表只按分级过滤, 不套用屏蔽标签
+    patch: toPatchWhere({ contentLimit, blockedTagIds: [] })
   }
 
   const [data, total] = await Promise.all([

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
 import { adminResourceApplyPaginationSchema } from '~/validations/admin'
-import { getNSFWHeader } from '~/app/api/utils/getNSFWHeader'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
 import { getPatchResourceApply } from './get'
 import { can } from '~/constants/permission'
 
@@ -12,7 +11,8 @@ export const GET = async (req: NextRequest) => {
     return NextResponse.json(input)
   }
 
-  const payload = await verifyHeaderCookie(req)
+  const ctx = viewerContextFromRequest(req)
+  const payload = await ctx.viewer()
   if (!payload) {
     return NextResponse.json('未登录')
   }
@@ -20,8 +20,8 @@ export const GET = async (req: NextRequest) => {
     return NextResponse.json('仅超级管理员可访问')
   }
 
-  const nsfwEnable = await getNSFWHeader(req, payload)
+  const { contentLimit } = await ctx.visibility()
 
-  const res = await getPatchResourceApply(input, nsfwEnable)
+  const res = await getPatchResourceApply(input, contentLimit)
   return NextResponse.json(res)
 }

@@ -25,7 +25,7 @@ describe('getGalgame 查询形状', () => {
 
   it('只 select 映射用到的六个字段, 不再 include 拉取 patch 全部标量', async () => {
     const input = adminGalgamePaginationSchema.parse({ page: 1, limit: 30 })
-    await getGalgame(input, {})
+    await getGalgame(input, null)
 
     expect(findManyMock.mock.calls[0][0].select).toEqual({
       id: true,
@@ -43,7 +43,7 @@ describe('getGalgame 查询形状', () => {
       limit: 50,
       search: 'kun'
     })
-    await getGalgame(input, { content_limit: 'sfw' })
+    await getGalgame(input, 'sfw')
 
     const args = findManyMock.mock.calls[0][0]
     expect(args.where).toEqual({
@@ -58,7 +58,7 @@ describe('getGalgame 查询形状', () => {
   it('无 search 时 where 即 nsfw 条件本身', async () => {
     const input = adminGalgamePaginationSchema.parse({ page: 1, limit: 30 })
     const nsfwEnable = { content_limit: 'sfw' }
-    await getGalgame(input, nsfwEnable)
+    await getGalgame(input, 'sfw')
 
     expect(findManyMock.mock.calls[0][0].where).toEqual(nsfwEnable)
     expect(countMock.mock.calls[0][0].where).toEqual(nsfwEnable)
@@ -80,7 +80,7 @@ describe('getGalgame 查询形状', () => {
     countMock.mockResolvedValue(1)
     const input = adminGalgamePaginationSchema.parse({ page: 1, limit: 30 })
 
-    const res = await getGalgame(input, {})
+    const res = await getGalgame(input, null)
 
     expect(res).toEqual({
       galgames: [

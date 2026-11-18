@@ -1,14 +1,20 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { adminGalgamePaginationSchema } from '~/validations/admin'
+import {
+  toPatchWhere,
+  type ContentLimit
+} from '~/server/viewer/patchVisibility'
 import type { AdminGalgame } from '~/types/api/admin'
 
 export const getGalgame = async (
   input: z.infer<typeof adminGalgamePaginationSchema>,
-  nsfwEnable: Record<string, string | undefined>
+  contentLimit: ContentLimit | null
 ) => {
   const { page, limit, search } = input
   const offset = (page - 1) * limit
+  // 后台列表只按分级过滤, 不套用屏蔽标签
+  const nsfwEnable = toPatchWhere({ contentLimit, blockedTagIds: [] })
 
   const where = search
     ? {

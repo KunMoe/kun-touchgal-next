@@ -6,15 +6,15 @@ import { generateKunMetadataTemplate } from './metadata'
 import { getResourcePageTitle } from '~/utils/patch/getResourcePageTitle'
 import { kunGetResourceDetailActions } from './actions'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
-import { getNSFWHeader } from '~/utils/actions/getNSFWHeader'
+import { getViewerContext } from '~/server/viewer/fromHeaders'
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 
 const isValidPatchId = (id: string) => /^[A-Za-z0-9]{8}$/.test(id)
 const isValidResourceId = (resourceId: string) => /^\d{1,7}$/.test(resourceId)
 
-const isNsfwAllowed = (nsfwHeader: { content_limit?: string }) =>
-  nsfwHeader.content_limit !== 'sfw'
+const isNsfwAllowed = async () =>
+  (await (await getViewerContext()).visibility()).contentLimit !== 'sfw'
 
 interface Props {
   params: Promise<{ id: string; resourceId: string }>
@@ -28,15 +28,15 @@ export const generateMetadata = async ({
     return {}
   }
 
-  const [detail, nsfwHeader] = await Promise.all([
+  const [detail, nsfwAllowed] = await Promise.all([
     kunGetResourceDetailActions(Number(resourceId)),
-    getNSFWHeader()
+    isNsfwAllowed()
   ])
   if (typeof detail === 'string' || detail.resource.uniqueId !== id) {
     return {}
   }
 
-  return generateKunMetadataTemplate(detail, isNsfwAllowed(nsfwHeader))
+  return generateKunMetadataTemplate(detail, nsfwAllowed)
 }
 
 export default async function Kun({ params }: Props) {
@@ -45,10 +45,10 @@ export default async function Kun({ params }: Props) {
     notFound()
   }
 
-  const [detail, payload, nsfwHeader] = await Promise.all([
+  const [detail, payload, nsfwAllowed] = await Promise.all([
     kunGetResourceDetailActions(Number(resourceId)),
     verifyHeaderCookie(),
-    getNSFWHeader()
+    isNsfwAllowed()
   ])
   if (typeof detail === 'string') {
     return <ErrorComponent error={detail} />
@@ -58,8 +58,7 @@ export default async function Kun({ params }: Props) {
     notFound()
   }
 
-  const isNsfwBlocked =
-    detail.contentLimit === 'nsfw' && !isNsfwAllowed(nsfwHeader)
+  const isNsfwBlocked = detail.contentLimit === 'nsfw' && !nsfwAllowed
 
   return (
     <div className="container pt-4 pb-6 mx-auto space-y-6">

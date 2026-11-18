@@ -30,7 +30,7 @@ describe('getPatchResource 搜索过滤', () => {
       search: 'kun',
       searchType: 'info'
     })
-    await getPatchResource(input, {})
+    await getPatchResource(input, null)
 
     const { where } = findManyMock.mock.calls[0][0]
     expect(where.OR).toEqual([
@@ -48,7 +48,7 @@ describe('getPatchResource 搜索过滤', () => {
       search: 'magnet:'
     })
     expect(input.searchType).toBe('content')
-    await getPatchResource(input, {})
+    await getPatchResource(input, null)
 
     const { where } = findManyMock.mock.calls[0][0]
     expect(where.links.some.OR).toEqual([
@@ -64,7 +64,7 @@ describe('getPatchResource 搜索过滤', () => {
       limit: 30,
       searchType: 'info'
     })
-    await getPatchResource(input, {})
+    await getPatchResource(input, null)
 
     const { where } = findManyMock.mock.calls[0][0]
     expect(where.OR).toBeUndefined()

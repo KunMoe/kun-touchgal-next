@@ -3,7 +3,7 @@ import 'server-only'
 import * as z from 'zod'
 import { adminResourcePaginationSchema } from '~/validations/admin'
 import { getPatchResource } from '~/app/api/admin/resource/get'
-import { getNSFWHeader } from '~/utils/actions/getNSFWHeader'
+import { getViewerContext } from '~/server/viewer/fromHeaders'
 import { parseSuperAdminAction } from '~/utils/actions/parseSuperAdminAction'
 
 export const kunGetActions = async (
@@ -17,8 +17,8 @@ export const kunGetActions = async (
     return input
   }
 
-  const nsfwEnable = await getNSFWHeader()
+  const { contentLimit } = await (await getViewerContext()).visibility()
 
-  const response = await getPatchResource(input, nsfwEnable)
+  const response = await getPatchResource(input, contentLimit)
   return response
 }
