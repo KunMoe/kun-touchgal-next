@@ -653,17 +653,26 @@ export const KUN_INVARIANTS = [
     id: 'inv-viewer-01',
     aliases: ['T05'],
     statement:
-      'Route Handler 与 app/api 下的模块不得导入 server/viewer/fromHeaders 和 utils/actions 下读请求上下文的 helper, 请求视角经 server/viewer/fromRequest 建一次后往下传',
+      'Route Handler 与 app/api 下的模块不得导入 server/viewer/fromHeaders、utils/actions 下读请求上下文的 helper 和页面读取器 (app 下的 actions.ts), 请求视角经 server/viewer/fromRequest 建一次后往下传',
     reason:
-      'fromHeaders 靠 React cache 让一次渲染共用同一个视角上下文, 而 cache 只在渲染过程中去重: Route Handler 里每调一次都会新建上下文并重新校验会话, 校验带登录会话的续期与清理 (Redis 读写)。app/api 下的 service 同时被路由与页面调用, 自己去取上下文就会落进这条路径, 所以只收调用方传进来的视角',
+      'fromHeaders 靠 React cache 让一次渲染共用同一个视角上下文, 而 cache 只在渲染过程中去重: Route Handler 里每调一次都会新建上下文并重新校验会话, 校验带登录会话的续期与清理 (Redis 读写)。app/api 下的 service 同时被路由与页面调用, 自己去取上下文就会落进这条路径, 所以只收调用方传进来的视角。本条只认直接的静态导入: 经别的模块转一手、或用 import() 动态加载, 它看不到',
     removeWhen: 'utils/actions 与 fromHeaders 不再依赖 React cache 去重',
-    files: ['app/api/**', 'app/**/route.ts'],
+    // Route Handler 与图标 / 站点地图这类元数据路由都不在渲染过程里
+    files: [
+      'app/api/**',
+      'app/**/route.{ts,tsx,js,jsx}',
+      'app/**/{opengraph-image,twitter-image,icon,apple-icon,sitemap,robots,manifest}.{ts,tsx,js,jsx}'
+    ],
+    // 测试要把路由与页面读取器放在一起比
+    ignores: ['**/__tests__/**'],
     enforce: {
       kind: 'import',
       sources: [
         /(^|\/)server\/viewer\/fromHeaders(\.[cm]?[jt]sx?)?$/,
         // safeParseSchema 只是 zod 包装, 不读请求
-        /(^|\/)utils\/actions\/(?!safeParseSchema(\.[cm]?[jt]sx?)?$)/
+        /(^|\/)utils\/actions\/(?!safeParseSchema(\.[cm]?[jt]sx?)?$)/,
+        // 页面读取器内部经 fromHeaders 取上下文; 路由要同样的数据就调它背后的 service
+        /^(~\/app\/|\.{1,2}\/)(.*\/)?actions(\.[cm]?[jt]sx?)?$/
       ]
     },
     examples: {
@@ -672,10 +681,13 @@ export const KUN_INVARIANTS = [
         "import { getViewerContext } from '~/server/viewer/fromHeaders'",
         "import { getViewerContext } from '../../server/viewer/fromHeaders.ts'",
         "import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'",
-        "import { parseSuperAdminAction } from '~/utils/actions/parseSuperAdminAction'"
+        "import { parseSuperAdminAction } from '~/utils/actions/parseSuperAdminAction'",
+        "import { kunGetActions } from '~/app/actions'",
+        "import { kunGetActions } from '../../tag/[id]/actions'"
       ],
       good: [
         "import { viewerContextFromRequest } from '~/server/viewer/fromRequest'",
+        "import { getHomeData } from '~/app/api/home/service'",
         "import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'",
         "import { safeParseSchema } from '~/utils/actions/safeParseSchema'",
         "import type { ViewerContext } from '~/server/viewer/context'"
@@ -686,12 +698,12 @@ export const KUN_INVARIANTS = [
     id: 'inv-viewer-02',
     aliases: ['T05'],
     statement:
-      '设置 store 的两个镜像 cookie (kun-patch-setting-store|state|data|…) 的名字只许出现在 server/viewer/context.ts: 服务端读它们来决定视角只有这一处',
+      '设置 store 的两个镜像 cookie (kun-patch-setting-store|state|data|…) 的名字只许写在 server/viewer/context.ts: 服务端读它们来决定视角只有这一处',
     reason:
-      '这两个 cookie 没有签名, 只能对有效会话采信。此前 Route Handler 与页面各有一族 helper 各读一遍, 三次可见性缺陷都是一侧改了另一侧没改 (匿名请求带 kunNsfwEnable=all 曾经 /api 拿到 NSFW 列表 52 天)。再出现第二个读取点, 两边就又得靠注释保持一致',
+      '这两个 cookie 没有签名, 只能对有效会话采信。此前 Route Handler 与页面各有一族 helper 各读一遍, 三次可见性缺陷都是一侧改了另一侧没改 (匿名请求带 kunNsfwEnable=all 曾经 /api 拿到 NSFW 列表 52 天)。再出现第二个读取点, 两边就又得靠注释保持一致。本条按字符串字面量认名字, 防的是顺手再写一个读取点; 把名字拆开拼出来它看不到',
     removeWhen: '服务端不再读这两个镜像 cookie',
-    files: ['app/**', 'server/**', 'middleware/**', 'utils/**', 'lib/**'],
-    ignores: ['server/viewer/context.ts', '**/__tests__/**'],
+    // 全仓执法 (components 下也有服务端组件); 本文件要在说明与样例里写出这个名字
+    ignores: ['server/viewer/context.ts', '**/__tests__/**', 'lint/**'],
     enforce: {
       kind: 'syntax',
       selectors: [],

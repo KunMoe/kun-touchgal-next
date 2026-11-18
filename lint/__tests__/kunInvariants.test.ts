@@ -130,13 +130,14 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
 
   // 测试做不了生产写入, 却常要 mock / 断言这些方法 (inv-content-05/06), 输入夹具也常写
   // { ...baseInput, role: 2 } (inv-authz-03), 构造操作者要用 kunTestActor (inv-authz-04),
-  // 拼 Cookie 头要写镜像 cookie 的名字 (inv-viewer-02);
+  // 拼 Cookie 头要写镜像 cookie 的名字 (inv-viewer-02), 路由与页面读取器要放在一起比 (inv-viewer-01);
   // 示例路径不在 __tests__ 下, 上面照常执行
   it.each([
     'inv-content-05',
     'inv-content-06',
     'inv-authz-03',
     'inv-authz-04',
+    'inv-viewer-01',
     'inv-viewer-02'
   ])('%s 不管 __tests__ 下的文件', async (id) => {
     const inv = KUN_INVARIANTS.find((item) => item.id === id)
@@ -187,7 +188,10 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
 
     for (const file of [
       'app/api/home/service.ts',
-      'app/oidc/interaction/[uid]/confirm/route.ts'
+      'app/oidc/interaction/[uid]/confirm/route.ts',
+      'app/feed/route.tsx',
+      'app/opengraph-image.tsx',
+      'app/sitemap.ts'
     ]) {
       expect((await reportsAt(file)).length, file).toBeGreaterThan(0)
     }
@@ -199,6 +203,25 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
     ]) {
       expect(await reportsAt(file), file).toEqual([])
     }
+  })
+
+  // 读这两个 cookie 的代码可以写在任何会在服务端执行的文件里, 包括 components 下的服务端组件
+  it('inv-viewer-02 全仓执法, 只放过 context.ts', async () => {
+    const inv = KUN_INVARIANTS.find((item) => item.id === 'inv-viewer-02')
+    const [bad] = inv?.examples.bad ?? []
+    const reportsAt = (file: string) =>
+      reportsOf(eslint, bad, file, 'kun/inv-viewer-02')
+
+    for (const file of [
+      'components/kun/KunInvariantExample.tsx',
+      'proxy.ts',
+      'constants/kunInvariantExample.ts',
+      'server/viewer/fromHeaders.ts',
+      'scripts/kunInvariantExample.ts'
+    ]) {
+      expect((await reportsAt(file)).length, file).toBeGreaterThan(0)
+    }
+    expect(await reportsAt('server/viewer/context.ts')).toEqual([])
   })
 
   // 这正是不用核心 no-restricted-* 承载不变量的原因: flat config 里后出现的同名规则
