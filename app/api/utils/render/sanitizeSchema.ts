@@ -12,14 +12,21 @@ import type { Options as RehypeSanitizeOptions } from 'rehype-sanitize'
 
 const defaultProtocols = defaultSchema.protocols || {}
 
+// 脚注的锚点。上游生成时已经带了 user-content- 前缀 (页面脚本用不到这个名字空间),
+// 这里按形状放行, 不再让净化库加一遍前缀 —— 加了就和脚注链接里的地址对不上
+const FOOTNOTE_REFERENCE_ID = /^user-content-fnref-/
+const FOOTNOTE_DEFINITION_ID = /^user-content-fn-/
+
 const linkAttributes = [
   'data-kun-external-link',
   'data-href',
   'data-text',
   'href',
+  'title',
   'target',
   'rel',
-  'className'
+  'className',
+  ['id', FOOTNOTE_REFERENCE_ID] as [string, RegExp]
 ]
 
 const imageAttributes = ['src', 'alt', 'title', 'class', 'loading']
@@ -67,14 +74,21 @@ export const extendSanitizeSchema = (
   }
 }
 
-// attributes 整体替换了默认表: 默认放行的 checked / align / start / title / id 等
-// 都被剥掉 (09-03 #5, 待裁定)。恢复哪些属于渲染策略变更
+// 属性表不沿用默认的那一大张, 只列管线自己会生成的: 原始 HTML 不进树, 用不上别的。
+// 任务列表的勾选、表格对齐、列表起始编号、链接标题、脚注锚点都在这里 (09-03 #5)
 export const markdownSanitizeSchema: RehypeSanitizeOptions = {
   ...defaultSchema,
   attributes: {
     a: linkAttributes,
-    img: imageAttributes
+    img: imageAttributes,
+    input: ['checked'],
+    li: [['id', FOOTNOTE_DEFINITION_ID]],
+    ol: ['start'],
+    td: ['align'],
+    th: ['align']
   },
+  // id 已按形状限定为脚注锚点, 不在这里加前缀
+  clobber: (defaultSchema.clobber ?? []).filter((name) => name !== 'id'),
   protocols: safeProtocols
 }
 

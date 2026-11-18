@@ -15,6 +15,12 @@ export const remarkKunExternalLinks: Plugin<[], Node> = () => {
 
         const safeHref = sanitizeUserHref(href)
         if (!safeHref) {
+          // 不合格的地址当场摘掉, 不留给后面的净化兜底
+          delete node.properties.href
+          return
+        }
+        // 页内链接 (脚注的引用与回链) 不是外链, 不打标记
+        if (safeHref.startsWith('#')) {
           return
         }
 

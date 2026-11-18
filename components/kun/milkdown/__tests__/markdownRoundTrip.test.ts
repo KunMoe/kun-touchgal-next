@@ -189,12 +189,13 @@ const KNOWN_DIVERGENCE = new Set([
   'directive-restored-in-tight-list'
 ])
 
-// 方言覆盖的语料 (冒号与指令) 逐条过一遍
+// 方言覆盖的语料 (冒号、指令、文首的 ---) 逐条过一遍
 describe.each(
   kunMarkdownCorpus
-    .filter(
-      (entry) =>
-        entry.tags.includes('colon') || entry.tags.includes('directive')
+    .filter((entry) =>
+      entry.tags.some(
+        (tag) => tag === 'colon' || tag === 'directive' || tag === 'frontmatter'
+      )
     )
     .map((entry) => [entry.id, entry.markdown] as const)
 )('语料 %s', (id, markdown) => {

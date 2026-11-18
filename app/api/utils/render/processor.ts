@@ -1,6 +1,5 @@
 import rehypeSanitize from 'rehype-sanitize'
 import rehypeStringify from 'rehype-stringify'
-import remarkFrontmatter from 'remark-frontmatter'
 import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
@@ -33,7 +32,7 @@ const createProcessor = (
   const processor = unified()
 
   // 语法
-  processor.use(remarkParse).use(remarkGfm).use(remarkFrontmatter)
+  processor.use(remarkParse).use(remarkGfm)
   if (profile.directives !== 'off') {
     processor.use(remarkKunDirectives, { mode: profile.directives })
   }

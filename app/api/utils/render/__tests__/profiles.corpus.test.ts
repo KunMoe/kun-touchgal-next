@@ -98,7 +98,7 @@ describe('净化不变量检测器', () => {
     ],
     ['<img id="body" src="/a.png">', ['dom-clobbering']],
     ['<img name="getElementById" src="/a.png">', ['dom-clobbering']],
-    ['<a href="#missing">a</a>', ['fragment-target']],
+    ['<a href="#user-content-fn-9">a</a>', ['fragment-target']],
     [
       '<p onclick="x" style="y"><a href="javascript:z">a</a></p>',
       ['event-handler', 'inline-style', 'unsafe-url']
@@ -112,6 +112,8 @@ describe('净化不变量检测器', () => {
     '<a href="https://a.example/x" data-href="magnet:?xt=urn:btih:abc">a</a>',
     '<a href="/doc?a=b:c">a</a><a href="//a.example/x">b</a>',
     '<a href="#user-content-fn-1">a</a><li id="user-content-fn-1">b</li>',
+    // 用户手写的页内链接指向哪里都行
+    '<a href="#download">a</a>',
     '<a href="#user-content-%E6%A0%87%E9%A2%98">a</a><h1 id="user-content-标题">b</h1>',
     // 引号里长得像属性的文字不是属性
     '<img src="https://a.example/a.png" alt="a&#x22; onerror=&#x22;alert(1)">',

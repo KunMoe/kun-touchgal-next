@@ -29,7 +29,7 @@ export const KUN_MARKDOWN_PROFILES = {
   },
   // 资源备注
   note: {
-    version: 1,
+    version: 2,
     directives: 'off',
     wrapScreenshots: false,
     schema: markdownSanitizeSchema

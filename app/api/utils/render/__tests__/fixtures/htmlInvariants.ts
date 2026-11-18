@@ -161,8 +161,8 @@ const hasClobberingName = (tag: HtmlTag) =>
     return value !== undefined && !value.startsWith(CLOBBER_PREFIX)
   })
 
-// 页内链接要能在同一份输出里找到对应的 id。语料里的 # 链接都是管线自己生成的
-// (脚注的引用与回链); 以后加入用户手写 #片段 的语料时, 要给这一条开例外
+// 管线自己生成的页内链接 (脚注的引用与回链) 要能在同一份输出里找到对应的 id。
+// 用户手写的 #片段 可以指向页面上任何地方, 不归这一条管
 const hasDanglingFragment = (tags: HtmlTag[]) => {
   const ids = new Set(
     tags.flatMap((tag) => {
@@ -172,12 +172,12 @@ const hasDanglingFragment = (tags: HtmlTag[]) => {
   )
   return tags.some((tag) => {
     const href = tag.attributes.get('href')
-    return (
-      href !== undefined &&
-      href.startsWith('#') &&
-      href.length > 1 &&
-      !ids.has(decodeFragment(href.slice(1)))
-    )
+    if (href === undefined || !href.startsWith(`#${CLOBBER_PREFIX}`)) {
+      return false
+    }
+    // 浏览器先按原样找, 找不到再按百分号解码后的样子找
+    const fragment = href.slice(1)
+    return !ids.has(fragment) && !ids.has(decodeFragment(fragment))
   })
 }
 

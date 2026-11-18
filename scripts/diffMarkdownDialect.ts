@@ -21,8 +21,8 @@ import { KUN_DIRECTIVES } from '~/utils/markdown/kunDialect'
 import type { Processor } from 'unified'
 import type { Node } from 'unist'
 
-// 指令方言 (T02 S3) 上线前的只读对照: 把库里的每条评论、每篇游戏简介分别用旧管线
-// 与新管线渲染, 差异按成因归类。不写库、不碰 Redis。发布前在生产 (或只读副本) 上跑:
+// 指令方言 (T02) 上线前的只读对照: 把库里的每条评论、每篇游戏简介分别用旧的语法
+// 与新的语法渲染, 差异按成因归类。不写库、不碰 Redis。发布前在生产 (或只读副本) 上跑:
 //   pnpm exec esno scripts/diffMarkdownDialect.ts
 //
 // 看三处:
@@ -30,17 +30,23 @@ import type { Node } from 'unist'
 // (2) 「行内短代码变原文」「指令写法变原文」列出的内容, 发布后会多出短代码或指令的
 //     原文 (原先是卡片 / 播放器, 或什么都不显示)。这两类是按「文中有这种写法」
 //     认定的, 要逐篇过目, 该改的由管理员改正或删掉那一行;
-// (3) 「冒号恢复」的样本确实是被吞掉的文字回来了。
+// (3) 「冒号恢复」的样本确实是被吞掉的文字回来了; 「文首 --- 恢复显示」列出的内容
+//     原先藏着的那一段会显示出来, 逐篇过目。
 // 「空占位短代码」不用处理: 地址没填的短代码原先输出一个空标签, 现在不输出,
 // 页面上前后都看不见。
 // 发布并回填之后这份脚本即可删除
 //
-// 归类靠四条管线, 相邻两条只差一个变量, 所以前两段差异的成因是确定的:
-//   旧   = 上线前的管线 (解析行内 / 整行 / 容器三种指令; 评论全删, 简介认不出的变空 div)
-//   中   = 旧管线只去掉行内指令的解析            → 旧≠中: 冒号恢复 / 行内短代码
+// 归类靠五条管线, 相邻两条只差一个变量, 所以前三段差异的成因是确定的:
+//   旧   = 上线前的语法 (解析行内 / 整行 / 容器三种指令与文首的 frontmatter;
+//          评论里的指令全删, 简介里认不出的变空 div)
+//   中   = 「旧」只去掉行内指令的解析            → 旧≠中: 冒号恢复 / 行内短代码
 //   占位 = 「中」再去掉地址没填的整行短代码      → 中≠占位: 空占位短代码
+//   文首 = 「占位」再去掉 frontmatter 的解析     → 占位≠文首: 文首 --- 恢复显示
 //   新   = 现在的管线 (只认整行短代码, 认不出的按原文; 容器写法就是普通文字)
-// 占位≠新 的差异只应来自「不合格的整行指令或容器写法」, 文中找不到就算「其他」
+// 文首≠新 的差异只应来自「不合格的整行指令或容器写法」, 文中找不到就算「其他」。
+//
+// 五条管线用的是同一份净化策略与外链插件: 同批上线的白名单恢复 (任务列表的勾选、
+// 表格对齐、列表起始编号、链接标题、脚注锚点) 对所有内容生效, 不在这份对照里
 
 const BATCH_SIZE = 500
 const SAMPLE_LIMIT = 20
@@ -70,10 +76,17 @@ const parseLegacyKun = (node: DirectiveNode) => {
 
 const buildLegacy = (
   profile: Profile,
-  variant: { inlineDirectives: boolean; dropBlank?: boolean }
+  variant: {
+    inlineDirectives: boolean
+    dropBlank?: boolean
+    noFrontmatter?: boolean
+  }
 ) => {
   const processor = unified()
-  processor.use(remarkParse).use(remarkGfm).use(remarkFrontmatter)
+  processor.use(remarkParse).use(remarkGfm)
+  if (!variant.noFrontmatter) {
+    processor.use(remarkFrontmatter)
+  }
   processor.use(function (this: Processor) {
     const data = this.data() as Record<string, unknown[] | undefined>
     ;(data.micromarkExtensions ??= []).push(
@@ -136,6 +149,11 @@ const pipelinesOf = (profile: Profile) => ({
   old: buildLegacy(profile, { inlineDirectives: true }),
   mid: buildLegacy(profile, { inlineDirectives: false }),
   blank: buildLegacy(profile, { inlineDirectives: false, dropBlank: true }),
+  plain: buildLegacy(profile, {
+    inlineDirectives: false,
+    dropBlank: true,
+    noFrontmatter: true
+  }),
   new: getKunMarkdownProcessor(profile)
 })
 
@@ -169,7 +187,12 @@ const directivesOf = (
 }
 
 type Category =
-  '冒号恢复' | '行内短代码变原文' | '指令写法变原文' | '空占位短代码' | '其他'
+  | '冒号恢复'
+  | '行内短代码变原文'
+  | '指令写法变原文'
+  | '空占位短代码'
+  | '文首 --- 恢复显示'
+  | '其他'
 
 // 新管线对「中」管线解析出的一个整行 / 容器指令的处置。容器写法现在是普通文字,
 // 同样算作按原文显示
@@ -205,6 +228,7 @@ const createStats = (): SourceStats => ({
     行内短代码变原文: [],
     指令写法变原文: [],
     空占位短代码: [],
+    '文首 --- 恢复显示': [],
     其他: []
   },
   samples: []
@@ -262,7 +286,12 @@ const inspect = (
     // 地址没填的整行短代码不再输出空标签
     categories.push('空占位短代码')
   }
-  if (blanked !== after) {
+  const plain = render(pipelines.plain, markdown)
+  if (blanked !== plain) {
+    // 文首两行 --- 之间的内容不再当作 frontmatter 藏起来
+    categories.push('文首 --- 恢复显示')
+  }
+  if (plain !== after) {
     // 名字没注册、属性填了却不合格的整行指令, 以及容器写法, 现在按原文显示
     const restored = directivesOf(pipelines.mid, markdown).some(
       (node) => fateOf(node) === 'restored'
@@ -357,7 +386,7 @@ const main = async () => {
     `  评论里的整行短代码 \`::kun-link\` / \`::kun-video\` (评论不显示它们): ${count(commentRows, /^\s*::kun-(link|video)[{[]/m)}`
   )
   console.log(
-    `  以 \`---\` 开头的简介 / 评论 (文首两行 --- 之间的内容现在不显示, 本次不改): ${count(introductionRows, /^---[ \t]*(\r?\n|$)/)} / ${count(commentRows, /^---[ \t]*(\r?\n|$)/)}`
+    `  以 \`---\` 开头的简介 / 评论: ${count(introductionRows, /^---[ \t]*(\r?\n|$)/)} / ${count(commentRows, /^---[ \t]*(\r?\n|$)/)}`
   )
 
   const unexplained =

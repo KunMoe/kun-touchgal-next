@@ -124,7 +124,7 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'xss-link-title-breakout',
     tags: ['xss'],
     markdown: '[x](https://a.example "t\\" onmouseover=\\"alert(1)")',
-    html: '<p><a href="https://a.example" data-kun-external-link="" data-href="https://a.example" data-text="x">x</a></p>'
+    html: '<p><a href="https://a.example" title="t&#x22; onmouseover=&#x22;alert(1)" data-kun-external-link="" data-href="https://a.example" data-text="x">x</a></p>'
   },
   {
     id: 'xss-image-alt-breakout',
@@ -163,6 +163,19 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     markdown:
       '<svg onload="alert(1)"><path d="M0 0" onclick="alert(1)"/></svg>',
     html: '<p></p>'
+  },
+  {
+    id: 'xss-raw-id-name',
+    tags: ['xss'],
+    markdown:
+      '<a id="body" name="getElementById" href="https://a.example">x</a>',
+    html: '<p>x</p>'
+  },
+  {
+    id: 'xss-footnote-id',
+    tags: ['xss'],
+    markdown: '脚注[^body] [^__proto__]\n\n[^body]: x\n\n[^__proto__]: y',
+    html: '<p>脚注<sup><a href="#user-content-fn-body" id="user-content-fnref-body">1</a></sup> <sup><a href="#user-content-fn-__proto__" id="user-content-fnref-__proto__">2</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li id="user-content-fn-body">\n<p>x <a href="#user-content-fnref-body" class="data-footnote-backref">↩</a></p>\n</li>\n<li id="user-content-fn-__proto__">\n<p>y <a href="#user-content-fnref-__proto__" class="data-footnote-backref">↩</a></p>\n</li>\n</ol>\n</section>'
   },
   {
     id: 'xss-html-comment',
@@ -624,24 +637,19 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'gfm-table',
     tags: ['gfm'],
     markdown: '| a | b |\n|:--|--:|\n| 1 | 2 |',
-    html: '<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody>\n</table>',
-    knownBad: { defect: '09-03 #5 待裁定: 净化剥掉了 align, 列对齐不生效' }
+    html: '<table>\n<thead>\n<tr>\n<th align="left">a</th>\n<th align="right">b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align="left">1</td>\n<td align="right">2</td>\n</tr>\n</tbody>\n</table>'
   },
   {
     id: 'gfm-task-list',
     tags: ['gfm'],
     markdown: '- [x] done\n- [ ] todo',
-    html: '<ul>\n<li><input disabled type="checkbox"> done</li>\n<li><input disabled type="checkbox"> todo</li>\n</ul>',
-    knownBad: {
-      defect: '09-03 #5 待裁定: 净化剥掉了 checked, 已勾选的任务显示为未勾选'
-    }
+    html: '<ul>\n<li><input checked disabled type="checkbox"> done</li>\n<li><input disabled type="checkbox"> todo</li>\n</ul>'
   },
   {
     id: 'gfm-ordered-start',
     tags: ['gfm'],
     markdown: '5. five\n6. six',
-    html: '<ol>\n<li>five</li>\n<li>six</li>\n</ol>',
-    knownBad: { defect: '09-03 #5 待裁定: 净化剥掉了 start, 列表从 1 开始编号' }
+    html: '<ol start="5">\n<li>five</li>\n<li>six</li>\n</ol>'
   },
   {
     id: 'gfm-autolink',
@@ -660,8 +668,7 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'gfm-link-title',
     tags: ['gfm'],
     markdown: '[t](https://a.example "title")',
-    html: '<p><a href="https://a.example" data-kun-external-link="" data-href="https://a.example" data-text="t">t</a></p>',
-    knownBad: { defect: '09-03 #5 待裁定: 净化剥掉了链接的 title' }
+    html: '<p><a href="https://a.example" title="title" data-kun-external-link="" data-href="https://a.example" data-text="t">t</a></p>'
   },
   {
     id: 'gfm-image',
@@ -679,12 +686,25 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'gfm-footnote',
     tags: ['gfm'],
     markdown: '脚注[^1]\n\n[^1]: 注释',
-    html: '<p>脚注<sup><a href="#user-content-fn-1" data-kun-external-link="" data-href="#user-content-fn-1" data-text="1">1</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li>\n<p>注释 <a href="#user-content-fnref-1" class="data-footnote-backref" data-kun-external-link="" data-href="#user-content-fnref-1" data-text="↩">↩</a></p>\n</li>\n</ol>\n</section>',
-    knownBad: {
-      defect:
-        '09-03 #5 待裁定: 净化剥掉了 id, 脚注的引用与回链都指向不存在的锚点',
-      violates: ['fragment-target']
-    }
+    html: '<p>脚注<sup><a href="#user-content-fn-1" id="user-content-fnref-1">1</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li id="user-content-fn-1">\n<p>注释 <a href="#user-content-fnref-1" class="data-footnote-backref">↩</a></p>\n</li>\n</ol>\n</section>'
+  },
+  {
+    id: 'gfm-footnote-repeated',
+    tags: ['gfm'],
+    markdown: '甲[^注] 乙[^注] 丙[^b]\n\n[^注]: 说明\n\n[^b]: 另一条',
+    html: '<p>甲<sup><a href="#user-content-fn-%E6%B3%A8" id="user-content-fnref-%E6%B3%A8">1</a></sup> 乙<sup><a href="#user-content-fn-%E6%B3%A8" id="user-content-fnref-%E6%B3%A8-2">1</a></sup> 丙<sup><a href="#user-content-fn-b" id="user-content-fnref-b">2</a></sup></p>\n<section><h2>Footnotes</h2>\n<ol>\n<li id="user-content-fn-%E6%B3%A8">\n<p>说明 <a href="#user-content-fnref-%E6%B3%A8" class="data-footnote-backref">↩</a> <a href="#user-content-fnref-%E6%B3%A8-2" class="data-footnote-backref">↩<sup>2</sup></a></p>\n</li>\n<li id="user-content-fn-b">\n<p>另一条 <a href="#user-content-fnref-b" class="data-footnote-backref">↩</a></p>\n</li>\n</ol>\n</section>'
+  },
+  {
+    id: 'gfm-link-fragment',
+    tags: ['gfm'],
+    markdown: '[回到下载](#download)',
+    html: '<p><a href="#download">回到下载</a></p>'
+  },
+  {
+    id: 'gfm-link-empty',
+    tags: ['gfm'],
+    markdown: '[空链接]() 与 [空白]( )',
+    html: '<p><a>空链接</a> 与 <a>空白</a></p>'
   },
   {
     id: 'gfm-inline-html',
@@ -711,10 +731,7 @@ export const kunMarkdownCorpus: readonly KunCorpusEntry[] = [
     id: 'frontmatter-yaml',
     tags: ['frontmatter'],
     markdown: '---\n剧透警告\n---\n正文',
-    html: '<p>正文</p>',
-    knownBad: {
-      defect: 'frontmatter 去留待裁定: 文首两行 --- 之间的内容整段不显示'
-    }
+    html: '<hr>\n<h2>剧透警告</h2>\n<p>正文</p>'
   },
   {
     id: 'frontmatter-unclosed',
