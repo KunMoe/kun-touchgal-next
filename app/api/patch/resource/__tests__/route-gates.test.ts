@@ -388,6 +388,19 @@ describe('PUT /api/patch/resource 闸门', () => {
     }
   )
 
+  it('同一个链接 id 提交两次在校验层就被拒, 不读会话也不到 service', async () => {
+    const res = await PUT(
+      jsonRequest(
+        'PUT',
+        updateBody({ links: [userLink({ id: 4 }), userLink({ id: 4 })] })
+      )
+    )
+
+    expect(await res.json()).toBe('同一条资源链接不能重复提交, 请刷新后重试')
+    expect(verifyHeaderCookieMock).not.toHaveBeenCalled()
+    expect(updatePatchResourceMock).not.toHaveBeenCalled()
+  })
+
   it('PUT 不查用户行、不看萌萌点与待审资源、不加锁', async () => {
     userFindUniqueMock.mockResolvedValue(asUserRow({ moemoepoint: 0 }))
     resourceFindFirstMock.mockResolvedValue({ id: 3 })

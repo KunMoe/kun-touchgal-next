@@ -139,3 +139,53 @@ describe('patchResourceCreateSchema 资源类别 / 类型联动', () => {
     expect(messages).toContain('所选资源类型不属于当前资源类别')
   })
 })
+
+// 一条已有的链接只能提交一次。重复提交会让几行共用同一个存储对象 (保留型对象存储链接),
+// 或让保留的那一行指向刚被入队删除的对象 (同一个 id 一条换了文件、一条没换)
+describe('资源链接的 id 不可重复', () => {
+  const DUPLICATE = '同一条资源链接不能重复提交, 请刷新后重试'
+  const [link] = baseInput.links
+  const messagesOf = (links: Array<Record<string, unknown>>) => {
+    const result = patchResourceUpdateSchema.safeParse({
+      ...baseInput,
+      resourceId: 9,
+      links
+    })
+    return result.success ? [] : result.error.issues.map((i) => i.message)
+  }
+
+  it('同一个 id 出现两次时校验失败', () => {
+    expect(
+      messagesOf([
+        { ...link, id: 5 },
+        { ...link, id: 5 }
+      ])
+    ).toEqual([DUPLICATE])
+  })
+
+  it('按转成数字之后的 id 判重', () => {
+    expect(
+      messagesOf([
+        { ...link, id: '5' },
+        { ...link, id: 5 }
+      ])
+    ).toEqual([DUPLICATE])
+  })
+
+  it('id 各不相同、或都是没有 id 的新链接时通过', () => {
+    expect(
+      messagesOf([{ ...link, id: 5 }, { ...link, id: 6 }, link, link])
+    ).toEqual([])
+  })
+
+  it('创建用的 schema 是同一份链接校验', () => {
+    const result = patchResourceCreateSchema.safeParse({
+      ...baseInput,
+      links: [
+        { ...link, id: 5 },
+        { ...link, id: 5 }
+      ]
+    })
+    expect(result.success).toBe(false)
+  })
+})

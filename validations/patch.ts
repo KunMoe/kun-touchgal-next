@@ -164,7 +164,18 @@ const patchResourceBaseSchema = z.object({
         })
     )
     .min(1, { message: '请至少添加一个资源链接' })
-    .max(10, { message: '单个资源最多添加 10 条链接' }),
+    .max(10, { message: '单个资源最多添加 10 条链接' })
+    // 一条已有的链接 (带 id) 只能提交一次: 重复提交会让几行共用同一个存储对象, 之后删掉
+    // 其中一行就把对象一并带走
+    .refine(
+      (links) => {
+        const ids = links.flatMap((link) =>
+          link.id === undefined ? [] : [link.id]
+        )
+        return new Set(ids).size === ids.length
+      },
+      { message: '同一条资源链接不能重复提交, 请刷新后重试' }
+    ),
   type: z
     .array(z.string())
     .min(1, { message: '请选择至少一个资源类型' })
