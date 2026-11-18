@@ -10,7 +10,13 @@ import { Select, SelectItem } from '@heroui/select'
 import { Divider } from '@heroui/divider'
 import { Plus, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useShallow } from 'zustand/react/shallow'
 import { SUPPORTED_RESOURCE_LINK_MAP, storageTypes } from '~/constants/resource'
+import {
+  KUN_LINK_STORAGES,
+  allowedLinkStorages,
+  defaultLinkStorage
+} from '~/constants/permission'
 import { fetchLinkData, fetchListData } from './fetchAlistSize'
 import { parseResourceLink } from '~/utils/resourceLink'
 import { FileUploadContainer } from '../upload/FileUploadContainer'
@@ -26,31 +32,8 @@ interface ResourceLinksInputProps {
   setUploadingResource: Dispatch<SetStateAction<boolean>>
 }
 
-const getDefaultLinkStorage = (section: string, role: number) => {
-  if (section === 'galgame') {
-    return role > 3 ? 'touchgal' : 'user'
-  }
-  if (role > 3) {
-    return 'touchgal'
-  }
-  if (role > 1) {
-    return 's3'
-  }
-  return 'user'
-}
-
-const getDisabledStorageKeys = (section: string, role: number) => {
-  if (role > 3) {
-    return []
-  }
-  if (role > 1 && section === 'patch') {
-    return ['touchgal']
-  }
-  return ['s3', 'touchgal']
-}
-
-const createEmptyLink = (section: string, role: number) => ({
-  storage: getDefaultLinkStorage(section, role),
+const createEmptyLink = (storage: string) => ({
+  storage,
   hash: '',
   content: '',
   size: '',
@@ -66,7 +49,12 @@ export const ResourceLinksInput = ({
   section,
   setUploadingResource
 }: ResourceLinksInputProps) => {
-  const userRole = useUserStore((state) => state.user.role)
+  // 这里只决定显隐与置灰; 执法在服务端, 两边调的是 constants/permission 里的同一组函数
+  const subject = useUserStore(
+    useShallow((state) => ({ uid: state.user.uid, role: state.user.role }))
+  )
+  const allowedStorages = allowedLinkStorages(subject, section)
+  const defaultStorage = defaultLinkStorage(subject, section)
   const { fields, append, remove } = useFieldArray({
     control,
     name: 'links'
@@ -75,9 +63,9 @@ export const ResourceLinksInput = ({
 
   useEffect(() => {
     if (!fields.length) {
-      append(createEmptyLink(section, userRole))
+      append(createEmptyLink(defaultStorage))
     }
-  }, [append, fields.length, section, userRole])
+  }, [append, fields.length, defaultStorage])
 
   const handleFetchTouchGalSize = async (content: string, index: number) => {
     const currentLink = links[index]
@@ -123,7 +111,7 @@ export const ResourceLinksInput = ({
         <Button
           variant="flat"
           startContent={<Plus className="size-4" />}
-          onPress={() => append(createEmptyLink(section, userRole))}
+          onPress={() => append(createEmptyLink(defaultStorage))}
         >
           添加链接
         </Button>
@@ -131,8 +119,7 @@ export const ResourceLinksInput = ({
 
       {fields.map((field, index) => {
         const currentLink = links[index]
-        const currentStorage =
-          currentLink?.storage || getDefaultLinkStorage(section, userRole)
+        const currentStorage = currentLink?.storage || defaultStorage
 
         return (
           <Card key={field.id} className="border border-default-200">
@@ -173,7 +160,9 @@ export const ResourceLinksInput = ({
                         })
                       }
                     }}
-                    disabledKeys={getDisabledStorageKeys(section, userRole)}
+                    disabledKeys={KUN_LINK_STORAGES.filter(
+                      (storage) => !allowedStorages.includes(storage)
+                    )}
                     isInvalid={!!errors.links?.[index]?.storage}
                     errorMessage={errors.links?.[index]?.storage?.message}
                   >

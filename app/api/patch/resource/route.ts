@@ -17,6 +17,7 @@ import { frontResourceEditGuard, updatePatchResource } from './update'
 import { deleteResource } from './delete'
 import { prisma } from '~/prisma/index'
 import { acquireKvLock, releaseKvLock } from '~/lib/redis'
+import { can } from '~/constants/permission'
 
 const patchIdSchema = z.object({
   patchId: z.coerce.number().min(1).max(9999999)
@@ -50,7 +51,7 @@ export const POST = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
   if (
-    payload.role < 4 &&
+    !can(payload, 'storage.touchgal') &&
     input.links.some((link) => link.storage === 'touchgal')
   ) {
     return NextResponse.json('仅超级管理员可使用 TouchGal 资源盘')
@@ -113,7 +114,7 @@ export const PUT = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
   if (
-    payload.role < 4 &&
+    !can(payload, 'storage.touchgal') &&
     input.links.some((link) => link.storage === 'touchgal')
   ) {
     return NextResponse.json('仅超级管理员可使用 TouchGal 资源盘')

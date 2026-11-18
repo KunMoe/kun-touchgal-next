@@ -15,6 +15,7 @@ import { sanitizeFileName } from '~/utils/sanitizeFileName'
 import { prisma } from '~/prisma'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { can } from '~/constants/permission'
 
 const MIN_FILE_SIZE = 1024
 const UPLOAD_TOKEN_TTL_SECONDS = 24 * 60 * 60
@@ -61,15 +62,17 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json('用户未找到')
   }
-  if (user.role < 2) {
+  // 以库里此刻的角色为准, 不用会话里可能来自鉴权缓存的那份
+  const uploader = { uid: user.id, role: user.role }
+  if (!can(uploader, 'storage.s3')) {
     return NextResponse.json(
       '您的权限不足, 创作者或者管理员才可以上传文件到对象存储'
     )
   }
-  if (user.role < 3 && user.moemoepoint < 20) {
+  if (!can(uploader, 'upload.skipPointsGate') && user.moemoepoint < 20) {
     return NextResponse.json('仅限萌萌点大于 20 的用户才可以发布资源')
   }
-  if (user.role === 2) {
+  if (!can(uploader, 'upload.skipCaptcha')) {
     const passed = await checkKunCaptchaExist(String(input.captcha ?? ''))
     if (!passed) {
       return NextResponse.json('人机验证无效, 请完成人机验证')

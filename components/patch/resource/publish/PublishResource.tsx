@@ -27,6 +27,7 @@ import {
 } from '~/constants/resource'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useUserStore } from '~/store/userStore'
+import { can, defaultLinkStorage } from '~/constants/permission'
 import type { PatchResource } from '~/types/api/patch'
 
 export type ResourceFormData = z.infer<typeof patchResourceCreateSchema>
@@ -37,25 +38,13 @@ interface CreateResourceProps {
   onSuccess?: (res: PatchResource) => void
 }
 
-const userRoleStorageMap: Record<number, string> = {
-  1: 'user',
-  2: 's3',
-  3: 's3',
-  4: 'touchgal'
-}
-
 export const PublishResource = ({
   patchId,
   onClose,
   onSuccess
 }: CreateResourceProps) => {
   const createDefaultLink = (section: string) => ({
-    storage:
-      section === 'galgame'
-        ? user.role > 3
-          ? 'touchgal'
-          : 'user'
-        : userRoleStorageMap[user.role],
+    storage: defaultLinkStorage(user, section),
     hash: '',
     content: '',
     size: '',
@@ -67,7 +56,10 @@ export const PublishResource = ({
   const creatingRef = useRef(false)
   const [uploadingResource, setUploadingResource] = useState(false)
   const user = useUserStore((state) => state.user)
-  const needsSectionPreselection = user.role <= 2
+  // 发布官方资源的角色默认进 Galgame 分区, 其余角色先选分区
+  const isOfficialPublisher = can(user, 'resource.officialBadge')
+  const defaultSection = isOfficialPublisher ? 'galgame' : 'patch'
+  const needsSectionPreselection = !isOfficialPublisher
   const [sectionConfirmed, setSectionConfirmed] = useState(
     !needsSectionPreselection
   )
@@ -83,14 +75,14 @@ export const PublishResource = ({
     defaultValues: {
       patchId,
       name: '',
-      section: user.role > 2 ? 'galgame' : 'patch',
+      section: defaultSection,
       type: [],
       language: [],
       platform: [],
       emulatorType: [],
       modelName: '',
       note: '',
-      links: [createDefaultLink(user.role > 2 ? 'galgame' : 'patch')]
+      links: [createDefaultLink(defaultSection)]
     }
   })
 
@@ -135,7 +127,7 @@ export const PublishResource = ({
         <h3 className="text-lg">发布资源</h3>
         {(sectionConfirmed || !needsSectionPreselection) && (
           <div className="text-sm font-medium text-default-500">
-            {user.role > 1 ? (
+            {can(user, 'storage.s3') ? (
               <div className="space-y-1">
                 <p>每日上传总额度为 5GB (5120MB)，上传越多可用额度越高。</p>
                 <p>{`今日剩余上传额度 ${user.dailyUploadLimit.toFixed(3)} MB`}</p>
