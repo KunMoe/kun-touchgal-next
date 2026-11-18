@@ -61,7 +61,8 @@ export const POST = async (req: NextRequest) => {
   if (!user) {
     return NextResponse.json('未找到该用户')
   }
-  if (user.moemoepoint < 20) {
+  // 与上传初始化 (upload/init) 是同一条门槛, 豁免也是同一项能力
+  if (!can(payload, 'upload.skipPointsGate') && user.moemoepoint < 20) {
     return NextResponse.json('仅限萌萌点大于 20 的用户才可以发布资源')
   }
 

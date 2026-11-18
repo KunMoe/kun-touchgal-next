@@ -247,21 +247,27 @@ describe('POST /api/patch/resource 用户行、萌萌点与待审资源', () => 
     expect(resourceFindFirstMock).not.toHaveBeenCalled()
   })
 
-  it.each([1, 2, 3, 4])(
-    '萌萌点 19 时 role %i 同样被拒 (此处无角色豁免)',
-    async (role) => {
-      verifyHeaderCookieMock.mockResolvedValue(asPayload(role))
-      userFindUniqueMock.mockResolvedValue(asUserRow({ role, moemoepoint: 19 }))
-      const res = await POST(jsonRequest('POST', createBody()))
+  it.each([1, 2])('萌萌点 19 时 role %i 被拒', async (role) => {
+    verifyHeaderCookieMock.mockResolvedValue(asPayload(role))
+    userFindUniqueMock.mockResolvedValue(asUserRow({ role, moemoepoint: 19 }))
+    const res = await POST(jsonRequest('POST', createBody()))
 
-      expect(await res.json()).toBe(MOEMOEPOINT_ERROR)
-      expect(resourceFindFirstMock).not.toHaveBeenCalled()
-      expect(acquireKvLockMock).not.toHaveBeenCalled()
-      expect(createPatchResourceMock).not.toHaveBeenCalled()
-    }
-  )
+    expect(await res.json()).toBe(MOEMOEPOINT_ERROR)
+    expect(resourceFindFirstMock).not.toHaveBeenCalled()
+    expect(acquireKvLockMock).not.toHaveBeenCalled()
+    expect(createPatchResourceMock).not.toHaveBeenCalled()
+  })
 
-  it('role 4 带 touchgal 链接通过资源盘闸门后仍受萌萌点闸门约束', async () => {
+  // 与上传初始化同一条门槛、同一项豁免: 能上传的管理员不会在发布这一步被拒
+  it.each([3, 4])('萌萌点 19 时 role %i 豁免门槛', async (role) => {
+    verifyHeaderCookieMock.mockResolvedValue(asPayload(role))
+    userFindUniqueMock.mockResolvedValue(asUserRow({ role, moemoepoint: 19 }))
+    const res = await POST(jsonRequest('POST', createBody()))
+
+    expect(await res.json()).toEqual({ id: 1, name: 'created' })
+  })
+
+  it('role 4 带 touchgal 链接、萌萌点 19: 资源盘与萌萌点两道闸门都放行', async () => {
     verifyHeaderCookieMock.mockResolvedValue(asPayload(4))
     userFindUniqueMock.mockResolvedValue(
       asUserRow({ role: 4, moemoepoint: 19 })
@@ -270,7 +276,25 @@ describe('POST /api/patch/resource 用户行、萌萌点与待审资源', () => 
       jsonRequest('POST', createBody({ links: [touchgalLink()] }))
     )
 
-    expect(await res.json()).toBe(MOEMOEPOINT_ERROR)
+    expect(await res.json()).toEqual({ id: 1, name: 'created' })
+  })
+
+  it('豁免按会话里的角色判定, 萌萌点取库里的值', async () => {
+    verifyHeaderCookieMock.mockResolvedValue(asPayload(3))
+    userFindUniqueMock.mockResolvedValue(
+      asUserRow({ role: 1, moemoepoint: 19 })
+    )
+    expect(
+      await (await POST(jsonRequest('POST', createBody()))).json()
+    ).toEqual({ id: 1, name: 'created' })
+
+    verifyHeaderCookieMock.mockResolvedValue(asPayload(2))
+    userFindUniqueMock.mockResolvedValue(
+      asUserRow({ role: 4, moemoepoint: 19 })
+    )
+    expect(await (await POST(jsonRequest('POST', createBody()))).json()).toBe(
+      MOEMOEPOINT_ERROR
+    )
   })
 
   it.each([1, 2, 3, 4])('萌萌点 20 时 role %i 通过', async (role) => {
