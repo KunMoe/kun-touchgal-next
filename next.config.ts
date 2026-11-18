@@ -43,7 +43,8 @@ const nextConfig: NextConfig = {
 
   output: 'standalone',
   // Turbopack 的文件追踪看不见 sharp .node 二进制 dlopen 的 libvips 动态库, 须显式包含;
-  // 同时它会把整个项目目录复制进 standalone (runtimePaths 动态 fs 探测所致), 排除私有内容。
+  // 排除项是兜底: lib/runtimePaths.ts 已标注 turbopackIgnore, 整个项目不再被追踪进 standalone;
+  // 以后再出现认不出目标的文件访问时, 私有内容也不会被带进去。
   // .env 不在排除之列: 那是 Next writeStandaloneDirectory 的刻意复制, 与追踪无关且 webpack 时代已如此
   outputFileTracingIncludes: {
     '*': ['node_modules/.pnpm/@img+sharp-libvips-*/**']
