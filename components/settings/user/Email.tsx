@@ -23,12 +23,13 @@ import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 
 type EmailFormData = z.infer<typeof resetEmailSchema>
-type AuthMode = 'password' | 'totp'
 
 export const Email = () => {
   const [loading, setLoading] = useState(false)
   const [checkingAuthMode, setCheckingAuthMode] = useState(false)
-  const [authMode, setAuthMode] = useState<AuthMode>('password')
+  // 启用了两步验证的账号, 除当前密码外还要第二因子 (验证码或一个备用验证码)
+  const [needsSecondFactor, setNeedsSecondFactor] = useState(false)
+  const [isUsingBackupCode, setIsUsingBackupCode] = useState(false)
   const { isOpen, onOpen, onClose } = useDisclosure()
 
   const {
@@ -44,13 +45,20 @@ export const Email = () => {
       email: '',
       code: '',
       currentPassword: '',
-      totp: ''
+      totp: '',
+      backupCode: ''
     }
   })
 
+  const clearSecondFactor = () => {
+    setValue('totp', '')
+    setValue('backupCode', '')
+  }
+
   const closeAuthModal = () => {
     setValue('currentPassword', '')
-    setValue('totp', '')
+    clearSecondFactor()
+    setIsUsingBackupCode(false)
     onClose()
   }
 
@@ -63,7 +71,7 @@ export const Email = () => {
         hasSecret: boolean
       }>('/user/setting/2fa/status')
 
-      setAuthMode(response.enabled && response.hasSecret ? 'totp' : 'password')
+      setNeedsSecondFactor(response.enabled)
       onOpen()
     } catch {
       toast.error('读取 2FA 状态失败, 请稍后重试')
@@ -82,6 +90,7 @@ export const Email = () => {
       )
       kunErrorHandler(res, () => {
         reset()
+        setIsUsingBackupCode(false)
         onClose()
         toast.success('更新邮箱成功!')
       })
@@ -106,7 +115,8 @@ export const Email = () => {
             <div className="rounded-2xl border border-default-200 bg-default-50/70 p-4 dark:bg-default-100/10">
               <p className="font-medium text-foreground">验证流程</p>
               <p className="mt-1 leading-6 text-default-500">
-                先向新邮箱发送验证码，保存时再通过当前密码或 2FA 确认本人操作。
+                先向新邮箱发送验证码，保存时再输入当前密码确认本人操作；已启用两步验证的账户还需要
+                2FA 验证码。
               </p>
             </div>
             <Controller
@@ -173,43 +183,24 @@ export const Email = () => {
 
       <Modal isOpen={isOpen} onClose={closeAuthModal} placement="center">
         <ModalContent>
-          <ModalHeader>确认修改邮箱</ModalHeader>
-          <ModalBody>
-            <p className="text-sm text-default-500">
-              {authMode === 'totp'
-                ? '请输入 2FA 验证码以确认是您本人操作。'
-                : '请输入当前密码以确认是您本人操作。'}
-            </p>
-            {authMode === 'totp' ? (
-              <Controller
-                name="totp"
-                control={control}
-                render={({ field }) => (
-                  <Input
-                    {...field}
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    autoComplete="one-time-code"
-                    placeholder="请输入 2FA 验证码"
-                    startContent={
-                      <ShieldCheck className="text-2xl pointer-events-none shrink-0 text-default-400" />
-                    }
-                    isInvalid={!!errors.totp}
-                    errorMessage={errors.totp?.message}
-                  />
-                )}
-              />
-            ) : (
+          <form className="contents" onSubmit={handleSubmit(handleUpdateEmail)}>
+            <ModalHeader>确认修改邮箱</ModalHeader>
+            <ModalBody>
+              <p className="text-sm text-default-500">
+                {needsSecondFactor
+                  ? '请输入当前密码和 2FA 验证码以确认是您本人操作。'
+                  : '请输入当前密码以确认是您本人操作。'}
+              </p>
               <Controller
                 name="currentPassword"
                 control={control}
                 render={({ field }) => (
                   <Input
                     {...field}
+                    isRequired
                     type="password"
+                    label="当前密码"
                     autoComplete="current-password"
-                    placeholder="请输入当前密码"
                     startContent={
                       <KeyRound className="text-2xl pointer-events-none shrink-0 text-default-400" />
                     }
@@ -218,20 +209,82 @@ export const Email = () => {
                   />
                 )}
               />
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="light" onPress={closeAuthModal}>
-              取消
-            </Button>
-            <Button
-              color="primary"
-              isLoading={loading}
-              onPress={() => handleSubmit(handleUpdateEmail)()}
-            >
-              确认修改
-            </Button>
-          </ModalFooter>
+              {needsSecondFactor &&
+                (isUsingBackupCode ? (
+                  <Controller
+                    name="backupCode"
+                    control={control}
+                    render={({ field }) => (
+                      <Input
+                        {...field}
+                        isRequired
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        label="备用验证码"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck="false"
+                        startContent={
+                          <ShieldCheck className="text-2xl pointer-events-none shrink-0 text-default-400" />
+                        }
+                        isInvalid={!!errors.backupCode}
+                        errorMessage={errors.backupCode?.message}
+                      />
+                    )}
+                  />
+                ) : (
+                  <Controller
+                    name="totp"
+                    control={control}
+                    render={({ field }) => (
+                      <Input
+                        {...field}
+                        isRequired
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        label="2FA 验证码"
+                        autoComplete="one-time-code"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck="false"
+                        startContent={
+                          <ShieldCheck className="text-2xl pointer-events-none shrink-0 text-default-400" />
+                        }
+                        isInvalid={!!errors.totp}
+                        errorMessage={errors.totp?.message}
+                      />
+                    )}
+                  />
+                ))}
+              {needsSecondFactor && (
+                <Button
+                  size="sm"
+                  variant="light"
+                  color="primary"
+                  className="self-start"
+                  isDisabled={loading}
+                  onPress={() => {
+                    clearSecondFactor()
+                    setIsUsingBackupCode((value) => !value)
+                  }}
+                >
+                  {isUsingBackupCode
+                    ? '使用身份验证器验证码'
+                    : '使用备用验证码'}
+                </Button>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={closeAuthModal}>
+                取消
+              </Button>
+              <Button color="primary" type="submit" isLoading={loading}>
+                确认修改
+              </Button>
+            </ModalFooter>
+          </form>
         </ModalContent>
       </Modal>
     </>

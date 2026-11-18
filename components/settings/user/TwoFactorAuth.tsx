@@ -64,6 +64,13 @@ export const TwoFactorAuth = () => {
   } = useDisclosure()
   const [disableToken, setDisableToken] = useState('')
   const [isUsingBackupCode, setIsUsingBackupCode] = useState(false)
+  // 生成密钥之前先确认当前密码
+  const {
+    isOpen: isPasswordOpen,
+    onOpen: onPasswordOpen,
+    onClose: onPasswordClose
+  } = useDisclosure()
+  const [currentPassword, setCurrentPassword] = useState('')
 
   useEffect(() => {
     const check2FAStatus = async () => {
@@ -89,12 +96,12 @@ export const TwoFactorAuth = () => {
     }
   }, [isMounted])
 
-  const generateSecret = async () => {
-    if (!user.uid) {
-      toast.error('请登录后再启用 2FA')
-      return
-    }
+  const closePasswordModal = () => {
+    setCurrentPassword('')
+    onPasswordClose()
+  }
 
+  const generateSecret = async () => {
     startTransition(async () => {
       try {
         const res = await kunFetchPost<
@@ -103,9 +110,10 @@ export const TwoFactorAuth = () => {
             authUrl: string
             qrCodeUrl: string
           }>
-        >('/user/setting/2fa/save-secret')
+        >('/user/setting/2fa/save-secret', { currentPassword })
 
         kunErrorHandler(res, (value) => {
+          closePasswordModal()
           setAuthStatus((current) => ({
             ...current,
             secret: value.secret,
@@ -216,10 +224,12 @@ export const TwoFactorAuth = () => {
                 isSelected={authStatus.isEnabled2FA}
                 isDisabled={isPending}
                 onValueChange={(value) => {
-                  if (value) {
-                    generateSecret()
-                  } else {
+                  if (!value) {
                     onDisableOpen()
+                  } else if (!user.uid) {
+                    toast.error('请登录后再启用 2FA')
+                  } else {
+                    onPasswordOpen()
                   }
                 }}
               />
@@ -233,6 +243,46 @@ export const TwoFactorAuth = () => {
           </p>
         </CardFooter>
       </Card>
+
+      <Modal isOpen={isPasswordOpen} onClose={closePasswordModal} size="md">
+        <ModalContent>
+          <form
+            className="contents"
+            onSubmit={(event) => {
+              event.preventDefault()
+              generateSecret()
+            }}
+          >
+            <ModalHeader>确认当前密码</ModalHeader>
+            <ModalBody>
+              <p className="text-sm text-default-500">
+                为确认是您本人操作，生成两步验证密钥前请输入当前密码。
+              </p>
+              <Input
+                isRequired
+                type="password"
+                name="current-password"
+                label="当前密码"
+                autoComplete="current-password"
+                value={currentPassword}
+                onValueChange={setCurrentPassword}
+              />
+            </ModalBody>
+            <ModalFooter>
+              <Button
+                variant="light"
+                onPress={closePasswordModal}
+                isDisabled={isPending}
+              >
+                取消
+              </Button>
+              <Button color="primary" type="submit" isLoading={isPending}>
+                继续
+              </Button>
+            </ModalFooter>
+          </form>
+        </ModalContent>
+      </Modal>
 
       <Modal isOpen={isOpen} onClose={onClose} size="lg">
         <ModalContent>

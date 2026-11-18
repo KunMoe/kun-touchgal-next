@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
 import { deleteKunToken } from '~/app/api/utils/jwt'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { disable2FA } from '~/app/api/user/setting/2fa/disable'
+import { kunTx } from '~/server/db/tx'
+import { disableTwoFactor } from '~/server/auth/twoFactorState'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { adminDisableUser2FASchema } from '~/validations/admin'
 import { can } from '~/constants/permission'
@@ -37,22 +38,29 @@ const disableUser2FAByAdmin = async (
     return '未找到该管理员'
   }
 
-  const response = await prisma.$transaction(async (prisma) => {
-    await disable2FA(input.uid, prisma)
+  const failure = await kunTx('admin.user.twoFactor.disable', async (ctx) => {
+    const disabled = await disableTwoFactor(
+      { kind: 'admin-override', adminUid, uid: input.uid },
+      ctx.tx
+    )
+    if (!disabled) {
+      ctx.fail('该用户尚未启用两步验证')
+    }
 
-    await prisma.admin_log.create({
+    await ctx.tx.admin_log.create({
       data: {
         type: 'update',
         user_id: adminUid,
         content: `管理员 ${admin.name} 关闭了用户 ${user.name} (${user.id}) 的两步验证`
       }
     })
-
-    return {}
   })
+  if (failure) {
+    return failure
+  }
 
   await deleteKunToken(input.uid)
-  return response
+  return {}
 }
 
 export const POST = async (req: NextRequest) => {

@@ -744,6 +744,42 @@ export const KUN_INVARIANTS = [
         "import { toDataURL } from 'qrcode'"
       ]
     }
+  },
+  {
+    id: 'inv-auth-02',
+    aliases: ['T07'],
+    statement:
+      'verifyPassword 只许在 server/auth/** 与登录路由里导入; 已登录后要验当前密码的操作走 server/auth/stepUp.ts 的 requireStepUp',
+    reason:
+      '裸调 verifyPassword 没有尝试预算: 设置页曾有两处, 持会话的人可以无限次猜当前密码, 每次还白耗一轮 argon2。requireStepUp 先预留额度再读凭据、校验, 哪种操作要验密码由它的策略表决定',
+    removeWhen: 'verifyPassword 不再从 algorithm 模块导出',
+    // app/api/utils/algorithm.ts 是迁移期整模块转出的旧路径; 测试要拿它核对落库的哈希
+    ignores: [
+      'server/auth/**',
+      'app/api/auth/login/route.ts',
+      'app/api/utils/algorithm.ts',
+      '**/__tests__/**'
+    ],
+    enforce: {
+      kind: 'import',
+      sources: [
+        /(^|\/)(server\/auth|app\/api\/utils)\/algorithm(\.[cm]?[jt]sx?)?$/
+      ],
+      importNames: ['verifyPassword']
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import { verifyPassword } from '~/server/auth/algorithm'",
+        "import { hashPassword, verifyPassword } from '~/app/api/utils/algorithm'",
+        "import { verifyPassword as check } from '../../server/auth/algorithm.ts'",
+        "export * from '~/server/auth/algorithm'"
+      ],
+      good: [
+        "import { hashPassword } from '~/server/auth/algorithm'",
+        "import { requireStepUp } from '~/server/auth/stepUp'"
+      ]
+    }
   }
 ]
 

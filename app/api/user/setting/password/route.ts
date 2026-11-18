@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import { hashPassword, verifyPassword } from '~/app/api/utils/algorithm'
+import { hashPassword } from '~/server/auth/algorithm'
+import { requireStepUp } from '~/server/auth/stepUp'
 import { deleteKunToken } from '~/app/api/utils/jwt'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { passwordSchema } from '~/validations/user'
@@ -17,14 +18,19 @@ const updatePassword = async (req: NextRequest) => {
   if (!payload) {
     return '用户未登录'
   }
-  if (!getRemoteIp(req.headers)) {
+  const ip = getRemoteIp(req.headers)
+  if (!ip) {
     return '读取请求头失败'
   }
 
-  const user = await prisma.user.findUnique({ where: { id: payload.uid } })
-  const res = await verifyPassword(input.oldPassword, user ? user.password : '')
-  if (!res) {
-    return '旧密码输入错误'
+  const stepUp = await requireStepUp(
+    payload.uid,
+    'password.change',
+    { currentPassword: input.oldPassword },
+    { ip }
+  )
+  if (!stepUp.ok) {
+    return stepUp.message
   }
 
   const hashedPassword = await hashPassword(input.newPassword)

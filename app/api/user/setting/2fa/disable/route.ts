@@ -1,62 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '~/prisma/index'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { disableUser2FASchema } from '~/validations/user'
-import { disable2FA } from '../disable'
+import { kunTx } from '~/server/db/tx'
+import { requireStepUp } from '~/server/auth/stepUp'
 import {
-  SECOND_FACTOR_FAILURE_MESSAGE,
-  verifySecondFactor
-} from '~/server/auth/secondFactor'
-
-const verifyAndDisable2FA = async (
-  uid: number,
-  input: { token: string; isBackupCode: boolean },
-  ip: string
-) => {
-  const user = await prisma.user.findUnique({
-    where: { id: uid },
-    select: {
-      enable_2fa: true,
-      two_factor_secret: true
-    }
-  })
-
-  if (!user || !user.enable_2fa) {
-    return '用户未启用 2FA'
-  }
-
-  if (!input.isBackupCode && !user.two_factor_secret) {
-    return '未找到 2FA 密钥'
-  }
-
-  if (input.isBackupCode) {
-    // 备份码的消费与关闭在同一个事务里: 关闭失败时备份码不能白白作废
-    const result = await prisma.$transaction(async (tx) => {
-      const verified = await verifySecondFactor(
-        uid,
-        { kind: 'backup', code: input.token },
-        { ip, db: tx }
-      )
-      return verified.ok ? disable2FA(uid, tx) : verified
-    })
-    return 'ok' in result
-      ? SECOND_FACTOR_FAILURE_MESSAGE[result.reason]
-      : result
-  }
-
-  const verified = await verifySecondFactor(
-    uid,
-    { kind: 'totp', code: input.token },
-    { ip }
-  )
-  if (!verified.ok) {
-    return SECOND_FACTOR_FAILURE_MESSAGE[verified.reason]
-  }
-
-  return disable2FA(uid)
-}
+  disableTwoFactor,
+  TWO_FACTOR_STATE_CHANGED
+} from '~/server/auth/twoFactorState'
 
 export const POST = async (req: NextRequest) => {
   const payload = await verifyHeaderCookie(req)
@@ -69,10 +21,22 @@ export const POST = async (req: NextRequest) => {
     return NextResponse.json(input)
   }
 
-  const result = await verifyAndDisable2FA(
-    payload.uid,
-    input,
-    getRemoteIp(req.headers)
-  )
-  return NextResponse.json(result)
+  const ip = getRemoteIp(req.headers)
+  // 二次验证与关闭在同一个事务里: 备份码的消费不能与关闭分开提交
+  const failure = await kunTx('twoFactor.disable', async (ctx) => {
+    const stepUp = await requireStepUp(
+      payload.uid,
+      'twoFactor.disable',
+      input.isBackupCode ? { backupCode: input.token } : { totp: input.token },
+      { ip, db: ctx.tx }
+    )
+    if (!stepUp.ok) {
+      return ctx.fail(stepUp.message)
+    }
+    if (!(await disableTwoFactor(stepUp.passed, ctx.tx))) {
+      ctx.fail(TWO_FACTOR_STATE_CHANGED)
+    }
+  })
+
+  return NextResponse.json(failure ?? { success: true, message: '2FA 已禁用' })
 }

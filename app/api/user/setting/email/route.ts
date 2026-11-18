@@ -5,13 +5,9 @@ import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { resetEmailSchema } from '~/validations/user'
-import { verifyPassword } from '~/app/api/utils/algorithm'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { delKv, setKv } from '~/lib/redis'
-import {
-  SECOND_FACTOR_FAILURE_MESSAGE,
-  verifySecondFactor
-} from '~/server/auth/secondFactor'
+import { requireStepUp } from '~/server/auth/stepUp'
 import {
   createEmailChangeRevertKey,
   EMAIL_CHANGE_REVERT_TTL_SECONDS,
@@ -19,19 +15,9 @@ import {
   type EmailChangeRevertPayload
 } from './_emailChange'
 
-type ResetEmailInput = {
-  email: string
-  code: string
-  currentPassword?: string
-  totp?: string
-}
-
 type EmailChangeUser = {
   id: number
   email: string
-  password: string
-  enable_2fa: boolean
-  two_factor_secret: string
 }
 
 type PreviousEmailNoticeResult =
@@ -40,82 +26,16 @@ type PreviousEmailNoticeResult =
 const getEmailChangeUser = async (uid: number) => {
   return prisma.user.findUnique({
     where: { id: uid },
-    select: {
-      id: true,
-      email: true,
-      password: true,
-      enable_2fa: true,
-      two_factor_secret: true
-    }
+    select: { id: true, email: true }
   })
 }
 
-const validateEmailChangeTarget = async (
-  user: EmailChangeUser,
-  email: string
-) => {
-  if (email === user.email) {
-    return '新邮箱不能与当前邮箱相同'
-  }
-
+const isEmailTaken = async (user: EmailChangeUser, email: string) => {
   const existedUser = await prisma.user.findUnique({
     where: { email },
     select: { id: true }
   })
-  if (existedUser && existedUser.id !== user.id) {
-    return '该邮箱已被使用'
-  }
-}
-
-const verifyTotpChallenge = async (
-  user: EmailChangeUser,
-  ip: string,
-  token?: string
-) => {
-  if (!user.two_factor_secret) {
-    return '未找到 2FA 密钥'
-  }
-
-  if (!token) {
-    return '请输入 2FA 验证码'
-  }
-
-  const verified = await verifySecondFactor(
-    user.id,
-    { kind: 'totp', code: token },
-    { ip }
-  )
-  if (!verified.ok) {
-    return verified.reason === 'invalid'
-      ? '2FA 验证码无效'
-      : SECOND_FACTOR_FAILURE_MESSAGE[verified.reason]
-  }
-}
-
-const verifyPasswordChallenge = async (
-  user: EmailChangeUser,
-  currentPassword?: string
-) => {
-  if (!currentPassword) {
-    return '请输入当前密码'
-  }
-
-  const isPasswordValid = await verifyPassword(currentPassword, user.password)
-  if (!isPasswordValid) {
-    return '当前密码输入错误'
-  }
-}
-
-const verifyEmailChangeChallenge = async (
-  user: EmailChangeUser,
-  input: ResetEmailInput,
-  ip: string
-) => {
-  if (user.enable_2fa) {
-    return verifyTotpChallenge(user, ip, input.totp)
-  }
-
-  return verifyPasswordChallenge(user, input.currentPassword)
+  return !!existedUser && existedUser.id !== user.id
 }
 
 const createRevertToken = async (user: EmailChangeUser, newEmail: string) => {
@@ -192,19 +112,25 @@ const updateEmail = async (req: NextRequest) => {
     return '用户不存在'
   }
 
-  const targetError = await validateEmailChangeTarget(user, input.email)
-  if (targetError) {
-    return targetError
+  if (input.email === user.email) {
+    return '新邮箱不能与当前邮箱相同'
   }
 
-  const challengeError = await verifyEmailChangeChallenge(user, input, ip)
-  if (challengeError) {
-    return challengeError
+  const stepUp = await requireStepUp(payload.uid, 'email.change', input, {
+    ip
+  })
+  if (!stepUp.ok) {
+    return stepUp.message
   }
 
   const isCodeValid = await verifyVerificationCode(input.email, input.code)
   if (!isCodeValid) {
     return '您的验证码无效, 请重新输入'
+  }
+
+  // 查重排在两道证明之后: 没证明身份、没收到新邮箱的验证码, 就问不出一个邮箱注册没有
+  if (await isEmailTaken(user, input.email)) {
+    return '该邮箱已被使用'
   }
 
   const notice = await sendPreviousEmailNotice(user, input.email)
