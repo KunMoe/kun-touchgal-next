@@ -725,23 +725,26 @@ export const KUN_INVARIANTS = [
     id: 'inv-auth-01',
     aliases: ['T07'],
     statement:
-      'time2fa 只许在 server/auth/secondFactor.ts 里导入, 其余一律用它导出的 checkTotp / verifySecondFactor / verifyEnrollmentCode / issueBackupCodes / createTotpKey',
+      'time2fa 只许在 server/auth/secondFactor.ts 里导入, 其余一律用它导出的 verifySecondFactor / verifyEnrollmentCode / issueBackupCodes / createTotpKey',
     reason:
-      'time2fa 的 validate 是纯函数, 只回布尔值: 不登记已用的时间步, 漂移窗口只能逐处传参, 也不计尝试次数。曾有 4 处裸调用, 每处都缺这三样 (同一个码在它的 30 秒内可跨入口重放, 跨步长到达的正确码被拒, 设置页可以无限次猜); 「防 2FA 暴力破解」那次修复改了两个设置页路由, 预算却只接到了登录一处',
+      'time2fa 的 validate 是纯函数, 只回布尔值: 不登记已用的时间步, 漂移窗口只能逐处传参, 也不计尝试次数。曾有 4 处裸调用, 每处都缺这三样 (同一个码在它的 30 秒内可跨入口重放, 跨步长到达的正确码被拒, 设置页可以无限次猜); 「防 2FA 暴力破解」那次修复改了两个设置页路由, 预算却只接到了登录一处。与本表其它 import 类规则一样, 只认静态导入',
     removeWhen: '全仓不再使用 time2fa',
     // 测试要自己算出真实的验证码
     ignores: ['server/auth/secondFactor.ts', '**/__tests__/**'],
-    enforce: { kind: 'import', sources: ['time2fa'] },
+    // 子路径 (time2fa/dist/…) 一并算
+    enforce: { kind: 'import', sources: [/^time2fa(\/|$)/] },
     examples: {
       file: 'app/api/kunInvariantExample.ts',
       bad: [
         "import { Totp } from 'time2fa'",
         "import { generateBackupCodes } from 'time2fa'",
-        "export { Hotp } from 'time2fa'"
+        "export { Hotp } from 'time2fa'",
+        "import { Totp } from 'time2fa/dist/index.mjs'"
       ],
       good: [
         "import { verifySecondFactor } from '~/server/auth/secondFactor'",
-        "import { toDataURL } from 'qrcode'"
+        "import { toDataURL } from 'qrcode'",
+        "import { time } from 'time2fa-like'"
       ]
     }
   },
@@ -749,7 +752,7 @@ export const KUN_INVARIANTS = [
     id: 'inv-auth-02',
     aliases: ['T07'],
     statement:
-      'verifyPassword 只许在 server/auth/** 与登录路由里导入; 已登录后要验当前密码的操作走 server/auth/stepUp.ts 的 requireStepUp',
+      'verifyPassword 只许在 server/auth/** 与登录路由里导入 (具名或整模块命名空间都算); 已登录后要验当前密码的操作走 server/auth/stepUp.ts 的 requireStepUp',
     reason:
       '裸调 verifyPassword 没有尝试预算: 设置页曾有两处, 持会话的人可以无限次猜当前密码, 每次还白耗一轮 argon2。requireStepUp 先预留额度再读凭据、校验, 哪种操作要验密码由它的策略表决定',
     removeWhen: 'verifyPassword 不再从 algorithm 模块导出',
@@ -762,10 +765,9 @@ export const KUN_INVARIANTS = [
     ],
     enforce: {
       kind: 'import',
-      sources: [
-        /(^|\/)(server\/auth|app\/api\/utils)\/algorithm(\.[cm]?[jt]sx?)?$/
-      ],
-      importNames: ['verifyPassword']
+      // 按文件名认, 相对路径 (../auth/algorithm、./algorithm) 也算; 全仓只有这一个 algorithm 模块
+      sources: [/(^|\/)algorithm(\.[cm]?[jt]sx?)?$/],
+      importNames: ['verifyPassword', '*']
     },
     examples: {
       file: 'app/api/kunInvariantExample.ts',
@@ -773,10 +775,50 @@ export const KUN_INVARIANTS = [
         "import { verifyPassword } from '~/server/auth/algorithm'",
         "import { hashPassword, verifyPassword } from '~/app/api/utils/algorithm'",
         "import { verifyPassword as check } from '../../server/auth/algorithm.ts'",
+        "import { verifyPassword } from '../auth/algorithm'",
+        "import { verifyPassword } from './algorithm'",
+        "import * as algorithm from '~/server/auth/algorithm'",
         "export * from '~/server/auth/algorithm'"
       ],
       good: [
         "import { hashPassword } from '~/server/auth/algorithm'",
+        "import { requireStepUp } from '~/server/auth/stepUp'"
+      ]
+    }
+  },
+  {
+    id: 'inv-auth-03',
+    aliases: ['T07'],
+    statement:
+      'checkTotp 与 consumeTwoFactorBackupCode 只许在 server/auth/** 与登录第二步的路由里导入; 其余入口验第二因子走 requireStepUp (或 verifySecondFactor / verifyEnrollmentCode)',
+    reason:
+      '这两个函数只做校验与消费, 不带尝试预算: 登录第二步有自己按 challenge 的预约, 所以直接用它们; 别的入口直接调, 等于又多一个可以无限次猜验证码或备份码的地方 (备份码的消费还要与它授权的变更同一个事务, 见 consumeStepUpBackupCode)',
+    removeWhen: '登录第二步也改走带预算的统一入口, 这两个函数不再从模块导出',
+    // app/api/utils/twoFactorBackupCode.ts 是迁移期整模块转出的旧路径
+    ignores: [
+      'server/auth/**',
+      'app/api/auth/verify-2fa/route.ts',
+      'app/api/utils/twoFactorBackupCode.ts',
+      '**/__tests__/**'
+    ],
+    enforce: {
+      kind: 'import',
+      sources: [/(^|\/)(secondFactor|twoFactorBackupCode)(\.[cm]?[jt]sx?)?$/],
+      importNames: ['checkTotp', 'consumeTwoFactorBackupCode', '*']
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import { checkTotp } from '~/server/auth/secondFactor'",
+        "import { consumeTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'",
+        "import { consumeTwoFactorBackupCode } from '~/app/api/utils/twoFactorBackupCode'",
+        "import * as secondFactor from '../../server/auth/secondFactor'",
+        "export * from '~/server/auth/twoFactorBackupCode'"
+      ],
+      good: [
+        "import { verifySecondFactor } from '~/server/auth/secondFactor'",
+        "import { hashTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'",
+        "import { secondFactorCodeSchema } from '~/validations/secondFactor'",
         "import { requireStepUp } from '~/server/auth/stepUp'"
       ]
     }
