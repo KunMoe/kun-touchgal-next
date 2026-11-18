@@ -88,36 +88,15 @@ export const defaultLinkStorage = (
   section: string
 ): KunLinkStorage => allowedLinkStorages(subject, section)[0] ?? 'user'
 
-export interface KunLinkStorageState {
-  section: string
-  links: readonly { id?: number; storage: string }[]
-}
-
-// 按 delta 判定: 只看新增的链接, 以及存储或所在分区有变化的链接, 返回第一个不被允许的
-// 存储。规则收紧之前留下的存量链接原样保存不算违规, 否则持有者连别的字段都改不了
+// 返回第一个不被允许的存储。哪些链接要判 (编辑时原样带回的存量不判) 由执法点决定,
+// 见 app/api/patch/resource/storageGate.ts
 export const findDisallowedLinkStorage = (
   subject: KunSubject | null | undefined,
-  next: KunLinkStorageState,
-  previous?: KunLinkStorageState
-): string | null => {
-  const unchanged = new Map<number, string>()
-  if (previous && previous.section === next.section) {
-    for (const link of previous.links) {
-      if (link.id !== undefined) {
-        unchanged.set(link.id, link.storage)
-      }
-    }
-  }
-  for (const link of next.links) {
-    if (link.id !== undefined && unchanged.get(link.id) === link.storage) {
-      continue
-    }
-    if (!isLinkStorageAllowed(subject, next.section, link.storage)) {
-      return link.storage
-    }
-  }
-  return null
-}
+  section: string,
+  links: readonly { storage: string }[]
+): string | null =>
+  links.find((link) => !isLinkStorageAllowed(subject, section, link.storage))
+    ?.storage ?? null
 
 // 能被授予的角色; 超级管理员不在其中
 export const KUN_GRANTABLE_ROLES = [

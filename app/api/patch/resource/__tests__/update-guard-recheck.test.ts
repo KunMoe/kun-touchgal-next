@@ -477,6 +477,96 @@ describe('更新资源在行锁下重算 links diff', () => {
   })
 })
 
+// 存储闸门在事务外的快照上判过一次 (赶在 S3 重绑之前), 行锁下以当前集合为准再判一次
+describe('更新资源在行锁下复判存储闸门', () => {
+  const touchgalLink = {
+    id: 5,
+    storage: 'touchgal',
+    content: 'https://pan.example.com/official',
+    hash: '',
+    s3_key: '',
+    size: '100MB',
+    code: '',
+    password: ''
+  }
+  const keptTouchgalLink = {
+    id: 5,
+    storage: 'touchgal',
+    hash: '',
+    content: 'https://pan.example.com/official',
+    size: '100MB',
+    code: '',
+    password: ''
+  }
+  const newS3Link = {
+    storage: 's3',
+    hash: 'upload-token',
+    content: '',
+    size: '100MB',
+    code: '',
+    password: ''
+  }
+
+  beforeEach(() => {
+    resourceFindUniqueMock.mockResolvedValue(
+      buildSnapshot({ section: 'patch', links: [touchgalLink] })
+    )
+    transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'patch' }])
+    bindUploadedResourceMock.mockResolvedValue({
+      downloadLink: 'new-c',
+      s3Key: 'new-k',
+      size: 1
+    })
+    transactionResourceUpdateMock.mockResolvedValue(buildUpdated())
+  })
+
+  it('快照里的 TouchGal 链接锁下已被删掉: 带着旧 id 提交按新增判, 不重建, 已重绑的对象入队清理', async () => {
+    // 超级管理员在快照之后删掉了这条链接
+    transactionLinkFindManyMock.mockResolvedValue([])
+
+    const result = await updateResource(
+      buildInput({ section: 'patch', links: [keptTouchgalLink, newS3Link] }),
+      9,
+      3
+    )
+
+    expect(result).toBe('仅超级管理员可使用 TouchGal 资源盘')
+    expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
+    expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
+      transactionClient,
+      [{ content: 'new-c', patchId: 10, hash: '', s3Key: 'new-k' }]
+    )
+  })
+
+  it('锁下这条链接还在且没变: 照常保存', async () => {
+    transactionLinkFindManyMock.mockResolvedValue([touchgalLink])
+
+    const result = await updateResource(
+      buildInput({ section: 'patch', links: [keptTouchgalLink, newS3Link] }),
+      9,
+      3
+    )
+
+    expect(typeof result).not.toBe('string')
+    expect(transactionResourceUpdateMock).toHaveBeenCalled()
+  })
+
+  it('锁下这条链接被改过地址: 提交的仍是旧地址, 不再算原样带回', async () => {
+    transactionLinkFindManyMock.mockResolvedValue([
+      { ...touchgalLink, content: 'https://pan.example.com/replaced' }
+    ])
+
+    const result = await updateResource(
+      buildInput({ section: 'patch', links: [keptTouchgalLink] }),
+      9,
+      3
+    )
+
+    expect(result).toBe('仅超级管理员可使用 TouchGal 资源盘')
+    expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
+  })
+})
+
 // 预签名直传迁移前的历史 s3 链接: hash 列存 BLAKE3 校验码、s3_key 为空,
 // 对象 key 靠 hash 还原. 编辑表单原样回传该 hash, 不能被当成上传 token
 describe('更新资源保留历史 s3 链接', () => {
@@ -536,7 +626,13 @@ describe('更新资源保留历史 s3 链接', () => {
     )
   })
 
+  // 换文件是一次新的上传: 以创作者 (role 2) 在补丁分区提交, 这是允许新用对象存储的最低
+  // 角色与分区
   it('历史链接换新文件时按 token 绑定, 旧对象按原 hash 入队删除', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      buildSnapshot({ section: 'patch', links: [legacyLink] })
+    )
+    transactionQueryRawMock.mockResolvedValue([{ status: 0, section: 'patch' }])
     bindUploadedResourceMock.mockResolvedValue({
       downloadLink: 'new-c',
       s3Key: 'new-k',
@@ -544,9 +640,12 @@ describe('更新资源保留历史 s3 链接', () => {
     })
 
     const result = await updateResource(
-      buildInput({ links: [{ ...legacyInputLink, hash: 'upload-token' }] }),
+      buildInput({
+        section: 'patch',
+        links: [{ ...legacyInputLink, hash: 'upload-token' }]
+      }),
       7,
-      1
+      2
     )
 
     expect(typeof result).not.toBe('string')

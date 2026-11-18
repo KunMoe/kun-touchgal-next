@@ -144,6 +144,20 @@ const storedLink = (id: number, storage: string) => ({
   download: 0
 })
 
+// 编辑表单原样带回的链接: 与库里那一行逐字段相同
+const kept = (id: number, storage: string) => {
+  const stored = storedLink(id, storage)
+  return {
+    id,
+    storage,
+    hash: stored.hash,
+    content: stored.content,
+    size: stored.size,
+    code: stored.code,
+    password: stored.password
+  }
+}
+
 const storedResource = (
   section: string,
   links: ReturnType<typeof storedLink>[],
@@ -297,7 +311,7 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
     )
 
     const result = await frontUpdate(
-      buildInput('galgame', [link('touchgal', 5), link('user', 6)], {
+      buildInput('galgame', [kept(5, 'touchgal'), kept(6, 'user')], {
         name: '改了名字'
       }),
       99,
@@ -316,7 +330,7 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
 
       // role 1、2 只能改自己的资源, 所以以作者身份提交
       const result = await frontUpdate(
-        buildInput('galgame', [link('touchgal', 5), link('touchgal')]),
+        buildInput('galgame', [kept(5, 'touchgal'), link('touchgal')]),
         AUTHOR_UID,
         role
       )
@@ -348,7 +362,7 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
     )
 
     const result = await frontUpdate(
-      buildInput('galgame', [link('user', 5), link('touchgal', 404)]),
+      buildInput('galgame', [kept(5, 'user'), link('touchgal', 404)]),
       99,
       3
     )
@@ -365,7 +379,7 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
       )
 
       const result = await frontUpdate(
-        buildInput('galgame', [{ ...link('s3', 5), hash: 'stored-hash' }]),
+        buildInput('galgame', [kept(5, 's3')]),
         AUTHOR_UID,
         role
       )
@@ -378,21 +392,21 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
 
   it('规则收紧前留下的 Galgame 分区对象存储链接不锁死: 原样保存、搬回补丁分区都放行', async () => {
     const legacy = storedResource('galgame', [storedLink(5, 's3')])
-    const kept = [{ ...link('s3', 5), hash: 'stored-hash' }]
+    const keptLinks = [kept(5, 's3')]
 
     resourceFindUniqueMock.mockResolvedValue(legacy)
     expect(
       await frontUpdate(
-        buildInput('galgame', kept, { name: '改了名字' }),
+        buildInput('galgame', keptLinks, { name: '改了名字' }),
         AUTHOR_UID,
         2
       )
     ).toBe(PASSED_GATE)
 
     resourceFindUniqueMock.mockResolvedValue(legacy)
-    expect(await frontUpdate(buildInput('patch', kept), AUTHOR_UID, 2)).toBe(
-      PASSED_GATE
-    )
+    expect(
+      await frontUpdate(buildInput('patch', keptLinks), AUTHOR_UID, 2)
+    ).toBe(PASSED_GATE)
   })
 
   it('存量资源里新增的对象存储链接照判', async () => {
@@ -401,16 +415,106 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
     )
 
     const result = await frontUpdate(
-      buildInput('galgame', [
-        { ...link('s3', 5), hash: 'stored-hash' },
-        link('s3')
-      ]),
+      buildInput('galgame', [kept(5, 's3'), link('s3')]),
       AUTHOR_UID,
       2
     )
 
     expect(result).toBe(S3_SECTION_ERROR)
     expectNoSideEffects()
+  })
+
+  // 「原样带回」才算存量: 归存储所有的字段动过, 或同一行被提交了不止一次, 都按新链接判
+  it.each([
+    ['地址', { content: 'https://evil.example.com/file' }],
+    ['大小', { size: '999GB' }],
+    ['提取码', { code: 'evil' }],
+    ['解压码', { password: 'evil' }],
+    ['hash', { hash: 'evil' }]
+  ])('role 3 不能改既有 TouchGal 链接的%s', async (_label, change) => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('galgame', [storedLink(5, 'touchgal')])
+    )
+
+    const result = await frontUpdate(
+      buildInput('galgame', [{ ...kept(5, 'touchgal'), ...change }]),
+      99,
+      3
+    )
+
+    expect(result).toBe(TOUCHGAL_ERROR)
+    expectNoSideEffects()
+  })
+
+  it('同一条既有 TouchGal 链接不能靠重复提交 id 克隆成多条', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('galgame', [storedLink(5, 'touchgal')])
+    )
+
+    const result = await frontUpdate(
+      buildInput('galgame', [kept(5, 'touchgal'), kept(5, 'touchgal')]),
+      99,
+      3
+    )
+
+    expect(result).toBe(TOUCHGAL_ERROR)
+    expectNoSideEffects()
+  })
+
+  it.each([2, 3] as const)(
+    'role %i 不能给 Galgame 分区的存量对象存储链接换新文件',
+    async (role) => {
+      resourceFindUniqueMock.mockResolvedValue(
+        storedResource('galgame', [storedLink(5, 's3')])
+      )
+
+      const result = await frontUpdate(
+        buildInput('galgame', [{ ...kept(5, 's3'), hash: 'new-upload-token' }]),
+        AUTHOR_UID,
+        role
+      )
+
+      expect(result).toBe(S3_SECTION_ERROR)
+      // 新的上传没有被绑定: 没有对象落进 Galgame 分区
+      expectNoSideEffects()
+    }
+  )
+
+  it('存量对象存储链接不能靠重复提交 id 多挂几个新上传', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('galgame', [storedLink(5, 's3')])
+    )
+
+    const result = await frontUpdate(
+      buildInput('galgame', [kept(5, 's3'), kept(5, 's3')]),
+      AUTHOR_UID,
+      2
+    )
+
+    expect(result).toBe(S3_SECTION_ERROR)
+    expectNoSideEffects()
+  })
+
+  it('存量对象存储链接的大小、提取码、解压码作者仍可改 (与申诉的可改字段一致), 不带 token 也算原对象', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('galgame', [storedLink(5, 's3')])
+    )
+
+    const result = await frontUpdate(
+      buildInput('galgame', [
+        {
+          ...kept(5, 's3'),
+          hash: '',
+          size: '200MB',
+          code: 'abcd',
+          password: 'kun'
+        }
+      ]),
+      AUTHOR_UID,
+      2
+    )
+
+    expect(result).toBe(PASSED_GATE)
   })
 
   it('超级管理员不受限 (后台包装与前台入口走的是同一个服务)', async () => {

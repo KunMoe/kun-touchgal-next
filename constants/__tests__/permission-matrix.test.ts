@@ -176,84 +176,28 @@ describe('存储 × 分区 × 角色', () => {
   })
 })
 
-describe('findDisallowedLinkStorage 按 delta 判定', () => {
-  const creator = subjectOf(2)
-  const admin = subjectOf(3)
-
-  it('没有上一版 (新建) 时每条链接都判', () => {
+// 哪些链接要判 (编辑时原样带回的存量不判) 由执法点决定, 见 patch/resource 的 storage-gate.test.ts
+describe('findDisallowedLinkStorage', () => {
+  it('返回第一条不被允许的链接的存储, 都允许时返回 null', () => {
     expect(
-      findDisallowedLinkStorage(admin, {
-        section: 'patch',
-        links: [{ storage: 'user' }, { storage: 's3' }]
-      })
+      findDisallowedLinkStorage(subjectOf(3), 'patch', [
+        { storage: 'user' },
+        { storage: 's3' }
+      ])
     ).toBeNull()
     expect(
-      findDisallowedLinkStorage(admin, {
-        section: 'patch',
-        links: [{ storage: 'user' }, { storage: 'touchgal' }]
-      })
-    ).toBe('touchgal')
-    expect(
-      findDisallowedLinkStorage(creator, {
-        section: 'galgame',
-        links: [{ storage: 's3' }]
-      })
+      findDisallowedLinkStorage(subjectOf(3), 'galgame', [
+        { storage: 'user' },
+        { storage: 's3' },
+        { storage: 'touchgal' }
+      ])
     ).toBe('s3')
-  })
-
-  it('存储与分区都没变的存量链接不判, 即使现在已不被允许', () => {
-    const previous = {
-      section: 'galgame',
-      links: [
-        { id: 1, storage: 'touchgal' },
-        { id: 2, storage: 's3' }
-      ]
-    }
-    expect(findDisallowedLinkStorage(admin, previous, previous)).toBeNull()
-    // 同一次保存里新增的链接照判
-    expect(
-      findDisallowedLinkStorage(
-        admin,
-        { ...previous, links: [...previous.links, { storage: 'touchgal' }] },
-        previous
-      )
-    ).toBe('touchgal')
-  })
-
-  it('换了存储的链接要判', () => {
-    expect(
-      findDisallowedLinkStorage(
-        admin,
-        { section: 'patch', links: [{ id: 1, storage: 'touchgal' }] },
-        { section: 'patch', links: [{ id: 1, storage: 's3' }] }
-      )
-    ).toBe('touchgal')
-  })
-
-  it('换了分区时全部链接重判: 补丁分区的对象存储不能跟着搬进 Galgame 分区', () => {
-    const links = [{ id: 1, storage: 's3' }]
-    expect(
-      findDisallowedLinkStorage(
-        creator,
-        { section: 'galgame', links },
-        { section: 'patch', links }
-      )
-    ).toBe('s3')
-    expect(
-      findDisallowedLinkStorage(
-        creator,
-        { section: 'patch', links },
-        { section: 'galgame', links }
-      )
-    ).toBeNull()
+    expect(findDisallowedLinkStorage(subjectOf(2), 'patch', [])).toBeNull()
   })
 
   it('不认识的存储一律不允许', () => {
     expect(
-      findDisallowedLinkStorage(subjectOf(4), {
-        section: 'patch',
-        links: [{ storage: 'ftp' }]
-      })
+      findDisallowedLinkStorage(subjectOf(4), 'patch', [{ storage: 'ftp' }])
     ).toBe('ftp')
   })
 })

@@ -111,8 +111,8 @@ export const updatePatchResource = async (
   if (inputPatchId !== resource.patch_id) {
     return '资源与 Galgame 不匹配'
   }
-  // 按编辑前的分区与链接做 delta: 原样带回来的存量链接不判, 所以管理员能保存含既有
-  // TouchGal 链接的资源; 必须先于下面的 S3 重绑
+  // 对照编辑前的分区与链接: 原样带回的存量链接不判, 所以管理员能保存含既有 TouchGal
+  // 链接的资源。这里判的是事务外快照, 为的是赶在下面的 S3 重绑之前拦下; 行锁下还要再判一次
   const storageError = linkStorageGateError(
     actor,
     { section: input.section, links },
@@ -256,6 +256,27 @@ export const updatePatchResource = async (
     const currentLinksById = new Map(
       currentLinks.map((link) => [link.id, link])
     )
+
+    // 存储闸门以锁下的集合为准再判一次: 快照之后别人可能删掉或换掉了这些链接, 带着旧 id
+    // 回来的就不再是原样带回的存量。被拦时已重绑的新对象随本事务入队清理 (与上面的守卫
+    // 复检同构)
+    const lockedStorageError = linkStorageGateError(
+      actor,
+      { section: input.section, links },
+      { section: previous.section, links: currentLinks }
+    )
+    if (lockedStorageError) {
+      await enqueueResourceLinkDeletions(
+        prisma,
+        [...boundLinks.values()].map((item) => ({
+          content: item.content,
+          patchId: resource.patch_id,
+          hash: '',
+          s3Key: item.s3Key
+        }))
+      )
+      return lockedStorageError
+    }
 
     const s3LinksToDelete: Array<{
       content: string
