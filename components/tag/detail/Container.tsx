@@ -20,6 +20,7 @@ import { DeleteTagModal } from './DeleteTagModal'
 import { KunUser } from '~/components/kun/floating-card/KunUser'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import { useSearchParams } from 'next/navigation'
 import { KunPagination } from '~/components/kun/Pagination'
 import { FilterBar } from '~/components/galgame/FilterBar'
@@ -279,7 +280,7 @@ export const TagDetailContainer = ({
 
               <DeleteTagModal tag={tag} />
 
-              {user.role > 2 && (
+              {can(user, 'tag.manage') && (
                 <Button
                   variant="flat"
                   color="primary"

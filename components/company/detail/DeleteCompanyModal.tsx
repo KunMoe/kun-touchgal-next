@@ -15,6 +15,7 @@ import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 import { useRouter } from '@bprogress/next/app'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import { Trash2 } from 'lucide-react'
 import type { CompanyDetail } from '~/types/api/company'
 import type { FC } from 'react'
@@ -47,7 +48,7 @@ export const DeleteCompanyModal: FC<Props> = ({ company }) => {
 
   return (
     <>
-      {user.role > 2 && (
+      {can(user, 'company.manage') && (
         <Button
           variant="flat"
           color="danger"

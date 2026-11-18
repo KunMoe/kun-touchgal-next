@@ -15,6 +15,7 @@ import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 import { useRouter } from '@bprogress/next/app'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import { Trash2 } from 'lucide-react'
 import type { Tag } from '~/types/api/tag'
 
@@ -43,7 +44,7 @@ export const DeleteTagModal = ({ tag }: Props) => {
 
   return (
     <>
-      {user.role > 2 && (
+      {can(user, 'tag.manage') && (
         <Button
           variant="flat"
           color="danger"

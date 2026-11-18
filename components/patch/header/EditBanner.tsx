@@ -11,6 +11,7 @@ import {
   ModalHeader
 } from '@heroui/modal'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import type { Patch } from '~/types/api/patch'
 
 const EditBannerContentFallback = ({ onClose }: { onClose: () => void }) => {
@@ -66,7 +67,7 @@ export const EditBanner = ({ patch }: PatchHeaderBannerProps) => {
 
   return (
     <>
-      {(user.uid === patch.user.id || user.role > 2) && (
+      {(user.uid === patch.user.id || can(user, 'banner.edit')) && (
         <Button
           color="default"
           variant="shadow"

@@ -8,6 +8,7 @@ import { Plus } from 'lucide-react'
 import { KunHeader } from '../kun/Header'
 import { LazyDialogFallback } from '~/components/patch/header/LazyDialogFallback'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import type { FC } from 'react'
 import type { Company as CompanyType } from '~/types/api/company'
 
@@ -38,7 +39,7 @@ export const CompanyHeader: FC<Props> = ({ setNewCompany }) => {
         description="这里是本站 Galgame 中包含的所有会社"
         headerEndContent={
           <>
-            {user.role > 2 && (
+            {can(user, 'company.manage') && (
               <Button
                 color="primary"
                 onPress={() => {

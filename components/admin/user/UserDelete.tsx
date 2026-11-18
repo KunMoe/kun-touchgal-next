@@ -14,7 +14,6 @@ import {
 import { Trash2 } from 'lucide-react'
 import { kunFetchDelete } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
-import { useUserStore } from '~/store/userStore'
 import type { AdminUser } from '~/types/api/admin'
 
 interface Props {
@@ -23,8 +22,6 @@ interface Props {
 }
 
 export const UserDelete = ({ user, onDeleted }: Props) => {
-  const currentUser = useUserStore((state) => state.user)
-
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [deleting, setDeleting] = useState(false)
   const handleUpdateUserInfo = async () => {
@@ -47,19 +44,16 @@ export const UserDelete = ({ user, onDeleted }: Props) => {
 
   return (
     <>
-      {currentUser.role === 4 && (
-        <Button
-          isIconOnly
-          aria-label="永久删除用户"
-          size="sm"
-          color="danger"
-          variant="light"
-          onPress={onOpen}
-          isDisabled={currentUser.role < 3}
-        >
-          <Trash2 size={16} />
-        </Button>
-      )}
+      <Button
+        isIconOnly
+        aria-label="永久删除用户"
+        size="sm"
+        color="danger"
+        variant="light"
+        onPress={onOpen}
+      >
+        <Trash2 size={16} />
+      </Button>
 
       <Modal size="2xl" isOpen={isOpen} onClose={onClose}>
         <ModalContent>

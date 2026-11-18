@@ -10,7 +10,8 @@ import { UserFollow } from './follow/Follow'
 import { Stats } from './follow/Stats'
 import { SelfButton } from './SelfButton'
 import { StartChatButton } from './StartChatButton'
-import { USER_ROLE_MAP, USER_STATUS_COLOR_MAP } from '~/constants/user'
+import { USER_STATUS_COLOR_MAP } from '~/constants/user'
+import { KUN_ROLE_LABEL, toKunRole } from '~/constants/role'
 import type { UserInfo } from '~/types/api/user'
 
 export const UserProfile = ({ user }: { user: UserInfo }) => {
@@ -29,7 +30,7 @@ export const UserProfile = ({ user }: { user: UserInfo }) => {
               <h4 className="text-2xl font-bold">{user.name}</h4>
               <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
                 <Chip color="primary" variant="flat" size="sm">
-                  {USER_ROLE_MAP[user.role]}
+                  {KUN_ROLE_LABEL[toKunRole(user.role)]}
                 </Chip>
                 {user.status === 2 && (
                   <Chip

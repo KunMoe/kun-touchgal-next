@@ -1,11 +1,8 @@
 'use client'
 
 import { Chip } from '@heroui/react'
-import {
-  USER_ROLE_MAP,
-  USER_STATUS_COLOR_MAP,
-  USER_STATUS_MAP
-} from '~/constants/user'
+import { USER_STATUS_COLOR_MAP, USER_STATUS_MAP } from '~/constants/user'
+import { KUN_ROLE_LABEL, toKunRole } from '~/constants/role'
 import { UserEdit } from './UserEdit'
 import { UserDelete } from './UserDelete'
 import { KunUser } from '~/components/kun/floating-card/KunUser'
@@ -38,7 +35,7 @@ export const RenderCell = (
     case 'role':
       return (
         <Chip color="primary" variant="flat">
-          {USER_ROLE_MAP[user.role]}
+          {KUN_ROLE_LABEL[toKunRole(user.role)]}
         </Chip>
       )
     case 'status':

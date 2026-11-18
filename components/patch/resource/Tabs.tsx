@@ -19,6 +19,7 @@ import {
 } from '@heroui/react'
 import { Edit, MoreHorizontal, Trash2 } from 'lucide-react'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import { ResourceInfo } from './ResourceInfo'
 import { ResourceDownload } from './ResourceDownload'
 import {
@@ -45,6 +46,10 @@ type ResourceSection = (typeof SUPPORTED_RESOURCE_SECTION)[number]
 const preloadEditResourceDialog = () => {
   void import('./edit/EditResourceDialog')
 }
+
+// 按资源作者 (而非当前查看者) 的角色分出「官方」一栏; 缺作者的归社区
+const isOfficialResource = ({ user }: PatchResource) =>
+  !!user && can({ uid: user.id, role: user.role }, 'resource.officialBadge')
 
 interface Props {
   vndbId: string
@@ -273,7 +278,8 @@ export const ResourceTabs = ({
               disabledKeys={
                 resource.status === 2 || resource.status === 3
                   ? ['edit', 'delete']
-                  : user.uid !== resource.userId && user.role < 3
+                  : user.uid !== resource.userId &&
+                      !can(user, 'content.moderateAny')
                     ? ['edit', 'delete']
                     : []
               }
@@ -316,8 +322,8 @@ export const ResourceTabs = ({
     >
       {SUPPORTED_RESOURCE_SECTION.map((section) => {
         const sectionResources = categorizedResources[section]
-        const official = sectionResources.filter((r) => r.user?.role > 2)
-        const community = sectionResources.filter((r) => !(r.user?.role > 2))
+        const official = sectionResources.filter((r) => isOfficialResource(r))
+        const community = sectionResources.filter((r) => !isOfficialResource(r))
 
         return (
           <Tab

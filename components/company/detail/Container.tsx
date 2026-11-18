@@ -22,6 +22,7 @@ import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { kunFetchGet } from '~/utils/kunFetch'
 import { SUPPORTED_LANGUAGE_MAP } from '~/constants/resource'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import { FilterBar } from '~/components/galgame/FilterBar'
 import type { CompanyDetail } from '~/types/api/company'
 import type { SortField, SortOrder } from '~/components/galgame/_sort'
@@ -224,7 +225,7 @@ export const CompanyDetailContainer: FC<Props> = ({
               }}
             />
 
-            {user.role > 2 && (
+            {can(user, 'company.manage') && (
               <div className="flex gap-2">
                 <Button
                   variant="flat"

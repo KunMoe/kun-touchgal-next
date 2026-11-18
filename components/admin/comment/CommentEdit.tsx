@@ -18,7 +18,6 @@ import {
 } from '@heroui/modal'
 import { Textarea } from '@heroui/input'
 import { MoreVertical } from 'lucide-react'
-import { useUserStore } from '~/store/userStore'
 import { kunFetchDelete, kunFetchGet, kunFetchPut } from '~/utils/kunFetch'
 import { markdownToText } from '~/utils/markdownToText'
 import type { AdminComment } from '~/types/api/admin'
@@ -36,8 +35,6 @@ export const CommentEdit = ({
   onUpdated,
   onDeleted
 }: Props) => {
-  const currentUser = useUserStore((state) => state.user)
-
   const {
     isOpen: isOpenDelete,
     onOpen: onOpenDelete,
@@ -153,7 +150,6 @@ export const CommentEdit = ({
             aria-label="评论操作菜单"
             size="sm"
             variant="light"
-            isDisabled={currentUser.role < 3}
           >
             <MoreVertical size={16} />
           </Button>

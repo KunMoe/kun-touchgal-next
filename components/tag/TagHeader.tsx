@@ -8,6 +8,7 @@ import { Plus } from 'lucide-react'
 import { KunHeader } from '../kun/Header'
 import { LazyDialogFallback } from '~/components/patch/header/LazyDialogFallback'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import type { Tag as TagType } from '~/types/api/tag'
 
 // 表单连带 RHF, 只有管理员用得到, 静态导入会进每位访客的首屏.
@@ -37,7 +38,7 @@ export const TagHeader = ({ setNewTag }: Props) => {
         description="这里是本站 Galgame 中的所有标签"
         headerEndContent={
           <>
-            {user.role > 2 && (
+            {can(user, 'tag.manage') && (
               <Button
                 color="primary"
                 onPress={() => {

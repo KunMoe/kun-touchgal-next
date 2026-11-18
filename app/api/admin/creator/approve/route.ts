@@ -8,6 +8,7 @@ import { approveCreatorSchema } from '~/validations/admin'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { can } from '~/constants/permission'
+import { KUN_ROLE } from '~/constants/role'
 
 const approveCreator = async (
   input: z.infer<typeof approveCreatorSchema>,
@@ -56,8 +57,8 @@ const approveCreator = async (
     // 仅提升普通用户, 避免把积压申请期间已提拔的管理员降级;
     // 命中 0 行不算失败, 申请照样标记通过
     await prisma.user.updateMany({
-      where: { id: uid, role: { lt: 2 } },
-      data: { role: { set: 2 } }
+      where: { id: uid, role: { lt: KUN_ROLE.CREATOR } },
+      data: { role: { set: KUN_ROLE.CREATOR } }
     })
 
     await createMessage(

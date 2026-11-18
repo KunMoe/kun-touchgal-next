@@ -6,6 +6,7 @@ import { Link } from '@heroui/link'
 import dynamic from 'next/dynamic'
 import { useShallow } from 'zustand/react/shallow'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import type { Tag } from '~/types/api/tag'
 
 const PatchTagSelector = dynamic(
@@ -23,7 +24,7 @@ export const PatchTag = ({ patchId, initialTags }: Props) => {
   const blockedTagIds = useUserStore(
     useShallow((state) => state.user.blockedTagIds)
   )
-  const canEditTags = useUserStore((state) => state.user.role > 2)
+  const canEditTags = useUserStore((state) => can(state.user, 'tag.manage'))
   const visibleTags = selectedTags.filter(
     (tag) => !blockedTagIds.includes(tag.id)
   )

@@ -18,7 +18,6 @@ import {
 } from '@heroui/modal'
 import { Textarea } from '@heroui/input'
 import { MoreVertical } from 'lucide-react'
-import { useUserStore } from '~/store/userStore'
 import { kunFetchDelete, kunFetchGet, kunFetchPut } from '~/utils/kunFetch'
 import type { AdminRating } from '~/types/api/admin'
 import toast from 'react-hot-toast'
@@ -30,8 +29,6 @@ interface Props {
 }
 
 export const RatingEdit = ({ initialRating, onUpdated, onDeleted }: Props) => {
-  const currentUser = useUserStore((state) => state.user)
-
   const {
     isOpen: isOpenDelete,
     onOpen: onOpenDelete,
@@ -141,7 +138,6 @@ export const RatingEdit = ({ initialRating, onUpdated, onDeleted }: Props) => {
             aria-label="评价操作菜单"
             size="sm"
             variant="light"
-            isDisabled={currentUser.role < 3}
           >
             <MoreVertical size={16} />
           </Button>

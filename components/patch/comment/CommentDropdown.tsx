@@ -31,6 +31,7 @@ import {
 import toast from 'react-hot-toast'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import type { PatchComment } from '~/types/api/patch'
 
 interface Props {
@@ -171,7 +172,7 @@ export const CommentDropdown = ({ comment, setComments, onDeleted }: Props) => {
           disabledKeys={
             isPending
               ? ['edit', 'delete', 'report']
-              : user.uid !== comment.userId && user.role < 3
+              : user.uid !== comment.userId && !can(user, 'content.moderateAny')
                 ? ['edit', 'delete']
                 : ['report']
           }

@@ -18,7 +18,6 @@ import {
 } from '@heroui/modal'
 import { Textarea } from '@heroui/input'
 import { MoreVertical } from 'lucide-react'
-import { useUserStore } from '~/store/userStore'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { errorReporter } from '~/utils/kunErrorHandler'
 import type { AdminFeedback } from '~/types/api/admin'
@@ -30,8 +29,6 @@ interface Props {
 }
 
 export const FeedbackHandler = ({ initialFeedback, onHandled }: Props) => {
-  const currentUser = useUserStore((state) => state.user)
-
   const {
     isOpen: isOpenHandle,
     onOpen: onOpenHandle,
@@ -73,7 +70,6 @@ export const FeedbackHandler = ({ initialFeedback, onHandled }: Props) => {
             aria-label="反馈操作菜单"
             size="sm"
             variant="light"
-            isDisabled={currentUser.role < 3}
           >
             <MoreVertical size={16} />
           </Button>

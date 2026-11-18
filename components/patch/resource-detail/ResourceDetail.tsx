@@ -18,6 +18,7 @@ import { ResourceLikeButton } from '~/components/patch/resource/ResourceLike'
 import { UserFollow } from '~/components/user/follow/Follow'
 import { ResourceDownloadCard } from '~/components/patch/resource/DownloadCard'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import { useKunExternalLinkNavigation } from '~/components/kun/external-link/useKunExternalLinkNavigation'
 import { KunNull } from '~/components/kun/Null'
 import { LazyDialogFallback } from '~/components/patch/header/LazyDialogFallback'
@@ -69,10 +70,10 @@ export const ResourceDetail = ({ detail, isLoggedIn }: Props) => {
   const router = useRouter()
   const searchParams = useSearchParams()
   const user = useUserStore((state) => state.user)
-  const isAdmin = user.role > 2
+  const isAdmin = can(user, 'content.moderateAny')
   const canEdit = isAdmin || user.uid === resource.userId
-  // 待审核资源后端只放行 role >= 3 (patch/resource/update.ts 的 status 闸门整段
-  // 挂在 userRole < 3 下), 作者本人提交必被拒, 故置灰而非让他点了才看到报错
+  // 待审核资源后端只放行 content.moderateAny (patch/resource/update.ts 的
+  // frontResourceEditGuard), 作者本人提交必被拒, 故置灰而非让他点了才看到报错
   const isEditDisabled = isPending && !isAdmin
   const {
     isOpen: isOpenEdit,

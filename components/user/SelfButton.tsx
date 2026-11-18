@@ -3,6 +3,7 @@
 import { Button } from '@heroui/button'
 import { BadgeCheck, Pencil, Shield } from 'lucide-react'
 import { useRouter } from '@bprogress/next/app'
+import { can, canApplyCreator } from '~/constants/permission'
 import type { UserInfo } from '~/types/api/user'
 
 interface Props {
@@ -11,7 +12,9 @@ interface Props {
 
 export const SelfButton = ({ user }: Props) => {
   const router = useRouter()
-  const isShowAdminButton = user.id === user.requestUserUid && user.role > 3
+  const isShowAdminButton =
+    user.id === user.requestUserUid &&
+    can({ uid: user.id, role: user.role }, 'admin.access')
 
   return (
     <div className="flex-col w-full space-y-3">
@@ -39,7 +42,7 @@ export const SelfButton = ({ user }: Props) => {
         )}
       </div>
 
-      {user.role < 2 && (
+      {canApplyCreator({ uid: user.id, role: user.role }) && (
         <Button
           startContent={<BadgeCheck className="size-4" />}
           color="primary"

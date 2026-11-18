@@ -9,6 +9,7 @@ import { Download } from 'lucide-react'
 import { Company } from '~/types/api/company'
 import dynamic from 'next/dynamic'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import { kunFetchPost } from '~/utils/kunFetch'
 import toast from 'react-hot-toast'
 
@@ -67,7 +68,9 @@ export const PatchCompany: FC<Props> = ({
     vndbId || bangumiId || steamId || dlsiteCode
   )
   const showFetchButton =
-    user.role > 2 && selectedCompanies.length === 0 && hasExternalSource
+    can(user, 'company.manage') &&
+    selectedCompanies.length === 0 &&
+    hasExternalSource
 
   return (
     <div className="mt-4 space-y-4">
@@ -109,7 +112,7 @@ export const PatchCompany: FC<Props> = ({
         )}
       </div>
 
-      {user.role > 2 && (
+      {can(user, 'company.manage') && (
         <PatchCompanySelector
           patchId={patchId}
           initialCompanies={selectedCompanies}

@@ -7,6 +7,7 @@ import { Download, Pencil, Share2, Trash2 } from 'lucide-react'
 import { useRouter } from '@bprogress/next/app'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import { kunCopy } from '~/utils/kunCopy'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { FavoriteButton } from './button/favorite/FavoriteButton'
@@ -82,7 +83,7 @@ export const PatchHeaderActions = ({ patch }: PatchHeaderActionsProps) => {
           <Share2 className="size-4" />
         </Button>
 
-        {user.role > 2 ? (
+        {can(user, 'galgame.rewrite') ? (
           <>
             <Button
               variant="bordered"
@@ -95,7 +96,7 @@ export const PatchHeaderActions = ({ patch }: PatchHeaderActionsProps) => {
               <Pencil className="size-4" />
             </Button>
 
-            {user.role > 3 && (
+            {can(user, 'galgame.delete') && (
               <Button
                 variant="bordered"
                 isIconOnly

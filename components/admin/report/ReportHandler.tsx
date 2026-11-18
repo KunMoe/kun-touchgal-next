@@ -8,7 +8,6 @@ import {
   DropdownTrigger
 } from '@heroui/dropdown'
 import { MoreVertical } from 'lucide-react'
-import { useUserStore } from '~/store/userStore'
 import { buildPatchLink } from './buildPatchLink'
 import type { AdminReport } from '~/types/api/admin'
 
@@ -17,7 +16,6 @@ interface Props {
 }
 
 export const ReportHandler = ({ report }: Props) => {
-  const currentUser = useUserStore((state) => state.user)
   const patchLink = buildPatchLink(report)
   // 资源评论的深链落点是资源详情页而非游戏详情页, 文案跟着落点走
   const isResourceComment =
@@ -33,13 +31,7 @@ export const ReportHandler = ({ report }: Props) => {
   return (
     <Dropdown>
       <DropdownTrigger>
-        <Button
-          isIconOnly
-          aria-label="举报操作菜单"
-          size="sm"
-          variant="light"
-          isDisabled={currentUser.role < 3}
-        >
+        <Button isIconOnly aria-label="举报操作菜单" size="sm" variant="light">
           <MoreVertical size={16} />
         </Button>
       </DropdownTrigger>

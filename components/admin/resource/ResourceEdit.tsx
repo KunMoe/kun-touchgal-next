@@ -12,7 +12,6 @@ import {
   useDisclosure
 } from '@heroui/react'
 import { Edit2, Trash2 } from 'lucide-react'
-import { useUserStore } from '~/store/userStore'
 import { kunFetchDelete } from '~/utils/kunFetch'
 import { errorReporter } from '~/utils/kunErrorHandler'
 import { EditResourceDialog } from '~/components/patch/resource/edit/EditResourceDialog'
@@ -30,7 +29,6 @@ export const ResourceEdit = ({
   onUpdated,
   onDeleted
 }: Props) => {
-  const currentUser = useUserStore((state) => state.user)
   // 保存后回写: 列表的 initialResource 是服务端快照且不刷新, 若继续用它做
   // 表单初值, 再次编辑同一条会把上次的改动整体回退
   const [resource, setResource] = useState(initialResource)
@@ -75,7 +73,6 @@ export const ResourceEdit = ({
           aria-label="编辑资源"
           size="sm"
           variant="light"
-          isDisabled={currentUser.role < 3}
           onPress={onOpenEdit}
         >
           <Edit2 size={16} />
@@ -86,7 +83,6 @@ export const ResourceEdit = ({
           size="sm"
           variant="light"
           color="danger"
-          isDisabled={currentUser.role < 3}
           onPress={onOpenDelete}
         >
           <Trash2 size={16} />

@@ -16,10 +16,10 @@ import {
   useDisclosure
 } from '@heroui/react'
 import { Edit2 } from 'lucide-react'
-import { USER_ROLE_MAP, USER_STATUS_MAP } from '~/constants/user'
+import { USER_STATUS_MAP } from '~/constants/user'
+import { KUN_ROLE_LABEL } from '~/constants/role'
 import { kunFetchPost, kunFetchPut } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
-import { useUserStore } from '~/store/userStore'
 import type { AdminUser } from '~/types/api/admin'
 
 interface Props {
@@ -27,7 +27,7 @@ interface Props {
   onUpdated?: (user: AdminUser) => void
 }
 
-const roleOptions = Object.entries(USER_ROLE_MAP).map(([value, label]) => ({
+const roleOptions = Object.entries(KUN_ROLE_LABEL).map(([value, label]) => ({
   value: Number(value),
   label
 }))
@@ -42,7 +42,6 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
   const [formUser, setFormUser] = useState<AdminUser>(initialUser)
   const [password, setPassword] = useState('')
   const [disabling2FA, setDisabling2FA] = useState(false)
-  const currentUser = useUserStore((state) => state.user)
   const { isOpen, onOpen, onClose } = useDisclosure()
 
   useEffect(() => {
@@ -127,7 +126,6 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
         size="sm"
         variant="light"
         onPress={handleOpen}
-        isDisabled={currentUser.role < 3}
       >
         <Edit2 size={16} />
       </Button>
@@ -205,18 +203,16 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
             </div>
           </ModalBody>
           <ModalFooter>
-            {currentUser.role === 4 && (
-              <Button
-                color="warning"
-                variant="flat"
-                className="mr-auto"
-                isDisabled={updating || disabling2FA || !formUser.enable2FA}
-                isLoading={disabling2FA}
-                onPress={handleDisable2FA}
-              >
-                关闭两步验证
-              </Button>
-            )}
+            <Button
+              color="warning"
+              variant="flat"
+              className="mr-auto"
+              isDisabled={updating || disabling2FA || !formUser.enable2FA}
+              isLoading={disabling2FA}
+              onPress={handleDisable2FA}
+            >
+              关闭两步验证
+            </Button>
             <Button color="danger" variant="light" onPress={handleClose}>
               取消
             </Button>

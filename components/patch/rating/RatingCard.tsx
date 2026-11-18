@@ -16,6 +16,7 @@ import { KunUser } from '~/components/kun/floating-card/KunUser'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { RatingLikeButton } from './RatingLike'
 import { useUserStore } from '~/store/userStore'
+import { can } from '~/constants/permission'
 import toast from 'react-hot-toast'
 import { kunFetchDelete, kunFetchPost } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
@@ -78,7 +79,8 @@ export const RatingCard = memo(function RatingCard({
   const [reportValue, setReportValue] = useState('')
   const [reporting, setReporting] = useState(false)
 
-  const canEdit = user.uid === rating.user.id || user.role >= 3
+  const canEdit =
+    user.uid === rating.user.id || can(user, 'content.moderateAny')
   const isPending = rating.status === 1
 
   const {
