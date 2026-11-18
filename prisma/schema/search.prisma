@@ -5,9 +5,11 @@
 model search_outbox {
   // 每个补丁至多一行待同步意图，冲突即累加 seq
   patch_id Int @id
-  // 每次入队自增，作为认领令牌：消费者成功应用后仅当 seq 未被并发入队改动才删除该行，
-  // 从而不丢失处理期间到达的新变更
-  seq      Int @default(0)
+  // 认领令牌：每次入队 (新插入与重复入队) 都从全局序列取新值，消费者成功应用后仅当 seq 未被
+  // 并发入队改动才删除该行，从而不丢失处理期间到达的新变更。不从 0 起计：删行后重新插入的行
+  // 若又是 0，并发的第二个 drain (续锁失败) 会按旧读数把它删掉，那次变更就不再同步。
+  // 刻意保持 int4：类型不变，部署窗口里仍在线的旧构建照常读写这一列
+  seq      Int @default(autoincrement())
 
   created DateTime @default(now())
   updated DateTime @updatedAt

@@ -50,7 +50,7 @@ export const syncPatchToSearch = async (patchId: number) => {
   }
 }
 
-// 写出箱入队：每个 patch 至多一行待同步意图，冲突即累加 seq 作为认领令牌。
+// 写出箱入队：每个 patch 至多一行待同步意图，每次入队都换发 seq 作为认领令牌 (见批量版)。
 // 单一 worker 串行消费 + 应用器读取最新状态，从根本上消除并发写的反序覆盖：
 // 无论多少次并发变更，同一 patch 最终只会被读到“当前”状态并写入。
 // client 传业务写所在事务的 tx，使入队与补丁变更原子提交（C-full，关闭“提交后再
@@ -59,16 +59,15 @@ export const enqueueSearchOutbox = async (
   client: Prisma.TransactionClient,
   patchId: number
 ) => {
-  await client.search_outbox.upsert({
-    where: { patch_id: patchId },
-    create: { patch_id: patchId },
-    update: { seq: { increment: 1 } }
-  })
+  await enqueueSearchOutboxBatch(client, [patchId])
 }
 
 // 批量入队：标签/会社改名或删除会波及其下全部关联 patch（热门标签可达数百上千），
 // 逐条 upsert 的往返次数会打满交互事务超时，故单条 SQL 完成整批。updated 是
-// @updatedAt（应用层维护，原生 SQL 必须显式赋值），时间写 UTC 墙钟与 Prisma 一致
+// @updatedAt（应用层维护，原生 SQL 必须显式赋值），时间写 UTC 墙钟与 Prisma 一致。
+// seq 新插入由列默认值、冲突时显式从同一个全局序列取值，永不重复：从 0 起计、冲突加 1 的话，
+// 一个 drain 删掉 (P, 0) 之后重新插入的行又是 (P, 0)，并发的第二个 drain (续锁失败) 会按
+// 旧读数把它删掉，那次变更就不再同步
 export const enqueueSearchOutboxBatch = async (
   client: Prisma.TransactionClient,
   patchIds: number[]
@@ -84,7 +83,8 @@ export const enqueueSearchOutboxBatch = async (
     SELECT unnest(${ids}::int[]),
       now() AT TIME ZONE 'UTC', now() AT TIME ZONE 'UTC'
     ON CONFLICT (patch_id) DO UPDATE
-      SET seq = search_outbox.seq + 1, updated = now() AT TIME ZONE 'UTC'`
+      SET seq = nextval(pg_get_serial_sequence('search_outbox', 'seq')),
+        updated = now() AT TIME ZONE 'UTC'`
 }
 
 // 单一消费者：加锁保证任意时刻只有一个 drain 在跑（即时 kick 与定时任务共用同锁），

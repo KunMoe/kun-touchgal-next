@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const {
   getMeiliClientMock,
   patchFindUniqueMock,
-  outboxUpsertMock,
+  executeRawMock,
   outboxFindManyMock,
   outboxDeleteManyMock,
   addDocumentsMock,
@@ -14,7 +14,7 @@ const {
 } = vi.hoisted(() => ({
   getMeiliClientMock: vi.fn(),
   patchFindUniqueMock: vi.fn(),
-  outboxUpsertMock: vi.fn(),
+  executeRawMock: vi.fn(),
   outboxFindManyMock: vi.fn(),
   outboxDeleteManyMock: vi.fn(),
   addDocumentsMock: vi.fn(),
@@ -26,9 +26,9 @@ const {
 
 vi.mock('~/prisma/index', () => ({
   prisma: {
+    $executeRaw: executeRawMock,
     patch: { findUnique: patchFindUniqueMock },
     search_outbox: {
-      upsert: outboxUpsertMock,
       findMany: outboxFindManyMock,
       deleteMany: outboxDeleteManyMock
     }
@@ -70,7 +70,7 @@ beforeEach(() => {
     })
   })
   patchFindUniqueMock.mockReset()
-  outboxUpsertMock.mockReset().mockResolvedValue(undefined)
+  executeRawMock.mockReset().mockResolvedValue(1)
   outboxFindManyMock.mockReset().mockResolvedValue([])
   outboxDeleteManyMock.mockReset().mockResolvedValue({ count: 1 })
   addDocumentsMock.mockReset().mockReturnValue({ waitTask: waitTaskMock })
@@ -171,15 +171,12 @@ describe('drainSearchOutbox 单消费者 + CAS 删除', () => {
 })
 
 describe('queueSearchSync/Remove 入写出箱并即时消费', () => {
-  it('入队 upsert 累加 seq，并触发即时 drain', async () => {
+  it('入队 upsert 换发 seq，并触发即时 drain', async () => {
     queueSearchSync(9)
     await flush()
 
-    expect(outboxUpsertMock).toHaveBeenCalledWith({
-      where: { patch_id: 9 },
-      create: { patch_id: 9 },
-      update: { seq: { increment: 1 } }
-    })
+    expect(executeRawMock).toHaveBeenCalledTimes(1)
+    expect(executeRawMock.mock.calls[0][1]).toEqual([9])
     // kick 触发了一次 drain（无行可处理）
     expect(withTaskLockMock).toHaveBeenCalledTimes(1)
   })
@@ -188,11 +185,8 @@ describe('queueSearchSync/Remove 入写出箱并即时消费', () => {
     queueSearchRemove(9)
     await flush()
 
-    expect(outboxUpsertMock).toHaveBeenCalledWith({
-      where: { patch_id: 9 },
-      create: { patch_id: 9 },
-      update: { seq: { increment: 1 } }
-    })
+    expect(executeRawMock).toHaveBeenCalledTimes(1)
+    expect(executeRawMock.mock.calls[0][1]).toEqual([9])
   })
 
   it('未配置 Meili 时不入队', async () => {
@@ -201,29 +195,27 @@ describe('queueSearchSync/Remove 入写出箱并即时消费', () => {
     queueSearchSync(9)
     await flush()
 
-    expect(outboxUpsertMock).not.toHaveBeenCalled()
+    expect(executeRawMock).not.toHaveBeenCalled()
   })
 })
 
 describe('enqueueSearchOutbox 事务性入队（C-full）', () => {
   it('对传入的 client（事务 tx）执行 upsert，而非顶层 prisma', async () => {
-    const txUpsert = vi.fn().mockResolvedValue(undefined)
-    const tx = { search_outbox: { upsert: txUpsert } } as never
+    const txExecuteRaw = vi.fn().mockResolvedValue(1)
+    const tx = { $executeRaw: txExecuteRaw } as never
 
     await enqueueSearchOutbox(tx, 42)
 
-    expect(txUpsert).toHaveBeenCalledWith({
-      where: { patch_id: 42 },
-      create: { patch_id: 42 },
-      update: { seq: { increment: 1 } }
-    })
+    // 与批量入队同一条语句：冲突时同样从序列换发 seq
+    expect(txExecuteRaw).toHaveBeenCalledTimes(1)
+    expect(txExecuteRaw.mock.calls[0][1]).toEqual([42])
     // 未落到顶层 prisma：证明入队参与调用方事务、与补丁变更原子提交
-    expect(outboxUpsertMock).not.toHaveBeenCalled()
+    expect(executeRawMock).not.toHaveBeenCalled()
   })
 })
 
 describe('enqueueSearchOutboxBatch 批量事务性入队', () => {
-  it('对传入的 client 以单条 SQL 批量 upsert，冲突累加 seq', async () => {
+  it('对传入的 client 以单条 SQL 批量 upsert，冲突从序列换发 seq', async () => {
     const txExecuteRaw = vi.fn().mockResolvedValue(2)
     const tx = { $executeRaw: txExecuteRaw } as never
 
@@ -234,7 +226,9 @@ describe('enqueueSearchOutboxBatch 批量事务性入队', () => {
     const sql = (strings as readonly string[]).join('?')
     expect(sql).toContain('INSERT INTO search_outbox')
     expect(sql).toContain('ON CONFLICT (patch_id)')
-    expect(sql).toContain('seq = search_outbox.seq + 1')
+    expect(sql).toContain(
+      "seq = nextval(pg_get_serial_sequence('search_outbox', 'seq'))"
+    )
     // 去重（重复 id 同语句二次命中同行报 21000）且升序（统一锁序防死锁）
     expect(ids).toEqual([3, 7])
   })
