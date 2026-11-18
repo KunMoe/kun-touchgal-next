@@ -10,11 +10,12 @@ export interface PatchVisibility {
   readonly blockedTagIds: readonly number[]
 }
 
-// 未登录或会话无效的视角: 与客户端带来的设置 cookie 无关
-export const PUBLIC_VISIBILITY: PatchVisibility = {
+// 未登录或会话无效的视角: 与客户端带来的设置 cookie 无关。所有这类请求拿到的是同一个对象,
+// 冻结之后原地改它 (绕过 readonly 去 push / sort) 会直接抛错, 而不是悄悄改掉此后每个游客的视角
+export const PUBLIC_VISIBILITY: PatchVisibility = Object.freeze({
   contentLimit: 'sfw',
-  blockedTagIds: []
-}
+  blockedTagIds: Object.freeze([])
+})
 
 export const toPatchWhere = (
   visibility: PatchVisibility

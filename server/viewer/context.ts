@@ -27,7 +27,7 @@ export type ViewerSession =
   | ({ readonly kind: 'authenticated' } & VerifiedSession)
   | { readonly kind: 'anonymous' }
 
-const ANONYMOUS_SESSION: ViewerSession = { kind: 'anonymous' }
+const ANONYMOUS_SESSION: ViewerSession = Object.freeze({ kind: 'anonymous' })
 
 // 一个请求的视角: 是谁、能看到哪些作品、列表响应能不能进共享缓存。
 // Route Handler 经 fromRequest、页面经 fromHeaders 各建一个, 建好后往下传;

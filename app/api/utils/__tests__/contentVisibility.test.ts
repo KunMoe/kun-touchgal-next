@@ -55,8 +55,6 @@ describe('shouldBypassSharedCache', () => {
   })
 })
 
-// content.viewPending 的边界: 创作者 (role 2) 与普通用户同视角, 只看得到自己的待审内容;
-// 管理员 (role 3) 起才看得到他人的待审内容
 describe('getListResourceStatusWhere', () => {
   const visibility = { contentLimit: 'sfw', blockedTagIds: [] } as const
 
@@ -92,6 +90,8 @@ describe('getListResourceStatusWhere', () => {
   })
 })
 
+// content.viewPending 的边界: 创作者 (role 2) 与普通用户同视角, 只看得到自己的待审内容;
+// 管理员 (role 3) 起才看得到他人的待审内容
 describe('待审内容可见性的角色边界 (content.viewPending)', () => {
   const OTHER_UID = 99
 

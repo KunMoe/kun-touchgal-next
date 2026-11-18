@@ -41,6 +41,23 @@ describe('toPatchWhere', () => {
   it('未登录视角是 sfw 且不带屏蔽标签', () => {
     expect(toPatchWhere(PUBLIC_VISIBILITY)).toEqual({ content_limit: 'sfw' })
   })
+
+  // 它是所有游客共用的同一个对象: 被原地改掉会影响此后每一个游客
+  it('未登录视角不可原地修改', () => {
+    const escaped = PUBLIC_VISIBILITY as {
+      contentLimit: string | null
+      blockedTagIds: number[]
+    }
+
+    expect(() => escaped.blockedTagIds.push(1)).toThrow(TypeError)
+    expect(() => {
+      escaped.contentLimit = null
+    }).toThrow(TypeError)
+    expect(PUBLIC_VISIBILITY).toEqual({
+      contentLimit: 'sfw',
+      blockedTagIds: []
+    })
+  })
 })
 
 describe('toSearchVisibility', () => {
