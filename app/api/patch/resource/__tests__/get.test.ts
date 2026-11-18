@@ -147,7 +147,7 @@ describe('getPatchResource', () => {
   it('omits noteHtml and skips markdown rendering on both list paths but keeps note', async () => {
     const shared = await getPatchResource({ patchId: 123 }, null)
     findManyMock.mockResolvedValue([buildRow({ like_by: [] })])
-    const bypass = await getPatchResource({ patchId: 123 }, { uid: 9, role: 5 })
+    const bypass = await getPatchResource({ patchId: 123 }, { uid: 9, role: 3 })
 
     for (const resources of [shared, bypass]) {
       expect(resources[0]).not.toHaveProperty('noteHtml')
@@ -195,7 +195,7 @@ describe('getPatchResource', () => {
 
     const resources = await getPatchResource(
       { patchId: 123 },
-      { uid: 9, role: 5 }
+      { uid: 9, role: 3 }
     )
 
     expect(resources[0]?.isLike).toBe(true)
@@ -234,7 +234,7 @@ describe('getPatchResource', () => {
 
     const resources = await getPatchResource(
       { patchId: 123 },
-      { uid: 9, role: 5 }
+      { uid: 9, role: 3 }
     )
 
     expect(getKvMock).not.toHaveBeenCalled()

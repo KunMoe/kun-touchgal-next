@@ -1,4 +1,4 @@
-import { KUN_ROLE } from './role'
+import { KUN_ROLE, toKunRole } from './role'
 import type { KunRole, KunSubject } from './role'
 
 // 能力 → 最低角色。每条权限规则只在这里有一份: 服务端执法、客户端的显隐与置灰都调
@@ -33,15 +33,19 @@ export const KUN_CAPABILITY = {
 
 export type KunCapability = keyof typeof KUN_CAPABILITY
 
-// 游客 (没有 subject, 或 uid 为 0 的客户端初始态) 没有任何能力
+// 游客 (没有 subject, 或 uid 为 0 的客户端初始态) 没有任何能力。subject 不一定来自会话
+// (库里的行、客户端 store、DTO 都会拿来判), 域外的角色值在这里同样按普通用户算
 export const can = (
   subject: KunSubject | null | undefined,
   capability: KunCapability
 ): boolean =>
-  !!subject && subject.uid > 0 && subject.role >= KUN_CAPABILITY[capability]
+  !!subject &&
+  subject.uid > 0 &&
+  toKunRole(subject.role) >= KUN_CAPABILITY[capability]
 
 // 创作者是身份不是能力: 已经是创作者或以上的不需要再申请
-export const isCreatorRole = (role: number): boolean => role >= KUN_ROLE.CREATOR
+export const isCreatorRole = (role: number): boolean =>
+  toKunRole(role) >= KUN_ROLE.CREATOR
 
 export const canApplyCreator = (
   subject: KunSubject | null | undefined

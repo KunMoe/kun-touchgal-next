@@ -10,7 +10,8 @@ import {
   canApplyCreator,
   canAssignRole,
   defaultLinkStorage,
-  findDisallowedLinkStorage
+  findDisallowedLinkStorage,
+  isCreatorRole
 } from '~/constants/permission'
 import { KUN_ROLE, KUN_ROLE_LABEL, toKunRole } from '~/constants/role'
 import { SUPPORTED_RESOURCE_LINK } from '~/constants/resource'
@@ -127,6 +128,18 @@ describe('can', () => {
     }
     expect(canApplyCreator(null)).toBe(false)
     expect(canApplyCreator({ uid: 0, role: 1 })).toBe(false)
+  })
+})
+
+describe('域外的角色值', () => {
+  // subject 不一定经过会话 (库里的行、客户端 store、DTO), 判定函数自己也要按普通用户算
+  it.each([0, -1, 5, 99, 2.5, Number.NaN])('role %d 没有任何能力', (role) => {
+    for (const capability of Object.keys(KUN_CAPABILITY) as KunCapability[]) {
+      expect(can(subjectOf(role), capability)).toBe(false)
+    }
+    expect(isCreatorRole(role)).toBe(false)
+    expect(allowedLinkStorages(subjectOf(role), 'patch')).toEqual(['user'])
+    expect(canAssignRole(subjectOf(role), { current: 1, next: 2 })).toBe(false)
   })
 })
 
