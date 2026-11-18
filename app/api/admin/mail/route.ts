@@ -6,6 +6,7 @@ import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { adminSendEmailSchema } from '~/validations/admin'
 import { sendEmailHTML } from './_send'
 import { truncateLogContent } from '~/app/api/admin/_log'
+import { can } from '~/constants/permission'
 
 const sendBulkEmail = async (
   input: z.infer<typeof adminSendEmailSchema>,
@@ -59,7 +60,7 @@ export const POST = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 

@@ -3,6 +3,7 @@ import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { adminBatchHandleReportSchema } from '~/validations/admin'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { handleReport } from '~/app/api/admin/report/handle/service'
+import { can } from '~/constants/permission'
 
 export const POST = async (req: NextRequest) => {
   const input = await kunParsePostBody(req, adminBatchHandleReportSchema)
@@ -13,7 +14,7 @@ export const POST = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 

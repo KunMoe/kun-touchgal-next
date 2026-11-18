@@ -9,6 +9,7 @@ import { kunTx } from '~/server/db/tx'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import { transitionResources } from '~/server/content/resource/transition'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { can } from '~/constants/permission'
 
 const approvePatchResource = async (
   input: z.infer<typeof approvePatchResourceSchema>,
@@ -85,7 +86,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('仅超级管理员可访问')
   }
 

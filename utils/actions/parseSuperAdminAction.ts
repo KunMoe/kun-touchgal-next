@@ -1,5 +1,6 @@
 import { safeParseSchema } from './safeParseSchema'
 import { verifyHeaderCookie } from './verifyHeaderCookie'
+import { can } from '~/constants/permission'
 import type { z } from 'zod'
 import type { ZodSchema } from 'zod'
 
@@ -8,7 +9,7 @@ export const verifySuperAdmin = async (): Promise<string | null> => {
   if (!payload) {
     return '用户登录失效'
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return '本页面仅超级管理员可访问'
   }
   return null

@@ -7,6 +7,7 @@ import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { sliceUntilDelimiterFromEnd } from '~/app/api/utils/sliceUntilDelimiterFromEnd'
 import { createMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { can } from '~/constants/permission'
 
 const handleFeedback = async (
   input: z.infer<typeof adminHandleFeedbackSchema>
@@ -69,7 +70,7 @@ export const POST = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 

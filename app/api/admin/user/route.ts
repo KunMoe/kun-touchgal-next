@@ -13,6 +13,7 @@ import {
 import { getUserInfo } from './get'
 import { updateUser } from './update'
 import { deleteUser } from './delete'
+import { can } from '~/constants/permission'
 
 const userIdSchema = z.object({
   uid: z.coerce.number({ message: '用户 ID 必须为数字' }).min(1).max(9999999)
@@ -27,7 +28,7 @@ export const GET = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 
@@ -44,7 +45,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 
@@ -61,7 +62,7 @@ export const DELETE = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 

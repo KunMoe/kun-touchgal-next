@@ -4,6 +4,7 @@ import { adminResourceApplyPaginationSchema } from '~/validations/admin'
 import { getNSFWHeader } from '~/app/api/utils/getNSFWHeader'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { getPatchResourceApply } from './get'
+import { can } from '~/constants/permission'
 
 export const GET = async (req: NextRequest) => {
   const input = kunParseGetQuery(req, adminResourceApplyPaginationSchema)
@@ -15,7 +16,7 @@ export const GET = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('仅超级管理员可访问')
   }
 

@@ -12,6 +12,7 @@ import {
   planResourceRemoval
 } from '~/server/content/resource/remove'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { can } from '~/constants/permission'
 
 const declinePatchResource = async (
   input: z.infer<typeof declinePatchResourceSchema>,
@@ -85,7 +86,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('仅超级管理员可访问')
   }
 

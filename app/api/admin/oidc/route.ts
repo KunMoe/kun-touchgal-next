@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { can } from '~/constants/permission'
 import type { NextRequest } from 'next/server'
 import {
   kunParseDeleteQuery,
@@ -23,7 +24,7 @@ const ensureAdmin = async (req: NextRequest) => {
   if (!payload) {
     return '用户未登录'
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return '本页面仅超级管理员可访问'
   }
   return null

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { prisma } from '~/prisma/index'
+import { can } from '~/constants/permission'
 import type { AdminModerationStats } from '~/types/api/admin'
 
 export const GET = async (req: NextRequest) => {
@@ -8,7 +9,7 @@ export const GET = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 

@@ -11,13 +11,14 @@ import {
   getRedirectConfig
 } from './getRedirectConfig'
 import { invalidateAllUserSessions } from '~/app/api/user/session/cache'
+import { can } from '~/constants/permission'
 
 export const GET = async (req: NextRequest) => {
   const payload = await verifyHeaderCookie(req)
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 
@@ -35,7 +36,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 

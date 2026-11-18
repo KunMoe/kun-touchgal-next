@@ -3,6 +3,7 @@ import { kunParsePutBody } from '~/app/api/utils/parseQuery'
 import { adminUpdateCommentShadowBanSchema } from '~/validations/admin'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { updateCommentShadowBan } from './shadowBan'
+import { can } from '~/constants/permission'
 
 export const PUT = async (req: NextRequest) => {
   const input = await kunParsePutBody(req, adminUpdateCommentShadowBanSchema)
@@ -13,7 +14,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 

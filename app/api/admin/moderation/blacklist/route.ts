@@ -10,6 +10,7 @@ import {
   adminModerationBlacklistCreateSchema,
   adminModerationBlacklistDeleteSchema
 } from '~/validations/admin'
+import { can } from '~/constants/permission'
 import type { AdminModerationBlacklistItem } from '~/types/api/admin'
 
 const verifyAdmin = async (req: NextRequest) => {
@@ -17,7 +18,7 @@ const verifyAdmin = async (req: NextRequest) => {
   if (!payload) {
     return '用户未登录'
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return '本页面仅超级管理员可访问'
   }
   return payload

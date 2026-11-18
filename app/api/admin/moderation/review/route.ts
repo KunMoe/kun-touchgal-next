@@ -5,6 +5,7 @@ import { prisma } from '~/prisma/index'
 import { adminModerationReviewSchema } from '~/validations/admin'
 import { applyModerationVerdict } from '~/server/moderation/apply'
 import { MODERATION_TASK_STATUS_MAP } from '~/constants/moderation'
+import { can } from '~/constants/permission'
 
 export const PUT = async (req: NextRequest) => {
   const input = await kunParsePutBody(req, adminModerationReviewSchema)
@@ -15,7 +16,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 

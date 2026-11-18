@@ -13,6 +13,7 @@ import { patchRatingUpdateSchema } from '~/validations/admin'
 import { getRating } from './get'
 import { updateRating } from './update'
 import { deleteRating } from './delete'
+import { can } from '~/constants/permission'
 
 export async function GET(req: NextRequest) {
   const input = kunParseGetQuery(req, adminRatingPaginationSchema)
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 
@@ -40,7 +41,7 @@ export const PUT = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 
@@ -57,7 +58,7 @@ export const DELETE = async (req: NextRequest) => {
   if (!payload) {
     return NextResponse.json('用户未登录')
   }
-  if (payload.role < 4) {
+  if (!can(payload, 'admin.access')) {
     return NextResponse.json('本页面仅超级管理员可访问')
   }
 
