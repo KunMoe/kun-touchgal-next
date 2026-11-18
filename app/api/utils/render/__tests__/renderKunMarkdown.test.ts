@@ -213,29 +213,44 @@ describe('renderKunMarkdown 残余成本', () => {
 // 解析库里有过三处平方级的耗时: 整理列表、判断列表松紧、处理表格。它们生成的树很浅,
 // 每行也只有一个标记, 预算里的熔断与结构上限都看不见; 10 万字符的简介分别要 8 秒
 // 到 27 秒。前两处靠升级依赖、第三处靠 listItemHandler.ts 消掉。
-// 下面的输入在修掉之后各自不到 1 秒; 任何一处退回去都会超过用例的时限
+//
+// 这里不比绝对耗时: 同一台机器的快慢几秒之内就能差出三倍, 时限定多少都会时而误报、
+// 时而漏报。比的是长度变成 4 倍时耗时变成几倍 —— 线性是 4 倍, 平方是 16 倍, 以 8 倍
+// 为界; 计的是本线程的 CPU 时间, 被别的进程挤占的那部分不算在内
 describe('长文档的渲染耗时随长度线性增长', () => {
-  const fill = (unit: string) => unit.repeat(Math.floor(100007 / unit.length))
+  const fill = (unit: string, length: number) =>
+    unit.repeat(Math.floor(length / unit.length))
+
+  const cpuTimeOf = async (markdown: string) => {
+    const start = process.threadCpuUsage()
+    const result = await renderKunMarkdown('introduction', markdown)
+    const { user, system } = process.threadCpuUsage(start)
+
+    expect(result.ok).toBe(true)
+    return user + system
+  }
 
   it.each([
-    ['空列表项', fill('-\n')],
-    ['带内容的列表项', fill('- a\n')],
-    ['单列表格', `|a|\n|-|\n${fill('|a|\n')}`],
+    ['空列表项', '', '-\n'],
+    ['带内容的列表项', '', '- a\n'],
+    ['单列表格', '|a|\n|-|\n', '|a|\n'],
     [
       '连写的小表格',
-      fill(
-        '|a|b|c|d|e|f|g|h|i|j|\n|-|-|-|-|-|-|-|-|-|-|\n|1|2|3|4|5|6|7|8|9|0|\n\n'
-      )
+      '',
+      '|a|b|c|d|e|f|g|h|i|j|\n|-|-|-|-|-|-|-|-|-|-|\n|1|2|3|4|5|6|7|8|9|0|\n\n'
     ]
-  ])(
-    '10 万字符的%s',
-    async (_name, markdown) => {
-      const result = await renderKunMarkdown('introduction', markdown)
+  ])('%s', { retry: 2, timeout: 60000 }, async (_name, head, unit) => {
+    const short = head + fill(unit, 25000)
+    const long = head + fill(unit, 100000)
 
-      expect(result.ok).toBe(true)
-    },
-    4000
-  )
+    // 短的那份在长的前后各量一次, 取慢的那次作基准: 机器中途变慢或变快一次, 都不会
+    // 把倍数撑大。连着变两次才会, 所以允许重来; 真退回平方级时每次都超
+    const before = await cpuTimeOf(short)
+    const full = await cpuTimeOf(long)
+    const after = await cpuTimeOf(short)
+
+    expect(full / Math.max(before, after)).toBeLessThan(8)
+  })
 })
 
 describe('renderKunMarkdown 缓存', () => {
