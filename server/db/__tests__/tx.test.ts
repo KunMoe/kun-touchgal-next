@@ -83,6 +83,20 @@ describe('kunTx 提交与回滚', () => {
     expect(rec.attempts[0].rolledBack).toBe(true)
   })
 
+  // TS 允许返回类型为 void 的函数实际返回任意值, 这样绕过去的字符串类型层面拦不住
+  it('回调在运行期返回了字符串时回滚并抛错, 不把它当成结果提交', async () => {
+    const helper: () => void = () => '萌萌点不足'
+
+    await expect(
+      kunTx('probe', async ({ tx }) => {
+        await tx.user.update({ where: { id: 1 }, data: {} } as never)
+        return helper()
+      })
+    ).rejects.toThrow('[kunTx:probe] 回调返回了字符串')
+    expect(rec.attempts[0].committed).toBe(false)
+    expect(rec.attempts[0].rolledBack).toBe(true)
+  })
+
   it('fail 抛出的中止不会被当成事务冲突', async () => {
     let captured: unknown
     await kunTx(
@@ -109,10 +123,13 @@ describe('kunTx 回调的返回类型', () => {
   it('返回字符串的回调编译不过, 没有值可返回的回调不 return', async () => {
     const failed = Math.random() > 2
 
+    // 这两种写法运行起来真的会返回字符串: 类型报错之外, 运行期的兜底也会拦下
     // @ts-expect-error 纯字符串
-    await kunTx('probe', async () => '错误')
-    // @ts-expect-error 模板字符串
-    await kunTx('probe', async () => `错误 ${failed}`)
+    await expect(kunTx('probe', async () => '错误')).rejects.toThrow(TypeError)
+    await expect(
+      // @ts-expect-error 模板字符串
+      kunTx('probe', async () => `错误 ${failed}`)
+    ).rejects.toThrow(TypeError)
     // @ts-expect-error 字符串与非空对象混用
     await kunTx('probe', async () => {
       if (failed) {
@@ -155,13 +172,15 @@ describe('kunTx 回调的返回类型', () => {
   it('commitWith 的结果可以与成功值混着返回, 调用方拿到的类型里没有它', async () => {
     const failed = Math.random() > 2
 
-    // @ts-expect-error 有了 commitWith 也不能顺手 return 字符串
-    await kunTx('probe', async ({ commitWith }) => {
-      if (failed) {
-        return commitWith('错误')
-      }
-      return '另一个错误'
-    })
+    await expect(
+      // @ts-expect-error 有了 commitWith 也不能顺手 return 字符串
+      kunTx('probe', async ({ commitWith }) => {
+        if (failed) {
+          return commitWith('错误')
+        }
+        return '另一个错误'
+      })
+    ).rejects.toThrow(TypeError)
 
     const mixed = await kunTx('probe', async ({ commitWith }) => {
       if (failed) {

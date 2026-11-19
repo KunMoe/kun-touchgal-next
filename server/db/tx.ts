@@ -114,6 +114,13 @@ export const kunTx = async <T extends TxValue>(
       if (abort) {
         throw abort
       }
+      // 类型挡不住的写法 (返回类型标成 void 的函数实际返回了字符串、as 断言) 在这里兜住:
+      // 放它过去就是带着已做的写入提交, 调用方却把结果当成失败
+      if (typeof result === 'string') {
+        throw new TypeError(
+          `[kunTx:${name}] 回调返回了字符串, 业务失败要用 ctx.fail`
+        )
+      }
       return result
     }
 
