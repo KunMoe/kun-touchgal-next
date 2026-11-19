@@ -9,6 +9,7 @@ import {
 import { createOidcAdapter } from './adapter'
 import { findAccount } from './account'
 import { buildKunInteractionPolicy } from './policy'
+import { registerKunSiteLogout } from './siteLogout'
 
 type OidcCallback = ReturnType<Provider['callback']>
 
@@ -107,6 +108,7 @@ const createProvider = () => {
   }
 
   const provider = new Provider(OIDC_ISSUER, configuration)
+  registerKunSiteLogout(provider)
   // 生产环境经反向代理，信任 x-forwarded-proto 以匹配 https issuer。
   if (process.env.NODE_ENV === 'production') {
     provider.proxy = true

@@ -15,26 +15,58 @@ interface PromptMissing {
   missingResourceScopes?: Record<string, string[]>
 }
 
-// 完成 login 交互：确认本站登录态后把 accountId 写入 provider session。
+type InteractionDetails = Awaited<
+  ReturnType<ReturnType<typeof getOidcProvider>['interactionDetails']>
+>
+
+// 依赖方要求重新认证 (prompt=login, 或 max_age 已超出) 时, 站点 cookie 本身不算数:
+// 只有这次交互开始之后才在站点登录过 (认证时刻不早于交互创建时刻) 才放行
+const needsFreshLogin = (details: InteractionDetails, authTime: number) => {
+  if (authTime >= details.iat) {
+    return false
+  }
+  const { reasons, details: promptDetails } = details.prompt
+  if (reasons.includes('login_prompt')) {
+    return true
+  }
+  const maxAge = Number(promptDetails.max_age)
+  return (
+    reasons.includes('max_age') &&
+    Number.isFinite(maxAge) &&
+    Math.floor(Date.now() / 1000) - authTime > maxAge
+  )
+}
+
+// 完成 login 交互：确认本站登录态后把 accountId 与站点的认证时刻写入 provider session。
 export const GET = async (
   req: NextRequest,
   { params }: { params: Promise<{ uid: string }> }
 ) => {
   const { uid } = await params
   const interactionPath = `${OIDC_MOUNT_PATH}/interaction/${uid}`
+  const loginUrl = new URL(
+    `/login?from=${encodeURIComponent(interactionPath)}`,
+    req.url
+  )
   const payload = await verifyHeaderCookie(req)
   if (!payload) {
-    return NextResponse.redirect(
-      new URL(`/login?from=${encodeURIComponent(interactionPath)}`, req.url)
-    )
+    return NextResponse.redirect(loginUrl)
   }
 
   const provider = getOidcProvider()
   const bridge = await buildRequestBridge(req, false, { skipBody: true })
   bridge.req.push(null)
+  // 认证时刻是站点登录的时刻 (签发站点令牌的 iat), 不是此刻: 否则 id_token 的 auth_time
+  // 恒为确认时刻, max_age / prompt=login 的重新认证要求被一个旧 cookie 零交互满足
+  const authTime = payload.iat ?? 0
   try {
+    const details = await provider.interactionDetails(bridge.req, bridge.res)
+    if (needsFreshLogin(details, authTime)) {
+      // 去站点登录页重新输入凭据, 登录后回到交互页再走一次 confirm
+      return NextResponse.redirect(loginUrl)
+    }
     await provider.interactionFinished(bridge.req, bridge.res, {
-      login: { accountId: String(payload.uid) }
+      login: { accountId: String(payload.uid), ts: payload.iat }
     })
   } catch (error) {
     // interaction 已被消费或过期（如后台 fetch 跑完 303 链后的重放）：

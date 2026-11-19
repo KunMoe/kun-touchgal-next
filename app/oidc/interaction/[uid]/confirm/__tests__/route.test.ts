@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { errors } from 'oidc-provider'
 
 const {
@@ -75,6 +75,20 @@ const createBridge = () => ({
 
 const routeContext = () => ({ params: Promise.resolve({ uid: 'uid123' }) })
 
+// 时间轴 (秒): 站点登录 → 交互创建 → 此刻
+const SITE_LOGIN_IAT = 1_700_000_000
+const INTERACTION_IAT = SITE_LOGIN_IAT + 3600
+const NOW = INTERACTION_IAT + 10
+
+const loginDetails = (
+  reasons: string[],
+  details: Record<string, unknown> = {}
+) => ({
+  iat: INTERACTION_IAT,
+  prompt: { name: 'login', reasons, details },
+  params: { client_id: 'client-1' }
+})
+
 const getRequest = (url = confirmUrl) =>
   new Request(url) as unknown as Parameters<typeof GET>[0]
 
@@ -90,6 +104,14 @@ describe('OIDC confirm route GET', () => {
       Grant: GrantMock
     })
     buildRequestBridgeMock.mockResolvedValue(createBridge())
+    // 交互创建于 INTERACTION_IAT, 只因为 provider 会话缺失而要登录
+    interactionDetailsMock.mockResolvedValue(loginDetails(['no_session']))
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW * 1000)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('未登录时重定向到登录页并携带 from', async () => {
@@ -103,8 +125,8 @@ describe('OIDC confirm route GET', () => {
     expect(interactionFinishedMock).not.toHaveBeenCalled()
   })
 
-  it('已登录时以 accountId 完成 login 交互并透传 303', async () => {
-    verifyHeaderCookieMock.mockResolvedValue({ uid: 7 })
+  it('已登录时以 accountId 与站点登录时刻完成 login 交互并透传 303', async () => {
+    verifyHeaderCookieMock.mockResolvedValue({ uid: 7, iat: SITE_LOGIN_IAT })
     interactionFinishedMock.mockResolvedValue(undefined)
 
     const res = await GET(getRequest(), routeContext())
@@ -112,10 +134,82 @@ describe('OIDC confirm route GET', () => {
     expect(interactionFinishedMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      { login: { accountId: '7' } }
+      { login: { accountId: '7', ts: SITE_LOGIN_IAT } }
     )
     expect(res.status).toBe(303)
     expect(res.headers.get('location')).toBe(resumeUrl)
+  })
+
+  it('interaction 读不到时同样回落到 interaction 页', async () => {
+    verifyHeaderCookieMock.mockResolvedValue({ uid: 7, iat: SITE_LOGIN_IAT })
+    interactionDetailsMock.mockRejectedValue(
+      new errors.SessionNotFound('interaction session not found')
+    )
+
+    const res = await GET(getRequest(), routeContext())
+
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe(interactionUrl)
+    expect(interactionFinishedMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      'prompt=login, 交互开始前登录的站点会话',
+      ['login_prompt'],
+      {},
+      SITE_LOGIN_IAT
+    ],
+    [
+      'max_age 已超出, 交互开始前登录的站点会话',
+      ['max_age'],
+      { max_age: 60 },
+      SITE_LOGIN_IAT
+    ]
+  ])('%s: 转登录页重新登录', async (_label, reasons, details, iat) => {
+    verifyHeaderCookieMock.mockResolvedValue({ uid: 7, iat })
+    interactionDetailsMock.mockResolvedValue(loginDetails(reasons, details))
+
+    const res = await GET(getRequest(), routeContext())
+
+    expect(res.headers.get('location')).toBe(
+      'http://localhost/login?from=%2Foidc%2Finteraction%2Fuid123'
+    )
+    expect(interactionFinishedMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      'prompt=login, 交互开始后重新登录过',
+      ['login_prompt'],
+      {},
+      INTERACTION_IAT
+    ],
+    [
+      'max_age 已超出, 但交互开始后重新登录过',
+      ['max_age'],
+      { max_age: 0 },
+      INTERACTION_IAT + 5
+    ],
+    [
+      'max_age 之内的站点会话',
+      ['max_age'],
+      { max_age: NOW - SITE_LOGIN_IAT },
+      SITE_LOGIN_IAT
+    ]
+  ])('%s: 直接完成 login 交互', async (_label, reasons, details, iat) => {
+    verifyHeaderCookieMock.mockResolvedValue({ uid: 7, iat })
+    interactionDetailsMock.mockResolvedValue(loginDetails(reasons, details))
+    interactionFinishedMock.mockResolvedValue(undefined)
+
+    const res = await GET(getRequest(), routeContext())
+
+    expect(interactionFinishedMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { login: { accountId: '7', ts: iat } }
+    )
+    expect(res.status).toBe(303)
   })
 
   it('interaction 已被消费时回落到 interaction 页而非 500', async () => {
