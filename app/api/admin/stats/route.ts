@@ -1,9 +1,6 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import { can } from '~/constants/permission'
 import type { OverviewData } from '~/types/api/admin'
 
 const daysSchema = z.object({
@@ -59,19 +56,9 @@ const getOverviewData = async (days: number): Promise<OverviewData> => {
   return { newUser, newActiveUser, newGalgame, newGalgameResource, newComment }
 }
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, daysSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
-
-  const data = await getOverviewData(input.days)
-  return NextResponse.json(data)
-}
+export const GET = kunRoute.get({
+  auth: 'user',
+  capability: 'admin.access',
+  input: daysSchema,
+  handler: ({ input }) => getOverviewData(input.days)
+})

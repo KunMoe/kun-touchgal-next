@@ -1,12 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { kunTx } from '~/server/db/tx'
 import { disableTwoFactor } from '~/server/auth/twoFactorState'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { adminDisableUser2FASchema } from '~/validations/admin'
-import { can } from '~/constants/permission'
 
 const disableUser2FAByAdmin = async (
   input: { uid: number },
@@ -63,19 +60,9 @@ const disableUser2FAByAdmin = async (
   return {}
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, adminDisableUser2FASchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
-
-  const response = await disableUser2FAByAdmin(input, payload.uid)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  capability: 'admin.access',
+  input: adminDisableUser2FASchema,
+  handler: ({ input, actor }) => disableUser2FAByAdmin(input, actor.uid)
+})

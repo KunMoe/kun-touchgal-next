@@ -1,13 +1,10 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { adminHandleFeedbackSchema } from '~/validations/admin'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { sliceUntilDelimiterFromEnd } from '~/app/api/utils/sliceUntilDelimiterFromEnd'
 import { createMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
-import { can } from '~/constants/permission'
 
 const handleFeedback = async (
   input: z.infer<typeof adminHandleFeedbackSchema>
@@ -61,19 +58,9 @@ const handleFeedback = async (
   return result
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, adminHandleFeedbackSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
-
-  const response = await handleFeedback(input)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  capability: 'admin.access',
+  input: adminHandleFeedbackSchema,
+  handler: ({ input }) => handleFeedback(input)
+})

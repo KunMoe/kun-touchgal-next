@@ -1,16 +1,13 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { createMessage } from '~/app/api/utils/message'
-import { kunParsePutBody } from '~/app/api/utils/parseQuery'
 import { approveCreatorSchema } from '~/validations/admin'
 import {
   applyKunCredentialChange,
   finishKunSecurityEvent
 } from '~/server/auth/securityEvents'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
-import { can } from '~/constants/permission'
 import { KUN_ROLE } from '~/constants/role'
 
 const approveCreator = async (
@@ -95,19 +92,9 @@ const approveCreator = async (
   return result
 }
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, approveCreatorSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
-
-  const response = await approveCreator(input, payload.uid)
-  return NextResponse.json(response)
-}
+export const PUT = kunRoute.put({
+  auth: 'user',
+  capability: 'admin.access',
+  input: approveCreatorSchema,
+  handler: ({ input, actor }) => approveCreator(input, actor.uid)
+})

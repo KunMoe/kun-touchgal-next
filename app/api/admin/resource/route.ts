@@ -1,70 +1,35 @@
-import { NextRequest, NextResponse } from 'next/server'
-import {
-  kunParseDeleteQuery,
-  kunParseGetQuery,
-  kunParsePutBody
-} from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   adminDeleteResourceSchema,
   adminResourcePaginationSchema
 } from '~/validations/admin'
 import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
 import { getPatchResource } from './get'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { patchResourceUpdateSchema } from '~/validations/patch'
 import { updatePatchResource } from './update'
 import { deleteResource } from './delete'
-import { can } from '~/constants/permission'
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, adminResourcePaginationSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const ctx = viewerContextFromRequest(req)
-  const payload = await ctx.viewer()
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
-  const { contentLimit } = await ctx.visibility()
+export const GET = kunRoute.get({
+  auth: 'user',
+  capability: 'admin.access',
+  input: adminResourcePaginationSchema,
+  handler: async ({ req, input }) => {
+    const { contentLimit } = await viewerContextFromRequest(req).visibility()
 
-  const res = await getPatchResource(input, contentLimit)
-  return NextResponse.json(res)
-}
+    return getPatchResource(input, contentLimit)
+  }
+})
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, patchResourceUpdateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
+export const PUT = kunRoute.put({
+  auth: 'user',
+  capability: 'admin.access',
+  input: patchResourceUpdateSchema,
+  handler: ({ input, actor }) => updatePatchResource(input, actor)
+})
 
-  const response = await updatePatchResource(input, payload)
-  return NextResponse.json(response)
-}
-
-export const DELETE = async (req: NextRequest) => {
-  const input = kunParseDeleteQuery(req, adminDeleteResourceSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
-
-  const response = await deleteResource(input, payload.uid)
-  return NextResponse.json(response)
-}
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  capability: 'admin.access',
+  input: adminDeleteResourceSchema,
+  handler: ({ input, actor }) => deleteResource(input, actor.uid)
+})

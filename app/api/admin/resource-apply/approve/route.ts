@@ -1,15 +1,12 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { createMessage } from '~/app/api/utils/message'
-import { kunParsePutBody } from '~/app/api/utils/parseQuery'
 import { approvePatchResourceSchema } from '~/validations/admin'
 import { kunTx } from '~/server/db/tx'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import { transitionResources } from '~/server/content/resource/transition'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
-import { can } from '~/constants/permission'
 
 const approvePatchResource = async (
   input: z.infer<typeof approvePatchResourceSchema>,
@@ -76,20 +73,10 @@ const approvePatchResource = async (
   return {}
 }
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, approvePatchResourceSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('仅超级管理员可访问')
-  }
-
-  const response = await approvePatchResource(input, payload.uid)
-  return NextResponse.json(response)
-}
+export const PUT = kunRoute.put({
+  auth: 'user',
+  capability: 'admin.access',
+  legacyDeny: { unauthenticated: '未登录', forbidden: '仅超级管理员可访问' },
+  input: approvePatchResourceSchema,
+  handler: ({ input, actor }) => approvePatchResource(input, actor.uid)
+})

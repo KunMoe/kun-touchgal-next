@@ -1,3 +1,57 @@
+GET /api/admin/appeal                                    user capability=admin.access
+PUT /api/admin/appeal                                    user capability=admin.access
+GET /api/admin/comment/full                              user capability=admin.access
+GET /api/admin/comment                                   user capability=admin.access
+PUT /api/admin/comment                                   user capability=admin.access
+DELETE /api/admin/comment                                user capability=admin.access
+PUT /api/admin/comment/shadow-ban                        user capability=admin.access
+PUT /api/admin/creator/approve                           user capability=admin.access
+PUT /api/admin/creator/decline                           user capability=admin.access
+GET /api/admin/creator                                   user capability=admin.access
+POST /api/admin/feedback/handle                          user capability=admin.access
+GET /api/admin/feedback                                  user capability=admin.access
+GET /api/admin/galgame                                   user capability=admin.access
+GET /api/admin/log                                       user capability=admin.access
+POST /api/admin/mail                                     user capability=admin.access
+PUT /api/admin/moderation/batch                          user capability=admin.access
+GET /api/admin/moderation/blacklist                      user capability=admin.access
+POST /api/admin/moderation/blacklist                     user capability=admin.access
+DELETE /api/admin/moderation/blacklist                   user capability=admin.access
+PUT /api/admin/moderation/retry                          user capability=admin.access
+PUT /api/admin/moderation/review                         user capability=admin.access
+GET /api/admin/moderation                                user capability=admin.access
+GET /api/admin/moderation/stats                          user capability=admin.access
+GET /api/admin/oidc                                      user capability=admin.access
+POST /api/admin/oidc                                     user capability=admin.access
+PUT /api/admin/oidc                                      user capability=admin.access
+DELETE /api/admin/oidc                                   user capability=admin.access
+GET /api/admin/rating/full                               user capability=admin.access
+GET /api/admin/rating                                    user capability=admin.access
+PUT /api/admin/rating                                    user capability=admin.access
+DELETE /api/admin/rating                                 user capability=admin.access
+PUT /api/admin/rating/shadow-ban                         user capability=admin.access
+POST /api/admin/report/handle/batch                      user capability=admin.access
+POST /api/admin/report/handle                            user capability=admin.access
+GET /api/admin/report                                    user capability=admin.access
+PUT /api/admin/resource-apply/approve                    user capability=admin.access legacyDeny.unauthenticated=未登录 legacyDeny.forbidden=仅超级管理员可访问
+PUT /api/admin/resource-apply/decline                    user capability=admin.access legacyDeny.unauthenticated=未登录 legacyDeny.forbidden=仅超级管理员可访问
+GET /api/admin/resource-apply                            user capability=admin.access legacyDeny.unauthenticated=未登录 legacyDeny.forbidden=仅超级管理员可访问
+PUT /api/admin/resource/hidden                           user capability=admin.access
+GET /api/admin/resource                                  user capability=admin.access
+PUT /api/admin/resource                                  user capability=admin.access
+DELETE /api/admin/resource                               user capability=admin.access
+GET /api/admin/setting/moderation                        user capability=admin.access
+PUT /api/admin/setting/moderation                        user capability=admin.access
+GET /api/admin/setting/redirect                          user capability=admin.access
+PUT /api/admin/setting/redirect                          user capability=admin.access
+GET /api/admin/setting/register                          user capability=admin.access
+PUT /api/admin/setting/register                          user capability=admin.access
+GET /api/admin/stats                                     user capability=admin.access
+GET /api/admin/stats/sum                                 user capability=admin.access
+POST /api/admin/user/2fa/disable                         user capability=admin.access
+GET /api/admin/user                                      user capability=admin.access
+PUT /api/admin/user                                      user capability=admin.access
+DELETE /api/admin/user                                   user capability=admin.access
 POST /api/auth/captcha/challenge                         public
 POST /api/auth/captcha/redeem                            public
 GET /api/auth/check-temp-token                           public

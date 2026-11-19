@@ -1,12 +1,9 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { adminSendEmailSchema } from '~/validations/admin'
 import { sendEmailHTML } from './_send'
 import { truncateLogContent } from '~/app/api/admin/_log'
-import { can } from '~/constants/permission'
 
 const sendBulkEmail = async (
   input: z.infer<typeof adminSendEmailSchema>,
@@ -51,19 +48,9 @@ const sendBulkEmail = async (
   return { count: emailList.length, failed }
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, adminSendEmailSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
-
-  const response = await sendBulkEmail(input, payload.uid)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  capability: 'admin.access',
+  input: adminSendEmailSchema,
+  handler: ({ input, actor }) => sendBulkEmail(input, actor.uid)
+})

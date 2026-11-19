@@ -1,67 +1,30 @@
-import { NextRequest, NextResponse } from 'next/server'
 import {
   adminRatingPaginationSchema,
   adminDeleteRatingSchema
 } from '~/validations/admin'
-import {
-  kunParseDeleteQuery,
-  kunParseGetQuery,
-  kunParsePutBody
-} from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { patchRatingUpdateSchema } from '~/validations/admin'
 import { getRating } from './get'
 import { updateRating } from './update'
 import { deleteRating } from './delete'
-import { can } from '~/constants/permission'
 
-export async function GET(req: NextRequest) {
-  const input = kunParseGetQuery(req, adminRatingPaginationSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
+export const GET = kunRoute.get({
+  auth: 'user',
+  capability: 'admin.access',
+  input: adminRatingPaginationSchema,
+  handler: ({ input }) => getRating(input)
+})
 
-  const res = await getRating(input)
-  return NextResponse.json(res)
-}
+export const PUT = kunRoute.put({
+  auth: 'user',
+  capability: 'admin.access',
+  input: patchRatingUpdateSchema,
+  handler: ({ input, actor }) => updateRating(input, actor)
+})
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, patchRatingUpdateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
-
-  const response = await updateRating(input, payload)
-  return NextResponse.json(response)
-}
-
-export const DELETE = async (req: NextRequest) => {
-  const input = kunParseDeleteQuery(req, adminDeleteRatingSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
-
-  const response = await deleteRating(input, payload.uid)
-  return NextResponse.json(response)
-}
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  capability: 'admin.access',
+  input: adminDeleteRatingSchema,
+  handler: ({ input, actor }) => deleteRating(input, actor.uid)
+})

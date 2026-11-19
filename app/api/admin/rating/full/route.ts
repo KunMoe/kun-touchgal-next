@@ -1,30 +1,20 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { adminGetFullRatingSchema } from '~/validations/admin'
-import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { can } from '~/constants/permission'
 
-export async function GET(req: NextRequest) {
-  const input = kunParseGetQuery(req, adminGetFullRatingSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'admin.access')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
+export const GET = kunRoute.get({
+  auth: 'user',
+  capability: 'admin.access',
+  input: adminGetFullRatingSchema,
+  handler: async ({ input }) => {
+    const rating = await prisma.patch_rating.findUnique({
+      where: { id: input.ratingId },
+      select: { short_summary: true }
+    })
+    if (!rating) {
+      return '未找到对应的评价'
+    }
 
-  const rating = await prisma.patch_rating.findUnique({
-    where: { id: input.ratingId },
-    select: { short_summary: true }
-  })
-  if (!rating) {
-    return NextResponse.json('未找到对应的评价')
+    return { shortSummary: rating.short_summary }
   }
-
-  return NextResponse.json({ shortSummary: rating.short_summary })
-}
+})

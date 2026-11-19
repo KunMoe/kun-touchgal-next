@@ -1,12 +1,4 @@
-import { NextResponse } from 'next/server'
-import { can } from '~/constants/permission'
-import type { NextRequest } from 'next/server'
-import {
-  kunParseDeleteQuery,
-  kunParsePostBody,
-  kunParsePutBody
-} from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   oidcClientCreateSchema,
   oidcClientDeleteSchema,
@@ -19,57 +11,29 @@ import {
   updateOidcClient
 } from './service'
 
-const ensureAdmin = async (req: NextRequest) => {
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return '用户未登录'
-  }
-  if (!can(payload, 'admin.access')) {
-    return '本页面仅超级管理员可访问'
-  }
-  return null
-}
+export const GET = kunRoute.get({
+  auth: 'user',
+  capability: 'admin.access',
+  handler: () => getOidcClients()
+})
 
-export const GET = async (req: NextRequest) => {
-  const error = await ensureAdmin(req)
-  if (error) {
-    return NextResponse.json(error)
-  }
-  return NextResponse.json(await getOidcClients())
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  capability: 'admin.access',
+  input: oidcClientCreateSchema,
+  handler: ({ input }) => createOidcClient(input)
+})
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, oidcClientCreateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const error = await ensureAdmin(req)
-  if (error) {
-    return NextResponse.json(error)
-  }
-  return NextResponse.json(await createOidcClient(input))
-}
+export const PUT = kunRoute.put({
+  auth: 'user',
+  capability: 'admin.access',
+  input: oidcClientUpdateSchema,
+  handler: ({ input }) => updateOidcClient(input)
+})
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, oidcClientUpdateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const error = await ensureAdmin(req)
-  if (error) {
-    return NextResponse.json(error)
-  }
-  return NextResponse.json(await updateOidcClient(input))
-}
-
-export const DELETE = async (req: NextRequest) => {
-  const input = kunParseDeleteQuery(req, oidcClientDeleteSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const error = await ensureAdmin(req)
-  if (error) {
-    return NextResponse.json(error)
-  }
-  return NextResponse.json(await deleteOidcClient(input.id))
-}
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  capability: 'admin.access',
+  input: oidcClientDeleteSchema,
+  handler: ({ input }) => deleteOidcClient(input.id)
+})
