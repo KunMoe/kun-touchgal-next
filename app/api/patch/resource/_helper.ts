@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto'
-import { copyObject, deleteFileFromS3 } from '~/lib/s3'
-import { acquireKvLock, delKv, releaseKvLock } from '~/lib/redis'
+import { deleteFileFromS3 } from '~/lib/s3'
+import { acquireKvLock, releaseKvLock } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { lockPatchRows } from '~/server/content/patchLock'
@@ -10,7 +10,9 @@ import {
   kickS3DeletionDrain
 } from '~/server/storage/s3Outbox'
 import {
+  consumeStagedUpload,
   discardStagedUpload,
+  promoteStagedObject,
   readUploadToken,
   verifyStagedObject
 } from '~/server/storage/stagedUpload'
@@ -20,10 +22,16 @@ import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import {
   RESOURCE_DAILY_UPLOAD_LIMIT_MB,
-  RESOURCE_S3_COPY_TIMEOUT_MS
+  RESOURCE_S3_COPY_TIMEOUT_MS,
+  RESOURCE_S3_HEAD_TIMEOUT_MS
 } from '~/constants/resource'
 
-const BIND_LOCK_TTL_SECONDS = 60
+// 锁要盖住锁内全部带墙钟上限的 S3 调用: 暂存对象的 HEAD、复制、转正后的 HEAD;
+// 余下的 15 秒留给 Redis 与额度更新。任何一个上限调大, 租期跟着变
+const BIND_LOCK_TTL_SECONDS =
+  Math.ceil(
+    (RESOURCE_S3_COPY_TIMEOUT_MS + 2 * RESOURCE_S3_HEAD_TIMEOUT_MS) / 1000
+  ) + 15
 
 export const bindUploadedResource = async (
   patchId: number,
@@ -64,13 +72,8 @@ export const bindUploadedResource = async (
     const segment = randomBytes(32).toString('hex')
     const finalKey = `patch/${patchId}/resource/${segment}/${meta.fileName}`
     try {
-      await copyObject(
-        meta.s3Key,
-        finalKey,
-        AbortSignal.timeout(RESOURCE_S3_COPY_TIMEOUT_MS)
-      )
-      await deleteFileFromS3(meta.s3Key).catch(() => undefined)
-      await delKv(`upload:${token}`)
+      await promoteStagedObject(meta, finalKey)
+      await consumeStagedUpload(token, meta)
     } catch (error) {
       // 复制结果不确定：S3 可能已完成 CopyObject 但响应超时/中断，留下无 DB 引用的
       // finalKey 孤儿 (随机段, 重试会生成新 key 使其永久泄漏)。DeleteObject 幂等

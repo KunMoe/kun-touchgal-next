@@ -199,6 +199,9 @@ export const RESOURCE_DAILY_UPLOAD_LIMIT_MB = 5120
 // 空闲兜底, 不设墙钟). 60s 与 moderation 的 MODERATION_S3_TIMEOUT_MS 取齐
 export const RESOURCE_S3_COPY_TIMEOUT_MS = 60 * 1000
 
+// 暂存对象与转正后对象的 HEAD 的墙钟上限。HEAD 只取元数据, 给到 10s 仍不回即按失败处理
+export const RESOURCE_S3_HEAD_TIMEOUT_MS = 10 * 1000
+
 export const storageTypes = [
   {
     value: 'touchgal',

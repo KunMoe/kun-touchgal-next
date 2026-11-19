@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // 暂存校验与转正的实现搬到哪里都由这里钉住
 const {
   copyObjectMock,
+  promoteObjectMock,
   deleteFileFromS3Mock,
   headObjectMock,
   acquireKvLockMock,
@@ -18,6 +19,7 @@ const {
   const userUpdateManyMock = vi.fn()
   return {
     copyObjectMock: vi.fn(),
+    promoteObjectMock: vi.fn(),
     deleteFileFromS3Mock: vi.fn(),
     headObjectMock: vi.fn(),
     acquireKvLockMock: vi.fn(),
@@ -33,6 +35,7 @@ const {
 
 vi.mock('~/lib/s3', () => ({
   copyObject: copyObjectMock,
+  promoteObject: promoteObjectMock,
   deleteFileFromS3: deleteFileFromS3Mock,
   headObject: headObjectMock
 }))
@@ -68,6 +71,10 @@ vi.mock('~/app/api/user/session/cache', () => ({
 }))
 
 import { bindUploadedResource } from '~/app/api/patch/resource/_helper'
+import {
+  RESOURCE_S3_COPY_TIMEOUT_MS,
+  RESOURCE_S3_HEAD_TIMEOUT_MS
+} from '~/constants/resource'
 
 const UID = 7
 const PATCH_ID = 10
@@ -97,26 +104,38 @@ const meta = (overrides: Record<string, unknown> = {}) =>
     ...overrides
   })
 
+const STAGED = { ContentLength: SIZE }
+const PROMOTED = {
+  ContentLength: SIZE,
+  ContentType: 'application/octet-stream',
+  ContentDisposition: 'attachment'
+}
+
 // 调用顺序是这条链路的承重部分 (先扣额度再复制、消费令牌与删暂存的先后), 统一记进一张表
 let calls: string[]
+// 转正后那次 HEAD 的应答; 暂存对象的 HEAD 由各用例直接改 headObjectMock
+let promotedHead: () => unknown
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+
+const site = (key: unknown) => (key === STAGING_KEY ? 'staging' : 'final')
 
 const record =
   <T>(name: string, result: () => T | Promise<T>) =>
-  async (...args: unknown[]) => {
-    calls.push(
-      name === 'deleteFileFromS3' || name === 'headObject'
-        ? `${name}:${args[0] === STAGING_KEY ? 'staging' : 'final'}`
-        : name
-    )
+  async () => {
+    calls.push(name)
     return result()
   }
 
 const bind = () => bindUploadedResource(PATCH_ID, TOKEN, UID)
 
+const promotedKey = () => promoteObjectMock.mock.calls[0][1] as string
+
 beforeEach(() => {
   vi.resetAllMocks()
   vi.stubEnv('NEXT_PUBLIC_KUN_VISUAL_NOVEL_S3_STORAGE_URL', STORAGE_URL)
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   calls = []
+  promotedHead = () => PROMOTED
 
   acquireKvLockMock.mockImplementation(
     record('acquireKvLock', () => LOCK_TOKEN)
@@ -124,13 +143,14 @@ beforeEach(() => {
   releaseKvLockMock.mockImplementation(record('releaseKvLock', () => undefined))
   getKvMock.mockImplementation(record('getKv', () => meta()))
   delKvMock.mockImplementation(record('delKv', () => undefined))
-  headObjectMock.mockImplementation(
-    record('headObject', () => ({ ContentLength: SIZE }))
-  )
-  copyObjectMock.mockImplementation(record('copyObject', () => ({})))
-  deleteFileFromS3Mock.mockImplementation(
-    record('deleteFileFromS3', () => undefined)
-  )
+  headObjectMock.mockImplementation(async (key: string) => {
+    calls.push(`headObject:${site(key)}`)
+    return key === STAGING_KEY ? STAGED : promotedHead()
+  })
+  promoteObjectMock.mockImplementation(record('promoteObject', () => ({})))
+  deleteFileFromS3Mock.mockImplementation(async (key: string) => {
+    calls.push(`deleteFileFromS3:${site(key)}`)
+  })
   userUpdateManyMock.mockImplementation(
     record('user.updateMany', () => ({ count: 1 }))
   )
@@ -155,11 +175,14 @@ describe('bindUploadedResource 绑定锁', () => {
     expect(releaseKvLockMock).not.toHaveBeenCalled()
   })
 
-  it('锁的租期盖得住锁内最长的 S3 调用 (复制 60 秒)', async () => {
+  it('锁的租期长于锁内三次带墙钟上限的 S3 调用之和 (暂存 HEAD、复制、转正后 HEAD)', async () => {
     await bind()
 
     const [, ttlSeconds] = acquireKvLockMock.mock.calls[0]
-    expect(ttlSeconds).toBeGreaterThanOrEqual(60)
+    expect(Number.isInteger(ttlSeconds)).toBe(true)
+    expect(ttlSeconds * 1000).toBeGreaterThan(
+      RESOURCE_S3_COPY_TIMEOUT_MS + 2 * RESOURCE_S3_HEAD_TIMEOUT_MS
+    )
   })
 
   it('每条返回路径都用自己的锁令牌释放锁', async () => {
@@ -217,6 +240,15 @@ describe('bindUploadedResource 令牌', () => {
 })
 
 describe('bindUploadedResource 暂存对象校验', () => {
+  it('HEAD 带墙钟上限', async () => {
+    await bind()
+
+    expect(headObjectMock.mock.calls[0]).toEqual([
+      STAGING_KEY,
+      expect.any(AbortSignal)
+    ])
+  })
+
   it('HEAD 失败: 返回未上传成功, 令牌与暂存都留着供重试', async () => {
     headObjectMock.mockRejectedValue(new Error('NotFound'))
 
@@ -233,7 +265,7 @@ describe('bindUploadedResource 暂存对象校验', () => {
     expect(deleteFileFromS3Mock).toHaveBeenCalledWith(STAGING_KEY)
     expect(delKvMock).toHaveBeenCalledWith(`upload:${TOKEN}`)
     expect(userUpdateManyMock).not.toHaveBeenCalled()
-    expect(copyObjectMock).not.toHaveBeenCalled()
+    expect(promoteObjectMock).not.toHaveBeenCalled()
   })
 
   it('HEAD 没给出大小: 按 0 处理, 同样判为大小不符', async () => {
@@ -280,7 +312,7 @@ describe('bindUploadedResource 每日额度', () => {
     expect(await bind()).toBe(QUOTA_EXCEEDED)
     expect(deleteFileFromS3Mock).toHaveBeenCalledWith(STAGING_KEY)
     expect(delKvMock).toHaveBeenCalledWith(`upload:${TOKEN}`)
-    expect(copyObjectMock).not.toHaveBeenCalled()
+    expect(promoteObjectMock).not.toHaveBeenCalled()
   })
 })
 
@@ -288,8 +320,8 @@ describe('bindUploadedResource 转正', () => {
   it('成功: 返回下载地址、正式 key 与实际大小, 并让会话里的额度失效', async () => {
     const result = await bind()
 
-    expect(copyObjectMock).toHaveBeenCalledTimes(1)
-    const [srcKey, finalKey, signal] = copyObjectMock.mock.calls[0]
+    expect(promoteObjectMock).toHaveBeenCalledTimes(1)
+    const [srcKey, finalKey, signal] = promoteObjectMock.mock.calls[0]
     expect(srcKey).toBe(STAGING_KEY)
     expect(finalKey).toMatch(FINAL_KEY)
     expect(signal).toBeInstanceOf(AbortSignal)
@@ -299,10 +331,16 @@ describe('bindUploadedResource 转正', () => {
       size: SIZE
     })
     expect(invalidateUserSessionMock).toHaveBeenCalledWith(UID)
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
   })
 
-  // 预期翻转 (S3): 改为先消费令牌再删暂存, 并在复制后对正式 key 做一次 HEAD
-  it('成功路径的顺序: 校验 → 扣额度 → 复制 → 删暂存 → 消费令牌', async () => {
+  it('转正不走继承源对象元数据的 copyObject', async () => {
+    await bind()
+
+    expect(copyObjectMock).not.toHaveBeenCalled()
+  })
+
+  it('成功路径的顺序: 校验 → 扣额度 → 转正 → 核对正式对象 → 消费令牌 → 删暂存', async () => {
     await bind()
 
     expect(calls).toEqual([
@@ -310,9 +348,10 @@ describe('bindUploadedResource 转正', () => {
       'getKv',
       'headObject:staging',
       'user.updateMany',
-      'copyObject',
-      'deleteFileFromS3:staging',
+      'promoteObject',
+      'headObject:final',
       'delKv',
+      'deleteFileFromS3:staging',
       'invalidateUserSession',
       'releaseKvLock'
     ])
@@ -322,7 +361,7 @@ describe('bindUploadedResource 转正', () => {
     await bind()
     await bind()
 
-    const [first, second] = copyObjectMock.mock.calls.map((call) => call[1])
+    const [first, second] = promoteObjectMock.mock.calls.map((call) => call[1])
     expect(first).not.toBe(second)
   })
 
@@ -335,12 +374,11 @@ describe('bindUploadedResource 转正', () => {
 
   it('复制失败: 删掉可能已生成的正式对象, 退回额度, 原样抛出; 暂存与令牌留着供重试', async () => {
     const failure = new Error('copy timeout')
-    copyObjectMock.mockRejectedValue(failure)
+    promoteObjectMock.mockRejectedValue(failure)
 
     await expect(bind()).rejects.toBe(failure)
 
-    const finalKey = copyObjectMock.mock.calls[0][1]
-    expect(deleteFileFromS3Mock.mock.calls).toEqual([[finalKey]])
+    expect(deleteFileFromS3Mock.mock.calls).toEqual([[promotedKey()]])
     expect(userUpdateManyMock).toHaveBeenLastCalledWith({
       where: { id: UID, daily_upload_size: { gte: 2 } },
       data: { daily_upload_size: { decrement: 2 } }
@@ -353,18 +391,19 @@ describe('bindUploadedResource 转正', () => {
 
   it('复制失败且即时删除正式对象也失败: 交给删除出箱', async () => {
     const failure = new Error('copy timeout')
-    copyObjectMock.mockRejectedValue(failure)
+    promoteObjectMock.mockRejectedValue(failure)
     deleteFileFromS3Mock.mockRejectedValue(new Error('s3 down'))
 
     await expect(bind()).rejects.toBe(failure)
 
-    const finalKey = copyObjectMock.mock.calls[0][1]
-    expect(enqueueS3DeletionMock).toHaveBeenCalledWith(prismaMock, [finalKey])
+    expect(enqueueS3DeletionMock).toHaveBeenCalledWith(prismaMock, [
+      promotedKey()
+    ])
   })
 
   it('复制失败后的清理与退额度都失败: 仍抛出最初的错误', async () => {
     const failure = new Error('copy timeout')
-    copyObjectMock.mockRejectedValue(failure)
+    promoteObjectMock.mockRejectedValue(failure)
     deleteFileFromS3Mock.mockRejectedValue(new Error('s3 down'))
     enqueueS3DeletionMock.mockRejectedValue(new Error('db down'))
     userUpdateManyMock
@@ -374,19 +413,66 @@ describe('bindUploadedResource 转正', () => {
     await expect(bind()).rejects.toBe(failure)
   })
 
-  // 预期翻转 (S3): 令牌先于暂存对象消费, 消费失败时暂存对象还在, 可以原样重试
-  it('消费令牌失败: 删掉正式对象并退回额度后抛出; 此时暂存对象已经删了', async () => {
+  it('消费令牌失败: 删掉正式对象并退回额度后抛出; 暂存对象还在, 同一枚令牌可以重试', async () => {
     const failure = new Error('redis down')
     delKvMock.mockRejectedValue(failure)
 
     await expect(bind()).rejects.toBe(failure)
 
-    const finalKey = copyObjectMock.mock.calls[0][1]
-    expect(deleteFileFromS3Mock.mock.calls).toEqual([[STAGING_KEY], [finalKey]])
+    expect(deleteFileFromS3Mock.mock.calls).toEqual([[promotedKey()]])
     expect(userUpdateManyMock).toHaveBeenLastCalledWith({
       where: { id: UID, daily_upload_size: { gte: 2 } },
       data: { daily_upload_size: { decrement: 2 } }
     })
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
+  })
+})
+
+// 第一版只记日志: 存储是否遵从 MetadataDirective 要先在生产上观察。改成拒绝时, 这一组的
+// 「绑定照常成功」翻成「按复制失败处理」
+describe('bindUploadedResource 转正后核对正式对象的元数据', () => {
+  it('HEAD 的是刚转正的那个 key, 带墙钟上限', async () => {
+    await bind()
+
+    expect(headObjectMock.mock.calls[1]).toEqual([
+      promotedKey(),
+      expect.any(AbortSignal)
+    ])
+  })
+
+  it.each([
+    ['类型不是二进制流', { ...PROMOTED, ContentType: 'text/html' }],
+    ['没有按附件下载', { ...PROMOTED, ContentDisposition: undefined }],
+    ['按内联展示', { ...PROMOTED, ContentDisposition: 'inline' }],
+    ['大小与声明不符', { ...PROMOTED, ContentLength: SIZE - 1 }]
+  ])('%s: 记一条日志, 绑定照常成功', async (_, info) => {
+    promotedHead = () => info
+
+    await expect(bind()).resolves.toMatchObject({ size: SIZE })
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1)
+    expect(consoleErrorSpy.mock.calls[0][1]).toMatchObject({
+      finalKey: promotedKey()
+    })
+    expect(delKvMock).toHaveBeenCalledWith(`upload:${TOKEN}`)
+  })
+
+  it('带文件名参数的 attachment 也算数', async () => {
+    promotedHead = () => ({
+      ...PROMOTED,
+      ContentDisposition: 'attachment; filename="game.zip"'
+    })
+
+    await bind()
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+  })
+
+  it('HEAD 失败: 记一条日志, 绑定照常成功', async () => {
+    promotedHead = () => {
+      throw new Error('s3 down')
+    }
+
+    await expect(bind()).resolves.toMatchObject({ size: SIZE })
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1)
   })
 })

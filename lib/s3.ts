@@ -75,6 +75,8 @@ export const deleteFileFromS3 = async (key: string) => {
   await s3.send(deleteCommand)
 }
 
+// 资源直传的写入端。Content-Type 进签名: 上传者换一个类型发 PUT 会验签失败, 暂存对象的类型
+// 因此只能是这里声明的那个。预签名器默认把 content-type 排除在签名之外, 要显式列为可签名
 export const presignPutObject = (
   key: string,
   contentLength: number,
@@ -88,12 +90,13 @@ export const presignPutObject = (
       ContentLength: contentLength,
       ContentType: 'application/octet-stream'
     }),
-    { expiresIn }
+    { expiresIn, signableHeaders: new Set(['content-type']) }
   )
 
-export const headObject = (key: string) =>
-  s3.send(new HeadObjectCommand({ Bucket, Key: key }))
+export const headObject = (key: string, abortSignal?: AbortSignal) =>
+  s3.send(new HeadObjectCommand({ Bucket, Key: key }), { abortSignal })
 
+// 原样继承源对象的元数据, 留给头像留档与审核落地 (源对象由服务端写入)
 export const copyObject = (
   srcKey: string,
   dstKey: string,
@@ -104,6 +107,25 @@ export const copyObject = (
       Bucket,
       CopySource: `${Bucket}/${encodeURI(srcKey)}`,
       Key: dstKey
+    }),
+    { abortSignal }
+  )
+
+// 资源直传的转正端。源对象由上传者写入, 目标对象的元数据不继承它, 由这里重写:
+// 一律按附件下载的二进制流
+export const promoteObject = (
+  srcKey: string,
+  dstKey: string,
+  abortSignal?: AbortSignal
+) =>
+  s3.send(
+    new CopyObjectCommand({
+      Bucket,
+      CopySource: `${Bucket}/${encodeURI(srcKey)}`,
+      Key: dstKey,
+      MetadataDirective: 'REPLACE',
+      ContentType: 'application/octet-stream',
+      ContentDisposition: 'attachment'
     }),
     { abortSignal }
   )
