@@ -4,7 +4,8 @@ import { translateDbViolation } from './violations'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { KunViolationMap } from './violations'
 
-// 事务执行器。提交边界归它管: 回调怎样算失败、失败时提不提交、提交之后与没提交时各做什么
+// 事务执行器: app / server / lib 下只有这里调用 prisma.$transaction (kun/inv-tx-01)。
+// 提交边界归它管: 回调怎样算失败、失败时提不提交、提交之后与没提交时各做什么
 
 // 回调返回值刻意排除 string: prisma.$transaction 的回调 return 字符串等于提交
 // (曾造成「已扣分却报错」), 业务失败只能经 ctx.fail 表达

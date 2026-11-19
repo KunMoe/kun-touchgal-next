@@ -978,6 +978,50 @@ export const KUN_INVARIANTS = [
         "export const runtime = 'nodejs'\nexport const dynamic = 'force-dynamic'"
       ]
     }
+  },
+  {
+    id: 'inv-tx-01',
+    aliases: ['T13'],
+    statement:
+      '事务一律经 server/db/tx.ts 的 kunTx 开启, 不直接碰 $transaction (调用、取引用、解构都不行)',
+    reason:
+      'prisma.$transaction 的回调 return 即提交, 而本仓的业务失败是 return 字符串: 回调里顺手 return 一句错误就带着已做的写入提交了 (8289bef4 提交出公开可见的孤儿 patch 行, 63fbe3f2 泄漏永久公开的 S3 对象); 挂在 .catch 上的清理在回调 resolve 时又被整个绕过。kunTx 的回调类型不收字符串, 回滚、有意提交与两种结果之后的动作都由执行器负责',
+    removeWhen: '事务不再由 Prisma 的交互式事务承载',
+    // 迁移脚本与 scripts/ 是一次性的离线程序, 各自管理事务; 测试要 mock / 直接驱动它
+    ignores: [
+      'server/db/tx.ts',
+      'migration/**',
+      'scripts/**',
+      '**/__tests__/**'
+    ],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        "MemberExpression[property.name='$transaction']",
+        "MemberExpression[property.value='$transaction']",
+        "MemberExpression > TemplateLiteral.property:has(TemplateElement[value.raw='$transaction'])",
+        "ObjectPattern > Property[key.name='$transaction']",
+        "ObjectPattern > Property[key.value='$transaction']"
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        'export const run = (prisma: any) => prisma.$transaction(async (tx: any) => tx.user.count())',
+        'export const run = (prisma: any) => prisma.$transaction([prisma.user.count()])',
+        'export const run = (tx: any) => tx.$transaction(async (inner: any) => inner.user.count())',
+        "export const run = (prisma: any) => prisma['$transaction'](async (tx: any) => tx.user.count())",
+        'export const run = (prisma: any) => prisma[`$transaction`](async (tx: any) => tx.user.count())',
+        'export const run = (prisma: any) => { const begin = prisma.$transaction; return begin.call(prisma, async (tx: any) => tx.user.count()) }',
+        'export const run = (prisma: any) => { const { $transaction } = prisma; return $transaction(async (tx: any) => tx.user.count()) }',
+        "export const run = (prisma: any) => { const { ['$transaction']: begin } = prisma; return begin(async (tx: any) => tx.user.count()) }"
+      ],
+      good: [
+        "export const run = () => kunTx('user.count', async ({ tx }) => ({ count: await tx.user.count() }))",
+        "export type Itx = Omit<Prisma.TransactionClient, '$transaction'>",
+        'export const run = (tx: any, id: number) => tx.$queryRaw`SELECT id FROM "user" WHERE id = ${id} FOR UPDATE`'
+      ]
+    }
   }
 ]
 
