@@ -22,9 +22,14 @@ const {
   hasPendingResourceMock: vi.fn()
 }))
 
+// 站点 cookie 'site-<uid>' 当作 uid 的会话令牌 (登出只验签名, 不经 Redis 解析)
 vi.mock('~/server/auth/session', () => ({
   verifyKunTokenWithUser: verifyKunTokenWithUserMock,
-  deleteKunTokenSession: deleteKunTokenSessionMock
+  deleteKunTokenSession: deleteKunTokenSessionMock,
+  decodeKunSessionToken: (token: string) => {
+    const uid = Number(token.replace('site-', ''))
+    return Number.isInteger(uid) ? { uid, jti: `jti-${uid}` } : null
+  }
 }))
 
 vi.mock('~/app/api/utils/pendingResourceCache', () => ({
@@ -39,9 +44,11 @@ import {
   follow,
   loginOnce,
   rpLogout,
+  send,
   siteSessionResolver,
   startServer,
   TOKEN_COOKIE,
+  CLIENT_ID,
   type Browser
 } from './_providerHarness'
 
@@ -106,6 +113,37 @@ describe('依赖方登出 × 站点会话', () => {
   it('吊销失败时照样清 cookie, 登出不报错', async () => {
     const b = browser()
     await loginOnce(b, provider, 7)
+    deleteKunTokenSessionMock.mockRejectedValue(new Error('redis down'))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const res = await rpLogout(b, 7, 'yes')
+
+    expect(res.status).toBe(303)
+    expect(clearsSiteCookie(res)).toBe(true)
+    consoleError.mockRestore()
+  })
+
+  it('确认失败 (xsrf 不对) 时 provider 会话还在, 站点也不退', async () => {
+    const b = browser()
+    await loginOnce(b, provider, 7)
+    await send(b, `/session/end?client_id=${CLIENT_ID}`, 7)
+
+    const res = await send(b, '/session/end/confirm', 7, {
+      method: 'POST',
+      body: new URLSearchParams({ xsrf: 'wrong', logout: 'yes' }).toString()
+    })
+
+    expect(res.status).toBe(400)
+    expect(deleteKunTokenSessionMock).not.toHaveBeenCalled()
+    expect(clearsSiteCookie(res)).toBe(false)
+    // provider 会话仍在: 再授权零交互
+    expect((await follow(b, authorizeUrl(), 7, provider)).kind).toBe('code')
+  })
+
+  it('Redis 不可用 (站点会话解析失败) 时照样按 cookie 的签名退出站点', async () => {
+    const b = browser()
+    await loginOnce(b, provider, 7)
+    verifyKunTokenWithUserMock.mockRejectedValue(new Error('redis down'))
     deleteKunTokenSessionMock.mockRejectedValue(new Error('redis down'))
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 
