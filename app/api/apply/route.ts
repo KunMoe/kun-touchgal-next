@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
 import { createMessage } from '~/app/api/utils/message'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { isCreatorRole } from '~/constants/permission'
 
 const applyForCreator = async (uid: number) => {
@@ -44,12 +43,7 @@ const applyForCreator = async (uid: number) => {
   return {}
 }
 
-export const POST = async (req: NextRequest) => {
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await applyForCreator(payload.uid)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  handler: ({ actor: payload }) => applyForCreator(payload.uid)
+})

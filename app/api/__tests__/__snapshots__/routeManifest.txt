@@ -52,6 +52,8 @@ POST /api/admin/user/2fa/disable                         user capability=admin.a
 GET /api/admin/user                                      user capability=admin.access
 PUT /api/admin/user                                      user capability=admin.access
 DELETE /api/admin/user                                   user capability=admin.access
+POST /api/apply                                          user
+GET /api/apply/status                                    optional
 POST /api/auth/captcha/challenge                         public
 POST /api/auth/captcha/redeem                            public
 GET /api/auth/check-temp-token                           public
@@ -77,6 +79,9 @@ POST /api/edit/vndb/details                              user
 POST /api/edit/vndb/relation                             user
 POST /api/forgot/request                                 public
 POST /api/forgot/reset                                   public
+GET /api/galgame                                         optional
+GET /api/home/random                                     optional
+GET /api/home                                            optional
 GET /api/message/all                                     user
 PUT /api/message/conversation/[id]/read                  user
 GET /api/message/conversation/[id]                       user
@@ -121,6 +126,8 @@ PUT /api/patch/resource                                  user
 DELETE /api/patch/resource                               user
 GET /api/patch                                           optional
 DELETE /api/patch                                        user capability=galgame.delete
+GET /api/resource                                        optional
+POST /api/search                                         optional
 POST /api/search/tag                                     public
 GET /api/tag/all                                         user
 GET /api/tag/galgame                                     optional
@@ -129,6 +136,8 @@ POST /api/tag                                            user capability=tag.man
 PUT /api/tag                                             user capability=tag.manage
 DELETE /api/tag                                          user capability=tag.manage
 POST /api/tag/search                                     user
+POST /api/upload/complete                                user csrf=handler legacyDeny.unauthenticated=用户未认证
+POST /api/upload/init                                    user csrf=handler legacyDeny.unauthenticated=用户未认证
 POST /api/upload/resource                                public csrf=handler
 GET /api/user/appeal                                     user
 POST /api/user/appeal                                    user
@@ -180,3 +189,5 @@ DELETE /oidc/[...path]                                   public
 PATCH /oidc/[...path]                                    public
 HEAD /oidc/[...path]                                     public
 OPTIONS /oidc/[...path]                                  public
+GET /oidc/interaction/[uid]/confirm                      optional
+POST /oidc/interaction/[uid]/confirm                     optional

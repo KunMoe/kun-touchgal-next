@@ -8,8 +8,6 @@
 // 登记门槛: 必须有能报错的 bad 样例 (lint/__tests__/kunInvariants.test.ts 逐条执行)。
 // 这里只收由机器执行的代码约束, 不收生产状态和审查流程。
 
-import { LEGACY_ROUTE_FILES } from './legacyRouteFiles.mjs'
-
 /**
  * @typedef {{
  *   id: `inv-${string}`,
@@ -132,7 +130,7 @@ const USER_PAYLOAD = inlineObjectOf(
   `${USER_UPDATE} > ObjectExpression > Property${keyIs('/^(data|update)$/')}`
 )
 
-// inv-route-01/02 共用。Route Handler 的导出名 (Next 认的 HTTP 方法) 与入口构造器
+// inv-route-01。Route Handler 的导出名 (Next 认的 HTTP 方法) 与入口构造器
 const HTTP_METHOD = '/^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$/'
 const KUN_ROUTE_CALL =
   "CallExpression[callee.type='MemberExpression'][callee.object.name='kunRoute']"
@@ -146,11 +144,6 @@ const HTTP_METHODS = [
   'PATCH',
   'OPTIONS'
 ]
-// 过渡期认的身份闸门: 会话适配器、视角上下文、后台两个文件内 helper
-const ROUTE_GATE_CALL =
-  'CallExpression[callee.name=/^(verifyHeaderCookie|viewerContextFromRequest|verifyAdmin|ensureAdmin)$/]'
-// 路径里的 [id] / [...path] 在 glob 里是字符类, 要转义成字面量
-const literalGlob = (path) => path.replace(/[[\]]/g, '\\$&')
 
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
@@ -941,7 +934,6 @@ export const KUN_INVARIANTS = [
       '访问级别以前写在 handler 体内, 是一段整段删掉也能通过类型、lint 与测试的语句: 外部抓取五路由匿名可达约 5 个月、@提及搜索约 18 个月, 都靠人工评审才发现; 「调了 verifyHeaderCookie 却不判空」的可选登录与忘了拦截在代码上长得一样。做成入口定义上的必填字面量后, 漏写编译不过, app/api/__tests__/routeManifest.test.ts 才能静态读出全站访问清单',
     removeWhen: 'Route Handler 改由别的、同样带必填访问声明的机制定义',
     files: ['app/**/route.ts'],
-    ignores: LEGACY_ROUTE_FILES.map(literalGlob),
     enforce: {
       kind: 'syntax',
       selectors: [
@@ -984,39 +976,6 @@ export const KUN_INVARIANTS = [
         "export const POST = kunRoute.post({ auth: 'user', order: 'auth-first', form: true, input: schema, legacyDeny: { unauthenticated: '用户未认证' }, handler: async () => ({}) })",
         "export const GET = kunRoute.get({ auth: 'optional', handler: async ({ req }) => viewerContextFromRequest(req).listView() })",
         "export const runtime = 'nodejs'\nexport const dynamic = 'force-dynamic'"
-      ]
-    }
-  },
-  {
-    id: 'inv-route-02',
-    aliases: ['T10'],
-    statement:
-      '过渡清单 (lint/legacyRouteFiles.mjs) 里还没改成 kunRoute 的 route 文件: 每个导出的 handler 体内都要有身份闸门调用 (verifyHeaderCookie、viewerContextFromRequest、verifyAdmin、ensureAdmin), 不是函数的导出只能是 kunRoute 调用',
-    reason:
-      '迁移分片进行期间, 清单里的旧文件新加一个方法也不能「整段没写」访问判断; 访问级别的正式声明由 inv-route-01 执法',
-    removeWhen: 'LEGACY_ROUTE_FILES 清空',
-    files: LEGACY_ROUTE_FILES.map(literalGlob),
-    enforce: {
-      kind: 'syntax',
-      selectors: [
-        `${ROUTE_EXPORT} > :matches(ArrowFunctionExpression, FunctionExpression).init:not(:has(${ROUTE_GATE_CALL}))`,
-        `ExportNamedDeclaration > FunctionDeclaration[id.name=${HTTP_METHOD}]:not(:has(${ROUTE_GATE_CALL}))`,
-        `${ROUTE_EXPORT}:not([init.type=/^(ArrowFunctionExpression|FunctionExpression)$/], [init.type='CallExpression'][init.callee.object.name='kunRoute'])`,
-        `ExportSpecifier[exported.name=${HTTP_METHOD}]`
-      ]
-    },
-    examples: {
-      file: LEGACY_ROUTE_FILES[0],
-      bad: [
-        'export const GET = async () => Response.json({})',
-        'export async function POST() { return Response.json({}) }',
-        'const handler = async () => Response.json({})\nexport const GET = handler',
-        'const handler = async () => Response.json({})\nexport { handler as GET }'
-      ],
-      good: [
-        'export const GET = async (req) => { const payload = await verifyHeaderCookie(req); return Response.json(payload) }',
-        'export async function POST(req) { await verifyAdmin(req); return Response.json({}) }',
-        "export const PUT = kunRoute.put({ auth: 'user', handler: async () => ({}) })"
       ]
     }
   }

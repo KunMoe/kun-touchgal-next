@@ -2,7 +2,6 @@ import { globSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
-import { LEGACY_ROUTE_FILES } from '~/lint/legacyRouteFiles.mjs'
 
 // 全站 Route Handler 的访问清单 (T10)。kun/inv-route-01 要求每个导出的 HTTP 方法都由
 // kunRoute.<method>({ ... }) 定义、访问相关的字段都是字面量, 所以这里静态读源码就能拿到
@@ -162,16 +161,22 @@ const GUEST_ACCESS: Record<string, string> = {
   'POST /api/auth/verify-2fa': '认的是 2FA 临时令牌, 登录第二步',
   'POST /api/forgot/request': '找回密码',
   'POST /api/forgot/reset': '找回密码 (凭邮件里的重置令牌)',
+  'GET /api/apply/status': '创作者申请状态, 游客回未申请',
   'GET /api/company': '会社详情, 会社页对游客公开',
   'GET /api/company/all': '会社列表, 会社页对游客公开',
   'GET /api/company/galgame': '会社下的作品列表, 按请求视角过滤',
   'POST /api/company/search': '会社搜索建议',
   'GET /api/edit/duplicate': '查重探测, 只回已存在条目的 uniqueId',
+  'GET /api/galgame': '作品列表, 按请求视角过滤',
+  'GET /api/home': '首页, 按请求视角过滤',
+  'GET /api/home/random': '首页随机作品, 按请求视角过滤',
   'GET /api/patch': '作品详情, 按请求视角过滤; 登录者另带收藏等个人字段',
   'GET /api/patch/resource': '作品页的资源列表; 登录者看得到自己待审核的资源',
   'PUT /api/patch/resource/download': '下载计数, 游客按 IP 去重',
   'GET /api/patch/introduction': '游戏简介, 对外公开的 API (C54 裁定保留)',
   'GET /api/patch/moyu': '按 VNDB id 查资源, 对外公开的 API',
+  'GET /api/resource': '资源列表, 按请求视角过滤',
+  'POST /api/search': '搜索, 按请求视角过滤',
   'POST /api/search/tag': '搜索页的标签建议, 搜索页对游客公开',
   'GET /api/tag': '待裁定 X01-03: 标签详情, 标签页对游客隐藏而本接口不拦',
   'GET /api/tag/galgame':
@@ -192,6 +197,9 @@ const GUEST_ACCESS: Record<string, string> = {
   'PATCH /oidc/[...path]': 'oidc-provider 透传',
   'HEAD /oidc/[...path]': 'oidc-provider 透传',
   'OPTIONS /oidc/[...path]': 'oidc-provider 透传',
+  'GET /oidc/interaction/[uid]/confirm': '未登录时转本站登录页',
+  'POST /oidc/interaction/[uid]/confirm':
+    '站点登录态与 SSO 会话不一致时以 login_required 结束授权',
   'GET /api/user/follow/follower':
     '待裁定 X02-02: 关注关系图, 个人主页对游客隐藏而本接口不拦',
   'GET /api/user/follow/following':
@@ -227,7 +235,7 @@ const PREFIX_POLICY: {
 ]
 
 // legacyDeny 是迁移期保留的漂移文案与状态码, 只减不增: 统一文案时同步调低
-const LEGACY_DENY_BUDGET = 11
+const LEGACY_DENY_BUDGET = 13
 
 const formatDecl = (decl: RouteDecl) =>
   [
@@ -250,9 +258,8 @@ describe('Route Handler 访问清单', () => {
     expect(decls.length).toBeGreaterThan(0)
   })
 
-  it('没改成 kunRoute 的文件恰好是过渡清单, 清单只减不增', () => {
-    expect(unmigrated).toEqual([...LEGACY_ROUTE_FILES].sort())
-    expect(LEGACY_ROUTE_FILES.length).toBeLessThanOrEqual(10)
+  it('每个导出 HTTP 方法的 route 文件都由 kunRoute 定义', () => {
+    expect(unmigrated).toEqual([])
   })
 
   it('导出名与 kunRoute 的方法一致, 访问字段都是字面量', () => {

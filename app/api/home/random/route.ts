@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
 import { toPatchWhere } from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
@@ -36,9 +36,11 @@ const getRandomUniqueId = async (visibilityWhere: Prisma.patchWhereInput) => {
   return patch ? { uniqueId: patch.unique_id } : '未查询到文章'
 }
 
-export const GET = async (req: NextRequest) => {
-  const visibility = await viewerContextFromRequest(req).visibility()
+export const GET = kunRoute.get({
+  auth: 'optional',
+  handler: async ({ req }) => {
+    const visibility = await viewerContextFromRequest(req).visibility()
 
-  const response = await getRandomUniqueId(toPatchWhere(visibility))
-  return NextResponse.json(response)
-}
+    return getRandomUniqueId(toPatchWhere(visibility))
+  }
+})

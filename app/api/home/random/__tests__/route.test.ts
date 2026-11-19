@@ -34,8 +34,12 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
+// kunRoute 的 optional 经 verifyHeaderCookie 读同一个上下文的 viewer
 vi.mock('~/server/viewer/fromRequest', () => ({
-  viewerContextFromRequest: () => ({ visibility: visibilityMock })
+  viewerContextFromRequest: () => ({
+    visibility: visibilityMock,
+    viewer: async () => null
+  })
 }))
 
 import { GET } from '~/app/api/home/random/route'

@@ -1,10 +1,7 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
 import { delKv, getKv } from '~/lib/redis'
 import { deleteFileFromS3, headObject } from '~/lib/s3'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import { verifyKunCsrf } from '~/middleware/_csrf'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   OBJECT_STORAGE_MAX_FILE_SIZE_BYTES,
   OBJECT_STORAGE_MAX_FILE_SIZE_ERROR
@@ -26,52 +23,43 @@ const cleanupRejectedUpload = async (token: string, s3Key: string) => {
   await delKv(`upload:${token}`).catch(() => undefined)
 }
 
-export async function POST(req: NextRequest) {
-  const csrfError = verifyKunCsrf(req)
-  if (csrfError) {
-    return NextResponse.json(csrfError, { status: 403 })
-  }
+export const POST = kunRoute.post({
+  auth: 'user',
+  csrf: 'handler',
+  input: completeSchema,
+  legacyDeny: { unauthenticated: '用户未认证' },
+  handler: async ({ input, actor: payload }) => {
+    const raw = await getKv(`upload:${input.token}`)
+    if (!raw) {
+      return '上传 token 已过期或不存在, 请重新上传'
+    }
 
-  const input = await kunParsePostBody(req, completeSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
+    const meta = JSON.parse(raw) as UploadTokenMeta
+    if (meta.uid !== payload.uid) {
+      return '上传 token 不属于当前用户'
+    }
 
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未认证')
-  }
+    const info = await headObject(meta.s3Key).catch(() => null)
+    if (!info) {
+      return '文件未上传成功, 请重试'
+    }
 
-  const raw = await getKv(`upload:${input.token}`)
-  if (!raw) {
-    return NextResponse.json('上传 token 已过期或不存在, 请重新上传')
-  }
+    const actualSize = Number(info.ContentLength ?? 0)
+    if (actualSize !== meta.declared) {
+      await cleanupRejectedUpload(input.token, meta.s3Key)
+      return '文件大小不一致, 请重新上传'
+    }
+    if (actualSize >= OBJECT_STORAGE_MAX_FILE_SIZE_BYTES) {
+      await cleanupRejectedUpload(input.token, meta.s3Key)
+      return OBJECT_STORAGE_MAX_FILE_SIZE_ERROR
+    }
 
-  const meta = JSON.parse(raw) as UploadTokenMeta
-  if (meta.uid !== payload.uid) {
-    return NextResponse.json('上传 token 不属于当前用户')
-  }
+    const fileSizeMB = actualSize / (1024 * 1024)
 
-  const info = await headObject(meta.s3Key).catch(() => null)
-  if (!info) {
-    return NextResponse.json('文件未上传成功, 请重试')
+    return {
+      filetype: 's3',
+      fileToken: input.token,
+      fileSize: `${fileSizeMB.toFixed(3)} MB`
+    }
   }
-
-  const actualSize = Number(info.ContentLength ?? 0)
-  if (actualSize !== meta.declared) {
-    await cleanupRejectedUpload(input.token, meta.s3Key)
-    return NextResponse.json('文件大小不一致, 请重新上传')
-  }
-  if (actualSize >= OBJECT_STORAGE_MAX_FILE_SIZE_BYTES) {
-    await cleanupRejectedUpload(input.token, meta.s3Key)
-    return NextResponse.json(OBJECT_STORAGE_MAX_FILE_SIZE_ERROR)
-  }
-
-  const fileSizeMB = actualSize / (1024 * 1024)
-
-  return NextResponse.json({
-    filetype: 's3',
-    fileToken: input.token,
-    fileSize: `${fileSizeMB.toFixed(3)} MB`
-  })
-}
+})

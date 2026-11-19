@@ -1,6 +1,5 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { parseSearchSuggestions, searchSchema } from '~/validations/search'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
@@ -381,31 +380,25 @@ const legacySearchGalgame = async (
   return { galgames, total }
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, searchSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const query = parseSearchSuggestions(input.queryString)
-  if (typeof query === 'string') {
-    return NextResponse.json(query)
-  }
-  const visibility = await viewerContextFromRequest(req).visibility()
-
-  if (isMeiliEnabled()) {
-    try {
-      const response = await searchGalgameWithMeili(input, visibility, query)
-      return NextResponse.json(response)
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Meilisearch 搜索失败，降级为 Prisma 实现:', error)
+export const POST = kunRoute.post({
+  auth: 'optional',
+  input: searchSchema,
+  handler: async ({ req, input }) => {
+    const query = parseSearchSuggestions(input.queryString)
+    if (typeof query === 'string') {
+      return query
     }
-  }
+    const visibility = await viewerContextFromRequest(req).visibility()
 
-  const response = await legacySearchGalgame(
-    input,
-    toPatchWhere(visibility),
-    query
-  )
-  return NextResponse.json(response)
-}
+    if (isMeiliEnabled()) {
+      try {
+        return await searchGalgameWithMeili(input, visibility, query)
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Meilisearch 搜索失败，降级为 Prisma 实现:', error)
+      }
+    }
+
+    return legacySearchGalgame(input, toPatchWhere(visibility), query)
+  }
+})
