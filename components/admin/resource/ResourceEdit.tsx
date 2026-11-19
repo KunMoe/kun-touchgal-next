@@ -52,7 +52,9 @@ export const ResourceEdit = ({
         resourceId: initialResource.id
       })
       if (typeof res === 'string') {
+        // 失败时弹窗不关, 可以直接重试
         toast.error(res)
+        return
       } else {
         toast.success('删除资源链接成功')
         onDeleted?.(initialResource.id)

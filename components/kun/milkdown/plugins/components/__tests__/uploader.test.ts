@@ -60,7 +60,7 @@ describe('kunUploader', () => {
     expect(nodes).toEqual([])
     expect(createAndFillMock).not.toHaveBeenCalled()
     expect(toastErrorMock).toHaveBeenCalledWith(
-      '您今日上传的图片已达到 50 张限额'
+      '图片 a.png 上传失败: 您今日上传的图片已达到 50 张限额'
     )
   })
 
@@ -73,16 +73,37 @@ describe('kunUploader', () => {
 
     expect(nodes).toEqual([{ src: 'https://img.kun/a.avif', alt: 'a.png' }])
     expect(toastErrorMock).toHaveBeenCalledTimes(1)
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      '图片 b.png 上传失败: 您今日上传的图片已达到 50 张限额'
+    )
   })
 
-  it('单图网络异常不影响其余图片且弹出 toast', async () => {
+  // kunFetch 不抛异常: 断网与 5xx 也是字符串, 与业务错误走同一个分支
+  it('单图网络异常不影响其余图片, 提示带文件名', async () => {
     kunFetchFormDataMock
-      .mockRejectedValueOnce(new Error('Kun Fetch error! Status: 500'))
+      .mockResolvedValueOnce('服务暂时不可用, 请稍后重试 (HTTP 500)')
       .mockResolvedValueOnce({ imageLink: 'https://img.kun/b.avif' })
 
     const nodes = await upload([makeImage('a.png'), makeImage('b.png')])
 
     expect(nodes).toEqual([{ src: 'https://img.kun/b.avif', alt: 'b.png' }])
+    expect(toastErrorMock).toHaveBeenCalledTimes(1)
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      '图片 a.png 上传失败: 服务暂时不可用, 请稍后重试 (HTTP 500)'
+    )
+  })
+
+  it('节点构造抛错 (编程错误) 时仍有兜底提示, 不影响其余图片', async () => {
+    kunFetchFormDataMock.mockResolvedValue({
+      imageLink: 'https://img.kun/x.avif'
+    })
+    createAndFillMock.mockImplementationOnce(() => {
+      throw new Error('schema 里没有 image 节点')
+    })
+
+    const nodes = await upload([makeImage('a.png'), makeImage('b.png')])
+
+    expect(nodes).toEqual([{ src: 'https://img.kun/x.avif', alt: 'b.png' }])
     expect(toastErrorMock).toHaveBeenCalledWith('图片 a.png 上传失败')
   })
 

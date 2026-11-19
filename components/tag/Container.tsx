@@ -6,7 +6,7 @@ import { TagHeader } from './TagHeader'
 import { SearchTags } from './SearchTag'
 import { TagList } from './TagList'
 import { kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
-import { errorReporter } from '~/utils/kunErrorHandler'
+import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useMounted } from '~/hooks/useMounted'
 import { KunPagination } from '~/components/kun/Pagination'
 import { KunNull } from '~/components/kun/Null'
@@ -41,10 +41,10 @@ export const Container = ({ initialTags, initialTotal, uid }: Props) => {
         page,
         limit: 100
       })
-      if (typeof response !== 'string') {
-        setTags(response.tags)
-        setTotal(response.total)
-      }
+      kunErrorHandler(response, (value) => {
+        setTags(value.tags)
+        setTotal(value.total)
+      })
     } catch (error) {
       errorReporter(error)
     } finally {
@@ -88,9 +88,7 @@ export const Container = ({ initialTags, initialTotal, uid }: Props) => {
           query: query.split(' ').filter((term) => term.length > 0)
         }
       )
-      if (typeof response !== 'string') {
-        setTags(response)
-      }
+      kunErrorHandler(response, setTags)
     } catch (error) {
       errorReporter(error)
     } finally {

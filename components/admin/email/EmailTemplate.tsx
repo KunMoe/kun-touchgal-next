@@ -65,7 +65,9 @@ export const EmailTemplate = () => {
         variables: templateVars
       })
       if (typeof response === 'string') {
+        // 请求失败时保留已选的模板与变量, 弹窗不关
         toast.error(response)
+        return
       } else if (response.failed > 0) {
         toast.error(
           `向网站的 ${response.count} 位用户发送邮件, 其中 ${response.failed} 封发送失败`

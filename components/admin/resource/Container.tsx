@@ -344,7 +344,9 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
 
       const actionLabel = status === 0 ? '恢复' : '隐藏'
       if (typeof res === 'string') {
+        // 失败时保留选中, 可以直接重试
         toast.error(res)
+        return
       } else {
         toast.success(`成功${actionLabel} ${res.count} 条资源`)
       }

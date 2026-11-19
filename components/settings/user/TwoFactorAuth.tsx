@@ -80,12 +80,14 @@ export const TwoFactorAuth = () => {
           hasSecret: boolean
           backupCodeLength: number
         }>('/user/setting/2fa/status')
-        setAuthStatus((current) => ({
-          ...current,
-          isEnabled2FA: response.enabled,
-          hasSecret: response.hasSecret,
-          backupCodeLength: response.backupCodeLength
-        }))
+        kunErrorHandler(response, (value) => {
+          setAuthStatus((current) => ({
+            ...current,
+            isEnabled2FA: value.enabled,
+            hasSecret: value.hasSecret,
+            backupCodeLength: value.backupCodeLength
+          }))
+        })
       } catch {
         toast.error('读取 2FA 状态失败, 请稍后重试')
       }

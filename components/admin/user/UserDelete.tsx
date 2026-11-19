@@ -61,11 +61,12 @@ export const UserDelete = ({ user, onUpdated, onDeleted }: Props) => {
         onUpdated?.({ ...user, status: 2 })
         return
       }
+      // 失败时弹窗不关, 可以再点一次
       kunErrorHandler(res, () => {
         toast.success('永久删除用户成功')
         onDeleted?.(user.id)
+        onClose()
       })
-      onClose()
     } catch (error) {
       errorReporter(error)
     } finally {

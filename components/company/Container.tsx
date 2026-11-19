@@ -28,15 +28,17 @@ export const Container: FC<Props> = ({ initialCompanies, initialTotal }) => {
 
   const fetchCompanies = () => {
     startTransition(async () => {
-      const { companies, total } = await kunFetchGet<{
+      const response = await kunFetchGet<{
         companies: CompanyType[]
         total: number
       }>('/company/all', {
         page,
         limit: 100
       })
-      setCompanies(companies)
-      setTotal(total)
+      kunErrorHandler(response, (value) => {
+        setCompanies(value.companies)
+        setTotal(value.total)
+      })
     })
   }
 

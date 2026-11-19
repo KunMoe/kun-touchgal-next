@@ -52,8 +52,10 @@ export const FavoriteModal = ({
         limit: LIMIT
       })
       if (seq !== fetchSeqRef.current) return
-      setFolders(response.folders)
-      setTotal(response.total)
+      kunErrorHandler(response, (value) => {
+        setFolders(value.folders)
+        setTotal(value.total)
+      })
     } finally {
       if (seq === fetchSeqRef.current) {
         setIsFetching(false)

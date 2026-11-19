@@ -2,7 +2,6 @@ import toast from 'react-hot-toast'
 import { Decoration } from '@milkdown/prose/view'
 import { kunFetchFormData } from '~/utils/kunFetch'
 import { checkImageValid, resizeImage } from '~/utils/resizeImage'
-import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import type { Uploader } from '@milkdown/plugin-upload'
 import type { Node } from '@milkdown/prose/model'
 
@@ -43,17 +42,16 @@ export const kunUploader: Uploader = async (files, schema) => {
             imageLink: string
           }>
         >('/user/image', formData)
-        const alt = image.name
-        let uploadedNode: Node | undefined
+        // 一次可以传多张: 失败的提示带上文件名, 才知道是哪一张
+        if (typeof res === 'string') {
+          toast.error(`图片 ${image.name} 上传失败: ${res}`)
+          return undefined
+        }
 
-        kunErrorHandler(res, (value) => {
-          uploadedNode = schema.nodes.image.createAndFill({
-            src: value.imageLink,
-            alt
-          }) as Node
-        })
-
-        return uploadedNode
+        return schema.nodes.image.createAndFill({
+          src: res.imageLink,
+          alt: image.name
+        }) as Node
       } catch {
         toast.error(`图片 ${image.name} 上传失败`)
         return undefined

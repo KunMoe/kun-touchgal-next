@@ -5,7 +5,11 @@ import { useRouter } from '@bprogress/next/app'
 import { Button, Input } from '@heroui/react'
 import toast from 'react-hot-toast'
 import { useUserStore } from '~/store/userStore'
-import { kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
+import {
+  isKunTransportFailure,
+  kunFetchGet,
+  kunFetchPost
+} from '~/utils/kunFetch'
 import { resolveKunLoginRedirect } from '~/utils/loginRedirect'
 import type { UserState } from '~/types/api/session'
 import { KunTextDivider } from '~/components/kun/TextDivider'
@@ -23,7 +27,9 @@ export const TwoFactor = () => {
       const res = await kunFetchGet<KunResponse<KunGalgameStatelessPayload>>(
         '/auth/check-temp-token'
       )
-      if (typeof res === 'string') {
+      // 处理器说临时令牌无效才退回登录页; 请求没得到 2xx 应答 (断网、网关错误) 时留在原地,
+      // 提交验证码时自会报错
+      if (typeof res === 'string' && !isKunTransportFailure(res)) {
         router.push(`/login${window.location.search}`)
       }
     }

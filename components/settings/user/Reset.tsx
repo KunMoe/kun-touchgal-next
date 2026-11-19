@@ -16,7 +16,7 @@ import { Button } from '@heroui/button'
 import { useRouter } from '@bprogress/next/app'
 import toast from 'react-hot-toast'
 import { useState } from 'react'
-import { kunFetchPost } from '~/utils/kunFetch'
+import { isKunTransportFailure, kunFetchPost } from '~/utils/kunFetch'
 import { useSettingStore } from '~/store/settingStore'
 
 export const Reset = () => {
@@ -31,8 +31,13 @@ export const Reset = () => {
 
     setLoading(true)
     try {
-      await kunFetchPost<KunResponse<{}>>('/user/status/logout')
-      toast.success('您已成功清除网站所有数据, 请重新登录')
+      const res = await kunFetchPost<KunResponse<{}>>('/user/status/logout')
+      // 处理器答复「未登录」同样算已退出; 只有请求没得到 2xx 应答时会话才可能还在
+      if (isKunTransportFailure(res)) {
+        toast.error('本地数据已清除, 但退出登录失败, 页面即将刷新')
+      } else {
+        toast.success('您已成功清除网站所有数据, 请重新登录')
+      }
     } catch {
       toast.error('本地数据已清除, 但退出登录失败, 页面即将刷新')
     } finally {

@@ -135,6 +135,9 @@ const HTTP_METHOD = '/^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$/'
 const KUN_ROUTE_CALL =
   "CallExpression[callee.type='MemberExpression'][callee.object.name='kunRoute']"
 const ROUTE_EXPORT = `ExportNamedDeclaration > VariableDeclaration > VariableDeclarator[id.name=${HTTP_METHOD}]`
+// inv-fetch-01。客户端 API 适配器 (utils/kunFetch.ts) 的五个导出
+const KUN_FETCH_CALL =
+  'CallExpression[callee.name=/^kunFetch(Get|Post|Put|Delete|FormData)$/]'
 const HTTP_METHODS = [
   'GET',
   'HEAD',
@@ -1020,6 +1023,37 @@ export const KUN_INVARIANTS = [
         "export const run = () => kunTx('user.count', async ({ tx }) => ({ count: await tx.user.count() }))",
         "export type Itx = Omit<Prisma.TransactionClient, '$transaction'>",
         'export const run = (tx: any, id: number) => tx.$queryRaw`SELECT id FROM "user" WHERE id = ${id} FOR UPDATE`'
+      ]
+    }
+  },
+  {
+    id: 'inv-fetch-01',
+    aliases: ['T16'],
+    statement:
+      'kunFetch* 的返回值不得以语句形式丢弃; 确实不看结果的请求写成 void kunFetchXxx(...) 并注明原因',
+    reason:
+      'kunFetch 不抛异常: 断网、非 2xx 与业务拒绝都以字符串返回。把调用写成一条语句就是把失败当成功 (删除评价、删除资源、标签与会社选择器都曾在请求失败后照常提示成功并改动本地状态), 类型系统拦不住这种写法',
+    removeWhen:
+      'kunFetch 的失败改回异常通道, 或返回值换成不消费就编译不过的类型',
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `ExpressionStatement > AwaitExpression > ${KUN_FETCH_CALL}`,
+        `ExpressionStatement > ${KUN_FETCH_CALL}`
+      ]
+    },
+    examples: {
+      file: 'components/kun/KunInvariantExample.tsx',
+      bad: [
+        "export const run = async () => { await kunFetchPost('/user/status/logout') }",
+        "export const run = () => { kunFetchPut('/patch/resource/download', { id: 1 }) }",
+        "export const run = async () => { await kunFetchDelete<KunResponse<{}>>('/patch/rating', { id: 1 }) }"
+      ],
+      good: [
+        "export const run = () => { void kunFetchPut('/patch/resource/download', { id: 1 }) }",
+        "export const run = async () => { const res = await kunFetchPost('/user/status/logout'); return typeof res === 'string' }",
+        "export const run = () => kunFetchGet('/tag/all').then((res) => res)",
+        "export const run = async () => { kunErrorHandler(await kunFetchGet('/tag/all'), () => {}) }"
       ]
     }
   }

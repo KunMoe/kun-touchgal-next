@@ -71,8 +71,10 @@ export const Email = () => {
         hasSecret: boolean
       }>('/user/setting/2fa/status')
 
-      setNeedsSecondFactor(response.enabled)
-      onOpen()
+      kunErrorHandler(response, (value) => {
+        setNeedsSecondFactor(value.enabled)
+        onOpen()
+      })
     } catch {
       toast.error('读取 2FA 状态失败, 请稍后重试')
     } finally {

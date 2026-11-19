@@ -92,6 +92,8 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
           skipNextFetchRef.current = true
           setPage(res.currentPage)
         }
+      } else if (typeof res === 'string') {
+        toast.error(res)
       }
     } catch {
       if (requestId === requestIdRef.current) {

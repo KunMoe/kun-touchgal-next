@@ -31,7 +31,7 @@ import { useUserStore } from '~/store/userStore'
 import { useSettingStore } from '~/store/settingStore'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from '@bprogress/next/app'
-import { kunFetchPost } from '~/utils/kunFetch'
+import { isKunTransportFailure, kunFetchPost } from '~/utils/kunFetch'
 import toast from 'react-hot-toast'
 import { showKunSooner } from '~/components/kun/Sooner'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
@@ -250,8 +250,13 @@ export const UserDropdown = () => {
 
   const handleLogOut = async () => {
     setLoading(true)
-    await kunFetchPost<KunResponse<{}>>('/user/status/logout')
+    const res = await kunFetchPost<KunResponse<{}>>('/user/status/logout')
     setLoading(false)
+    // 请求没有得到 2xx 应答时会话可能还在, 保留登录态; 处理器答复「未登录」同样算已登出
+    if (typeof res === 'string' && isKunTransportFailure(res)) {
+      toast.error(res)
+      return
+    }
     logout()
     resetUnreadMessageStatus()
     resetSettings()

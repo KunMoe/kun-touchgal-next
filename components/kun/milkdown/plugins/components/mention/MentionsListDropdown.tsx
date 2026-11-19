@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
-import { kunFetchGet } from '~/utils/kunFetch'
+import { isKunTransportFailure, kunFetchGet } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useInstance } from '@milkdown/react'
 import { editorViewCtx } from '@milkdown/kit/core'
@@ -132,11 +132,12 @@ export const MentionsListDropdown = () => {
           '/user/mention/search',
           { query: debouncedQuery }
         )
-        if (!cancelled) {
+        // 输入过程中的自动搜索: 请求没得到 2xx 应答 (断网、网关错误) 静默即可, 处理器的拒绝照常提示
+        if (!cancelled && !isKunTransportFailure(response)) {
           kunErrorHandler(response, setUsers)
         }
       } catch {
-        // 输入过程中的自动搜索, 网络错误静默即可
+        // 同上, 不打断输入
       }
     })
     return () => {

@@ -25,8 +25,9 @@ interface Props {
 }
 
 export const ResourceDownloadCard = ({ resource, link }: Props) => {
-  const handleClickDownload = async () => {
-    await kunFetchPut<KunResponse<{}>>('/patch/resource/download', {
+  // 下载计数没记上不值得打断用户, 结果有意不看
+  const handleClickDownload = () => {
+    void kunFetchPut<KunResponse<{}>>('/patch/resource/download', {
       patchId: resource.patchId,
       resourceId: resource.id,
       linkId: link.id
