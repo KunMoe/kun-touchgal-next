@@ -108,11 +108,14 @@ beforeEach(() => {
   findUniqueMock.mockResolvedValue(row())
   userUpdateMock.mockResolvedValue({})
   stampMode.enforce = true
+  // 解析会话时按 1/100 抽样清理过期成员: 固定在不抽中的桶, 免得它吃掉注入的 Redis 失败
+  vi.spyOn(Math, 'random').mockReturnValue(0.5)
 })
 
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
 })
 
 describe('establishKunSession', () => {
