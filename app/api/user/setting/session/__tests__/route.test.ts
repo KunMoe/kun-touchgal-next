@@ -10,21 +10,25 @@ const redis = await vi.hoisted(async () =>
   (await import('~/server/auth/__tests__/_redisFake')).createRedisFake()
 )
 
-const { users, cookieDeletes, cookieSets, stampWrites } = vi.hoisted(() => ({
-  users: new Map<
-    number,
-    {
-      id: number
-      name: string
-      role: number
-      status: number
-      security_stamp?: Date | null
-    }
-  >(),
-  cookieSets: [] as { name: string; value: string }[],
-  cookieDeletes: [] as string[],
-  stampWrites: [] as { uid: number; data: Record<string, unknown> }[]
-}))
+const { users, cookieDeletes, cookieSets, stampWrites, hooks } = vi.hoisted(
+  () => ({
+    users: new Map<
+      number,
+      {
+        id: number
+        name: string
+        role: number
+        status: number
+        security_stamp?: Date | null
+      }
+    >(),
+    cookieSets: [] as { name: string; value: string }[],
+    cookieDeletes: [] as string[],
+    stampWrites: [] as { uid: number; data: Record<string, unknown> }[],
+    // 在写戳之前跑一次 (模拟请求通过鉴权之后、写入之前别处发生的变更)
+    hooks: { beforeStampWrite: null as (() => void) | null }
+  })
+)
 
 vi.mock('~/lib/redis', () => redis.module)
 vi.mock('~/prisma/index', () => ({
@@ -39,6 +43,8 @@ vi.mock('~/prisma/index', () => ({
         where: { id: number } & Record<string, unknown>
         data: Record<string, unknown>
       }) => {
+        hooks.beforeStampWrite?.()
+        hooks.beforeStampWrite = null
         stampWrites.push({ uid: args.where.id, data: args.data })
         const row = users.get(args.where.id)
         if (!row || !Object.keys(args.data).length) {
@@ -113,6 +119,7 @@ beforeEach(() => {
   cookieDeletes.length = 0
   cookieSets.length = 0
   stampWrites.length = 0
+  hooks.beforeStampWrite = null
   users.set(UID, { id: UID, name: 'kun', role: 1, status: 0 })
   users.set(OTHER_UID, { id: OTHER_UID, name: 'other', role: 1, status: 0 })
   vi.useFakeTimers({ toFake: ['Date'] })
@@ -169,9 +176,10 @@ describe('POST /api/user/setting/session', () => {
   it('戳在这个请求通过鉴权之后被别处刷新过: 不删别人的会话, 不重签', async () => {
     const current = await login()
     const b = await login()
-    // 别处 (重置密码、另一台设备) 刚把戳刷新了, 这个会话的令牌还带着旧戳
-    users.set(UID, { ...users.get(UID)!, security_stamp: new Date(T0 - 1) })
-    stampWrites.length = 0
+    // 这个请求通过鉴权之后, 别处 (重置密码、另一台设备) 把戳刷新了
+    hooks.beforeStampWrite = () => {
+      users.set(UID, { ...users.get(UID)!, security_stamp: new Date(T0 - 1) })
+    }
 
     const response = await POST(request('POST', current.token))
 
