@@ -136,6 +136,13 @@ describe('POST /api/upload/complete 令牌', () => {
     [
       '暂存 key 不在 patch/tmp/ 之下',
       meta({ s3Key: 'patch/1/resource/x/a.zip' })
+    ],
+    [
+      '的 key 在名字一段里带路径分隔',
+      meta({
+        s3Key: `patch/tmp/${UID}/${'a'.repeat(64)}/../../x.zip`,
+        fileName: '../../x.zip'
+      })
     ]
   ])('令牌内容%s: 按令牌无效处理, 不拿它去碰对象存储', async (_, raw) => {
     getKvMock.mockResolvedValue(raw)

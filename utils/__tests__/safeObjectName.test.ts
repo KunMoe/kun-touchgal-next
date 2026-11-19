@@ -39,6 +39,14 @@ describe('toSafeObjectName 归一化 (X06-06)', () => {
   it('不做兼容合成: 全角扩展名不会被折成白名单里的扩展名', () => {
     expect(toSafeObjectName('game.ｚｉｐ')).toBeNull()
   })
+
+  it.each([
+    ['点号', 'e.\u0301x.zip'],
+    ['空格', 'e \u0301x.zip'],
+    ['零宽空格', 'e\u200b\u0301x.zip']
+  ])('基字与组合符号之间隔着会被滤掉的%s: 滤掉之后照样合成', (_, raw) => {
+    expect(toSafeObjectName(raw)).toBe('\u00e9x.zip')
+  })
 })
 
 describe('toSafeObjectName 控制符与不可见码点 (9-03 发现 3)', () => {
@@ -51,6 +59,8 @@ describe('toSafeObjectName 控制符与不可见码点 (9-03 发现 3)', () => {
     ['零宽空格', 'ga\u200bme.zip', 'game.zip'],
     ['从右到左覆盖符', 'evil\u202etxt.zip', 'eviltxt.zip'],
     ['扩展名之后的换行', 'game.zip\n', 'game.zip'],
+    ['扩展名之后的行分隔符', 'game.zip\u2028', 'game.zip'],
+    ['扩展名之后的段分隔符', 'game.zip\u2029', 'game.zip'],
     ['扩展名中间的零宽空格', 'game.z\u200bip', 'game.zip']
   ])('%s被剥掉, 不再原样放行', (_, raw, expected) => {
     expect(toSafeObjectName(raw)).toBe(expected)
@@ -139,7 +149,10 @@ describe('toSafeObjectName 结果的形状', () => {
     ).toBeLessThanOrEqual(100)
   })
 
-  it.each(samples)('%j 的结果再过一遍仍被接受', (raw) => {
-    expect(toSafeObjectName(toSafeObjectName(raw)!)).not.toBeNull()
+  it.each(samples)('%j 的结果是合成形式, 再过一遍不变', (raw) => {
+    const name = toSafeObjectName(raw)!
+
+    expect(name).toBe(name.normalize('NFC'))
+    expect(toSafeObjectName(name)).toBe(name)
   })
 })

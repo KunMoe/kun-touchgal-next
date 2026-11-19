@@ -82,7 +82,8 @@ const TOKEN = 'upload-token-0001'
 const LOCK_TOKEN = 'lock-token'
 const MB = 1024 * 1024
 const SIZE = 2 * MB
-const STAGING_KEY = `patch/tmp/${UID}/${'a'.repeat(64)}/game.zip`
+const STAGING_DIR = `patch/tmp/${UID}/${'a'.repeat(64)}`
+const STAGING_KEY = `${STAGING_DIR}/game.zip`
 const FINAL_KEY = new RegExp(
   `^patch/${PATCH_ID}/resource/[0-9a-f]{64}/game\\.zip$`
 )
@@ -180,8 +181,29 @@ describe('bindUploadedResource 绑定锁', () => {
 
     const [, ttlSeconds] = acquireKvLockMock.mock.calls[0]
     expect(Number.isInteger(ttlSeconds)).toBe(true)
-    expect(ttlSeconds * 1000).toBeGreaterThan(
-      RESOURCE_S3_COPY_TIMEOUT_MS + 2 * RESOURCE_S3_HEAD_TIMEOUT_MS
+    // 三次调用的上限之外至少还有 10 秒留给 Redis 与额度更新
+    expect(ttlSeconds * 1000).toBeGreaterThanOrEqual(
+      RESOURCE_S3_COPY_TIMEOUT_MS + 2 * RESOURCE_S3_HEAD_TIMEOUT_MS + 10_000
+    )
+  })
+
+  // 租期是按这三个上限算的, 所以要看实际传给适配器的信号是多长时间的, 不只是「带了信号」
+  it('锁内三次 S3 调用各自带着租期公式里的那个墙钟上限', async () => {
+    const timeoutOf = new Map<AbortSignal, number>()
+    const createTimeout = AbortSignal.timeout.bind(AbortSignal)
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const signal = createTimeout(ms)
+      timeoutOf.set(signal, ms)
+      return signal
+    })
+
+    await bind()
+
+    const [stagedHead, promotedHeadCall] = headObjectMock.mock.calls
+    expect(timeoutOf.get(stagedHead[1])).toBe(RESOURCE_S3_HEAD_TIMEOUT_MS)
+    expect(timeoutOf.get(promotedHeadCall[1])).toBe(RESOURCE_S3_HEAD_TIMEOUT_MS)
+    expect(timeoutOf.get(promoteObjectMock.mock.calls[0][2])).toBe(
+      RESOURCE_S3_COPY_TIMEOUT_MS
     )
   })
 
@@ -225,6 +247,15 @@ describe('bindUploadedResource 令牌', () => {
     ['不是 JSON', 'not-json'],
     ['缺字段', '{}'],
     ['大小不是正整数', meta({ declared: 0 })],
+    ['的随机段不是 64 位十六进制', meta({ s3Key: 'patch/tmp/7/abc/game.zip' })],
+    [
+      '的 key 在名字一段里带路径分隔',
+      meta({ s3Key: `${STAGING_DIR}/../../x.zip`, fileName: '../../x.zip' })
+    ],
+    [
+      '的名字洗不出可用的结果',
+      meta({ s3Key: `${STAGING_DIR}/.zip`, fileName: '.zip' })
+    ],
     [
       '暂存 key 不在 patch/tmp/ 之下',
       meta({ s3Key: 'patch/1/resource/x/a.zip' })
@@ -237,6 +268,43 @@ describe('bindUploadedResource 令牌', () => {
     expect(deleteFileFromS3Mock).not.toHaveBeenCalled()
     expect(releaseKvLockMock).toHaveBeenCalledTimes(1)
   })
+})
+
+// 部署时 Redis 里还有旧代码写下的令牌 (有效期 24 小时)。那时的清洗函数遇到行终止符会把
+// 原文放行, 扩展名保留原样的大小写; 暂存 key 的末段与 fileName 是同一个名字
+describe('bindUploadedResource 策略收紧之前写下的令牌', () => {
+  const bindLegacy = async (legacyName: string) => {
+    const s3Key = `${STAGING_DIR}/${legacyName}`
+    getKvMock.mockResolvedValue(meta({ s3Key, fileName: legacyName }))
+    headObjectMock.mockImplementation(async (key: string) =>
+      key === s3Key ? STAGED : PROMOTED
+    )
+    const result = await bind()
+    return { s3Key, result }
+  }
+
+  it.each([
+    ['被原样放行的带换行的名字', 'evil\n"><svg>.ZIP', 'evilsvg.zip'],
+    ['大写扩展名', 'GAME.ZIP', 'GAME.zip'],
+    ['分解形式的韩文字母', '한글.zip'.normalize('NFD'), '한글.zip']
+  ])(
+    '%s: 暂存对象照旧按原 key 取, 正式对象的名字只取当前策略的结果',
+    async (_, legacyName, safeName) => {
+      const { s3Key, result } = await bindLegacy(legacyName)
+
+      const [srcKey, finalKey] = promoteObjectMock.mock.calls[0]
+      expect(srcKey).toBe(s3Key)
+      expect(finalKey).toMatch(
+        new RegExp(`^patch/${PATCH_ID}/resource/[0-9a-f]{64}/`)
+      )
+      expect(finalKey.split('/').pop()).toBe(safeName)
+      expect(result).toMatchObject({
+        downloadLink: `${STORAGE_URL}/${finalKey}`,
+        s3Key: finalKey
+      })
+      expect(deleteFileFromS3Mock).toHaveBeenCalledWith(s3Key)
+    }
+  )
 })
 
 describe('bindUploadedResource 暂存对象校验', () => {

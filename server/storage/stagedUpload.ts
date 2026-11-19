@@ -19,17 +19,20 @@ import {
 } from '~/utils/safeObjectName'
 
 // 资源直传的「暂存 → 转正」边界 (T19)。上传者只决定字节: 暂存对象叫什么、令牌里记什么、
-// 对象够不够格转正、转正后带什么元数据, 都只在这个模块里定。init / complete 路由与
-// bindUploadedResource 是它仅有的三个调用方; 上传会话仍是 Redis 里的一枚令牌, 没有持久化状态
+// 对象够不够格转正、转正后带什么元数据, 都只在这个模块里定。正式 key 由 bindUploadedResource
+// 拼 (补丁 id 与随机段是它的), 末段的名字只取这里读回的 fileName。init / complete 路由与
+// bindUploadedResource 是仅有的三个调用方; 上传会话仍是 Redis 里的一枚令牌, 没有持久化状态
 
 const STAGING_PREFIX = 'patch/tmp/'
+// createStagedUpload 拼出来的形状: 前缀 / uid / 64 位随机段 / 单段名字。令牌里的 key 只认这个形状
+const STAGING_KEY = /^patch\/tmp\/\d+\/[0-9a-f]{64}\/[^/]+$/
 const UPLOAD_TOKEN_TTL_SECONDS = 24 * 60 * 60
 const PRESIGN_TTL_SECONDS = 2 * 60 * 60
 
 const UPLOAD_TOKEN_MISSING = '上传 token 已过期或不存在, 请重新上传文件'
 
 const uploadTokenMetaSchema = z.object({
-  s3Key: z.string().startsWith(STAGING_PREFIX),
+  s3Key: z.string().regex(STAGING_KEY),
   fileName: z.string().min(1),
   declared: z.number().int().positive(),
   uid: z.number().int().positive()
@@ -74,7 +77,9 @@ export const createStagedUpload = async (input: {
   return { uploadUrl, token, expiresIn: PRESIGN_TTL_SECONDS }
 }
 
-// 令牌内容损坏或形状不对与令牌不存在同样处理: 调用方拿到的要么是校验过的元数据, 要么是文案
+// 令牌内容损坏或形状不对与令牌不存在同样处理: 调用方拿到的要么是校验过的元数据, 要么是文案。
+// 名字再过一遍命名策略, 转正用的名字因此只会是当前策略的结果: Redis 里的令牌可能是策略
+// 收紧之前写下的 (有效期 24 小时), 那时的清洗函数遇到行终止符会把原文放行
 export const readUploadToken = async (
   token: string,
   uid: number
@@ -94,10 +99,14 @@ export const readUploadToken = async (
   if (!parsed.success) {
     return UPLOAD_TOKEN_MISSING
   }
+  const fileName = toSafeObjectName(parsed.data.fileName)
+  if (!fileName) {
+    return UPLOAD_TOKEN_MISSING
+  }
   if (parsed.data.uid !== uid) {
     return '上传 token 不属于当前用户'
   }
-  return parsed.data
+  return { ...parsed.data, fileName }
 }
 
 // 被拒绝的上传不留给下一次请求: 暂存对象与令牌一起清掉, 清理失败不改变拒绝结果
@@ -179,7 +188,8 @@ export const promoteStagedObject = async (
 }
 
 // 转正之后收尾: 先消费令牌, 再尽力删暂存对象。消费失败会抛出, 那时暂存对象还在, 同一枚令牌
-// 可以原样重试; 反过来先删对象, 令牌没消费掉时两份字节就都没了
+// 可以原样重试 (删除其实已在 Redis 执行、只是应答丢了的那一次除外: 令牌没了, 暂存对象留给
+// 存储的过期规则); 反过来先删对象, 令牌没消费掉时两份字节就都没了
 export const consumeStagedUpload = async (
   token: string,
   meta: UploadTokenMeta
