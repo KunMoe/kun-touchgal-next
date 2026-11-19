@@ -19,7 +19,7 @@ export const KunCaptchaModal = ({
   const widgetRef = useRef<CapWidget | null>(null)
 
   useEffect(() => {
-    // 与 cap-widget 0.1.61 期望的 @cap.js/wasm@0.0.8 对应 (browser 构建与 0.0.7 逐字节相同),
+    // 与 cap-widget 0.1.63 期望的 @cap.js/wasm@0.0.8 对应 (browser 构建与 0.0.7 逐字节相同),
     // 升级 widget 时需同步更新 public/cap/cap_wasm_bg.wasm (加载失败会自动降级 JS 解题器)
     window.CAP_CUSTOM_WASM_URL = '/cap/cap_wasm_bg.wasm'
     // 注入 CSRF 头以通过 middleware 校验 (与 utils/kunFetch.ts 一致)

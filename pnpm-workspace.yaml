@@ -6,7 +6,7 @@ enablePrePostScripts: true
 auditConfig:
   ignoreGhsas:
     # minimatch <11.0.1 globParts 放大：受影响代码 firstPhasePreProcess 只在 optimizationLevel>=2 时执行，
-    # 3.1.5 不含该代码；10.2.6 的消费者（eslint、@eslint/config-array、@typescript-eslint/typescript-estree）均未设置该选项，
+    # 3.1.5 不含该代码；10.2.6 的消费者只剩 @typescript-eslint/typescript-estree（eslint 10.15 起与 @eslint/config-array 已用 11.x），未设置该选项，
     # 模式全部来自仓库自有 lint 配置。
     # 11.x 删除了 makeRe 与可调用的默认导出，eslint-plugin-import / react / jsx-a11y 仍依赖 ^3 无法强升；
     # 这些插件迁到 minimatch>=11.0.1 后删除此条并加 override
@@ -135,5 +135,5 @@ allowBuilds:
 patchedDependencies:
   '@heroui/tabs@2.2.20': patches/@heroui__tabs@2.2.20.patch
   '@react-aria/i18n@3.12.10': patches/@react-aria__i18n@3.12.10.patch
-  cap-widget@0.1.61: patches/cap-widget@0.1.61.patch
-  next@16.4.5: patches/next@16.4.5.patch
+  cap-widget@0.1.63: patches/cap-widget@0.1.63.patch
+  next@16.4.6: patches/next@16.4.6.patch
