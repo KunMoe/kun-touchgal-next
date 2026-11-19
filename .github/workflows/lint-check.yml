@@ -172,3 +172,4 @@ jobs:
           migration/__tests__/backfillResourceLinkS3Key.db.test.ts
           server/search/__tests__/sync.db.test.ts
           server/account/__tests__/deleteAccount.db.test.ts
+          server/db/__tests__/tx.db.test.ts
