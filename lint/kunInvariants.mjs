@@ -835,9 +835,9 @@ export const KUN_INVARIANTS = [
     id: 'inv-auth-04',
     aliases: ['T09'],
     statement:
-      'server/auth/** 之外, user 表的 update / updateMany / upsert 写入体里不得出现凭据与权限列 (password、email、enable_2fa、two_factor_secret、two_factor_backup、role、status、security_stamp), 也不得展开; 这些列经 server/auth/securityEvents.ts 的 applyKunCredentialChange 写, 提交之后调 finishKunSecurityEvent',
+      'server/auth/** 之外, user 表的 update / updateMany / upsert 写入体必须是行内对象字面量, 里面不得出现凭据与权限列 (password、email、enable_2fa、two_factor_secret、two_factor_backup、role、status、security_stamp), 也不得展开或用计算键; 这些列经 server/auth/securityEvents.ts 的 applyKunCredentialChange 写, 提交之后调 finishKunSecurityEvent',
     reason:
-      '「哪个账号事件吊销什么」只写在 KUN_SECURITY_POLICY 一张表里, 安全戳与凭据写在同一条语句里。绕过它直接写凭据, 新的写路径就不刷新戳、不吊销会话 (曾有 4 条安全写路径一个会话都不吊销, 要逐个路由去审); 写入体里的展开 (...rest) 带着 role / status / email 写进去, 语法上看不见, 后台编辑用户曾是唯一的逃逸点。本条只认 <x>.user.<method>(...) 的形状: 把 delegate 解构出来、raw SQL 看不到',
+      '「哪个账号事件吊销什么」只写在 KUN_SECURITY_POLICY 一张表里, 安全戳与凭据写在同一条语句里。绕过它直接写凭据, 新的写路径就不刷新戳、不吊销会话 (曾有 4 条安全写路径一个会话都不吊销, 要逐个路由去审); 写入体里的展开 (...rest)、先放进变量的写入体、条件表达式的写入体都能带着 role / status / email 写进去而语法上看不见 (后台编辑用户的 ...rest 曾是唯一的逃逸点), 所以写入体必须是字面量。本条只认 <x>.user.<method>(...) 的形状: 把 delegate 解构出来、raw SQL 看不到',
     removeWhen: '凭据列不再由应用层写入',
     files: [
       'app/**/*.ts',
@@ -852,7 +852,8 @@ export const KUN_INVARIANTS = [
       kind: 'syntax',
       selectors: [
         `${USER_PAYLOAD} > Property${keyIs(`/^(${CREDENTIAL_COLUMNS})$/`)}`,
-        `${USER_PAYLOAD} > :matches(SpreadElement, Property[computed=true])`
+        `${USER_PAYLOAD} > :matches(SpreadElement, Property[computed=true])`,
+        `${USER_UPDATE} > ObjectExpression > Property${keyIs('/^(data|update)$/')}${NOT_INLINE_VALUE}`
       ]
     },
     examples: {
@@ -865,7 +866,9 @@ export const KUN_INVARIANTS = [
         "export const run = (prisma: any) => prisma.user.upsert({ where: { id: 1 }, create: { name: 'x' }, update: { enable_2fa: false } })",
         'export const run = (prisma: any, rest: any) => prisma.user.update({ where: { id: 1 }, data: { name: rest.name, ...rest } })',
         "export const run = (prisma: any, key: string) => prisma.user.update({ where: { id: 1 }, data: { [key]: 'x' } })",
-        "export const run = (prisma: any) => prisma.user.update({ where: { id: 1 }, data: { 'two_factor_secret': '' } })"
+        "export const run = (prisma: any) => prisma.user.update({ where: { id: 1 }, data: { 'two_factor_secret': '' } })",
+        'export const run = (prisma: any, h: string) => { const data = { password: h }; return prisma.user.update({ where: { id: 1 }, data }) }',
+        "export const run = (prisma: any, flag: boolean) => prisma.user.update({ where: { id: 1 }, data: flag ? { email: 'a' } : { name: 'b' } })"
       ],
       good: [
         "export const run = (prisma: any) => prisma.user.update({ where: { id: 1, status: 0 }, data: { name: 'x' } })",
@@ -882,7 +885,7 @@ export const KUN_INVARIANTS = [
     statement:
       'deleteKunToken 与 deleteOtherKunTokenSessions 只许在 server/auth/** 里导入; 账号事件之后的吊销一律经 securityEvents.ts 的 finishKunSecurityEvent, 由策略表决定删哪些会话',
     reason:
-      '提交之后逐个删 Redis 键是卫生清理, 吊销是否成立由安全戳决定; 每个写路径各自记得调删键函数, 新路径照样会漏, 而且看不出这个事件该删全部、删其它还是都不删。只登出这一个会话的 deleteKunTokenSession 不在此列',
+      '提交之后逐个删 Redis 键是卫生清理, 吊销是否成立由安全戳决定; 每个写路径各自记得调删键函数, 新路径照样会漏, 而且看不出这个事件该删全部、删其它还是都不删。只登出这一个会话的 deleteKunTokenSession 不在此列。与本表其它 import 类规则一样只认静态导入, import() 动态加载看不到',
     removeWhen: '这两个函数不再从模块导出',
     // app/api/utils/jwt.ts 是迁移期整模块转出的旧路径
     ignores: ['server/auth/**', 'app/api/utils/jwt.ts', '**/__tests__/**'],
