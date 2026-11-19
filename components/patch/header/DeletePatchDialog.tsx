@@ -27,14 +27,15 @@ export const DeletePatchDialog = ({ patchId, isOpen, onClose }: Props) => {
     setDeleting(true)
     const res = await kunFetchDelete<KunResponse<{}>>('/patch', { patchId })
 
+    // 失败时弹窗不关, 可以直接重试
     if (typeof res === 'string') {
       toast.error(res)
     } else {
       toast.success('删除 Galgame 成功')
       router.push('/')
+      onClose()
     }
 
-    onClose()
     setDeleting(false)
   }
 

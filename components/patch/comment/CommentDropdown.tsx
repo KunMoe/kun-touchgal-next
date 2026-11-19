@@ -149,13 +149,14 @@ export const CommentDropdown = ({ comment, setComments, onDeleted }: Props) => {
       patchId: comment.patchId,
       content: reportValue
     })
+    // 失败时弹窗不关, 可以直接重试
     if (typeof res === 'string') {
       toast.error(res)
     } else {
       setReportValue('')
       toast.success('提交举报成功')
+      onCloseReport()
     }
-    onCloseReport()
     setReporting(false)
   }
 

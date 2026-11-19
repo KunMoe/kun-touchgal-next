@@ -32,13 +32,14 @@ export const FeedbackDialog = ({
       patchId,
       content: inputValue
     })
+    // 失败时弹窗不关, 可以直接重试
     if (typeof res === 'string') {
       toast.error(res)
     } else {
       onSubmitSuccess()
       toast.success('提交反馈成功')
+      onClose()
     }
-    onClose()
     setSubmitting(false)
   }
 
