@@ -3,6 +3,7 @@ import { prisma } from '~/prisma/index'
 import { clearReadMessageSchema } from '~/validations/message'
 import { getUnreadMessageStatus } from '../unread/service'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { isPrismaTransactionConflict } from '~/server/db/txErrors'
 
 const MESSAGE_BATCH_SIZE = 5000
 
@@ -10,9 +11,6 @@ const sleep = (ms: number) =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-
-const isDeadlockError = (error: unknown) =>
-  error instanceof Error && error.message.includes('deadlock detected')
 
 const withDeadlockRetry = async <T>(
   action: () => Promise<T>,
@@ -24,7 +22,7 @@ const withDeadlockRetry = async <T>(
     try {
       return await action()
     } catch (error) {
-      if (!isDeadlockError(error) || attempt >= maxRetries) {
+      if (!isPrismaTransactionConflict(error) || attempt >= maxRetries) {
         throw error
       }
 

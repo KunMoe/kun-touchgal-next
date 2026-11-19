@@ -84,4 +84,33 @@ describe('message/read PUT', () => {
     expect(sql).toContain("updated = now() AT TIME ZONE 'UTC'")
     expect(sql).not.toMatch(/now\(\)(?!\s+AT TIME ZONE)/i)
   })
+
+  // 单条原生语句被死锁检测回滚时驱动抛出的形状 (server/db/__tests__/tx.db.test.ts 在真库上钉住)
+  it('retries the batch when the statement is rolled back by a deadlock', async () => {
+    const deadlock = {
+      code: 'P2010',
+      meta: {
+        driverAdapterError: {
+          cause: { kind: 'postgres', originalCode: '40P01' }
+        }
+      }
+    }
+    queryRawMock
+      .mockRejectedValueOnce(deadlock)
+      .mockResolvedValueOnce([{ count: 3 }])
+      .mockResolvedValueOnce([{ count: 0 }])
+
+    const res = await PUT({} as never)
+
+    expect(queryRawMock).toHaveBeenCalledTimes(3)
+    expect(res.status).toBe(200)
+  })
+
+  it('does not retry other errors', async () => {
+    const boom = new Error('connection lost')
+    queryRawMock.mockRejectedValueOnce(boom)
+
+    await expect(PUT({} as never)).rejects.toBe(boom)
+    expect(queryRawMock).toHaveBeenCalledTimes(1)
+  })
 })
