@@ -21,7 +21,7 @@ import {
 import { ArrayAdder } from './ArrayAdder'
 import { SUPPORTED_LANGUAGE_MAP } from '~/constants/resource'
 import { kunFetchPost, kunFetchPut } from '~/utils/kunFetch'
-import { errorReporter, kunErrorHandlerAsync } from '~/utils/kunErrorHandler'
+import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import type { Company, CompanyDetail } from '~/types/api/company'
 import type { FC } from 'react'
 
@@ -190,18 +190,18 @@ export const CompanyFormModal: FC<Props> = ({
         if (isEdit) {
           const companyId = company!.id
           const res = await updateCompany(companyId)
-          const result = await kunErrorHandlerAsync(res)
-
-          toast.success('会社信息更新成功')
-          onSuccess<typeof type>(result)
-          reset()
+          kunErrorHandler(res, (result) => {
+            toast.success('会社信息更新成功')
+            onSuccess<typeof type>(result)
+            reset()
+          })
         } else {
           const res = await createCompany()
-          const result = await kunErrorHandlerAsync(res)
-
-          toast.success('会社创建成功')
-          onSuccess<typeof type>(result)
-          reset()
+          kunErrorHandler(res, (result) => {
+            toast.success('会社创建成功')
+            onSuccess<typeof type>(result)
+            reset()
+          })
         }
       } catch (err) {
         errorReporter(err)
