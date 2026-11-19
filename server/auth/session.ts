@@ -348,7 +348,10 @@ export const establishKunSession = async (
 }
 
 // 脚本与测试工具用: 不经凭据校验、不写 cookie, 直接为某个账号签一个会话令牌
-export const mintKunSessionToken = async (uid: number) => {
+export const mintKunSessionToken = async (
+  uid: number,
+  context?: LoginSessionContext
+) => {
   const user = await prisma.user.findUnique({
     where: { id: uid },
     select: { id: true, name: true, role: true, status: true }
@@ -356,7 +359,7 @@ export const mintKunSessionToken = async (uid: number) => {
   if (!user || user.status === 2) {
     throw new Error(`用户 ${uid} 不存在或已被封禁`)
   }
-  return issueKunSessionToken(user)
+  return issueKunSessionToken(user, context)
 }
 
 export const generateKunStatelessToken = (
