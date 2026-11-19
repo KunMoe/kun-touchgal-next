@@ -14,6 +14,7 @@ import {
 import { Trash2 } from 'lucide-react'
 import { kunFetchDelete } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
+import { DELETED_USER_NAME } from '~/constants/user'
 import type { AdminUser } from '~/types/api/admin'
 
 interface Props {
@@ -62,7 +63,14 @@ export const UserDelete = ({ user, onDeleted }: Props) => {
             <div>
               <h2 className="text-2xl text-danger">严重警告</h2>
               <p>您确定要永久删除用户 {user.name} 吗?</p>
-              <p>该操作将会抹消用户的一切痕迹, 该操作不可撤销</p>
+              <p>
+                将删除该用户建档的全部 Galgame (连同其他人在这些 Galgame
+                下的内容), 以及该用户的全部资源、评论与评价, 该操作不可撤销
+              </p>
+              <p>
+                该用户创建的标签、会社、审核黑名单规则与管理日志会保留,
+                创建者显示为「{DELETED_USER_NAME}」
+              </p>
             </div>
           </ModalBody>
           <ModalFooter>

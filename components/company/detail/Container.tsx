@@ -5,7 +5,7 @@ import { useDebounce } from 'use-debounce'
 import dynamic from 'next/dynamic'
 import { useRouter } from '@bprogress/next/app'
 import { useSearchParams } from 'next/navigation'
-import { Button, Chip } from '@heroui/react'
+import { Button, Chip, User } from '@heroui/react'
 import { useDisclosure } from '@heroui/modal'
 import { Link } from '@heroui/link'
 import { Pencil } from 'lucide-react'
@@ -23,6 +23,7 @@ import { kunFetchGet } from '~/utils/kunFetch'
 import { SUPPORTED_LANGUAGE_MAP } from '~/constants/resource'
 import { useUserStore } from '~/store/userStore'
 import { can } from '~/constants/permission'
+import { DELETED_USER_NAME } from '~/constants/user'
 import { FilterBar } from '~/components/galgame/FilterBar'
 import type { CompanyDetail } from '~/types/api/company'
 import type { SortField, SortOrder } from '~/components/galgame/_sort'
@@ -198,6 +199,12 @@ export const CompanyDetailContainer: FC<Props> = ({
     sortField === 'rating' ? debouncedMinRatingCount : null
   ])
 
+  const createdDescription = (
+    <>
+      创建于 <KunTimeAgo date={company.created} />
+    </>
+  )
+
   return (
     <div className="w-full my-4 space-y-6">
       <KunHeader
@@ -210,20 +217,20 @@ export const CompanyDetailContainer: FC<Props> = ({
         }
         endContent={
           <div className="flex justify-between mb-4">
-            <KunUser
-              user={company.user}
-              userProps={{
-                name: company.user.name,
-                description: (
-                  <>
-                    创建于 <KunTimeAgo date={company.created} />
-                  </>
-                ),
-                avatarProps: {
-                  src: company.user?.avatar
-                }
-              }}
-            />
+            {company.user ? (
+              <KunUser
+                user={company.user}
+                userProps={{
+                  name: company.user.name,
+                  description: createdDescription,
+                  avatarProps: {
+                    src: company.user.avatar
+                  }
+                }}
+              />
+            ) : (
+              <User name={DELETED_USER_NAME} description={createdDescription} />
+            )}
 
             {can(user, 'company.manage') && (
               <div className="flex gap-2">

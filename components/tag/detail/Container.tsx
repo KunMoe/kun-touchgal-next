@@ -8,6 +8,7 @@ import { kunFetchDelete, kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
 import { Chip } from '@heroui/chip'
 import { Button } from '@heroui/button'
 import { useDisclosure } from '@heroui/modal'
+import { User } from '@heroui/user'
 import { CircleOff, Pencil } from 'lucide-react'
 import { TagDetail } from '~/types/api/tag'
 import { KunLoading } from '~/components/kun/Loading'
@@ -21,6 +22,7 @@ import { KunUser } from '~/components/kun/floating-card/KunUser'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { useUserStore } from '~/store/userStore'
 import { can } from '~/constants/permission'
+import { DELETED_USER_NAME } from '~/constants/user'
 import { useSearchParams } from 'next/navigation'
 import { KunPagination } from '~/components/kun/Pagination'
 import { FilterBar } from '~/components/galgame/FilterBar'
@@ -240,6 +242,12 @@ export const TagDetailContainer = ({
     }
   }
 
+  const createdDescription = (
+    <>
+      创建于 <KunTimeAgo date={tag.created} />
+    </>
+  )
+
   return (
     <div className="w-full my-4 space-y-6">
       <KunHeader
@@ -252,20 +260,20 @@ export const TagDetailContainer = ({
         }
         endContent={
           <div className="flex justify-between">
-            <KunUser
-              user={tag.user}
-              userProps={{
-                name: tag.user.name,
-                description: (
-                  <>
-                    创建于 <KunTimeAgo date={tag.created} />
-                  </>
-                ),
-                avatarProps: {
-                  src: tag.user?.avatar
-                }
-              }}
-            />
+            {tag.user ? (
+              <KunUser
+                user={tag.user}
+                userProps={{
+                  name: tag.user.name,
+                  description: createdDescription,
+                  avatarProps: {
+                    src: tag.user.avatar
+                  }
+                }}
+              />
+            ) : (
+              <User name={DELETED_USER_NAME} description={createdDescription} />
+            )}
 
             <div className="flex items-center gap-2">
               <Button

@@ -37,6 +37,7 @@ import {
   MODERATION_TASK_STATUS_MAP,
   MODERATION_TEXT_CONTENT_TYPE
 } from '~/constants/moderation'
+import { DELETED_USER_NAME } from '~/constants/user'
 import type {
   AdminModerationBlacklistItem,
   AdminModerationStats,
@@ -604,7 +605,7 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
                       {formatModerationContentTypeLabel(item.contentTypes)}
                     </Chip>
                     <Chip size="sm" variant="flat">
-                      {item.user.name}
+                      {item.user?.name ?? DELETED_USER_NAME}
                     </Chip>
                     <Button
                       size="sm"

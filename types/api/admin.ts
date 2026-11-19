@@ -127,7 +127,8 @@ export interface AdminReport {
 export interface AdminLog {
   id: number
   type: string
-  user: KunUser
+  // 写日志的管理员账号已删除时为 null
+  user: KunUser | null
   content: string
   created: Date | string
 }
@@ -175,7 +176,8 @@ export interface AdminModerationBlacklistItem {
   pattern: string
   // 生效的文本类型; 空数组 = 全部生效
   contentTypes: string[]
-  user: KunUser
+  // 添加规则的管理员账号已删除时为 null
+  user: KunUser | null
   created: Date | string
 }
 

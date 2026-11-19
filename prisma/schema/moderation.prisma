@@ -78,8 +78,9 @@ model moderation_blacklist {
   // 生效的文本 content_type (comment | rating | resource | bio); 空数组 = 全部生效
   content_types String[] @default([])
 
-  user_id Int
-  user    user @relation("user_moderation_blacklist", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  // 添加这条规则的管理员; 账号删除后置空, 规则保留
+  user_id Int?
+  user    user? @relation("user_moderation_blacklist", fields: [user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   created DateTime @default(now())
   updated DateTime @updatedAt

@@ -8,5 +8,6 @@ export interface Tag {
 export interface TagDetail extends Tag {
   introduction: string
   created: string | Date
-  user: KunUser
+  // 建标签的账号已删除时为 null
+  user: KunUser | null
 }

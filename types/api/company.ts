@@ -11,5 +11,6 @@ export interface CompanyDetail extends Company {
   official_website: string[]
   parent_brand: string[]
   created: string | Date
-  user: KunUser
+  // 建会社的账号已删除时为 null
+  user: KunUser | null
 }
