@@ -88,6 +88,7 @@ vi.mock('~/app/api/company/cache', () => ({
   invalidateCompanyListCache: invalidateMock
 }))
 
+import { Prisma } from '~/prisma/generated/prisma/client'
 import { DELETE, POST, PUT } from '~/app/api/company/route'
 
 const CREATE_INPUT = {
@@ -152,6 +153,20 @@ describe('company list cache invalidation', () => {
 
     expect(updateMock).toHaveBeenCalledTimes(1)
     expect(invalidateMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns the duplicate message when a concurrent rename hits the unique index', async () => {
+    updateMock.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('unique', {
+        code: 'P2002',
+        clientVersion: 'test'
+      })
+    )
+
+    const response = await PUT(request)
+
+    expect(await response.json()).toBe('这个会社已经存在了')
+    expect(invalidateMock).not.toHaveBeenCalled()
   })
 
   it('invalidates after a company deletion succeeds', async () => {

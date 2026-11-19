@@ -22,7 +22,7 @@ export const invalidatePatchRelationCaches = async (
 // 解析与能力门在各路由文件的 kunRoute 声明里 (先解析后鉴权, #52), 这里接着做
 // 补丁存在性 -> 变更事务 -> 失效。mutate 返回关系是否真的发生变化, 无变化则一处缓存都不动
 export const patchRelationHandler = <T extends { patchId: number }>(options: {
-  mutate: (input: T) => Promise<boolean>
+  mutate: (input: T) => Promise<boolean | string>
   invalidateListCache: () => Promise<void>
 }) => {
   return async ({ input }: { input: T }) => {
@@ -37,6 +37,9 @@ export const patchRelationHandler = <T extends { patchId: number }>(options: {
     }
 
     const changed = await options.mutate(input)
+    if (typeof changed === 'string') {
+      return changed
+    }
     if (changed) {
       await invalidatePatchRelationCaches(
         patch.unique_id,

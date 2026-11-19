@@ -2,7 +2,7 @@ import * as z from 'zod'
 import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { Prisma } from '~/prisma/generated/prisma/client'
+import { kunTx } from '~/server/db/tx'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateResourceStatsListCache } from '~/app/api/resource/cache'
 import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
@@ -55,8 +55,9 @@ const toggleResourceLike = async (
   }
 
   // deleteMany + createMany(skipDuplicates) 使并发双击不会触发 P2002/P2025
-  const response = await prisma
-    .$transaction(async (tx) => {
+  const response = await kunTx(
+    'resource.like',
+    async ({ tx }) => {
       // 串行化同一用户的并发 toggle, 理由与 ::int 强转的必要性见 rating/like/route.ts
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LIKE_LOCK_NAMESPACE}::int, ${uid}::int)`
 
@@ -93,17 +94,10 @@ const toggleResourceLike = async (
       })
 
       return !isRemoved
-    })
-    .catch((error: unknown) => {
-      // 外键命中 = 引用行被并发删除, 取舍同 rating/like/route.ts
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2003'
-      ) {
-        return '未找到资源'
-      }
-      throw error
-    })
+    },
+    // 外键命中 = 引用行被并发删除, 取舍同 rating/like/route.ts
+    { violations: { P2003: '未找到资源' } }
+  )
 
   if (typeof response === 'string') {
     return response

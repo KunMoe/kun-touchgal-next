@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { enqueueResourceLinkDeletions } from './resource/_helper'
 import { invalidateResourceListCache } from '~/app/api/resource/cache'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
@@ -23,8 +24,7 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
     return '未找到该游戏'
   }
 
-  let shouldInvalidateResourceList = false
-  const response = await prisma.$transaction(async (prisma) => {
+  const deleted = await kunTx('patch.delete', async ({ tx: prisma }) => {
     // 升序锁全部资源行: 与 update 的 FOR UPDATE 互斥, 锁序 (先 patch_resource 后
     // patch) 与 update 的「锁资源行 → patch.update」一致 —— 不可先锁 patch 行,
     // 会与 update 构成 AB-BA 死锁. links 必须锁下重读: 事务外快照与级联删除之间的
@@ -50,7 +50,7 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
           s3Key: link.s3_key
         }))
     )
-    shouldInvalidateResourceList = patchResources.some(
+    const shouldInvalidateResourceList = patchResources.some(
       (resource) => resource.status === 0 && resource.section === 'patch'
     )
 
@@ -83,8 +83,11 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
       resource: patchResources.map((resource) => resource.id)
     })
 
-    return {}
+    return { shouldInvalidateResourceList }
   })
+  if (typeof deleted === 'string') {
+    return deleted
+  }
 
   queueSearchRemove(patchId)
 
@@ -99,12 +102,12 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
 
   // 不失效 patch 资源详情缓存: 该缓存按 patch_id 分键, 补丁连同详情页一并消失后其键
   // 不再可达, 而版本号是全站共享的, 递增只会白清其他补丁的缓存
-  if (shouldInvalidateResourceList) {
+  if (deleted.shouldInvalidateResourceList) {
     await invalidateResourceListCache()
   }
 
   // 即时消费删除出箱；抢不到锁则由定时任务兜底
   kickS3DeletionDrain()
 
-  return response
+  return {}
 }

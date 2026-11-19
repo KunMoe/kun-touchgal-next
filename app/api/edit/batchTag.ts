@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 
 export const handleBatchPatchTags = async (
   patchId: number,
@@ -60,8 +61,9 @@ export const handleBatchPatchTags = async (
     ...new Set([...existingTags.map((tag) => tag.id), ...tagsToRemove])
   ].sort((a, b) => a - b)
 
-  await prisma.$transaction(
-    async (tx) => {
+  const failure = await kunTx(
+    'edit.batchTag',
+    async ({ tx }) => {
       if (lockIds.length > 0) {
         await tx.$queryRaw`SELECT id FROM patch_tag WHERE id = ANY(${lockIds}::int4[]) ORDER BY id FOR NO KEY UPDATE`
       }
@@ -104,6 +106,10 @@ export const handleBatchPatchTags = async (
     },
     { timeout: 60000 }
   )
+  // 回调里没有 fail, 走不到字符串结果
+  if (typeof failure === 'string') {
+    throw new Error(failure)
+  }
 
   return {
     success: true,

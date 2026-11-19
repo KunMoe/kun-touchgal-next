@@ -1,6 +1,6 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
-import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { patchTagChangeSchema } from '~/validations/patch'
 import { enqueueSearchOutbox } from '~/server/search/sync'
 import { invalidateTagListCache } from '~/app/api/tag/cache'
@@ -10,10 +10,10 @@ const handlePatchTagAction = (type: 'add' | 'delete') => {
   const isAdd = type === 'add'
   return async (
     input: z.infer<typeof patchTagChangeSchema>
-  ): Promise<boolean> => {
+  ): Promise<boolean | string> => {
     const { patchId, tagId } = input
 
-    return await prisma.$transaction(async (prisma) => {
+    return await kunTx(`patch.tag.${type}`, async ({ tx: prisma }) => {
       const existing = await prisma.patch_tag_relation.findMany({
         where: { patch_id: patchId, tag_id: { in: tagId } },
         select: { tag_id: true }

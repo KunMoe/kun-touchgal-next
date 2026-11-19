@@ -1,5 +1,6 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { bioSchema } from '~/validations/user'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import {
@@ -23,7 +24,7 @@ export const POST = kunRoute.post({
 
     if (moderation.intercept) {
       // 新签名暂存于任务 payload, 通过审核后由 apply.ts 写入 user 表
-      await prisma.$transaction(async (tx) => {
+      const failure = await kunTx('bio.submit', async ({ tx }) => {
         await tx.user.update({
           where: { id: payload.uid },
           data: { bio_status: 1 }
@@ -33,6 +34,9 @@ export const POST = kunRoute.post({
           bio: input.bio
         })
       })
+      if (typeof failure === 'string') {
+        return failure
+      }
       await invalidateUserSession(payload.uid)
 
       // 显性告知作者签名审核中

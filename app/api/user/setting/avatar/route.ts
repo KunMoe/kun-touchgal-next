@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { avatarSchema } from '~/validations/user'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
 import {
@@ -93,7 +94,7 @@ const updateUserAvatar = async (actor: KunActor, avatar: ArrayBuffer) => {
       uid,
       nonce
     )
-    await prisma.$transaction(async (tx) => {
+    const failure = await kunTx('avatar.submit', async ({ tx }) => {
       await tx.user.update({
         where: { id: uid },
         data: { avatar_status: 1 }
@@ -116,6 +117,9 @@ const updateUserAvatar = async (actor: KunActor, avatar: ArrayBuffer) => {
         tx
       )
     })
+    if (typeof failure === 'string') {
+      return failure
+    }
     await invalidateUserSession(uid)
     // pending 用每次唯一的新 key, CDN 无旧缓存可刷, 无需 purge (正式落地分支才需)
 

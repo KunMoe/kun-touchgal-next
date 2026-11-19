@@ -1,6 +1,6 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
-import { prisma } from '~/prisma'
+import { kunTx } from '~/server/db/tx'
 import { patchCompanyChangeSchema } from '~/validations/patch'
 import { enqueueSearchOutbox } from '~/server/search/sync'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
@@ -10,10 +10,10 @@ const handlePatchCompanyAction = (type: 'add' | 'delete') => {
   const isAdd = type === 'add'
   return async (
     input: z.infer<typeof patchCompanyChangeSchema>
-  ): Promise<boolean> => {
+  ): Promise<boolean | string> => {
     const { patchId, companyId } = input
 
-    return await prisma.$transaction(async (prisma) => {
+    return await kunTx(`patch.company.${type}`, async ({ tx: prisma }) => {
       const existing = await prisma.patch_company_relation.findMany({
         where: { patch_id: patchId, company_id: { in: companyId } },
         select: { company_id: true }

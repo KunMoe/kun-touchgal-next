@@ -1,7 +1,7 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { Prisma } from '~/prisma/generated/prisma/client'
+import { kunTx } from '~/server/db/tx'
 import { togglePatchFavoriteSchema } from '~/validations/patch'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
@@ -48,8 +48,9 @@ const togglePatchFavorite = async (
   }
 
   // deleteMany + createMany(skipDuplicates) 使并发双击不会触发 P2002/P2025
-  const response = await prisma
-    .$transaction(async (tx) => {
+  const response = await kunTx(
+    'favorite.toggle',
+    async ({ tx }) => {
       // 串行化同一收藏夹的并发 toggle: 拿锁后 deleteMany 读到的是已提交状态, 使 toggle
       // 恢复可线性化并顺带消除重复通知. ::int 显式定型以匹配 (int, int) 重载 (pg adapter
       // 原生参数默认 text, 缺 cast 会命中不存在的 (text, text) 重载报 42883)
@@ -92,17 +93,10 @@ const togglePatchFavorite = async (
         await createDedupMessage(messageData, tx)
       }
       return { added: true, isFavorite: true }
-    })
-    .catch((error: unknown) => {
-      // 事务内任一外键的引用行被并发删除都会命中约束, 无法区分是哪一条, 返回通用文案
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2003'
-      ) {
-        return '收藏失败, 请重试'
-      }
-      throw error
-    })
+    },
+    // 事务内任一外键的引用行被并发删除都会命中约束, 无法区分是哪一条, 返回通用文案
+    { violations: { P2003: '收藏失败, 请重试' } }
+  )
   if (typeof response === 'string') {
     return response
   }

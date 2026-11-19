@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto'
 import { copyObject, deleteFileFromS3, headObject } from '~/lib/s3'
 import { acquireKvLock, delKv, getKv, releaseKvLock } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { lockPatchRows } from '~/server/content/patchLock'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import {
@@ -296,11 +297,15 @@ export const recalcPatchType = async (
 ): Promise<string> => {
   if (!tx) {
     // 不传 tx 的兜底: 自开事务, 提交后再失效缓存 (与传 tx 时调用方的后置失效等价)
-    const uniqueId = await prisma.$transaction((t) =>
-      recalcPatchTypeLocked(patchId, t)
-    )
-    await invalidatePatchContentCache(uniqueId).catch(() => undefined)
-    return uniqueId
+    const result = await kunTx('patch.recalcType', async ({ tx: t }) => ({
+      uniqueId: await recalcPatchTypeLocked(patchId, t)
+    }))
+    // 回调里没有 fail, 走不到字符串结果
+    if (typeof result === 'string') {
+      throw new Error(result)
+    }
+    await invalidatePatchContentCache(result.uniqueId).catch(() => undefined)
+    return result.uniqueId
   }
   // 传 tx: 返回 unique_id, 调用方须在事务提交后 invalidatePatchContentCache
   return recalcPatchTypeLocked(patchId, tx)

@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { adminUpdateUserSchema } from '~/validations/admin'
 import {
   isReservedUsername,
@@ -87,7 +88,7 @@ export const updateUser = async (
     hashedPassword || email !== user.email
       ? 'admin-credentials-changed'
       : 'admin-edited'
-  const result = await prisma.$transaction(async (prisma) => {
+  const failure = await kunTx('admin.user.update', async ({ tx: prisma }) => {
     const { count } = await applyKunCredentialChange(prisma, {
       uid,
       event,
@@ -112,13 +113,14 @@ export const updateUser = async (
         content: `管理员 ${admin.name} 更改了一个用户的信息\n\n更改内容:\n${JSON.stringify(logInput)}\n\n原用户信息:\n${JSON.stringify(user)}`
       }
     })
-
-    return {}
   })
+  if (typeof failure === 'string') {
+    return failure
+  }
 
   // 改权 (降权 / 封禁) 必须删光会话 (策略表 admin-edited: redis all): 删掉 access token 使
   // 旧凭证校验先行失败, 是「旧鉴权缓存不被采信」的根闸门。不能只轮转缓存版本键, 那一步的
   // 失败会被吞掉, 存活的旧 token 将命中旧权限缓存
   await finishKunSecurityEvent(uid, event)
-  return result
+  return {}
 }

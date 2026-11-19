@@ -1,6 +1,7 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { formatModerationContentTypeLabel } from '~/constants/moderation'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import {
   adminModerationBlacklistCreateSchema,
   adminModerationBlacklistDeleteSchema
@@ -45,24 +46,27 @@ export const POST = kunRoute.post({
     }
 
     const typeLabel = formatModerationContentTypeLabel(input.contentTypes)
-    await prisma.$transaction(async (tx) => {
-      await tx.moderation_blacklist.create({
-        data: {
-          pattern: input.pattern,
-          content_types: input.contentTypes,
-          user_id: actor.uid
-        }
-      })
-      await tx.admin_log.create({
-        data: {
-          type: 'create',
-          user_id: actor.uid,
-          content: `管理员添加了审核黑名单模式: ${input.pattern} (生效类型: ${typeLabel})`
-        }
-      })
-    })
+    const failure = await kunTx(
+      'admin.moderation.blacklist.create',
+      async ({ tx }) => {
+        await tx.moderation_blacklist.create({
+          data: {
+            pattern: input.pattern,
+            content_types: input.contentTypes,
+            user_id: actor.uid
+          }
+        })
+        await tx.admin_log.create({
+          data: {
+            type: 'create',
+            user_id: actor.uid,
+            content: `管理员添加了审核黑名单模式: ${input.pattern} (生效类型: ${typeLabel})`
+          }
+        })
+      }
+    )
 
-    return {}
+    return failure ?? {}
   }
 })
 
@@ -78,17 +82,20 @@ export const DELETE = kunRoute.delete({
       return '未找到该黑名单模式'
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.moderation_blacklist.delete({ where: { id: item.id } })
-      await tx.admin_log.create({
-        data: {
-          type: 'delete',
-          user_id: actor.uid,
-          content: `管理员删除了审核黑名单模式: ${item.pattern}`
-        }
-      })
-    })
+    const failure = await kunTx(
+      'admin.moderation.blacklist.delete',
+      async ({ tx }) => {
+        await tx.moderation_blacklist.delete({ where: { id: item.id } })
+        await tx.admin_log.create({
+          data: {
+            type: 'delete',
+            user_id: actor.uid,
+            content: `管理员删除了审核黑名单模式: ${item.pattern}`
+          }
+        })
+      }
+    )
 
-    return {}
+    return failure ?? {}
   }
 })

@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { invalidateTagListCache } from './cache'
 import {
   enqueueSearchOutboxBatch,
@@ -15,7 +16,7 @@ export const deleteTag = async (tagId: number) => {
 
   // 索引文档内嵌标签名与 tagIds，FK Cascade 会随删除清掉关系行，因此关联 patch
   // 必须在删除前读取；删除与入队原子提交，消费者按 DB 最新状态重建文档
-  const patchIds = await prisma.$transaction(async (tx) => {
+  const patchIds = await kunTx('tag.delete', async ({ tx }) => {
     const relations = await tx.patch_tag_relation.findMany({
       where: { tag_id: tagId },
       select: { patch_id: true }
@@ -27,6 +28,9 @@ export const deleteTag = async (tagId: number) => {
     await enqueueSearchOutboxBatch(tx, patchIds)
     return patchIds
   })
+  if (typeof patchIds === 'string') {
+    return patchIds
+  }
   await invalidateTagListCache()
   if (patchIds.length > 0) {
     kickSearchOutboxDrain()

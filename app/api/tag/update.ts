@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { updateTagSchema } from '~/validations/tag'
 import { invalidateTagListCache } from './cache'
 import {
@@ -29,7 +30,7 @@ export const updateTag = async (input: z.infer<typeof updateTagSchema>) => {
   const shouldSyncSearch = !!currentTag && currentTag.name !== name
 
   // 事务性入队：标签变更与写出箱入队原子提交，关闭崩溃丢失窗口
-  const { newTag, patchIds } = await prisma.$transaction(async (tx) => {
+  const result = await kunTx('tag.update', async ({ tx }) => {
     const newTag: TagDetail = await tx.patch_tag.update({
       where: { id: tagId },
       data: {
@@ -58,6 +59,10 @@ export const updateTag = async (input: z.infer<typeof updateTagSchema>) => {
     await enqueueSearchOutboxBatch(tx, patchIds)
     return { newTag, patchIds }
   })
+  if (typeof result === 'string') {
+    return result
+  }
+  const { newTag, patchIds } = result
   await invalidateTagListCache()
   if (patchIds.length > 0) {
     kickSearchOutboxDrain()

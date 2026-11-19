@@ -2,7 +2,7 @@ import * as z from 'zod'
 import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { Prisma } from '~/prisma/generated/prisma/client'
+import { kunTx } from '~/server/db/tx'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
@@ -51,8 +51,9 @@ const toggleRatingLike = async (
   }
 
   // deleteMany + createMany(skipDuplicates) 使并发双击不会触发 P2002/P2025
-  const response = await prisma
-    .$transaction(async (tx) => {
+  const response = await kunTx(
+    'rating.like',
+    async ({ tx }) => {
       // 串行化同一用户的并发 toggle: 拿锁后 deleteMany 读到的是已提交状态, 使 toggle
       // 恢复可线性化 (READ COMMITTED 下删不存在的行不持锁, 无锁时两个并发请求会双双
       // 落进 create 分支). ::int 显式定型以匹配 (int, int) 重载 (pg adapter 原生参数
@@ -92,18 +93,11 @@ const toggleRatingLike = async (
       })
 
       return !isRemoved
-    })
-    .catch((error: unknown) => {
-      // 外键命中 = 引用行被并发删除. 事务内的外键不止评价一处, 但点赞者/收件人被删时
-      // 请求本身已无意义, 故用指向性文案而非 favorite 那样的通用文案
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2003'
-      ) {
-        return '评价不存在'
-      }
-      throw error
-    })
+    },
+    // 外键命中 = 引用行被并发删除. 事务内的外键不止评价一处, 但点赞者/收件人被删时
+    // 请求本身已无意义, 故用指向性文案而非 favorite 那样的通用文案
+    { violations: { P2003: '评价不存在' } }
+  )
 
   if (typeof response === 'string') {
     return response

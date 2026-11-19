@@ -1,6 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
-import { Prisma } from '~/prisma/generated/prisma/client'
+import { kunTx } from '~/server/db/tx'
 import { patchRatingCreateSchema } from '~/validations/patch'
 import { recomputePatchRatingStat } from './stat'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
@@ -39,8 +39,9 @@ export const createPatchRating = async (
     actor
   })
 
-  const data = await prisma
-    .$transaction(async (tx) => {
+  const data = await kunTx(
+    'rating.create',
+    async ({ tx }) => {
       const created = await tx.patch_rating.create({
         data: {
           patch_id: patchId,
@@ -78,23 +79,18 @@ export const createPatchRating = async (
 
       await recomputePatchRatingStat(patchId, tx)
       return created
-    })
-    .catch((error: unknown) => {
-      // 事务已回滚: 上方 exists 预检在事务外, 并发双击 / 多标签页会双双通过预检, 靠唯一
-      // 索引兜底. 字符串在此处返回是安全的, 切勿挪进事务回调 —— 那会被当作正常结束而提交
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    },
+    {
+      violations: {
+        // 上方 exists 预检在事务外, 并发双击 / 多标签页会双双通过预检, 靠唯一索引兜底.
         // 该事务内只有 patch_rating 带唯一约束 (moderation_task 零 @@unique), P2002 必为
         // 重复评价, 无需读 meta 区分字段
-        if (error.code === 'P2002') {
-          return '您已经评价过该游戏'
-        }
+        P2002: '您已经评价过该游戏',
         // patch_id 外键: 预检只查 patch_rating, 补丁不存在或被并发删除时命中
-        if (error.code === 'P2003') {
-          return '未找到 Galgame'
-        }
+        P2003: '未找到 Galgame'
       }
-      throw error
-    })
+    }
+  )
 
   if (typeof data === 'string') {
     return data

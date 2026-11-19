@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import {
   getConversationMessagesSchema,
@@ -95,7 +96,7 @@ export const sendMessage = async (
 
   // create 与递增必须同事务: 消息在提交前对读方不可见, 末尾的 update 持会话行锁
   // 到提交, 配合已读路由的锁前置封死「消息被标已读后递增才落地」的幻影角标交错
-  const message = await prisma.$transaction(async (tx) => {
+  const message = await kunTx('message.send', async ({ tx }) => {
     const created = await tx.user_private_message.create({
       data: {
         conversation_id: conversationId,
@@ -117,6 +118,9 @@ export const sendMessage = async (
 
     return created
   })
+  if (typeof message === 'string') {
+    return message
+  }
 
   await invalidateUnread(recipientId).catch(() => undefined)
 

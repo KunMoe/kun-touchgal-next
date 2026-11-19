@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
 import { updatePatchResource as updatePatchResourceByRole } from '~/app/api/patch/resource/update'
 import { sanitizeResourceLinksForAuditLog } from '~/app/api/patch/resource/_helper'
 import { patchResourceUpdateSchema } from '~/validations/patch'
@@ -39,19 +40,22 @@ export const updatePatchResource = async (
     links: sanitizeResourceLinksForAuditLog(updatedResource.links)
   }
 
-  return await prisma.$transaction(async (prisma) => {
-    await prisma.admin_log.create({
-      data: {
-        type: 'update',
-        user_id: uid,
-        // 新旧 note 各有 10007 上限, 拼接后必须截断; 此日志写在资源更新已提交
-        // 之后, 一旦 22001 会用 500 掩盖已生效的更新
-        content: truncateLogContent(
-          `管理员 ${admin.name} 更新了一个资源信息\n\n原资源信息:\n${JSON.stringify(resource)}\n\n新资源信息:\n${JSON.stringify(sanitizedUpdated)}`
-        )
-      }
-    })
+  const failure = await kunTx(
+    'admin.resource.update.log',
+    async ({ tx: prisma }) => {
+      await prisma.admin_log.create({
+        data: {
+          type: 'update',
+          user_id: uid,
+          // 新旧 note 各有 10007 上限, 拼接后必须截断; 此日志写在资源更新已提交
+          // 之后, 一旦 22001 会用 500 掩盖已生效的更新
+          content: truncateLogContent(
+            `管理员 ${admin.name} 更新了一个资源信息\n\n原资源信息:\n${JSON.stringify(resource)}\n\n新资源信息:\n${JSON.stringify(sanitizedUpdated)}`
+          )
+        }
+      })
+    }
+  )
 
-    return updatedResource
-  })
+  return failure ?? updatedResource
 }

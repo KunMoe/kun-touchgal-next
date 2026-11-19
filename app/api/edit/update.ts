@@ -1,6 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
-import { Prisma } from '~/prisma/generated/prisma/client'
+import { kunTx } from '~/server/db/tx'
 import { patchUpdateSchema } from '~/validations/edit'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { processSubmittedExternalData } from './processExternalData'
@@ -106,8 +106,9 @@ export const updateGalgame = async (
   } = input
 
   // 事务性入队：patch 字段更新与写出箱入队原子提交，关闭崩溃丢失窗口
-  const updateResult = await prisma
-    .$transaction(async (tx) => {
+  const updateResult = await kunTx(
+    'edit.update',
+    async ({ tx }) => {
       await tx.patch.update({
         where: { id },
         data: {
@@ -125,43 +126,45 @@ export const updateGalgame = async (
         }
       })
       await enqueueSearchOutbox(tx, id)
-    })
-    .catch((error) => {
+    },
+    {
       // bangumi_id / steam_id / dlsite_code / (vndb_id, vndb_relation_id) 组合及其
       // 单独形态部分唯一索引 (db/migrations/0007_patch_vndb_solo_unique.notx.sql) 兜底并发编辑:
       // 预检与 patch.update 之间两个填同一外部 ID 的请求会双双通过预检.
-      // 字符串在此处返回是安全的(事务已回滚), 但切勿把它挪进事务回调 —— 那会被当作
-      // 正常结束而提交
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        return '您填写的外部 ID 已经被其它 Galgame 使用, 请检查后重试'
+      // 撞索引时事务回滚, 以这句文案作为结果
+      violations: {
+        P2002: '您填写的外部 ID 已经被其它 Galgame 使用, 请检查后重试'
       }
-      throw error
-    })
+    }
+  )
 
   if (typeof updateResult === 'string') {
     return updateResult
   }
 
-  await prisma.$transaction(async (prisma) => {
-    await prisma.patch_alias.deleteMany({
-      where: { patch_id: id }
-    })
+  const aliasFailure = await kunTx(
+    'edit.update.alias',
+    async ({ tx: prisma }) => {
+      await prisma.patch_alias.deleteMany({
+        where: { patch_id: id }
+      })
 
-    // patch_alias 无 (patch_id, name) 唯一约束, skipDuplicates 挡不住批内重复,
-    // 与 POST 路径(route.ts 的 checkStringArrayValid)对齐在应用层去重
-    const aliasData = normalizeStringArray(alias).map((name) => ({
-      name,
-      patch_id: id
-    }))
+      // patch_alias 无 (patch_id, name) 唯一约束, skipDuplicates 挡不住批内重复,
+      // 与 POST 路径(route.ts 的 checkStringArrayValid)对齐在应用层去重
+      const aliasData = normalizeStringArray(alias).map((name) => ({
+        name,
+        patch_id: id
+      }))
 
-    await prisma.patch_alias.createMany({
-      data: aliasData,
-      skipDuplicates: true
-    })
-  })
+      await prisma.patch_alias.createMany({
+        data: aliasData,
+        skipDuplicates: true
+      })
+    }
+  )
+  if (typeof aliasFailure === 'string') {
+    return aliasFailure
+  }
 
   await processSubmittedExternalData(
     id,
