@@ -1,5 +1,4 @@
 import { PatchHeaderContainer } from '~/components/patch/header/Container'
-import { ErrorComponent } from '~/components/error/ErrorComponent'
 import { KunBreadcrumbTitle } from '~/components/kun/BreadcrumbTitle'
 import { generateKunMetadataTemplate } from './metadata'
 import {
@@ -34,9 +33,6 @@ export const generateMetadata = async ({
     kunGetPatchPageDataActions(id),
     isNsfwAllowed()
   ])
-  if (typeof pageData === 'string') {
-    return {}
-  }
 
   return generateKunMetadataTemplate(
     pageData.patch,
@@ -56,9 +52,6 @@ export default async function Kun({ params }: Props) {
     verifyHeaderCookie(),
     isNsfwAllowed()
   ])
-  if (typeof pageData === 'string') {
-    return <ErrorComponent error={pageData} />
-  }
 
   after(() => kunUpdatePatchViewsActions({ uniqueId: id }))
 

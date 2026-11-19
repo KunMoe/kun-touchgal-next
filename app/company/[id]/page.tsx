@@ -40,9 +40,6 @@ export const generateMetadata = async ({
 }: Props): Promise<Metadata> => {
   const { id } = await params
   const company = await kunGetCompanyByIdActions({ companyId: Number(id) })
-  if (typeof company === 'string') {
-    return {}
-  }
   return generateKunMetadataTemplate(company)
 }
 

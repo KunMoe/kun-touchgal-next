@@ -67,6 +67,9 @@ const VIEW = {
   visibility: { contentLimit: 'sfw', blockedTagIds: [] }
 }
 
+// next/navigation 的 notFound() 抛出的错误 (文档写明的 digest), 这里用真实实现
+const NOT_FOUND = { digest: 'NEXT_HTTP_ERROR_FALLBACK;404' }
+
 beforeEach(() => {
   vi.clearAllMocks()
   reactCacheEntriesMock.length = 0
@@ -118,6 +121,24 @@ describe('kunGetCompanyByIdActions', () => {
       Promise.all([metadataPromise, pageDataPromise])
     ).resolves.toEqual([company, { company, response }])
   })
+
+  it('answers a missing company with notFound', async () => {
+    getCompanyByIdMock.mockResolvedValue(null)
+
+    await expect(
+      kunGetCompanyByIdActions({ companyId: 15 })
+    ).rejects.toMatchObject(NOT_FOUND)
+  })
+
+  it.each([0, Number.NaN, 10000000])(
+    'answers an invalid company id (%s) with notFound without querying',
+    async (companyId) => {
+      await expect(
+        kunGetCompanyByIdActions({ companyId })
+      ).rejects.toMatchObject(NOT_FOUND)
+      expect(getCompanyByIdMock).not.toHaveBeenCalled()
+    }
+  )
 })
 
 describe('kunGetCompanyPageDataActions', () => {
@@ -147,22 +168,57 @@ describe('kunGetCompanyPageDataActions', () => {
     await expect(pageDataPromise).resolves.toEqual({ company, response })
   })
 
-  it('keeps company errors ahead of patch errors', async () => {
-    getCompanyByIdMock.mockResolvedValue('未找到公司')
+  it('keeps a missing company ahead of patch errors', async () => {
+    getCompanyByIdMock.mockResolvedValue(null)
     getPatchByCompanyMock.mockResolvedValue('作品查询失败')
 
     await expect(
       kunGetCompanyPageDataActions({ ...patchParams, companyId: 9 })
-    ).resolves.toBe('未找到公司')
+    ).rejects.toMatchObject(NOT_FOUND)
   })
 
-  it('returns a missing-company error without waiting for the patch query', async () => {
-    getCompanyByIdMock.mockResolvedValue('未找到公司')
+  it('answers a missing company with notFound without waiting for the patch query', async () => {
+    getCompanyByIdMock.mockResolvedValue(null)
     getPatchByCompanyMock.mockReturnValue(new Promise(() => undefined))
 
     await expect(
       kunGetCompanyPageDataActions({ ...patchParams, companyId: 13 })
-    ).resolves.toBe('未找到公司')
+    ).rejects.toMatchObject(NOT_FOUND)
+  })
+
+  it.each([0, Number.NaN, 10000000])(
+    'answers an invalid company id (%s) with notFound without querying',
+    async (companyId) => {
+      await expect(
+        kunGetCompanyPageDataActions({ ...patchParams, companyId })
+      ).rejects.toMatchObject(NOT_FOUND)
+      expect(getCompanyByIdMock).not.toHaveBeenCalled()
+      expect(getPatchByCompanyMock).not.toHaveBeenCalled()
+    }
+  )
+
+  // 路由段参数之外的校验失败 (查询串) 仍是普通的字符串失败, 不是 404
+  it('returns the validation message for a bad query param on an existing company', async () => {
+    getCompanyByIdMock.mockResolvedValue({ id: 16, name: '测试会社' })
+
+    const result = await kunGetCompanyPageDataActions({
+      ...patchParams,
+      companyId: 16,
+      limit: 0
+    })
+
+    expect(typeof result).toBe('string')
+    expect(getPatchByCompanyMock).not.toHaveBeenCalled()
+  })
+
+  // 页面与 generateMetadata 必须对「不存在」给出同一个结论, 与查询串无关
+  it('answers a missing company with notFound even when the query param is bad', async () => {
+    getCompanyByIdMock.mockResolvedValue(null)
+
+    await expect(
+      kunGetCompanyPageDataActions({ ...patchParams, companyId: 17, limit: 0 })
+    ).rejects.toMatchObject(NOT_FOUND)
+    expect(getPatchByCompanyMock).not.toHaveBeenCalled()
   })
 
   it('returns the patch error after a successful company lookup', async () => {
@@ -174,9 +230,9 @@ describe('kunGetCompanyPageDataActions', () => {
     ).resolves.toBe('作品查询失败')
   })
 
-  it('keeps a missing-company error when the concurrent patch query rejects', async () => {
-    let resolveCompany: ((value: string) => void) | undefined
-    const pendingCompany = new Promise<string>((resolve) => {
+  it('keeps notFound for a missing company when the concurrent patch query rejects', async () => {
+    let resolveCompany: ((value: null) => void) | undefined
+    const pendingCompany = new Promise<null>((resolve) => {
       resolveCompany = resolve
     })
     getCompanyByIdMock.mockReturnValue(pendingCompany)
@@ -190,8 +246,8 @@ describe('kunGetCompanyPageDataActions', () => {
       expect(getPatchByCompanyMock).toHaveBeenCalledTimes(1)
     })
 
-    resolveCompany?.('未找到公司')
-    await expect(pageDataPromise).resolves.toBe('未找到公司')
+    resolveCompany?.(null)
+    await expect(pageDataPromise).rejects.toMatchObject(NOT_FOUND)
   })
 
   it('rethrows a patch failure after a successful company lookup', async () => {

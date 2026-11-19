@@ -68,6 +68,7 @@ const writePatchPageCacheIfAbsent = async (
   ])
 }
 
+// 作品不存在时返回 null: 文案与 404 由调用方决定 (页面读取器调 notFound)
 export const getPatchPageData = async (
   input: z.infer<typeof uniqueIdSchema>,
   viewer: KunViewer | null
@@ -120,7 +121,7 @@ export const getPatchPageData = async (
     : await queryPatchPage()
 
   if (result === PATCH_NOT_FOUND) {
-    return '未找到对应 Galgame'
+    return null
   }
 
   return {

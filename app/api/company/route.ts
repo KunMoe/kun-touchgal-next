@@ -18,7 +18,7 @@ import {
 export const GET = kunRoute.get({
   auth: 'public',
   input: getCompanyByIdSchema,
-  handler: ({ input }) => getCompanyById(input)
+  handler: async ({ input }) => (await getCompanyById(input)) ?? '未找到公司'
 })
 
 const rewriteCompany = async (input: z.infer<typeof updateCompanySchema>) => {

@@ -33,11 +33,12 @@ export interface PatchResourceDetail {
 const OTHER_RESOURCES_TAKE = 12
 
 // 资源详情页专用: 单行查询不走共享缓存 (note 的 markdown 渲染自带内容级缓存),
-// 可见性与列表一致——status 2/3 仅作者与有 content.viewPending 能力的角色可见, 1 前台不可见
+// 可见性与列表一致——status 2/3 仅作者与有 content.viewPending 能力的角色可见, 1 前台不可见。
+// 不存在与对该视角不可见都返回 null (两者不可区分), 文案与 404 由调用方决定
 export const getPatchResourceDetail = async (
   resourceId: number,
   viewer: KunViewer | null
-): Promise<PatchResourceDetail | string> => {
+): Promise<PatchResourceDetail | null> => {
   const uid = viewer?.uid ?? 0
 
   const data = await prisma.patch_resource.findFirst({
@@ -49,7 +50,7 @@ export const getPatchResourceDetail = async (
     }
   })
   if (!data) {
-    return '未找到该资源'
+    return null
   }
 
   // 其他资源与本资源同 patch 同 section, 可见性口径与本资源一致

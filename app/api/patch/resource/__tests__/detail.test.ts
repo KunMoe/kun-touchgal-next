@@ -144,10 +144,7 @@ describe('getPatchResourceDetail', () => {
 
     const result = await getPatchResourceDetail(5, { uid: 7, role: 1 })
 
-    expect(typeof result).not.toBe('string')
-    if (typeof result !== 'string') {
-      expect(result.resource.isLike).toBe(true)
-    }
+    expect(result?.resource.isLike).toBe(true)
   })
 
   it('其他资源按同 patch 同 section 过滤且排除自身, 可见性口径与本资源一致', async () => {
@@ -180,18 +177,15 @@ describe('getPatchResourceDetail', () => {
 
     const result = await getPatchResourceDetail(5, null)
 
-    expect(typeof result).not.toBe('string')
-    if (typeof result !== 'string') {
-      expect(result.otherResources).toEqual([
-        {
-          id: 6,
-          name: 'other',
-          section: 'galgame',
-          created: String(created),
-          user: { name: 'uploader', avatar: '' }
-        }
-      ])
-    }
+    expect(result?.otherResources).toEqual([
+      {
+        id: 6,
+        name: 'other',
+        section: 'galgame',
+        created: String(created),
+        user: { name: 'uploader', avatar: '' }
+      }
+    ])
   })
 
   it('viewer 已关注上传者时 isFollowingUploader 为 true, 仅对非本人查询关注关系', async () => {
@@ -205,10 +199,7 @@ describe('getPatchResourceDetail', () => {
       },
       select: { id: true }
     })
-    expect(typeof result).not.toBe('string')
-    if (typeof result !== 'string') {
-      expect(result.isFollowingUploader).toBe(true)
-    }
+    expect(result?.isFollowingUploader).toBe(true)
   })
 
   it('游客与上传者本人不查询关注关系', async () => {
@@ -217,18 +208,17 @@ describe('getPatchResourceDetail', () => {
 
     expect(followFindUniqueMock).not.toHaveBeenCalled()
     for (const result of [guest, self]) {
-      expect(typeof result).not.toBe('string')
-      if (typeof result !== 'string') {
-        expect(result.isFollowingUploader).toBe(false)
-      }
+      expect(result?.isFollowingUploader).toBe(false)
     }
   })
 
-  it('资源不存在或不可见时返回错误字符串', async () => {
+  // 「不存在」与「对该视角不可见」不可区分, 都是 null; 文案与 404 由调用方决定
+  it('资源不存在或不可见时返回 null, 不再查其他资源', async () => {
     findFirstMock.mockResolvedValue(null)
 
     const result = await getPatchResourceDetail(5, null)
 
-    expect(result).toBe('未找到该资源')
+    expect(result).toBeNull()
+    expect(findManyMock).not.toHaveBeenCalled()
   })
 })

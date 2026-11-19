@@ -265,12 +265,10 @@ describe('getPatchPageData', () => {
     expect(kvStore.has(getPatchIntroductionCacheKey(uniqueId))).toBe(true)
   })
 
-  it('查无此作品时返回错误消息且不写缓存', async () => {
+  it('查无此作品时返回 null 且不写缓存', async () => {
     findUniqueMock.mockResolvedValue(null)
 
-    await expect(getPatchPageData(input, null)).resolves.toBe(
-      '未找到对应 Galgame'
-    )
+    await expect(getPatchPageData(input, null)).resolves.toBeNull()
 
     expect(setKvMock).not.toHaveBeenCalled()
     expect(setKvIfAbsentMock).not.toHaveBeenCalled()

@@ -2,12 +2,13 @@ import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { getCompanyByIdSchema } from '~/validations/company'
 
+// 会社不存在时返回 null: 文案在路由边界产生, 页面读取器调 notFound
 export const getCompanyById = async (
   input: z.infer<typeof getCompanyByIdSchema>
 ) => {
   const { companyId } = input
 
-  const company = await prisma.patch_company.findUnique({
+  return prisma.patch_company.findUnique({
     where: { id: companyId },
     select: {
       id: true,
@@ -28,9 +29,4 @@ export const getCompanyById = async (
       }
     }
   })
-  if (!company) {
-    return '未找到公司'
-  }
-
-  return company
 }

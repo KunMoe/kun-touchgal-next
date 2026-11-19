@@ -1,5 +1,4 @@
 import { ResourceDetail } from '~/components/patch/resource-detail/ResourceDetail'
-import { ErrorComponent } from '~/components/error/ErrorComponent'
 import { KunBreadcrumbTitle } from '~/components/kun/BreadcrumbTitle'
 import { KunNull } from '~/components/kun/Null'
 import { generateKunMetadataTemplate } from './metadata'
@@ -32,7 +31,7 @@ export const generateMetadata = async ({
     kunGetResourceDetailActions(Number(resourceId)),
     isNsfwAllowed()
   ])
-  if (typeof detail === 'string' || detail.resource.uniqueId !== id) {
+  if (detail.resource.uniqueId !== id) {
     return {}
   }
 
@@ -50,9 +49,6 @@ export default async function Kun({ params }: Props) {
     verifyHeaderCookie(),
     isNsfwAllowed()
   ])
-  if (typeof detail === 'string') {
-    return <ErrorComponent error={detail} />
-  }
   // 资源存在但不属于 URL 中的 patch: 与不存在等同, 防跨 patch 拼接链接
   if (detail.resource.uniqueId !== id) {
     notFound()
