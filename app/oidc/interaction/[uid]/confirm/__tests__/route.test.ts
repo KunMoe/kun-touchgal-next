@@ -147,6 +147,8 @@ describe('OIDC confirm route POST', () => {
       Grant: GrantMock
     })
     buildRequestBridgeMock.mockResolvedValue(createBridge())
+    // 站点会话与 SSO 会话是同一个账号
+    verifyHeaderCookieMock.mockResolvedValue({ uid: 7 })
   })
 
   it('interaction 已被消费时回落到 interaction 页而非 500', async () => {
@@ -163,7 +165,7 @@ describe('OIDC confirm route POST', () => {
 
   it('同意授权时创建 Grant 并以 grantId 完成 consent 交互', async () => {
     interactionDetailsMock.mockResolvedValue({
-      session: { accountId: 'acc-1' },
+      session: { accountId: '7' },
       grantId: undefined,
       prompt: {
         details: {
@@ -197,7 +199,7 @@ describe('OIDC confirm route POST', () => {
 
   it('取消授权时以 access_denied 完成交互', async () => {
     interactionDetailsMock.mockResolvedValue({
-      session: { accountId: 'acc-1' },
+      session: { accountId: '7' },
       grantId: undefined,
       prompt: { details: {} },
       params: { client_id: 'client-1' }
@@ -214,6 +216,32 @@ describe('OIDC confirm route POST', () => {
       expect.objectContaining({ error: 'access_denied' })
     )
     expect(grantSaveMock).not.toHaveBeenCalled()
+    expect(res.status).toBe(303)
+  })
+
+  it.each([
+    ['站点已登出', null],
+    ['站点换成了另一个账号', { uid: 8 }]
+  ])('%s时不建 Grant, 以 login_required 结束交互', async (_label, viewer) => {
+    verifyHeaderCookieMock.mockResolvedValue(viewer)
+    interactionDetailsMock.mockResolvedValue({
+      session: { accountId: '7' },
+      grantId: undefined,
+      prompt: { details: { missingOIDCScope: ['openid'] } },
+      params: { client_id: 'client-1' }
+    })
+    interactionFinishedMock.mockResolvedValue(undefined)
+
+    const res = await POST(postRequest(), routeContext())
+
+    expect(grantSaveMock).not.toHaveBeenCalled()
+    expect(grantFindMock).not.toHaveBeenCalled()
+    expect(interactionFinishedMock).toHaveBeenCalledTimes(1)
+    expect(interactionFinishedMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ error: 'login_required' })
+    )
     expect(res.status).toBe(303)
   })
 })

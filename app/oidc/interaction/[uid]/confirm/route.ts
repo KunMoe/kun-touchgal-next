@@ -84,6 +84,16 @@ export const POST = async (
   if (!accountId) {
     return NextResponse.json('授权会话缺少登录态', { status: 401 })
   }
+  // 同意页停留期间站点可能已登出或换了账号: 建 Grant 之前再按站点会话复核一次,
+  // 不一致就结束这次授权, 不替 SSO 会话里的旧账号授权
+  const viewer = await verifyHeaderCookie(req)
+  if (!viewer || String(viewer.uid) !== accountId) {
+    await provider.interactionFinished(bridge.req, bridge.res, {
+      error: 'login_required',
+      error_description: '站点登录态已变化, 请重新登录'
+    })
+    return bridge.toResponse()
+  }
 
   const missing = details.prompt.details as PromptMissing
   let grant = details.grantId

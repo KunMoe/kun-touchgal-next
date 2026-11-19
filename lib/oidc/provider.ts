@@ -8,6 +8,7 @@ import {
 } from '~/config/oidc'
 import { createOidcAdapter } from './adapter'
 import { findAccount } from './account'
+import { buildKunInteractionPolicy } from './policy'
 
 type OidcCallback = ReturnType<Provider['callback']>
 
@@ -68,6 +69,7 @@ const createProvider = () => {
       userinfo: { enabled: true }
     },
     interactions: {
+      policy: buildKunInteractionPolicy(),
       url(_ctx, interaction) {
         return `${OIDC_MOUNT_PATH}/interaction/${interaction.uid}`
       }
