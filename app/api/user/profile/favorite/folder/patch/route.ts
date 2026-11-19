@@ -4,11 +4,11 @@ import { prisma } from '~/prisma/index'
 import { getFavoriteFolderPatchSchema } from '~/validations/user'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 
+// 公开收藏夹的内容与个人主页同样只给登录用户看 (9-03 发现 2 站长裁定)
 export const GET = kunRoute.get({
-  auth: 'optional',
+  auth: 'user',
   input: getFavoriteFolderPatchSchema,
-  handler: async ({ input, actor: payload }) =>
-    getPatchByFolder(input, payload?.uid ?? 0)
+  handler: async ({ input, actor }) => getPatchByFolder(input, actor.uid)
 })
 
 const getPatchByFolder = async (

@@ -142,13 +142,13 @@ POST /api/upload/resource                                public csrf=handler
 GET /api/user/appeal                                     user
 POST /api/user/appeal                                    user
 POST /api/user/follow/follow                             user
-GET /api/user/follow/follower                            optional
-GET /api/user/follow/following                           optional
+GET /api/user/follow/follower                            user
+GET /api/user/follow/following                           user
 POST /api/user/follow/unfollow                           user
 POST /api/user/image                                     user form
 GET /api/user/mention/search                             user
 GET /api/user/profile/comment                            user legacyDeny.unauthenticated=用户登录失效
-GET /api/user/profile/favorite/folder/patch              optional
+GET /api/user/profile/favorite/folder/patch              user
 GET /api/user/profile/favorite/folder                    user
 POST /api/user/profile/favorite/folder                   user
 PUT /api/user/profile/favorite/folder                    user

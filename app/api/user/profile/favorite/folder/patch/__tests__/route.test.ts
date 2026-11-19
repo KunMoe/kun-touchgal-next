@@ -149,6 +149,15 @@ describe('GET /api/user/profile/favorite/folder/patch', () => {
     expect(findManyMock).not.toHaveBeenCalled()
   })
 
+  it('rejects anonymous viewers before reading the folder (9-03 finding 2)', async () => {
+    verifyHeaderCookieMock.mockResolvedValue(null)
+
+    const res = await GET(mockRequest)
+    await expect(res.json()).resolves.toBe('用户未登录')
+    expect(findUniqueMock).not.toHaveBeenCalled()
+    expect(countMock).not.toHaveBeenCalled()
+  })
+
   it('returns the validation message when the query is invalid', async () => {
     parseGetMock.mockReturnValue('文件夹 ID 不合法')
 

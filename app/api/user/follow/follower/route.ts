@@ -67,9 +67,9 @@ const getUserFollower = async (
   return { followers, total }
 }
 
+// 关注关系图与个人主页同样只给登录用户看 (X02-02 站长裁定); 游客按 uid 遍历就能导出全站的关注关系
 export const GET = kunRoute.get({
-  auth: 'optional',
+  auth: 'user',
   input: getUserFollowStatusSchema,
-  handler: async ({ input, actor: payload }) =>
-    getUserFollower(input, payload?.uid)
+  handler: async ({ input, actor }) => getUserFollower(input, actor.uid)
 })

@@ -255,3 +255,19 @@ describe('GET /api/user/follow/following', () => {
     })
   })
 })
+
+// 关注关系图只给登录用户看 (X02-02): 游客在查询之前就被拦下
+describe.each([
+  ['follower', getFollowerRoute],
+  ['following', getFollowingRoute]
+])('GET /api/user/follow/%s 游客', (_name, route) => {
+  it('返回 用户未登录, 不查关注关系', async () => {
+    verifyHeaderCookieMock.mockResolvedValue(null)
+
+    const response = await route(mockRequest)
+
+    await expect(response.json()).resolves.toBe('用户未登录')
+    expect(relationFindManyMock).not.toHaveBeenCalled()
+    expect(relationCountMock).not.toHaveBeenCalled()
+  })
+})

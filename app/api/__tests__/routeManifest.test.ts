@@ -199,13 +199,7 @@ const GUEST_ACCESS: Record<string, string> = {
   'OPTIONS /oidc/[...path]': 'oidc-provider 透传',
   'GET /oidc/interaction/[uid]/confirm': '未登录时转本站登录页',
   'POST /oidc/interaction/[uid]/confirm':
-    '站点登录态与 SSO 会话不一致时以 login_required 结束授权',
-  'GET /api/user/follow/follower':
-    '待裁定 X02-02: 关注关系图, 个人主页对游客隐藏而本接口不拦',
-  'GET /api/user/follow/following':
-    '待裁定 X02-02: 关注关系图, 个人主页对游客隐藏而本接口不拦',
-  'GET /api/user/profile/favorite/folder/patch':
-    '待裁定 9-03 发现 2: 公开收藏夹的内容, 个人主页对游客隐藏而本接口不拦'
+    '站点登录态与 SSO 会话不一致时以 login_required 结束授权'
 }
 
 // 前缀下的入口不得低于这里的要求; 例外逐条写理由
