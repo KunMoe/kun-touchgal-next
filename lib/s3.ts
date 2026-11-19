@@ -75,8 +75,9 @@ export const deleteFileFromS3 = async (key: string) => {
   await s3.send(deleteCommand)
 }
 
-// 资源直传的写入端。Content-Type 进签名: 上传者换一个类型发 PUT 会验签失败, 暂存对象的类型
-// 因此只能是这里声明的那个。预签名器默认把 content-type 排除在签名之外, 要显式列为可签名
+// 资源直传的写入端。Content-Type 进签名: 核验签名的存储会拒绝换了类型的 PUT, 暂存对象的类型
+// 因此只能是这里声明的那个 (存储是否核验用 scripts/probeStagedUploadBoundary.ts 查)。
+// 预签名器默认把 content-type 排除在签名之外, 要显式列为可签名
 export const presignPutObject = (
   key: string,
   contentLength: number,

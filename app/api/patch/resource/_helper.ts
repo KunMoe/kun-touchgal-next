@@ -26,8 +26,9 @@ import {
   RESOURCE_S3_HEAD_TIMEOUT_MS
 } from '~/constants/resource'
 
-// 锁要盖住锁内全部带墙钟上限的 S3 调用: 暂存对象的 HEAD、复制、转正后的 HEAD;
-// 余下的 15 秒留给 Redis 与额度更新。任何一个上限调大, 租期跟着变
+// 锁要盖住锁内全部带墙钟上限的 S3 调用: 暂存对象的 HEAD、复制、转正后的 HEAD, 任何一个
+// 上限调大, 租期跟着变。另加的 15 秒是给 Redis 与额度更新的余量, 这两步自己没有墙钟上限
+// (额度更新可能要等 user 行锁): 租期到了绑定还没走完时, 同一枚令牌的另一次绑定进得来
 const BIND_LOCK_TTL_SECONDS =
   Math.ceil(
     (RESOURCE_S3_COPY_TIMEOUT_MS + 2 * RESOURCE_S3_HEAD_TIMEOUT_MS) / 1000

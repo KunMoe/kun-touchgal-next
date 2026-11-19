@@ -1,13 +1,16 @@
 /* eslint-disable no-console */
 // 核查对象存储是否执行资源直传的两道控制 (T19 的 S0 ①), 由站长在生产环境人工执行:
 //   pnpm exec esno scripts/probeStagedUploadBoundary.ts --write
-// 会在 patch/tmp/0/probe-<随机>/ 下写入三个 16 字节的对象, 结束时删除; 不读写数据库。
+// 会在 patch/tmp/0/probe-<随机>/ 下写入至多五个 16 字节的对象, 结束时删除; 不读写数据库。
 //
-// 1. 预签名 PUT 把 Content-Type 签进签名之后, 换一个类型上传是否被拒 (预期 403)
+// 1. 预签名 PUT 把 Content-Type 签进签名之后, 换一个类型上传是否被拒 (预期 403; 任何 4xx 都算拒绝)
 // 2. 按声明的类型上传是否成功 (预期 200)。前端就是这么传的, 这一条不过不能发布
 // 3. promoteObject 是否重写元数据: 源对象是 text/html, 转正后应为二进制流 + attachment
 // 4. 经存储公开域名读暂存对象与转正对象, 报告状态码与响应头 (只报告, 不计入通过与否):
 //    边缘规则配好之后, patch/tmp/ 下的读取应为 403
+// 5. key 的末段能有多长 (只报告): 命名策略把主名截到 100 个码点, 100 个汉字是 304 字节,
+//    有的存储按段限制字节数 (MinIO 实测 255; B2 官方 SDK 按 250 校验, 现行文档页没有写),
+//    超限的文件名在 PUT 时会被拒
 // lib/s3 在导入时就用环境变量建客户端, .env 必须先于它加载
 import 'dotenv/config'
 import { randomBytes } from 'node:crypto'
@@ -52,7 +55,7 @@ const reportPublicRead = async (label: string, key: string) => {
 const main = async () => {
   if (!process.argv.includes('--write')) {
     console.log(
-      '本脚本会向桶里写入并删除三个 16 字节的探针对象; 确认后加 --write 执行'
+      '本脚本会向桶里写入并删除至多五个 16 字节的探针对象; 确认后加 --write 执行'
     )
     return
   }
@@ -61,6 +64,8 @@ const main = async () => {
   const stagedKey = `${prefix}/staged.zip`
   const htmlKey = `${prefix}/source.zip`
   const promotedKey = `${prefix}/promoted.zip`
+  // 82 个汉字加扩展名是 250 字节, 100 个是 304 字节
+  const longKeys = [82, 100].map((n) => `${prefix}/${'汉'.repeat(n)}.zip`)
   const failures: string[] = []
   const check = (passed: boolean, label: string, detail: string) => {
     console.log(`${passed ? '通过' : '未通过'}  ${label}: ${detail}`)
@@ -74,7 +79,11 @@ const main = async () => {
       await presignPutObject(stagedKey, BODY.length, 300),
       'text/html'
     )
-    check(wrongType === 403, '1 换类型上传被拒', `HTTP ${wrongType} (预期 403)`)
+    check(
+      wrongType >= 400 && wrongType < 500,
+      '1 换类型上传被拒',
+      `HTTP ${wrongType} (预期 403)`
+    )
 
     const declaredType = await putWithType(
       await presignPutObject(stagedKey, BODY.length, 300),
@@ -107,8 +116,18 @@ const main = async () => {
     console.log('4 经公开域名读取 (只报告):')
     await reportPublicRead('暂存对象 (text/html)', htmlKey)
     await reportPublicRead('转正对象', promotedKey)
+
+    console.log('5 key 末段的长度 (只报告):')
+    for (const key of longKeys) {
+      const status = await putWithType(
+        await presignPutObject(key, BODY.length, 300),
+        'application/octet-stream'
+      )
+      const bytes = Buffer.byteLength(key.slice(prefix.length + 1))
+      console.log(`  末段 ${bytes} 字节: HTTP ${status}`)
+    }
   } finally {
-    for (const key of [stagedKey, htmlKey, promotedKey]) {
+    for (const key of [stagedKey, htmlKey, promotedKey, ...longKeys]) {
       await deleteFileFromS3(key).catch((error) =>
         console.error(`探针对象未能删除, 请手工清理: ${key}`, error)
       )
