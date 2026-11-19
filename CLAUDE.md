@@ -33,9 +33,9 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 ## 请求与数据流（核心）
 
 - Server Component（`app/**/page.tsx`）→ `app/**/actions.ts` → service → `prisma` / `redis`。`actions.ts` 是只在服务端被 await 的页面读取器，首行 `import 'server-only'`，不写 `'use server'`（会把导出登记成可被直接 POST 的 Server Function；lint 的 `kun/inv-server-01` 执法）。
-- Client Component → `utils/kunFetch.ts` → `app/api/**/route.ts` → `parseQuery` + Zod 校验 → 鉴权 → service/cache → Prisma。
+- Client Component → `utils/kunFetch.ts` → `app/api/**/route.ts`（`kunRoute`：Zod 校验 → 会话与能力门）→ service/cache → Prisma。
 - `proxy.ts`（Next 16 前身为 `middleware.ts`）：对 `/api/*`（排除 `/api/upload/*`，其在 handler 内自行校验）做 CSRF；对 `/admin`、`/user`、`/edit` 做登录保护。
-- 认证：JWT cookie 名 `kun-galgame-patch-moe-token`；proxy 用 `app/api/utils/jwtEdge.ts`，服务端的签发与解析只在 `server/auth/session.ts`（`establishKunSession` / `resolveKunSiteSession`），路由用 `verifyHeaderCookie`。
+- 认证：JWT cookie 名 `kun-galgame-patch-moe-token`；proxy 用 `app/api/utils/jwtEdge.ts`，服务端的签发与解析只在 `server/auth/session.ts`（`establishKunSession` / `resolveKunSiteSession`），路由从 `kunRoute` 的 `actor` 取身份。
 - 数据层入口：`prisma/index.ts`（Prisma 7 + pg pool）、`lib/redis.ts`、`lib/s3.ts`。Prisma model 拆分在 `prisma/schema/*.prisma`，生成到 `prisma/generated/prisma`。
 - 库的结构与数据变更只走 `db/migrations/`（线性、只追加，已合入的文件不可改）；改 `prisma/schema` 必须同时新增迁移并刷新 `db/objects.snapshot.sql`，CI 的 `db-replay` job 执法。
 
@@ -43,9 +43,10 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 
 - 导入统一用路径别名 `~/*`（指向仓库根）。
 - 默认保留 Server Component；只有 hooks、浏览器 API、交互式组件才加 `'use client'`。
-- 新增 API / 表单：先在 `validations/` 增加或复用 Zod schema，再用 `kunParseGetQuery` / `kunParsePostBody` / `kunParsePutBody` / `kunParseDeleteQuery` / `kunParseFormData` 解析——它们返回 `T | string`，返回 string 即代表校验失败的错误消息。
+- Route Handler 一律写成 `export const GET = kunRoute.get({ auth: 'public' | 'optional' | 'user', capability?, input?, handler })`（`app/api/utils/kunRoute.ts`）：`auth` 必填且为字面量（lint 的 `kun/inv-route-01` 执法），对游客开放的入口要在 `app/api/__tests__/routeManifest.test.ts` 写理由，清单快照 `__snapshots__/routeManifest.txt` 随声明一起改。
+- 新增 API / 表单：先在 `validations/` 增加或复用 Zod schema，交给 `kunRoute` 的 `input`（内部调 `kunParseGetQuery` / `kunParsePostBody` / `kunParsePutBody` / `kunParseDeleteQuery` / `kunParseFormData`，返回 `T | string`，string 即校验失败的错误消息）。
 - 客户端访问内部 API 一律走 `utils/kunFetch.ts`（自带 `credentials: 'include'` 与 `x-requested-with: kun-fetch`），不要手写重复 fetch；用 `kunErrorHandler` / `kunErrorHandlerAsync` 处理 `string | T` 返回值。
-- 响应约定：业务错误返回 `NextResponse.json('错误消息')`（字符串），成功返回 typed JSON。
+- 响应约定：handler 返回中文错误消息字符串即业务错误（`kunRoute` 以 200 回出），成功返回 typed 对象；要状态码或 cookie 时返回 `NextResponse`，原样透传。
 - 评论 / 评价 / 资源的物理删除与 `status` 写入只走 `server/content/**` 的命令，在 `kunTx`（`server/db/tx.ts`）里调用；事务里的业务失败用 `ctx.fail`，不要 `return` 字符串（等于提交）。lint 的 `kun/inv-content-05/06` 执法。
 - 权限判断走 `constants/permission.ts` 的 `can(subject, capability)` 与属性谓词，不写角色数字比较；需要操作者的服务收 `KunActor`（`constants/role.ts`，只由 `resolveKunSiteSession` 构造），路由把会话 payload 原样下传。lint 的 `kun/inv-authz-01..04` 执法。
 - 请求视角（会话、作品可见性、列表缓存准入）只从 `server/viewer` 取：Route Handler 用 `viewerContextFromRequest(req)` 建一次后往下传，页面与读取器用 `getViewerContext()`；service 收 `PatchVisibility` / `ListView`，不收拼好的 `where`。lint 的 `kun/inv-viewer-01/02` 执法。
