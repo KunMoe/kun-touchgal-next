@@ -8,6 +8,7 @@ const rec = await vi.hoisted(async () =>
 
 vi.mock('~/prisma/index', () => rec.module)
 
+import { Prisma } from '~/prisma/generated/prisma/client'
 import { kunTx } from '~/server/db/tx'
 import { isPrismaTransactionConflict } from '~/server/db/txErrors'
 
@@ -17,6 +18,12 @@ const deadlock = {
     driverAdapterError: { cause: { kind: 'postgres', originalCode: '40P01' } }
   }
 }
+
+const violation = (code: string) =>
+  new Prisma.PrismaClientKnownRequestError(`violation ${code}`, {
+    code,
+    clientVersion: 'test'
+  })
 
 beforeEach(() => {
   rec.reset()
@@ -144,6 +151,289 @@ describe('kunTx 回调的返回类型', () => {
     expect(none ?? {}).toEqual({})
     expect(typeof some === 'string' ? 0 : some.count).toBe(1)
   })
+
+  it('commitWith 的结果可以与成功值混着返回, 调用方拿到的类型里没有它', async () => {
+    const failed = Math.random() > 2
+
+    // @ts-expect-error 有了 commitWith 也不能顺手 return 字符串
+    await kunTx('probe', async ({ commitWith }) => {
+      if (failed) {
+        return commitWith('错误')
+      }
+      return '另一个错误'
+    })
+
+    const mixed = await kunTx('probe', async ({ commitWith }) => {
+      if (failed) {
+        return commitWith('错误')
+      }
+      return { count: 1 }
+    })
+    const bare = await kunTx('probe', async ({ commitWith }) => {
+      if (failed) {
+        return commitWith('错误')
+      }
+    })
+
+    // 收窄掉 string 之后直接读成功值的字段: 结果类型里若还留着 KunCommittedFailure, 这里编译不过
+    expect(typeof mixed === 'string' ? 0 : mixed.count).toBe(1)
+    expect(bare ?? {}).toEqual({})
+  })
+})
+
+describe('kunTx 失败但提交', () => {
+  it('commitWith 提交事务, 执行提交后副作用, 以消息作为结果', async () => {
+    const committed = vi.fn()
+    const rolledBack = vi.fn()
+
+    const result = await kunTx(
+      'probe',
+      async ({ tx, commitWith, afterCommit, onRollback }) => {
+        await tx.s3_deletion_outbox.createMany({ data: [] } as never)
+        afterCommit('cache', committed)
+        onRollback('cleanup', rolledBack)
+        return commitWith('该资源的链接已被修改, 请刷新后重试')
+      },
+      { onRollback: rolledBack }
+    )
+
+    expect(result).toBe('该资源的链接已被修改, 请刷新后重试')
+    expect(rec.attempts[0].committed).toBe(true)
+    expect(rec.labels()).toEqual(['s3_deletion_outbox.createMany'])
+    expect(committed).toHaveBeenCalledTimes(1)
+    expect(rolledBack).not.toHaveBeenCalled()
+  })
+
+  it('只调用不 return 的 commitWith 不改变结果', async () => {
+    const result = await kunTx('probe', async ({ commitWith }) => {
+      commitWith('没有被返回')
+      return { ok: true }
+    })
+
+    expect(result).toEqual({ ok: true })
+  })
+
+  it('fail 被吞掉后再 return commitWith 仍然回滚', async () => {
+    const result = await kunTx('probe', async ({ fail, commitWith }) => {
+      try {
+        fail('必须回滚')
+      } catch {
+        // 吞掉
+      }
+      return commitWith('想要提交')
+    })
+
+    expect(result).toBe('必须回滚')
+    expect(rec.attempts[0].rolledBack).toBe(true)
+  })
+})
+
+describe('kunTx 没有提交时的清理', () => {
+  it('fail 回滚后执行, 回调里登记的与选项里给的各一次', async () => {
+    const order: string[] = []
+
+    const result = await kunTx(
+      'probe',
+      async ({ fail, onRollback }) => {
+        onRollback('banner', () => {
+          order.push(`banner:${rec.attempts[0].rolledBack}`)
+        })
+        fail('不行')
+      },
+      { onRollback: () => order.push('bound') }
+    )
+
+    expect(result).toBe('不行')
+    expect(order).toEqual(['bound', 'banner:true'])
+  })
+
+  it('回调抛异常时先清理再把原异常抛给调用方', async () => {
+    const boom = new Error('boom')
+    const cleanup = vi.fn()
+
+    await expect(
+      kunTx(
+        'probe',
+        async ({ onRollback }) => {
+          onRollback('banner', cleanup)
+          throw boom
+        },
+        { onRollback: cleanup }
+      )
+    ).rejects.toBe(boom)
+
+    expect(cleanup).toHaveBeenCalledTimes(2)
+  })
+
+  it('提交成功时不执行', async () => {
+    const cleanup = vi.fn()
+
+    await kunTx(
+      'probe',
+      async ({ onRollback }) => {
+        onRollback('banner', cleanup)
+      },
+      { onRollback: cleanup }
+    )
+
+    expect(cleanup).not.toHaveBeenCalled()
+  })
+
+  it('同一 key 只执行一次, 保留先登记的那个', async () => {
+    const calls: string[] = []
+
+    await kunTx('probe', async ({ fail, onRollback }) => {
+      onRollback('banner', () => calls.push('first'))
+      onRollback('banner', () => calls.push('second'))
+      fail('不行')
+    })
+
+    expect(calls).toEqual(['first'])
+  })
+
+  // 事务前就已绑定的对象靠选项里的清理兜底: 拿不到连接时回调根本没有执行,
+  // 回调里登记的清理无从谈起
+  it('事务没开起来 (回调未执行) 时, 选项里给的清理照样执行', async () => {
+    const startTimeout = { code: 'P2028' }
+    const cleanup = vi.fn()
+    const body = vi.fn(async () => {})
+    rec.failNextBegin(startTimeout)
+
+    await expect(kunTx('probe', body, { onRollback: cleanup })).rejects.toBe(
+      startTimeout
+    )
+
+    expect(body).not.toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  // commit 抛错时库里可能已经提交, 也可能没有: 按没有提交处理, 清理自己要能分辨
+  it('commit 抛错 (结果不确定) 按没有提交处理: 执行清理, 不执行提交后副作用', async () => {
+    const commitFailure = new Error('connection lost during commit')
+    const committed = vi.fn()
+    const cleanup = vi.fn()
+    rec.failNextCommit(commitFailure)
+
+    await expect(
+      kunTx('probe', async ({ afterCommit, onRollback }) => {
+        afterCommit('cache', committed)
+        onRollback('banner', cleanup)
+      })
+    ).rejects.toBe(commitFailure)
+
+    expect(committed).not.toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('某一项清理失败只记日志, 其余照常执行, 不遮住原来的结果', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const boom = new Error('boom')
+    const s3Down = new Error('s3 down')
+    const redisDown = new Error('redis down')
+    const calls: string[] = []
+
+    await expect(
+      kunTx(
+        'edit.create',
+        async ({ onRollback }) => {
+          onRollback('banner', () => {
+            throw s3Down
+          })
+          onRollback('token', () => calls.push('token'))
+          throw boom
+        },
+        {
+          onRollback: () => {
+            throw redisDown
+          }
+        }
+      )
+    ).rejects.toBe(boom)
+
+    expect(calls).toEqual(['token'])
+    expect(errorSpy.mock.calls).toEqual([
+      ['[kunTx:edit.create] onRollback', redisDown],
+      ['[kunTx:edit.create] onRollback:banner', s3Down]
+    ])
+  })
+})
+
+describe('kunTx 违例文案', () => {
+  it.each(['P2002', 'P2003', 'P2025'] as const)(
+    '%s 在表里时回滚并以对应文案作为结果',
+    async (code) => {
+      const committed = vi.fn()
+      const cleanup = vi.fn()
+
+      const result = await kunTx(
+        'probe',
+        async ({ tx, afterCommit, onRollback }) => {
+          afterCommit('cache', committed)
+          onRollback('banner', cleanup)
+          await tx.user.update({ where: { id: 1 }, data: {} } as never)
+          throw violation(code)
+        },
+        { violations: { [code]: `撞了 ${code}` } }
+      )
+
+      expect(result).toBe(`撞了 ${code}`)
+      expect(rec.attempts[0].rolledBack).toBe(true)
+      expect(committed).not.toHaveBeenCalled()
+      expect(cleanup).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('表里没有的违例原样抛出', async () => {
+    const error = violation('P2003')
+
+    await expect(
+      kunTx(
+        'probe',
+        async () => {
+          throw error
+        },
+        { violations: { P2002: '已存在' } }
+      )
+    ).rejects.toBe(error)
+  })
+
+  it('没有 violations 时不翻译', async () => {
+    const error = violation('P2002')
+
+    await expect(
+      kunTx('probe', async () => {
+        throw error
+      })
+    ).rejects.toBe(error)
+  })
+
+  // 与 kunRoute 的兜底同一份判据: 只认 Prisma 已知错误, 不认碰巧带同名 code 的别的异常
+  it('不是 Prisma 已知错误的异常不翻译, 只看类型不看 code 字段', async () => {
+    const error = Object.assign(new Error('fk'), { code: 'P2003' })
+
+    await expect(
+      kunTx(
+        'probe',
+        async () => {
+          throw error
+        },
+        { violations: { P2003: '未找到 Galgame' } }
+      )
+    ).rejects.toBe(error)
+  })
+
+  it('违例不重试', async () => {
+    const result = await kunTx(
+      'probe',
+      async () => {
+        throw violation('P2002')
+      },
+      { retry: 2, violations: { P2002: '已存在' } }
+    )
+
+    expect(result).toBe('已存在')
+    expect(rec.attempts).toHaveLength(1)
+  })
 })
 
 describe('kunTx 提交后副作用', () => {
@@ -265,6 +555,50 @@ describe('kunTx 冲突重试', () => {
     expect(fresh).toHaveBeenCalledTimes(1)
   })
 
+  // 清理的是「最终没有提交」留下的东西: 中途的重放不能触发, 否则下一轮提交的行
+  // 会引用已被清掉的对象
+  it('被重放的尝试不触发清理, 最终提交则一次都不执行', async () => {
+    const cleanup = vi.fn()
+    let calls = 0
+
+    const result = await kunTx(
+      'probe',
+      async ({ onRollback }) => {
+        calls++
+        onRollback('banner', cleanup)
+        if (calls === 1) {
+          throw deadlock
+        }
+        return { calls }
+      },
+      { retry: 1, onRollback: cleanup }
+    )
+
+    expect(result).toEqual({ calls: 2 })
+    expect(cleanup).not.toHaveBeenCalled()
+  })
+
+  it('重试耗尽后清理只执行一次, 各次尝试登记的都算数', async () => {
+    const calls: string[] = []
+    let attempt = 0
+
+    await expect(
+      kunTx(
+        'probe',
+        async ({ onRollback }) => {
+          const label = `attempt:${++attempt}`
+          onRollback('shared', () => calls.push('shared'))
+          onRollback(label, () => calls.push(label))
+          throw deadlock
+        },
+        { retry: 1, onRollback: () => calls.push('bound') }
+      )
+    ).rejects.toBe(deadlock)
+
+    expect(rec.attempts).toHaveLength(2)
+    expect(calls).toEqual(['bound', 'shared', 'attempt:1', 'attempt:2'])
+  })
+
   it('默认不重试', async () => {
     await expect(
       kunTx('probe', async () => {
@@ -317,9 +651,20 @@ describe('kunTx 事务选项', () => {
     expect(rec.attempts[0].options).toBeUndefined()
   })
 
-  it('timeout / maxWait / isolationLevel 原样透传, 不带 retry', async () => {
+  it('只给 violations / onRollback 时同样只传回调', async () => {
+    await kunTx('probe', async () => {}, {
+      violations: { P2002: '已存在' },
+      onRollback: () => {}
+    })
+
+    expect(rec.attempts[0].options).toBeUndefined()
+  })
+
+  it('timeout / maxWait / isolationLevel 原样透传, 不带执行器自己的选项', async () => {
     await kunTx('probe', async () => {}, {
       retry: 2,
+      violations: { P2002: '已存在' },
+      onRollback: () => {},
       timeout: 60000,
       isolationLevel: 'Serializable'
     })

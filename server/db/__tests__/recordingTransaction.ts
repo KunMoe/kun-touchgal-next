@@ -80,6 +80,8 @@ export const recordingTransaction = () => {
   const outside: RecordedStatement[] = []
   const handlers = new Map<string, Handler>()
   const rawHandlers: Array<{ pattern: RegExp; handler: RawHandler }> = []
+  const beginFailures: unknown[] = []
+  const commitFailures: unknown[] = []
 
   const runModel = async (
     sink: RecordedStatement[],
@@ -156,6 +158,9 @@ export const recordingTransaction = () => {
     callback: (client: unknown) => unknown,
     options?: unknown
   ) => {
+    if (beginFailures.length) {
+      throw beginFailures.shift()
+    }
     const attempt: RecordedAttempt = {
       committed: false,
       rolledBack: false,
@@ -165,6 +170,9 @@ export const recordingTransaction = () => {
     attempts.push(attempt)
     try {
       const result = await callback(tx)
+      if (commitFailures.length) {
+        throw commitFailures.shift()
+      }
       attempt.committed = true
       return result
     } catch (error) {
@@ -205,6 +213,14 @@ export const recordingTransaction = () => {
           typeof result === 'function' ? (result as RawHandler) : () => result
       })
     },
+    // 让下一次 $transaction 在回调执行之前就抛错 (拿不到连接、开事务超时): 不产生尝试记录
+    failNextBegin(error: unknown) {
+      beginFailures.push(error)
+    },
+    // 让下一次 $transaction 在回调正常结束之后、提交时抛错 (结果不确定), 记为回滚
+    failNextCommit(error: unknown) {
+      commitFailures.push(error)
+    },
     // 最近一次尝试的语句标签序列
     labels: () => (attempts.at(-1)?.statements ?? []).map((item) => item.label),
     // 最近一次尝试里某个标签的全部入参
@@ -217,6 +233,8 @@ export const recordingTransaction = () => {
       outside.length = 0
       handlers.clear()
       rawHandlers.length = 0
+      beginFailures.length = 0
+      commitFailures.length = 0
     }
   }
 }
