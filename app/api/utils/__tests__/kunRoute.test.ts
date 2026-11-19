@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NextRequest } from 'next/server'
 
 const {
@@ -43,6 +43,7 @@ vi.mock('~/app/api/utils/parseQuery', () => ({
 }))
 
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { Prisma } from '~/prisma/generated/prisma/client'
 
 const req = new Request('http://localhost/api/x') as unknown as NextRequest
 const schema = z.object({ id: z.coerce.number() })
@@ -355,17 +356,77 @@ describe('返回值', () => {
 
     expect(response).toBe(original)
   })
+})
 
-  it('handler 抛出的异常原样冒出', async () => {
+describe('违例兜底', () => {
+  const violation = (code: string) =>
+    new Prisma.PrismaClientKnownRequestError(`violation ${code}`, {
+      code,
+      clientVersion: 'test'
+    })
+  const throwing = (error: unknown) =>
+    kunRoute.post({
+      auth: 'user',
+      handler: async () => {
+        throw error
+      }
+    })
+
+  let warnSpy: ReturnType<typeof vi.spyOn>
+  let errorSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    verifyHeaderCookieMock.mockResolvedValue(user)
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it.each([
+    ['P2003', '相关内容不存在或已被删除, 请刷新页面后重试'],
+    ['P2025', '相关内容不存在或已被删除, 请刷新页面后重试'],
+    ['P2002', '数据已存在或已被修改, 请刷新页面后重试']
+  ])('%s 回 200 + 通用文案并记 warn', async (code, message) => {
+    const response = await throwing(violation(code))(req)
+
+    expect(response.status).toBe(200)
+    await expect(body(response)).resolves.toBe(message)
+    expect(warnSpy).toHaveBeenCalledWith('[kunRoute] violation', {
+      method: 'POST',
+      path: '/api/x',
+      uid: user.uid,
+      code
+    })
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('其余 Prisma 已知错误 (P2034 等) 记 error 后原样重抛', async () => {
+    const error = violation('P2034')
+
+    await expect(throwing(error)(req)).rejects.toBe(error)
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[kunRoute] unhandled',
+      { method: 'POST', path: '/api/x', uid: user.uid },
+      error
+    )
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('不是 Prisma 已知错误的异常原样重抛, 只看类型不看 code 字段', async () => {
     const error = Object.assign(new Error('fk'), { code: 'P2003' })
-    await expect(
-      kunRoute.post({
-        auth: 'public',
-        handler: async () => {
-          throw error
-        }
-      })(req)
-    ).rejects.toBe(error)
+
+    await expect(throwing(error)(req)).rejects.toBe(error)
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('解析与鉴权抛出的异常不归兜底管', async () => {
+    const error = violation('P2003')
+    verifyHeaderCookieMock.mockRejectedValue(error)
+
+    await expect(throwing(new Error('unreachable'))(req)).rejects.toBe(error)
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 })
 

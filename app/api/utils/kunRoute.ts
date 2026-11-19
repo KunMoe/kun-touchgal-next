@@ -10,6 +10,7 @@ import {
 } from '~/app/api/utils/parseQuery'
 import { can, KUN_CAPABILITY } from '~/constants/permission'
 import { KUN_ROLE_LABEL } from '~/constants/role'
+import { Prisma } from '~/prisma/generated/prisma/client'
 import type * as z from 'zod'
 import type { NextRequest } from 'next/server'
 import type { KunCapability } from '~/constants/permission'
@@ -184,6 +185,48 @@ const authorize = async (
   return { ok: true, actor: payload }
 }
 
+// 违例兜底: handler 里漏翻的三类 Prisma 已知违例 (外键、唯一、目标行不存在) 多半是并发删改,
+// 原样冒出时 Next 回空体 500, kunFetch 抛错, 没写 finally 的提交按钮会一直转圈。这里只认这三个
+// code (不读 meta, #57), 回一句通用文案并记 warn; 精确到操作的文案仍由 service 自己 catch
+// (先于这里生效)。其余异常 (含 P2034、P2020 这类编程或并发信号) 记一条带上下文的 error 后原样重抛
+const KUN_VIOLATION_MESSAGE: Readonly<Record<string, string>> = {
+  P2002: '数据已存在或已被修改, 请刷新页面后重试',
+  P2003: '相关内容不存在或已被删除, 请刷新页面后重试',
+  P2025: '相关内容不存在或已被删除, 请刷新页面后重试'
+}
+
+const pathOf = (req: NextRequest) => {
+  try {
+    return new URL(req.url).pathname
+  } catch {
+    return String(req.url)
+  }
+}
+
+const runHandler = async (
+  method: KunRouteMethod,
+  req: NextRequest,
+  def: KunRouteAnyDef,
+  ctx: KunRouteContext<KunRouteAuth, unknown, unknown>
+): Promise<KunRouteResult> => {
+  try {
+    return await def.handler(ctx as never)
+  } catch (error) {
+    const context = { method, path: pathOf(req), uid: ctx.actor?.uid }
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      Object.hasOwn(KUN_VIOLATION_MESSAGE, error.code)
+    ) {
+      // eslint-disable-next-line no-console
+      console.warn('[kunRoute] violation', { ...context, code: error.code })
+      return KUN_VIOLATION_MESSAGE[error.code]
+    }
+    // eslint-disable-next-line no-console
+    console.error('[kunRoute] unhandled', context, error)
+    throw error
+  }
+}
+
 const toResponse = (result: KunRouteResult) =>
   result instanceof Response ? result : NextResponse.json(result)
 
@@ -232,7 +275,9 @@ const defineRoute =
       actor = auth.actor
     }
 
-    return toResponse(await def.handler({ req, input, params, actor } as never))
+    return toResponse(
+      await runHandler(method, req, def, { req, input, params, actor } as never)
+    )
   }
 
 const queryRoute = defineRoute as (
