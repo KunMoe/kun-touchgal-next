@@ -238,3 +238,69 @@ describe('updateResourceHidden', () => {
     expect(resourceListMock).toHaveBeenCalledTimes(1)
   })
 })
+
+// 与别的入口在行锁上互等时, 数据库判死锁回滚其中一方: 事务整体回滚、无副作用, 重放即可
+describe('updateResourceHidden 事务冲突', () => {
+  const deadlock = () =>
+    Object.assign(new Error('deadlock detected'), {
+      code: 'P2010',
+      meta: {
+        driverAdapterError: {
+          cause: { kind: 'postgres', originalCode: '40P01' }
+        }
+      }
+    })
+
+  beforeEach(() => {
+    seed([row(1, 20, 0, 'galgame'), row(2, 10, 0, 'galgame')])
+  })
+
+  it('40P01 冲突重放整个事务, 提交后的副作用只按最终一次的结果执行', async () => {
+    let logCalls = 0
+    rec.on('admin_log.create', () => {
+      logCalls++
+      if (logCalls === 1) {
+        throw deadlock()
+      }
+      return {}
+    })
+
+    await expect(
+      updateResourceHidden({ resourceIds: [1, 2], status: 1 }, 99)
+    ).resolves.toEqual({ count: 2 })
+
+    expect(rec.attempts.map((attempt) => attempt.committed)).toEqual([
+      false,
+      true
+    ])
+    expect(patchContentMock.mock.calls).toEqual([['patch-10'], ['patch-20']])
+    expect(resourceDetailMock.mock.calls).toEqual([[10], [20]])
+    expect(kickSearchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('非冲突错误不重试直接抛出', async () => {
+    rec.on('admin_log.create', () => {
+      throw new Error('boom')
+    })
+
+    await expect(
+      updateResourceHidden({ resourceIds: [1, 2], status: 1 }, 99)
+    ).rejects.toThrow('boom')
+
+    expect(rec.attempts).toHaveLength(1)
+    expect(kickSearchMock).not.toHaveBeenCalled()
+  })
+
+  it('连续 3 次冲突后放弃', async () => {
+    rec.on('admin_log.create', () => {
+      throw deadlock()
+    })
+
+    await expect(
+      updateResourceHidden({ resourceIds: [1, 2], status: 1 }, 99)
+    ).rejects.toThrow('deadlock detected')
+
+    expect(rec.attempts).toHaveLength(3)
+    expect(patchContentMock).not.toHaveBeenCalled()
+  })
+})
