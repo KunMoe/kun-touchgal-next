@@ -1,12 +1,6 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import {
-  kunParseDeleteQuery,
-  kunParseGetQuery,
-  kunParsePostBody,
-  kunParsePutBody
-} from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { NextResponse } from 'next/server'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   patchResourceCreateSchema,
   patchResourceUpdateSchema
@@ -30,101 +24,74 @@ const resourceIdSchema = z.object({
     .max(9999999)
 })
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, patchIdSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
+export const GET = kunRoute.get({
+  auth: 'optional',
+  input: patchIdSchema,
+  handler: ({ input, actor }) => getPatchResource(input, actor)
+})
 
-  const response = await getPatchResource(input, payload)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: patchResourceCreateSchema,
+  handler: async ({ input, actor: payload }) => {
+    const user = await prisma.user.findUnique({ where: { id: payload.uid } })
+    if (!user) {
+      return NextResponse.json('未找到该用户')
+    }
+    // 与上传初始化 (upload/init) 是同一条门槛, 豁免也是同一项能力
+    if (!can(payload, 'upload.skipPointsGate') && user.moemoepoint < 20) {
+      return NextResponse.json('仅限萌萌点大于 20 的用户才可以发布资源')
+    }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, patchResourceCreateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  const user = await prisma.user.findUnique({ where: { id: payload.uid } })
-  if (!user) {
-    return NextResponse.json('未找到该用户')
-  }
-  // 与上传初始化 (upload/init) 是同一条门槛, 豁免也是同一项能力
-  if (!can(payload, 'upload.skipPointsGate') && user.moemoepoint < 20) {
-    return NextResponse.json('仅限萌萌点大于 20 的用户才可以发布资源')
-  }
-
-  const resource = await prisma.patch_resource.findFirst({
-    where: { user_id: payload.uid, status: 2 }
-  })
-  if (resource) {
-    return NextResponse.json(
-      '您有至少一个 Galgame 资源在待审核阶段, 请等待审核结束后再发布资源'
-    )
-  }
-
-  const lockKey = `lock:patch:resource:create:${payload.uid}`
-  let lockToken: string | null = null
-
-  try {
-    lockToken = await acquireKvLock(lockKey, 300)
-  } catch (error) {
-    process.stderr.write(
-      `Failed to acquire patch resource lock: ${String(error)}\n`
-    )
-    return NextResponse.json('资源提交服务暂时不可用, 请稍后重试')
-  }
-
-  if (!lockToken) {
-    return NextResponse.json('资源正在提交中, 请勿重复点击')
-  }
-
-  try {
-    const response = await createPatchResource(input, payload)
-    return NextResponse.json(response)
-  } finally {
-    try {
-      await releaseKvLock(lockKey, lockToken)
-    } catch (error) {
-      process.stderr.write(
-        `Failed to release patch resource lock: ${String(error)}\n`
+    const resource = await prisma.patch_resource.findFirst({
+      where: { user_id: payload.uid, status: 2 }
+    })
+    if (resource) {
+      return NextResponse.json(
+        '您有至少一个 Galgame 资源在待审核阶段, 请等待审核结束后再发布资源'
       )
     }
-  }
-}
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, patchResourceUpdateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  const response = await updatePatchResource(
-    input,
-    payload,
-    frontResourceEditGuard(payload)
-  )
-  return NextResponse.json(response)
-}
+    const lockKey = `lock:patch:resource:create:${payload.uid}`
+    let lockToken: string | null = null
 
-export const DELETE = async (req: NextRequest) => {
-  const input = kunParseDeleteQuery(req, resourceIdSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+    try {
+      lockToken = await acquireKvLock(lockKey, 300)
+    } catch (error) {
+      process.stderr.write(
+        `Failed to acquire patch resource lock: ${String(error)}\n`
+      )
+      return NextResponse.json('资源提交服务暂时不可用, 请稍后重试')
+    }
 
-  const response = await deleteResource(input, payload)
-  return NextResponse.json(response)
-}
+    if (!lockToken) {
+      return NextResponse.json('资源正在提交中, 请勿重复点击')
+    }
+
+    try {
+      const response = await createPatchResource(input, payload)
+      return NextResponse.json(response)
+    } finally {
+      try {
+        await releaseKvLock(lockKey, lockToken)
+      } catch (error) {
+        process.stderr.write(
+          `Failed to release patch resource lock: ${String(error)}\n`
+        )
+      }
+    }
+  }
+})
+
+export const PUT = kunRoute.put({
+  auth: 'user',
+  input: patchResourceUpdateSchema,
+  handler: ({ input, actor }) =>
+    updatePatchResource(input, actor, frontResourceEditGuard(actor))
+})
+
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  input: resourceIdSchema,
+  handler: ({ input, actor }) => deleteResource(input, actor)
+})

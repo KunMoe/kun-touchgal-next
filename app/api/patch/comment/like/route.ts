@@ -1,9 +1,8 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePutBody } from '~/app/api/utils/parseQuery'
+import { NextResponse } from 'next/server'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
@@ -127,16 +126,12 @@ const toggleCommentLike = async (
   return response
 }
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, commentIdSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
+export const PUT = kunRoute.put({
+  auth: 'user',
+  input: commentIdSchema,
+  handler: async ({ input, actor }) => {
+    // 成功时是点赞后的布尔状态, kunRoute 的返回类型不收布尔, 在这里序列化
+    const response = await toggleCommentLike(input, actor.uid)
+    return NextResponse.json(response)
   }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await toggleCommentLike(input, payload.uid)
-  return NextResponse.json(response)
-}
+})

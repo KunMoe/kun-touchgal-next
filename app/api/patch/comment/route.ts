@@ -1,11 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
-import {
-  kunParseDeleteQuery,
-  kunParseGetQuery,
-  kunParsePostBody,
-  kunParsePutBody
-} from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   patchCommentCreateSchema,
   patchCommentUpdateSchema,
@@ -24,58 +17,27 @@ const commentIdSchema = z.object({
     .max(9999999)
 })
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, getPatchCommentSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户登录失效')
-  }
+export const GET = kunRoute.get({
+  auth: 'user',
+  legacyDeny: { unauthenticated: '用户登录失效' },
+  input: getPatchCommentSchema,
+  handler: ({ input, actor }) => getPatchComment(input, actor)
+})
 
-  const response = await getPatchComment(input, payload)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: patchCommentCreateSchema,
+  handler: ({ input, actor }) => createPatchComment(input, actor)
+})
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, patchCommentCreateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+export const PUT = kunRoute.put({
+  auth: 'user',
+  input: patchCommentUpdateSchema,
+  handler: ({ input, actor }) => updateComment(input, actor)
+})
 
-  const response = await createPatchComment(input, payload)
-  return NextResponse.json(response)
-}
-
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, patchCommentUpdateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await updateComment(input, payload)
-  return NextResponse.json(response)
-}
-
-export const DELETE = async (req: NextRequest) => {
-  const input = kunParseDeleteQuery(req, commentIdSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await deleteComment(input, payload)
-  return NextResponse.json(response)
-}
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  input: commentIdSchema,
+  handler: ({ input, actor }) => deleteComment(input, actor)
+})

@@ -1,7 +1,5 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { createPatchCommentReportSchema } from '~/validations/patch'
 import { prisma } from '~/prisma'
 import { Prisma } from '~/prisma/generated/prisma/client'
@@ -75,16 +73,8 @@ const createReport = async (
   return {}
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, createPatchCommentReportSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await createReport(input, payload.uid)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: createPatchCommentReportSchema,
+  handler: ({ input, actor }) => createReport(input, actor.uid)
+})

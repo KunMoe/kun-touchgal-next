@@ -1,16 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { getPatchByCompanySchema } from '~/validations/company'
-import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
 import { getPatchByCompany } from './service'
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, getPatchByCompanySchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const view = await viewerContextFromRequest(req).listView()
+export const GET = kunRoute.get({
+  auth: 'optional',
+  input: getPatchByCompanySchema,
+  handler: async ({ req, input }) => {
+    const view = await viewerContextFromRequest(req).listView()
 
-  const response = await getPatchByCompany(input, view)
-  return NextResponse.json(response)
-}
+    return getPatchByCompany(input, view)
+  }
+})

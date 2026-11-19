@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import * as z from 'zod'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { fetchVndbVn } from '~/lib/arnebiae/vndb'
 import { TAG_MAP } from '~/lib/tagMap'
 import type {
@@ -55,36 +54,31 @@ const buildDevelopers = (results: VNDBFullResult[]) => {
     .filter((name, i, arr) => arr.indexOf(name) === i)
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, detailsSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: detailsSchema,
+  handler: async ({ input }) => {
+    const vndbId = input.vndbId.toLowerCase()
 
-  const vndbId = input.vndbId.toLowerCase()
+    try {
+      const vndbData = await fetchVndbVn<VNDBFullResult>(
+        ['id', '=', vndbId],
+        'title, titles.lang, titles.title, aliases, released, tags{id,name,rating,spoiler,lie,category}, developers{id,name,original,aliases,lang,type}'
+      )
+      if (!vndbData.results.length) {
+        return NextResponse.json('未找到对应的 VNDB 条目')
+      }
 
-  try {
-    const vndbData = await fetchVndbVn<VNDBFullResult>(
-      ['id', '=', vndbId],
-      'title, titles.lang, titles.title, aliases, released, tags{id,name,rating,spoiler,lie,category}, developers{id,name,original,aliases,lang,type}'
-    )
-    if (!vndbData.results.length) {
-      return NextResponse.json('未找到对应的 VNDB 条目')
+      const titles = buildAllTitles(vndbData)
+      const released = vndbData.results[0].released
+      const tags = buildTags(vndbData.results)
+      const developers = buildDevelopers(vndbData.results)
+
+      return NextResponse.json({ titles, released, tags, developers })
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('VNDB vn fetch failed', { vndbId, error })
+      return NextResponse.json('VNDB API 请求失败')
     }
-
-    const titles = buildAllTitles(vndbData)
-    const released = vndbData.results[0].released
-    const tags = buildTags(vndbData.results)
-    const developers = buildDevelopers(vndbData.results)
-
-    return NextResponse.json({ titles, released, tags, developers })
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('VNDB vn fetch failed', { vndbId, error })
-    return NextResponse.json('VNDB API 请求失败')
   }
-}
+})

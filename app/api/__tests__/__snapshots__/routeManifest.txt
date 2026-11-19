@@ -61,12 +61,20 @@ POST /api/auth/register                                  public
 POST /api/auth/send-register-code                        public
 POST /api/auth/verify-2fa                                public
 GET /api/company/all                                     public
+GET /api/company/galgame                                 optional
 GET /api/company                                         public
 PUT /api/company                                         user capability=company.manage
 POST /api/company                                        user capability=company.manage
 DELETE /api/company                                      user capability=company.manage
 POST /api/company/search                                 public
+POST /api/edit/bangumi                                   user
+POST /api/edit/dlsite                                    user
 GET /api/edit/duplicate                                  public
+POST /api/edit                                           user capability=galgame.create form
+PUT /api/edit                                            user capability=galgame.rewrite
+POST /api/edit/steam                                     user
+POST /api/edit/vndb/details                              user
+POST /api/edit/vndb/relation                             user
 POST /api/forgot/request                                 public
 POST /api/forgot/reset                                   public
 GET /api/message/all                                     user
@@ -82,17 +90,45 @@ PUT /api/message/read                                    user
 DELETE /api/message/read                                 user
 POST /api/message                                        public
 GET /api/message/unread                                  user
+POST /api/patch/banner                                   user capability=banner.edit form
+PUT /api/patch/comment/like                              user
+GET /api/patch/comment/markdown                          user
+POST /api/patch/comment/report                           user
+GET /api/patch/comment                                   user legacyDeny.unauthenticated=用户登录失效
+POST /api/patch/comment                                  user
+PUT /api/patch/comment                                   user
+DELETE /api/patch/comment                                user
+PUT /api/patch/favorite                                  user
+POST /api/patch/feedback                                 user
+POST /api/patch/introduction/company/fetch               user capability=company.manage legacyDeny.forbidden=您没有权限执行此操作
 POST /api/patch/introduction/company                     user capability=company.manage
 PUT /api/patch/introduction/company                      user capability=company.manage
 GET /api/patch/introduction                              public
 POST /api/patch/introduction/tag                         user capability=tag.manage
 PUT /api/patch/introduction/tag                          user capability=tag.manage
 GET /api/patch/moyu                                      public
+PUT /api/patch/rating/like                               user legacyDeny.unauthenticated=请先登录
+POST /api/patch/rating/report                            user
+GET /api/patch/rating                                    user
+POST /api/patch/rating                                   user
+PUT /api/patch/rating                                    user
+DELETE /api/patch/rating                                 user
+PUT /api/patch/resource/download                         optional
+PUT /api/patch/resource/like                             user
+GET /api/patch/resource                                  optional
+POST /api/patch/resource                                 user
+PUT /api/patch/resource                                  user
+DELETE /api/patch/resource                               user
+GET /api/patch                                           optional
+DELETE /api/patch                                        user capability=galgame.delete
 POST /api/search/tag                                     public
+GET /api/tag/all                                         user
+GET /api/tag/galgame                                     optional
 GET /api/tag                                             public
 POST /api/tag                                            user capability=tag.manage
 PUT /api/tag                                             user capability=tag.manage
 DELETE /api/tag                                          user capability=tag.manage
+POST /api/tag/search                                     user
 POST /api/upload/resource                                public csrf=handler
 GET /api/user/appeal                                     user
 POST /api/user/appeal                                    user

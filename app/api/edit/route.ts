@@ -1,11 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseFormData, kunParsePutBody } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { NextResponse } from 'next/server'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { patchCreateSchema, patchUpdateSchema } from '~/validations/edit'
 import { createGalgame } from './create'
 import { updateGalgame } from './update'
 import { normalizeStringArray } from '~/utils/normalizeStringArray'
-import { can } from '~/constants/permission'
 
 const checkStringArrayValid = (type: 'alias' | 'tag', aliasString: string) => {
   const label = type === 'alias' ? '别名' : '标签'
@@ -38,59 +36,43 @@ const checkStringArrayValid = (type: 'alias' | 'tag', aliasString: string) => {
   return normalizedArray
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParseFormData(req, patchCreateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'galgame.create')) {
-    return NextResponse.json('本页面仅超级管理员可访问')
-  }
+export const POST = kunRoute.post({
+  auth: 'user',
+  capability: 'galgame.create',
+  form: true,
+  input: patchCreateSchema,
+  handler: async ({ input, actor }) => {
+    const { alias, banner, bannerOriginal, tag, ...rest } = input
+    const aliasResult = checkStringArrayValid('alias', alias)
+    if (typeof aliasResult === 'string') {
+      return NextResponse.json(aliasResult)
+    }
+    const tagResult = checkStringArrayValid('tag', tag)
+    if (typeof tagResult === 'string') {
+      return NextResponse.json(tagResult)
+    }
+    const bannerArrayBuffer = await new Response(banner)?.arrayBuffer()
+    const bannerOriginalArrayBuffer = bannerOriginal
+      ? await new Response(bannerOriginal)?.arrayBuffer()
+      : undefined
 
-  const { alias, banner, bannerOriginal, tag, ...rest } = input
-  const aliasResult = checkStringArrayValid('alias', alias)
-  if (typeof aliasResult === 'string') {
-    return NextResponse.json(aliasResult)
+    const response = await createGalgame(
+      {
+        alias: aliasResult,
+        tag: tagResult,
+        banner: bannerArrayBuffer,
+        bannerOriginal: bannerOriginalArrayBuffer,
+        ...rest
+      },
+      actor.uid
+    )
+    return NextResponse.json(response)
   }
-  const tagResult = checkStringArrayValid('tag', tag)
-  if (typeof tagResult === 'string') {
-    return NextResponse.json(tagResult)
-  }
-  const bannerArrayBuffer = await new Response(banner)?.arrayBuffer()
-  const bannerOriginalArrayBuffer = bannerOriginal
-    ? await new Response(bannerOriginal)?.arrayBuffer()
-    : undefined
+})
 
-  const response = await createGalgame(
-    {
-      alias: aliasResult,
-      tag: tagResult,
-      banner: bannerArrayBuffer,
-      bannerOriginal: bannerOriginalArrayBuffer,
-      ...rest
-    },
-    payload.uid
-  )
-  return NextResponse.json(response)
-}
-
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, patchUpdateSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'galgame.rewrite')) {
-    return NextResponse.json('本页面仅管理员可访问')
-  }
-
-  const response = await updateGalgame(input, payload.uid)
-  return NextResponse.json(response)
-}
+export const PUT = kunRoute.put({
+  auth: 'user',
+  capability: 'galgame.rewrite',
+  input: patchUpdateSchema,
+  handler: ({ input, actor }) => updateGalgame(input, actor.uid)
+})

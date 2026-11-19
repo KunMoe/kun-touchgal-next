@@ -1,9 +1,7 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePutBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { togglePatchFavoriteSchema } from '~/validations/patch'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
@@ -127,16 +125,8 @@ const togglePatchFavorite = async (
   return response
 }
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, togglePatchFavoriteSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await togglePatchFavorite(input, payload.uid)
-  return NextResponse.json(response)
-}
+export const PUT = kunRoute.put({
+  auth: 'user',
+  input: togglePatchFavoriteSchema,
+  handler: ({ input, actor }) => togglePatchFavorite(input, actor.uid)
+})

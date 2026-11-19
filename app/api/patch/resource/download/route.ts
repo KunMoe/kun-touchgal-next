@@ -1,8 +1,7 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePutBody } from '~/app/api/utils/parseQuery'
+import { NextResponse } from 'next/server'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { delKv, setKvIfAbsent } from '~/lib/redis'
 import { DOWNLOAD_DEDUP_CACHE_DURATION } from '~/config/cache'
@@ -61,29 +60,27 @@ const downloadStats = async (
   return {}
 }
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, updatePatchResourceStatsSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
+export const PUT = kunRoute.put({
+  auth: 'optional',
+  input: updatePatchResourceStatsSchema,
+  handler: async ({ req, input, actor: payload }) => {
+    // 匿名可计数: 已登录用 uid, 否则回退到 IP; 二者命名空间隔离防碰撞
+    const identity = payload?.uid
+      ? `u:${payload.uid}`
+      : `ip:${getRemoteIp(req.headers) || 'unknown'}`
+    const dedupKey = `download:dedup:${identity}:${input.linkId}`
+
+    const fresh = await setKvIfAbsent(
+      dedupKey,
+      '1',
+      DOWNLOAD_DEDUP_CACHE_DURATION
+    )
+    if (!fresh) {
+      // 窗口内重复请求: 直接成功返回, 不查库、不自增、不失效缓存
+      return NextResponse.json({})
+    }
+
+    const response = await downloadStats(input, dedupKey)
+    return NextResponse.json(response)
   }
-
-  // 匿名可计数: 已登录用 uid, 否则回退到 IP; 二者命名空间隔离防碰撞
-  const payload = await verifyHeaderCookie(req)
-  const identity = payload?.uid
-    ? `u:${payload.uid}`
-    : `ip:${getRemoteIp(req.headers) || 'unknown'}`
-  const dedupKey = `download:dedup:${identity}:${input.linkId}`
-
-  const fresh = await setKvIfAbsent(
-    dedupKey,
-    '1',
-    DOWNLOAD_DEDUP_CACHE_DURATION
-  )
-  if (!fresh) {
-    // 窗口内重复请求: 直接成功返回, 不查库、不自增、不失效缓存
-    return NextResponse.json({})
-  }
-
-  const response = await downloadStats(input, dedupKey)
-  return NextResponse.json(response)
-}
+})

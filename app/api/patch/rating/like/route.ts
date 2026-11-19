@@ -1,9 +1,8 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePutBody } from '~/app/api/utils/parseQuery'
+import { NextResponse } from 'next/server'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
@@ -116,16 +115,13 @@ const toggleRatingLike = async (
   return response
 }
 
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, ratingIdSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
+export const PUT = kunRoute.put({
+  auth: 'user',
+  legacyDeny: { unauthenticated: '请先登录' },
+  input: ratingIdSchema,
+  handler: async ({ input, actor }) => {
+    // 成功时是点赞后的布尔状态, kunRoute 的返回类型不收布尔, 在这里序列化
+    const response = await toggleRatingLike(input, actor.uid)
+    return NextResponse.json(response)
   }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('请先登录')
-  }
-
-  const response = await toggleRatingLike(input, payload.uid)
-  return NextResponse.json(response)
-}
+})
