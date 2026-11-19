@@ -253,7 +253,8 @@ describe('POST /api/forgot/reset', () => {
   )
 
   it(
-    '[current: password committed before session revoke] rejects after the password write when deleting sessions fails',
+    // 安全戳以影子模式发布: 删 Redis 键失败时旧会话还认 (切到强制模式后由安全戳拒绝, 那次提交翻转这一条)
+    '[shadow mode] rejects after the password write when deleting sessions fails, and the old session still resolves',
     async () => {
       const session = await login()
       const token = seedResetLink('kun@example.com')
