@@ -257,7 +257,10 @@ describe('POST /api/forgot/reset', () => {
     async () => {
       const session = await login()
       const token = seedResetLink('kun@example.com')
-      redis.failNext('delKvs', new Error('redis del failed'))
+      redis.failNext(
+        'delKvsAndRemoveKvSetMembers',
+        new Error('redis del failed')
+      )
 
       await expect(post(resetBody(token))).rejects.toThrow('redis del failed')
       await expect(

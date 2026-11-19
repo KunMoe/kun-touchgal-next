@@ -459,25 +459,26 @@ describe('deleteKunToken', () => {
     expect(redis.members(setKey(OTHER_UID))).toEqual([other.jti])
   })
 
-  it('[current: X07-06 orphan] a session written between the SMEMBERS read and the DEL survives outside the set', async () => {
+  it('a session written between the SMEMBERS read and the delete stays listed and revocable (X07-06: it used to become an orphan)', async () => {
     const before = await login(UID)
     let late = { token: '', jti: '' }
-    redis.beforeNext('delKvs', async () => {
+    redis.beforeNext('delKvsAndRemoveKvSetMembers', async () => {
       late = await login(UID)
     })
 
     await deleteKunToken(UID)
 
     await expect(verifyKunTokenPayload(before.token)).resolves.toBeNull()
-    // the late session's keys were not in the SMEMBERS snapshot, its set member went with the set
+    // 不在读到的快照里, 这次不删; 但它的集合成员还在
     expect(await verifyKunTokenPayload(late.token)).not.toBeNull()
-    expect(redis.members(setKey(UID))).toEqual([])
-    await expect(getKunLoginSessions(UID, late.jti)).resolves.toEqual([])
+    expect(redis.members(setKey(UID))).toEqual([late.jti])
+    expect(
+      (await getKunLoginSessions(UID, late.jti)).map((session) => session.id)
+    ).toEqual([late.jti])
 
-    // ...so neither the session list nor a second revoke-all can reach it
+    // 再吊销一次就够得着它
     await deleteKunToken(UID)
-    expect(await verifyKunTokenPayload(late.token)).not.toBeNull()
-    expect(redis.ttl(tokenKey(UID, late.jti))).toBe(THIRTY_DAYS)
+    await expect(verifyKunTokenPayload(late.token)).resolves.toBeNull()
   })
 
   it('rejects and deletes nothing when the set cannot be read', async () => {

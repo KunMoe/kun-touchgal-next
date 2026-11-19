@@ -4,7 +4,6 @@ import { cookies } from 'next/headers'
 import {
   acquireKvLock,
   delKv,
-  delKvs,
   delKvsAndRemoveKvSetMembers,
   setKvAndExpireKvIfTtlLessThan,
   getKv,
@@ -659,16 +658,12 @@ export const deleteOtherKunTokenSessions = async (
   return sessionIdsToDelete.length
 }
 
+// 只删读到的那些会话, 集合里只摘掉这些成员 (不删整个集合键): 读与删之间新写入的会话
+// 留在集合里, 会话列表看得到、还能再吊销。删整个键会把它变成列表里看不见的孤儿 (X07-06)
 export const deleteKunToken = async (uid: number) => {
   const sessionIds = await getKvSetMembers(getLoginSessionsKey(uid))
   await Promise.all([
-    delKvs([
-      getLoginSessionsKey(uid),
-      ...sessionIds.flatMap((sessionId) => [
-        getAccessTokenKey(uid, sessionId),
-        getLoginSessionKey(uid, sessionId)
-      ])
-    ]),
+    cleanupLoginSessions(uid, sessionIds),
     invalidateUserSession(uid)
   ])
 }

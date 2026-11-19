@@ -174,7 +174,7 @@ describe('GET /api/user/session', () => {
     const response = await GET(request(token))
 
     expect(response.status).toBe(503)
-    expect(redis.callNames()).not.toContain('delKvs')
+    expect(redis.callNames()).not.toContain('delKvsAndRemoveKvSetMembers')
   })
 
   it('returns 503 when getUserStatus rejects, without deleting any session (T60: was 401)', async () => {
@@ -185,7 +185,7 @@ describe('GET /api/user/session', () => {
 
     expect(response.status).toBe(503)
     expect(await response.json()).toBe('会话服务暂时不可用')
-    expect(redis.callNames()).not.toContain('delKvs')
+    expect(redis.callNames()).not.toContain('delKvsAndRemoveKvSetMembers')
     expect(await alive(token)).toBe(true)
     expect(touchUserLastActiveTimeMock).not.toHaveBeenCalled()
   })
@@ -215,7 +215,7 @@ describe('GET /api/user/session', () => {
   it('still returns 401 when deleting the sessions fails in that branch (T60: the route used to throw)', async () => {
     const token = await login()
     getUserStatusMock.mockResolvedValue('用户登录失效')
-    redis.failNext('delKvs', new Error('redis del failed'))
+    redis.failNext('delKvsAndRemoveKvSetMembers', new Error('redis del failed'))
 
     const response = await GET(request(token))
 
