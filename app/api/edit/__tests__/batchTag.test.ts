@@ -182,7 +182,62 @@ describe('saveManualTagChange', () => {
         UID
       )
     ).rejects.toThrow('connection lost')
+    expect(rec.attempts).toHaveLength(1)
     expect(rec.attempts[0].rolledBack).toBe(true)
+  })
+})
+
+// 这一步排在 patch 主事务提交之后: 与别的保存在标签行上互等时, 数据库判死锁回滚其中一方,
+// 不重放的话用户看到的是「字段已保存、随后 500」
+describe('saveManualTagChange 事务冲突', () => {
+  const deadlock = () =>
+    Object.assign(new Error('deadlock detected'), {
+      code: 'P2010',
+      meta: {
+        driverAdapterError: {
+          cause: { kind: 'postgres', originalCode: '40P01' }
+        }
+      }
+    })
+  const change = { removeTagIds: [10], addTagNames: ['brand-new'] }
+
+  it('40P01 冲突重放整个事务, 结果以提交的那一次为准', async () => {
+    const db = seed([{ id: 10, name: 'tag-old', alias: [] }], [10])
+    let lockCalls = 0
+    rec.onRaw(/FOR NO KEY UPDATE/, () => {
+      lockCalls++
+      if (lockCalls === 1) {
+        throw deadlock()
+      }
+      return []
+    })
+
+    await expect(saveManualTagChange(PATCH_ID, change, UID)).resolves.toEqual({
+      changed: true
+    })
+
+    expect(rec.attempts.map((attempt) => attempt.committed)).toEqual([
+      false,
+      true
+    ])
+    // 重放的那一次从读开始重做, 不是接着上一次往下写
+    expect(rec.labels()[0]).toBe('patch_tag.findMany')
+    expect(db.relatedNames()).toEqual(['brand-new'])
+  })
+
+  it('连续 3 次冲突后放弃, 原样抛出', async () => {
+    const db = seed([{ id: 10, name: 'tag-old', alias: [] }], [10])
+    rec.onRaw(/FOR NO KEY UPDATE/, () => {
+      throw deadlock()
+    })
+
+    await expect(saveManualTagChange(PATCH_ID, change, UID)).rejects.toThrow(
+      'deadlock detected'
+    )
+
+    expect(rec.attempts).toHaveLength(3)
+    expect(rec.attempts.every((attempt) => attempt.rolledBack)).toBe(true)
+    expect(db.relatedNames()).toEqual(['tag-old'])
   })
 })
 

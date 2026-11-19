@@ -134,10 +134,13 @@ export const saveManualTagChange = async (
     return { changed: false }
   }
 
+  // 这一步排在 patch 主事务提交之后, 一次事务冲突不重放就成了「字段已保存、随后 500」。
+  // 预锁挡不住全部互等: 新标签被并发事务抢先建好时, 回读到的那一行不在预锁集里。
+  // 事务体的读与写都走 tx、输出只走返回值, 整段重放是安全的
   const result = await kunTx(
     'edit.manualTag',
     ({ tx }) => applyManualTagChange(tx, patchId, change, uid),
-    { timeout: 60000 }
+    { timeout: 60000, retry: 2 }
   )
   // 回调里没有 fail, 走不到字符串结果
   if (typeof result === 'string') {
