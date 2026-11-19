@@ -69,6 +69,7 @@ vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCache: invalidateContentMock
 }))
 
+import { Prisma } from '~/prisma/generated/prisma/client'
 import { commentSubject } from '~/server/moderation/subject'
 import { createPatchComment } from '~/app/api/patch/comment/create'
 import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
@@ -228,6 +229,34 @@ describe('createPatchComment', () => {
     expect(onCommentPublishedMock).not.toHaveBeenCalled()
     // 待审评论照样失效缓存 (创建路径的既有行为)
     expect(invalidateCommentCacheMock).toHaveBeenCalledWith(10)
+  })
+})
+
+// 补丁的一级评论不取任何行锁, 补丁不存在或被并发删除时由 INSERT 的外键检查发现
+describe('createPatchComment 撞外键', () => {
+  it('P2003 回滚并返回「未找到 Galgame」, 不失效缓存、不发通知', async () => {
+    createCommentMock.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('fk', {
+        code: 'P2003',
+        clientVersion: 'test'
+      })
+    )
+
+    await expect(
+      createPatchComment(input, kunTestActor({ uid: 7, role: 1 }))
+    ).resolves.toBe('未找到 Galgame')
+    expect(invalidateCommentCacheMock).not.toHaveBeenCalled()
+    expect(invalidateContentMock).not.toHaveBeenCalled()
+    expect(onCommentPublishedMock).not.toHaveBeenCalled()
+  })
+
+  it('其它异常原样抛出', async () => {
+    const boom = new Error('connection lost')
+    createCommentMock.mockRejectedValue(boom)
+
+    await expect(
+      createPatchComment(input, kunTestActor({ uid: 7, role: 1 }))
+    ).rejects.toBe(boom)
   })
 })
 

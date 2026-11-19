@@ -76,59 +76,64 @@ export const createPatchComment = async (
     return prepared
   }
 
-  const data = await kunTx('comment.create', async (ctx) => {
-    const { tx } = ctx
-    // 事务外的预检之后, 资源或父评论可能被删、被隐藏。删除与隐藏的命令锁着这些行
-    // (FOR UPDATE): 插入之前先取 FOR KEY SHARE, 排在它们之后就读到提交后的结果, 当场
-    // 给出与预检相同的提示; 不取的话要等 INSERT 的外键检查才失败, 调用方看到的是 500。
-    // 顺序与级联删除一致 (资源 → 补丁 → 评论): 先锁父评论的话, 删资源的事务锁着资源行
-    // 去级联删评论, 这里锁着评论行去等资源行, 两边互等
-    if (resourceId) {
-      const resources = await tx.$queryRaw<Array<{ id: number }>>`
+  const data = await kunTx(
+    'comment.create',
+    async (ctx) => {
+      const { tx } = ctx
+      // 事务外的预检之后, 资源或父评论可能被删、被隐藏。删除与隐藏的命令锁着这些行
+      // (FOR UPDATE): 插入之前先取 FOR KEY SHARE, 排在它们之后就读到提交后的结果, 当场
+      // 给出与预检相同的提示; 不取的话要等 INSERT 的外键检查才失败, 调用方看到的是 500。
+      // 顺序与级联删除一致 (资源 → 补丁 → 评论): 先锁父评论的话, 删资源的事务锁着资源行
+      // 去级联删评论, 这里锁着评论行去等资源行, 两边互等
+      if (resourceId) {
+        const resources = await tx.$queryRaw<Array<{ id: number }>>`
         SELECT id FROM patch_resource WHERE id = ${resourceId} FOR KEY SHARE`
-      if (!resources.length) {
-        ctx.fail('未找到该资源')
-      }
-    }
-    if (input.parentId) {
-      // 补丁被整体删除时父评论随之消失, 由下面的父评论检查给出结果
-      await tx.$executeRaw`SELECT id FROM patch WHERE id = ${input.patchId} FOR KEY SHARE`
-      const [parent] = await tx.$queryRaw<Array<{ status: number }>>`
-        SELECT status FROM patch_comment WHERE id = ${input.parentId} FOR KEY SHARE`
-      const parentError = replyParentError(parent)
-      if (parentError) {
-        ctx.fail(parentError)
-      }
-    }
-
-    const created = await tx.patch_comment.create({
-      data: {
-        ...prepared,
-        is_spoiler: input.isSpoiler,
-        status: moderation.intercept ? 1 : 0,
-        user_id: uid,
-        patch_id: input.patchId,
-        parent_id: input.parentId,
-        resource_id: resourceId
-      },
-      include: {
-        patch: {
-          select: {
-            unique_id: true
-          }
+        if (!resources.length) {
+          ctx.fail('未找到该资源')
         }
       }
-    })
+      if (input.parentId) {
+        // 补丁被整体删除时父评论随之消失, 由下面的父评论检查给出结果
+        await tx.$executeRaw`SELECT id FROM patch WHERE id = ${input.patchId} FOR KEY SHARE`
+        const [parent] = await tx.$queryRaw<Array<{ status: number }>>`
+        SELECT status FROM patch_comment WHERE id = ${input.parentId} FOR KEY SHARE`
+        const parentError = replyParentError(parent)
+        if (parentError) {
+          ctx.fail(parentError)
+        }
+      }
 
-    if (moderation.queue) {
-      await enqueueTextModeration(tx, moderation, {
-        contentId: created.id,
-        userId: uid
+      const created = await tx.patch_comment.create({
+        data: {
+          ...prepared,
+          is_spoiler: input.isSpoiler,
+          status: moderation.intercept ? 1 : 0,
+          user_id: uid,
+          patch_id: input.patchId,
+          parent_id: input.parentId,
+          resource_id: resourceId
+        },
+        include: {
+          patch: {
+            select: {
+              unique_id: true
+            }
+          }
+        }
       })
-    }
 
-    return created
-  })
+      if (moderation.queue) {
+        await enqueueTextModeration(tx, moderation, {
+          contentId: created.id,
+          userId: uid
+        })
+      }
+
+      return created
+    },
+    // patch_id 外键: 补丁的一级评论不取行锁, 补丁不存在或被并发删除时由 INSERT 命中
+    { violations: { P2003: '未找到 Galgame' } }
+  )
   if (typeof data === 'string') {
     return data
   }
