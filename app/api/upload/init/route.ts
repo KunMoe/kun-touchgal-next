@@ -1,6 +1,5 @@
 import * as z from 'zod'
 import {
-  ALLOWED_EXTENSIONS,
   OBJECT_STORAGE_MAX_FILE_SIZE_BYTES,
   OBJECT_STORAGE_MAX_FILE_SIZE_ERROR,
   RESOURCE_DAILY_UPLOAD_LIMIT_MB
@@ -10,6 +9,10 @@ import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { can } from '~/constants/permission'
 import { createStagedUpload } from '~/server/storage/stagedUpload'
+import {
+  toSafeObjectName,
+  UNSAFE_OBJECT_NAME_ERROR
+} from '~/utils/safeObjectName'
 
 const MIN_FILE_SIZE = 1024
 
@@ -26,18 +29,16 @@ const initSchema = z.object({
   captcha: z.string().max(256).optional()
 })
 
-const getFileExtension = (filename: string) =>
-  filename.slice(filename.lastIndexOf('.')).toLowerCase()
-
 export const POST = kunRoute.post({
   auth: 'user',
   csrf: 'handler',
   input: initSchema,
   legacyDeny: { unauthenticated: '用户未认证' },
   handler: async ({ input, actor: payload }) => {
-    const extension = getFileExtension(input.fileName)
-    if (!ALLOWED_EXTENSIONS.includes(extension)) {
-      return `不支持的文件类型: ${extension}`
+    // 名字不可用的文件在查库与消耗人机验证之前就拒掉; createStagedUpload 建对象时仍以
+    // 同一份策略为准
+    if (!toSafeObjectName(input.fileName)) {
+      return UNSAFE_OBJECT_NAME_ERROR
     }
 
     const user = await prisma.user.findUnique({ where: { id: payload.uid } })

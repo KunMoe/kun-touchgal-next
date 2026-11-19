@@ -13,7 +13,10 @@ import {
   RESOURCE_S3_COPY_TIMEOUT_MS,
   RESOURCE_S3_HEAD_TIMEOUT_MS
 } from '~/constants/resource'
-import { sanitizeFileName } from '~/utils/sanitizeFileName'
+import {
+  toSafeObjectName,
+  UNSAFE_OBJECT_NAME_ERROR
+} from '~/utils/safeObjectName'
 
 // 资源直传的「暂存 → 转正」边界 (T19)。上传者只决定字节: 暂存对象叫什么、令牌里记什么、
 // 对象够不够格转正、转正后带什么元数据, 都只在这个模块里定。init / complete 路由与
@@ -36,12 +39,16 @@ export type UploadTokenMeta = z.infer<typeof uploadTokenMetaSchema>
 
 const uploadTokenKey = (token: string) => `upload:${token}`
 
+// 暂存对象的名字只取命名策略的结果: 洗不出名字的上传不建对象, 也不发令牌
 export const createStagedUpload = async (input: {
   uid: number
   fileName: string
   fileSize: number
 }) => {
-  const fileName = sanitizeFileName(input.fileName)
+  const fileName = toSafeObjectName(input.fileName)
+  if (!fileName) {
+    return UNSAFE_OBJECT_NAME_ERROR
+  }
   const segment = randomBytes(32).toString('hex')
   const s3Key = `${STAGING_PREFIX}${input.uid}/${segment}/${fileName}`
 

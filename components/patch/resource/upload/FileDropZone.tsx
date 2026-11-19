@@ -11,6 +11,10 @@ import {
   OBJECT_STORAGE_MAX_FILE_SIZE_BYTES,
   OBJECT_STORAGE_MAX_FILE_SIZE_LABEL
 } from '~/constants/resource'
+import {
+  toSafeObjectName,
+  UNSAFE_OBJECT_NAME_ERROR
+} from '~/utils/safeObjectName'
 
 interface Props {
   onFileUpload: (file: File) => Promise<void>
@@ -34,6 +38,12 @@ const handleFileInput = (file: File | undefined) => {
 
   if (!validateFileType(file)) {
     toast.error('文件类型不被支持，仅接受 .zip, .rar, .7z 格式')
+    return
+  }
+
+  // 与服务端同一份命名策略: 洗不出名字的文件在人机验证之前就提示改名
+  if (!toSafeObjectName(file.name)) {
+    toast.error(UNSAFE_OBJECT_NAME_ERROR)
     return
   }
 

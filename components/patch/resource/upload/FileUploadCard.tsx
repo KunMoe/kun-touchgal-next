@@ -1,6 +1,6 @@
 import { Button, Card, Progress } from '@heroui/react'
 import { File as FileIcon } from 'lucide-react'
-import { sanitizeFileName } from '~/utils/sanitizeFileName'
+import { toSafeObjectName } from '~/utils/safeObjectName'
 import type { FileStatus } from '../share'
 
 interface Props {
@@ -14,7 +14,9 @@ const calcFileSizeMB = (byteNumber: number) => {
 }
 
 export const FileUploadCard = ({ fileData, onRemove }: Props) => {
-  const fileName = sanitizeFileName(fileData.file.name).slice(0, 20)
+  const fileName = (
+    toSafeObjectName(fileData.file.name) ?? fileData.file.name
+  ).slice(0, 20)
 
   return (
     <Card className="p-4 mt-6">

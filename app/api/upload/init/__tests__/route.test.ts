@@ -61,6 +61,8 @@ const CAPTCHA_ERROR = '人机验证无效, 请完成人机验证'
 const QUOTA_ERROR = '您今日的上传大小已达到 5GB 限额'
 const PENDING_ERROR =
   '您有至少一个 Galgame 资源在待审核阶段, 请等待审核结束后再发布资源'
+const NAME_ERROR =
+  '文件名不可用: 仅支持 .zip .rar .7z 格式, 且文件名需要包含文字或数字, 请改名后重新上传'
 
 const validBody = (): Record<string, unknown> => ({
   fileName: 'game.zip',
@@ -148,25 +150,28 @@ describe('POST /api/upload/init 前置闸门顺序', () => {
     expect(userFindUniqueMock).not.toHaveBeenCalled()
   })
 
-  it('未登录且扩展名非法时鉴权消息优先', async () => {
+  it('未登录且文件名不可用时鉴权消息优先', async () => {
     verifyHeaderCookieMock.mockResolvedValue(null)
     const res = await POST(postRequest({ ...validBody(), fileName: 'a.exe' }))
 
     expect(await res.json()).toBe('用户未认证')
   })
 
-  it('扩展名不在白名单时返回不支持的类型, 先于查用户行', async () => {
-    const res = await POST(postRequest({ ...validBody(), fileName: 'a.exe' }))
+  it.each([
+    ['扩展名不在白名单', 'a.exe'],
+    ['白名单扩展名不在末尾', 'game.zip.exe'],
+    ['没有扩展名', 'archive'],
+    ['扩展名后跟着空格', 'game.zip '],
+    ['主名为空', '.zip'],
+    ['主名只有符号', '【】.zip'],
+    ['主名全是 emoji', '😀❤\ufe0f.zip']
+  ])('%s的文件名被拒, 先于查用户行与人机验证', async (_, fileName) => {
+    const res = await POST(postRequest({ ...validBody(), fileName }))
 
-    expect(await res.json()).toBe('不支持的文件类型: .exe')
+    expect(await res.json()).toBe(NAME_ERROR)
     expect(userFindUniqueMock).not.toHaveBeenCalled()
-  })
-
-  it('无扩展名的文件名取最后一个字符当扩展名报错', async () => {
-    const res = await POST(postRequest({ ...validBody(), fileName: 'archive' }))
-
-    expect(await res.json()).toBe('不支持的文件类型: e')
-    expect(userFindUniqueMock).not.toHaveBeenCalled()
+    expect(checkKunCaptchaExistMock).not.toHaveBeenCalled()
+    expect(presignPutObjectMock).not.toHaveBeenCalled()
   })
 
   it.each(['GAME.ZIP', 'game.rar', 'game.7z'])(
@@ -405,5 +410,42 @@ describe('POST /api/upload/init 成功响应', () => {
       uid: UID
     })
     expect(kvTtl).toBe(24 * 60 * 60)
+  })
+
+  // 暂存 key 的末段与令牌里的 fileName 是同一个名字, 后者就是转正后的下载文件名
+  const stagedName = async (fileName: string) => {
+    signInAs({ role: 3 })
+    const res = await POST(postRequest({ ...validBody(), fileName }))
+    expect(await res.json()).toMatchObject({ uploadUrl: PRESIGNED_URL })
+
+    const [s3Key] = presignPutObjectMock.mock.calls[0]
+    const name = (s3Key as string).split('/').pop()
+    expect(JSON.parse(setKvMock.mock.calls[0][1]).fileName).toBe(name)
+    return name!
+  }
+
+  it('macOS 交来的分解形式文件名先合成再清洗, 浊点不丢', async () => {
+    const name = await stagedName('ガールズ&パッチ.zip'.normalize('NFD'))
+
+    expect(name).toBe('ガールズパッチ.zip')
+  })
+
+  it('文件名里的换行与路径片段进不了 key', async () => {
+    const name = await stagedName('a\n../../b.zip')
+
+    expect(name).toBe('ab.zip')
+  })
+
+  it('平面外文字的长文件名按码点截断, key 仍是合法字符串, 不再让预签名抛错', async () => {
+    const name = await stagedName(`a${'𠮷'.repeat(120)}.zip`)
+
+    expect(name).toBe(`a${'𠮷'.repeat(99)}.zip`)
+    expect(name.isWellFormed()).toBe(true)
+  })
+
+  it('大写扩展名落成白名单里的小写形式', async () => {
+    const name = await stagedName('GAME.ZIP')
+
+    expect(name).toBe('GAME.zip')
   })
 })
