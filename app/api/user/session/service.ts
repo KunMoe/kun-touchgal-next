@@ -1,6 +1,7 @@
 import { cache } from 'react'
 import { cookies } from 'next/headers'
-import { deleteKunToken, resolveKunSiteSession } from '~/server/auth/session'
+import { resolveKunSiteSession } from '~/server/auth/session'
+import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import { touchUserLastActiveTime } from '~/server/auth/sessionActivity'
 import { getUserStatus } from '~/app/api/user/status/service'
 import { getUnreadMessageStatus } from '~/app/api/message/unread/service'
@@ -36,7 +37,7 @@ const getUserState = async (uid: number): Promise<UserState | null> => {
   const user = await getUserStatus(uid)
   if (typeof user === 'string') {
     // 库给出的正面证据: 删不掉会话也不改变结论 (这个分支不写缓存, 下次照样查库拒绝)
-    await deleteKunToken(uid).catch((error) =>
+    await finishKunSecurityEvent(uid, 'ban-detected').catch((error) =>
       logSessionError('Failed to revoke sessions of a missing user:', error)
     )
     return null

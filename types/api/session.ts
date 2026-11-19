@@ -25,6 +25,8 @@ export interface KunGalgameStatelessPayload {
   require2FA: boolean
   id: number
   jti: string
+  // 第一步校验密码时读到的安全戳 (毫秒); 第二步与它自己读到的那一行比较
+  cs?: number
 }
 
 export interface UserSession {

@@ -19,6 +19,11 @@ import { toKunRole } from '~/constants/role'
 import { kunCookieOptions } from './cookieOptions'
 import { updateUserLastLoginTime } from './sessionActivity'
 import {
+  rejectOnStampMismatch,
+  stampValueOf,
+  tokenStampOf
+} from './securityStamp'
+import {
   getCachedAuthUser,
   getUserSessionCacheScope,
   getUserSessionInvalidationKv,
@@ -42,6 +47,8 @@ export interface KunGalgamePayload {
   role: number
   // 站点认证时刻 (秒): 输入凭据登录的那一刻。OIDC 的 auth_time 取它
   auth_time?: number
+  // 签发时读到的安全戳 (毫秒, 库里为 null 时是 0)。之前签发的令牌没有它, 按 0 处理
+  cs?: number
   iat?: number
   exp?: number
 }
@@ -286,7 +293,12 @@ const nowSeconds = () => Math.floor(Date.now() / 1000)
 // 签出一个站点会话令牌并一次写入 token、会话元数据与会话缓存版本键 (一段 Lua):
 // 版本键随签发轮换, 新会话不会读到签发之前写入的鉴权缓存。全仓只有这里调 jwt.sign 签会话令牌
 const issueKunSessionToken = async (
-  subject: { id: number; name: string; role: number },
+  subject: {
+    id: number
+    name: string
+    role: number
+    security_stamp: Date | null
+  },
   context?: LoginSessionContext,
   authTime = nowSeconds()
 ) => {
@@ -297,7 +309,9 @@ const issueKunSessionToken = async (
     uid: subject.id,
     name: subject.name,
     role: subject.role,
-    auth_time: authTime
+    auth_time: authTime,
+    // 取自校验凭据时读到的那一行: 读完之后凭据被改了, 这张令牌一出生就对不上
+    cs: stampValueOf(subject.security_stamp)
   }
 
   const token = jwt.sign(payload, process.env.JWT_SECRET!, {
@@ -315,11 +329,44 @@ const issueKunSessionToken = async (
   return { token, jti: payload.jti }
 }
 
+// 安全戳刷新之后保留当前会话 (securityEvents 的 current: 'keep'): 同一个会话 (jti)、同一个
+// 认证时刻与到期时刻, 只换上新戳, 覆盖 Redis 里的令牌并写回 cookie。会话元数据原样保留
+export const reissueKunSessionToken = async (
+  current: KunGalgamePayload,
+  stamp: Date
+) => {
+  const ttlSeconds = getTokenTtlSeconds(current)
+  if (ttlSeconds <= 0) {
+    return
+  }
+  const payload: KunGalgamePayload = {
+    iss: current.iss,
+    aud: current.aud,
+    jti: current.jti,
+    uid: current.uid,
+    name: current.name,
+    role: current.role,
+    auth_time: current.auth_time ?? current.iat,
+    cs: stampValueOf(stamp),
+    exp: current.exp
+  }
+  const token = jwt.sign(payload, process.env.JWT_SECRET!)
+  const metadata =
+    parseLoginSessionMetadata(
+      await getKv(getLoginSessionKey(current.uid, current.jti))
+    ) ?? createLoginSessionMetadata(current.jti)
+  await setKunTokenSession(payload, token, metadata, ttlSeconds)
+
+  const cookie = await cookies()
+  cookie.set(KUN_AUTH_TOKEN_COOKIE, token, kunCookieOptions(ttlSeconds))
+}
+
 export interface KunSessionSubject {
   id: number
   name: string
   role: number
   status: number
+  security_stamp: Date | null
 }
 
 export type EstablishKunSessionResult =
@@ -354,7 +401,13 @@ export const mintKunSessionToken = async (
 ) => {
   const user = await prisma.user.findUnique({
     where: { id: uid },
-    select: { id: true, name: true, role: true, status: true }
+    select: {
+      id: true,
+      name: true,
+      role: true,
+      status: true,
+      security_stamp: true
+    }
   })
   if (!user || user.status === 2) {
     throw new Error(`用户 ${uid} 不存在或已被封禁`)
@@ -410,17 +463,26 @@ const loadAuthUser = async (uid: number) => {
     return cached
   }
 
-  const user = await prisma.user.findUnique({
+  const row = await prisma.user.findUnique({
     where: { id: uid },
     select: {
       id: true,
       name: true,
       role: true,
       status: true,
-      blocked_tag_ids: true
+      blocked_tag_ids: true,
+      security_stamp: true
     }
   })
-  if (user && user.status !== 2 && scope) {
+  if (!row) {
+    return null
+  }
+  const { security_stamp, ...rest } = row
+  const user: AuthUserCache = {
+    ...rest,
+    securityStamp: stampValueOf(security_stamp)
+  }
+  if (user.status !== 2 && scope) {
     await setCachedAuthUser(uid, user, scope).catch(() => undefined)
   }
   return user
@@ -474,6 +536,24 @@ export const resolveKunSiteSession = async (
       // 库给出的是正面证据, 删不掉会话也不改变结论: 这个分支不写鉴权缓存, 下次照样查库拒绝
       await deleteKunToken(payload.uid).catch((error) =>
         logSessionError('Failed to revoke sessions of a banned user:', error)
+      )
+      return ANONYMOUS_SITE_SESSION
+    }
+
+    // 令牌签发之后凭据或安全属性变过 (安全戳刷新了): 这张令牌作废, 删掉这个会话。
+    // 按值相等比较: 在途登录在改密之后才写入会话, 只比签发时刻拦不住它
+    const tokenStamp = tokenStampOf(payload)
+    if (
+      tokenStamp !== user.securityStamp &&
+      rejectOnStampMismatch('site', {
+        uid: payload.uid,
+        jti: payload.jti,
+        tokenStamp,
+        userStamp: user.securityStamp
+      })
+    ) {
+      await cleanupLoginSessions(payload.uid, [payload.jti]).catch(
+        () => undefined
       )
       return ANONYMOUS_SITE_SESSION
     }

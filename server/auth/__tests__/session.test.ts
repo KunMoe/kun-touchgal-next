@@ -7,11 +7,15 @@ const redis = await vi.hoisted(async () =>
   (await import('~/server/auth/__tests__/_redisFake')).createRedisFake()
 )
 
-const { findUniqueMock, userUpdateMock, cookieSetMock } = vi.hoisted(() => ({
-  findUniqueMock: vi.fn(),
-  userUpdateMock: vi.fn(),
-  cookieSetMock: vi.fn()
-}))
+const { findUniqueMock, userUpdateMock, cookieSetMock, stampMode } = vi.hoisted(
+  () => ({
+    findUniqueMock: vi.fn(),
+    userUpdateMock: vi.fn(),
+    cookieSetMock: vi.fn(),
+    // 安全戳不一致时是否拒绝 (强制模式); 影子模式只记日志
+    stampMode: { enforce: true }
+  })
+)
 
 vi.mock('~/lib/redis', () => redis.module)
 vi.mock('~/prisma/index', () => ({
@@ -20,14 +24,21 @@ vi.mock('~/prisma/index', () => ({
 vi.mock('next/headers', () => ({
   cookies: async () => ({ set: cookieSetMock })
 }))
+vi.mock('~/server/auth/securityStamp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/auth/securityStamp')>()),
+  rejectOnStampMismatch: vi.fn(() => stampMode.enforce)
+}))
 
 import {
   establishKunSession,
   KUN_BANNED_LOGIN_MESSAGE,
   mintKunSessionToken,
+  reissueKunSessionToken,
   resolveKunSiteSession,
   verifyKunTokenWithUser
 } from '~/server/auth/session'
+import { rejectOnStampMismatch } from '~/server/auth/securityStamp'
+import { invalidateUserSession } from '~/server/auth/sessionCache'
 
 const SECRET = 'session-test-secret'
 const ISS = 'kun-test-iss'
@@ -47,6 +58,7 @@ const row = (overrides: Record<string, unknown> = {}) => ({
   role: 1,
   status: 0,
   blocked_tag_ids: [3],
+  security_stamp: null as Date | null,
   ...overrides
 })
 
@@ -95,6 +107,7 @@ beforeEach(() => {
   vi.stubEnv('JWT_AUD', AUD)
   findUniqueMock.mockResolvedValue(row())
   userUpdateMock.mockResolvedValue({})
+  stampMode.enforce = true
 })
 
 afterEach(() => {
@@ -115,6 +128,7 @@ describe('establishKunSession', () => {
       [
         'aud',
         'auth_time',
+        'cs',
         'exp',
         'iat',
         'iss',
@@ -126,6 +140,8 @@ describe('establishKunSession', () => {
     )
     expect(payload).toMatchObject({ iss: ISS, aud: AUD, uid: UID, role: 1 })
     expect(payload.auth_time).toBe(T0 / 1000)
+    // 库里的戳为 null: cs 记作 0
+    expect(payload.cs).toBe(0)
     expect(payload.iat).toBe(T0 / 1000)
     expect(payload.exp).toBe(T0 / 1000 + THIRTY_DAYS)
 
@@ -328,5 +344,127 @@ describe('mintKunSessionToken', () => {
 
     findUniqueMock.mockResolvedValue(null)
     await expect(mintKunSessionToken(UID)).rejects.toThrow()
+  })
+})
+
+describe('安全戳', () => {
+  const STAMP = new Date(T0 - 60_000)
+  const LATER = new Date(T0 + 1000)
+
+  it('令牌的 cs 取自校验凭据时读到的那一行', async () => {
+    const { token } = await establish(row({ security_stamp: STAMP }))
+
+    expect((jwt.decode(token) as { cs: number }).cs).toBe(STAMP.getTime())
+  })
+
+  it('库里的戳与令牌一致: 已认证', async () => {
+    const { token } = await establish(row({ security_stamp: STAMP }))
+    findUniqueMock.mockResolvedValue(row({ security_stamp: STAMP }))
+
+    expect((await resolveKunSiteSession(token)).kind).toBe('authenticated')
+    expect(rejectOnStampMismatch).not.toHaveBeenCalled()
+  })
+
+  it('不带 cs 的存量令牌与库里的 null 都按 0 处理: 上线不踢人', async () => {
+    const token = sign({ iss: ISS, aud: AUD, jti: 'old', uid: UID })
+    seedSession(token, 'old')
+
+    expect((await resolveKunSiteSession(token)).kind).toBe('authenticated')
+  })
+
+  it('签发之后戳刷新过 (改密 / 在途登录读到旧行): 匿名, 删掉这个会话', async () => {
+    const { token, jti } = await establish(row({ security_stamp: STAMP }))
+    const other = await establish(row({ security_stamp: LATER }))
+    findUniqueMock.mockResolvedValue(row({ security_stamp: LATER }))
+
+    expect(await resolveKunSiteSession(token)).toEqual({ kind: 'anonymous' })
+    expect(rejectOnStampMismatch).toHaveBeenCalledWith('site', {
+      uid: UID,
+      jti,
+      tokenStamp: STAMP.getTime(),
+      userStamp: LATER.getTime()
+    })
+    expect(redis.has(tokenKey(jti))).toBe(false)
+    expect(redis.members(setKey())).toEqual([other.jti])
+    // 同一账号带着新戳的会话不受影响
+    expect((await resolveKunSiteSession(other.token)).kind).toBe(
+      'authenticated'
+    )
+  })
+
+  it('存量令牌 (无 cs) 遇到已刷新的戳: 同样作废', async () => {
+    const token = sign({ iss: ISS, aud: AUD, jti: 'old', uid: UID })
+    seedSession(token, 'old')
+    findUniqueMock.mockResolvedValue(row({ security_stamp: LATER }))
+
+    expect(await resolveKunSiteSession(token)).toEqual({ kind: 'anonymous' })
+  })
+
+  it('影子模式: 不一致只记日志, 照常认证, 不删会话', async () => {
+    stampMode.enforce = false
+    const { token, jti } = await establish(row({ security_stamp: STAMP }))
+    findUniqueMock.mockResolvedValue(row({ security_stamp: LATER }))
+
+    expect((await resolveKunSiteSession(token)).kind).toBe('authenticated')
+    expect(rejectOnStampMismatch).toHaveBeenCalledTimes(1)
+    expect(redis.get(tokenKey(jti))).toBe(token)
+  })
+
+  it('鉴权缓存里没有安全戳的旧条目当作未命中, 回源读库', async () => {
+    const { token } = await establish()
+    await resolveKunSiteSession(token)
+    const authKey =
+      redis.keys().find((key) => key.startsWith('session:authuser:')) ?? ''
+    const cached = JSON.parse(redis.get(authKey) ?? '{}')
+    expect(cached.securityStamp).toBe(0)
+    delete cached.securityStamp
+    redis.put(authKey, JSON.stringify(cached), 600)
+    findUniqueMock.mockClear()
+
+    await resolveKunSiteSession(token)
+
+    expect(findUniqueMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('重签当前会话: 同一个 jti、认证时刻与到期时刻, 换上新戳, 写回 cookie, 元数据不变', async () => {
+    const { token, jti } = await establish(row({ security_stamp: STAMP }), {
+      ip: '203.0.113.8',
+      userAgent: 'vitest'
+    })
+    const before = jwt.decode(token) as Record<string, number | string>
+    const metadata = redis.get(sessionKey(jti))
+    vi.setSystemTime(T0 + 60_000)
+    cookieSetMock.mockClear()
+    findUniqueMock.mockResolvedValue(row({ security_stamp: STAMP }))
+
+    const session = await resolveKunSiteSession(token)
+    if (session.kind !== 'authenticated') {
+      throw new Error('expected an authenticated session')
+    }
+    // 与 finishKunSecurityEvent 的次序一致: 先失效鉴权缓存 (里面还是旧戳), 再重签
+    await invalidateUserSession(UID)
+    await reissueKunSessionToken(session.payload, LATER)
+
+    const reissued = cookieSetMock.mock.calls[0]?.[1] as string
+    const after = jwt.decode(reissued) as Record<string, number | string>
+    expect(after).toMatchObject({
+      jti,
+      uid: UID,
+      auth_time: before.auth_time,
+      exp: before.exp,
+      cs: LATER.getTime()
+    })
+    expect(redis.get(tokenKey(jti))).toBe(reissued)
+    expect(redis.ttl(tokenKey(jti))).toBe(THIRTY_DAYS - 60)
+    expect(redis.get(sessionKey(jti))).toBe(metadata)
+    expect(cookieSetMock).toHaveBeenCalledWith(
+      'kun-galgame-patch-moe-token',
+      reissued,
+      expect.objectContaining({ maxAge: THIRTY_DAYS - 60 })
+    )
+
+    findUniqueMock.mockResolvedValue(row({ security_stamp: LATER }))
+    expect((await resolveKunSiteSession(reissued)).kind).toBe('authenticated')
+    expect(await resolveKunSiteSession(token)).toEqual({ kind: 'anonymous' })
   })
 })

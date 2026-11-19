@@ -9,6 +9,7 @@ import {
   disableTwoFactor,
   TWO_FACTOR_STATE_CHANGED
 } from '~/server/auth/twoFactorState'
+import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 
 export const POST = async (req: NextRequest) => {
   const payload = await verifyHeaderCookie(req)
@@ -32,15 +33,24 @@ export const POST = async (req: NextRequest) => {
   }
 
   // 备份码的消费与关闭在同一个事务里, 不能分开提交
-  const failure = await kunTx('twoFactor.disable', async (ctx) => {
-    const outcome = await disableTwoFactor(stepUp.passed, ctx.tx)
-    if (outcome === 'backup-code-gone') {
-      ctx.fail(STEP_UP_BACKUP_CODE_GONE)
+  const result = await kunTx('twoFactor.disable', async (ctx) => {
+    const disabled = await disableTwoFactor(stepUp.passed, ctx.tx)
+    if (disabled.outcome !== 'disabled') {
+      return ctx.fail(
+        disabled.outcome === 'backup-code-gone'
+          ? STEP_UP_BACKUP_CODE_GONE
+          : TWO_FACTOR_STATE_CHANGED
+      )
     }
-    if (outcome === 'not-enabled') {
-      ctx.fail(TWO_FACTOR_STATE_CHANGED)
-    }
+    return { stamp: disabled.stamp }
   })
+  if (typeof result === 'string') {
+    return NextResponse.json(result)
+  }
 
-  return NextResponse.json(failure ?? { success: true, message: '2FA 已禁用' })
+  await finishKunSecurityEvent(payload.uid, '2fa-disabled', {
+    current: payload,
+    stamp: result.stamp
+  })
+  return NextResponse.json({ success: true, message: '2FA 已禁用' })
 }

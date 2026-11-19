@@ -1,11 +1,13 @@
 import { prisma } from '~/prisma/index'
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { hashPassword } from '~/server/auth/algorithm'
 import { requireStepUp } from '~/server/auth/stepUp'
-import { deleteKunToken } from '~/app/api/utils/jwt'
+import {
+  applyKunCredentialChange,
+  finishKunSecurityEvent
+} from '~/server/auth/securityEvents'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { passwordSchema } from '~/validations/user'
 
@@ -35,14 +37,20 @@ const updatePassword = async (req: NextRequest) => {
 
   const hashedPassword = await hashPassword(input.newPassword)
 
-  await prisma.user.update({
-    where: { id: payload.uid },
+  const { count, stamp } = await applyKunCredentialChange(prisma, {
+    uid: payload.uid,
+    event: 'password-changed',
     data: { password: hashedPassword }
   })
+  if (!count) {
+    return '用户不存在'
+  }
 
-  await deleteKunToken(payload.uid)
-  const cookie = await cookies()
-  cookie.delete('kun-galgame-patch-moe-token')
+  // 登出全部会话 (含当前这个) 并清 cookie
+  await finishKunSecurityEvent(payload.uid, 'password-changed', {
+    current: payload,
+    stamp
+  })
 }
 
 export const POST = async (req: NextRequest) => {

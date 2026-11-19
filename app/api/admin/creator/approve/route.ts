@@ -5,7 +5,10 @@ import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { createMessage } from '~/app/api/utils/message'
 import { kunParsePutBody } from '~/app/api/utils/parseQuery'
 import { approveCreatorSchema } from '~/validations/admin'
-import { invalidateUserSession } from '~/app/api/user/session/cache'
+import {
+  applyKunCredentialChange,
+  finishKunSecurityEvent
+} from '~/server/auth/securityEvents'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { can } from '~/constants/permission'
 import { KUN_ROLE } from '~/constants/role'
@@ -56,8 +59,10 @@ const approveCreator = async (
 
     // 仅提升普通用户, 避免把积压申请期间已提拔的管理员降级;
     // 命中 0 行不算失败, 申请照样标记通过
-    await prisma.user.updateMany({
-      where: { id: uid, role: { lt: KUN_ROLE.CREATOR } },
+    await applyKunCredentialChange(prisma, {
+      uid,
+      event: 'creator-approved',
+      where: { role: { lt: KUN_ROLE.CREATOR } },
       data: { role: { set: KUN_ROLE.CREATOR } }
     })
 
@@ -84,7 +89,8 @@ const approveCreator = async (
   if (typeof result === 'string') {
     return result
   }
-  await invalidateUserSession(uid)
+  // 升权: 策略表只失效会话缓存, 不登出
+  await finishKunSecurityEvent(uid, 'creator-approved')
   await invalidateUnread(uid).catch(() => undefined)
   return result
 }

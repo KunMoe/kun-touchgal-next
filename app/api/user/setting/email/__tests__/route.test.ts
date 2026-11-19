@@ -596,7 +596,8 @@ describe('POST /api/user/setting/email: notice and commit', () => {
         reverted: null
       }
     ])
-    expect(kv.keys()).toEqual([])
+    // 撤销状态不再放 Redis; 剩下的只有提交之后失效会话缓存写的版本键 (securityEvents)
+    expect(kv.keys()).toEqual([`session:user:version:${UID}`])
     expect(db.transactions).toEqual([{ committed: true }])
   })
 

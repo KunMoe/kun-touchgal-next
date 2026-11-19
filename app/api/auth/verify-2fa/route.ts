@@ -18,15 +18,21 @@ import {
   SECOND_FACTOR_FAILURE_MESSAGE
 } from '~/server/auth/secondFactor'
 import { consumeTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'
+import {
+  rejectOnStampMismatch,
+  stampValueOf,
+  tokenStampOf
+} from '~/server/auth/securityStamp'
+import type { KunGalgameStatelessPayload } from '~/types/api/session'
 import type { TwoFactorAttemptReservation } from '~/app/api/auth/_twoFactorChallenge'
 
 const verifyLogin2FA = async (
   input: z.infer<typeof verifyLogin2FASchema>,
-  uid: number,
-  jti: string,
+  challenge: KunGalgameStatelessPayload,
   context: { ip: string; userAgent: string }
 ) => {
   const { token, isBackupCode } = input
+  const { id: uid, jti } = challenge
 
   const user = await prisma.user.findUnique({
     where: { id: uid }
@@ -34,6 +40,23 @@ const verifyLogin2FA = async (
 
   if (!user || !user.enable_2fa) {
     return '用户未启用 2FA'
+  }
+
+  // 第一步之后凭据变过 (改密、重置): 这次挑战作废, 在消费备份码或登记验证码之前就拒绝
+  const challengeStamp = tokenStampOf(challenge)
+  const userStamp = stampValueOf(user.security_stamp)
+  if (
+    challengeStamp !== userStamp &&
+    rejectOnStampMismatch('two-factor', {
+      uid,
+      jti,
+      tokenStamp: challengeStamp,
+      userStamp
+    })
+  ) {
+    const cookie = await cookies()
+    cookie.delete('kun-galgame-patch-moe-2fa-token')
+    return '2FA 临时令牌已失效, 请重新登录'
   }
 
   if (isBackupCode) {
@@ -104,7 +127,7 @@ export const POST = async (req: NextRequest) => {
 
   let response: Awaited<ReturnType<typeof verifyLogin2FA>>
   try {
-    response = await verifyLogin2FA(input, payload.id, payload.jti, {
+    response = await verifyLogin2FA(input, payload, {
       ip,
       userAgent: req.headers.get('user-agent') ?? ''
     })

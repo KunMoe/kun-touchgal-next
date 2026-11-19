@@ -10,12 +10,13 @@ const redis = await vi.hoisted(async () =>
   (await import('~/server/auth/__tests__/_redisFake')).createRedisFake()
 )
 
-const { users, cookieDeletes } = vi.hoisted(() => ({
+const { users, cookieDeletes, stampWrites } = vi.hoisted(() => ({
   users: new Map<
     number,
     { id: number; name: string; role: number; status: number }
   >(),
-  cookieDeletes: [] as string[]
+  cookieDeletes: [] as string[],
+  stampWrites: [] as { uid: number; data: Record<string, unknown> }[]
 }))
 
 vi.mock('~/lib/redis', () => redis.module)
@@ -25,6 +26,14 @@ vi.mock('~/prisma/index', () => ({
       findUnique: async (args: { where: { id: number } }) => {
         const row = users.get(args.where.id)
         return row ? { ...row, blocked_tag_ids: [] } : null
+      },
+      // 「退出其它设备」只写安全戳 (策略不刷新时 data 为空, Prisma 不发查询)
+      updateMany: async (args: {
+        where: { id: number }
+        data: Record<string, unknown>
+      }) => {
+        stampWrites.push({ uid: args.where.id, data: args.data })
+        return { count: Object.keys(args.data).length ? 1 : 0 }
       }
     }
   }
@@ -79,6 +88,7 @@ beforeEach(() => {
   redis.reset()
   users.clear()
   cookieDeletes.length = 0
+  stampWrites.length = 0
   users.set(UID, { id: UID, name: 'kun', role: 1, status: 0 })
   users.set(OTHER_UID, { id: OTHER_UID, name: 'other', role: 1, status: 0 })
   vi.useFakeTimers({ toFake: ['Date'] })

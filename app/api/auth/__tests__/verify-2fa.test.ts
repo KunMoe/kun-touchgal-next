@@ -12,7 +12,8 @@ const {
   parseCookiesMock,
   reserveAttemptMock,
   checkTotpMock,
-  verify2FAMock
+  verify2FAMock,
+  stampMode
 } = vi.hoisted(() => ({
   consumeBackupCodeMock: vi.fn(),
   consumeChallengeMock: vi.fn(),
@@ -25,7 +26,9 @@ const {
   parseCookiesMock: vi.fn(),
   reserveAttemptMock: vi.fn(),
   checkTotpMock: vi.fn(),
-  verify2FAMock: vi.fn()
+  verify2FAMock: vi.fn(),
+  // 安全戳不一致时是否拒绝 (强制模式); 影子模式只记日志
+  stampMode: { enforce: true }
 }))
 
 vi.mock('next/headers', () => ({
@@ -86,6 +89,11 @@ vi.mock('~/app/api/auth/_twoFactorChallenge', () => ({
   reserveTwoFactorAttempt: reserveAttemptMock
 }))
 
+vi.mock('~/server/auth/securityStamp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/auth/securityStamp')>()),
+  rejectOnStampMismatch: vi.fn(() => stampMode.enforce)
+}))
+
 vi.mock('~/server/auth/twoFactorBackupCode', () => ({
   consumeTwoFactorBackupCode: consumeBackupCodeMock
 }))
@@ -141,6 +149,7 @@ beforeEach(() => {
   consumeChallengeMock.mockResolvedValue(true)
   establishSessionMock.mockResolvedValue({ ok: true })
   getUserStatusMock.mockResolvedValue({ uid: 7, name: 'tester' })
+  stampMode.enforce = true
 })
 
 describe('POST /api/auth/verify-2fa', () => {
@@ -303,5 +312,52 @@ describe('POST /api/auth/verify-2fa', () => {
 
     await expect(response.json()).resolves.toBe('banned')
     expect(getUserStatusMock).not.toHaveBeenCalled()
+  })
+
+  describe('第一步之后凭据变过 (安全戳与临时令牌里的 cs 不一致)', () => {
+    const CHANGED = new Date('2027-01-15T08:00:00.000Z')
+
+    beforeEach(() => {
+      findUniqueMock.mockResolvedValue({ ...user, security_stamp: CHANGED })
+      checkTotpMock.mockResolvedValue('ok')
+    })
+
+    it('在校验第二因子之前拒绝, 删掉临时 cookie, 不建立会话', async () => {
+      const response = await POST(createRequest())
+
+      await expect(response.json()).resolves.toBe(
+        '2FA 临时令牌已失效, 请重新登录'
+      )
+      expect(checkTotpMock).not.toHaveBeenCalled()
+      expect(consumeBackupCodeMock).not.toHaveBeenCalled()
+      expect(consumeChallengeMock).not.toHaveBeenCalled()
+      expect(establishSessionMock).not.toHaveBeenCalled()
+      expect(cookieDeleteMock).toHaveBeenCalledWith(
+        'kun-galgame-patch-moe-2fa-token'
+      )
+    })
+
+    it('临时令牌带着同一个戳时照常通过', async () => {
+      verify2FAMock.mockReturnValue({
+        id: 7,
+        jti: 'challenge-id',
+        require2FA: true,
+        cs: CHANGED.getTime()
+      })
+
+      const response = await POST(createRequest())
+
+      expect(await response.json()).toMatchObject({ uid: 7 })
+      expect(establishSessionMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('影子模式: 只记日志, 照常通过', async () => {
+      stampMode.enforce = false
+
+      const response = await POST(createRequest())
+
+      expect(await response.json()).toMatchObject({ uid: 7 })
+      expect(establishSessionMock).toHaveBeenCalledTimes(1)
+    })
   })
 })

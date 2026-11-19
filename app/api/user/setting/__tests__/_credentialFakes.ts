@@ -17,7 +17,7 @@ import { generateConfig, Hotp } from 'time2fa'
 //   vi.mock('~/lib/redis', () => fakes.modules.redis)
 //   vi.mock('~/server/auth/attemptBudget', () => fakes.modules.budget)
 //   vi.mock('~/middleware/_verifyHeaderCookie', () => fakes.modules.session)
-//   vi.mock('~/app/api/utils/jwt', () => fakes.modules.jwt)
+//   vi.mock('~/server/auth/session', () => fakes.modules.sessionStore)
 //   vi.mock('next/headers', () => fakes.modules.headers)
 // 每个用例前调 fakes.reset(); 要发邮件的用例再调 fakes.mail.install() (vi.stubGlobal 的 fetch)
 
@@ -30,6 +30,7 @@ export interface FakeUserRow {
   enable_2fa: boolean
   two_factor_secret: string
   two_factor_backup: string[]
+  security_stamp: Date | null
 }
 
 export interface FakeEmailChangeRow {
@@ -58,7 +59,8 @@ const USER_COLUMNS = new Set<string>([
   'role',
   'enable_2fa',
   'two_factor_secret',
-  'two_factor_backup'
+  'two_factor_backup',
+  'security_stamp'
 ])
 const ADMIN_LOG_COLUMNS = new Set<string>(['type', 'user_id', 'content'])
 
@@ -93,7 +95,10 @@ const checkColumns = (
   for (const [key, value] of Object.entries(record)) {
     const isStringArray =
       Array.isArray(value) && value.every((item) => typeof item === 'string')
-    if (!columns.has(key) || !(isScalar(value) || isStringArray)) {
+    if (
+      !columns.has(key) ||
+      !(isScalar(value) || isStringArray || value instanceof Date)
+    ) {
       unsupported(what, { [key]: value })
     }
   }
@@ -573,6 +578,10 @@ export interface FakeSessionPayload {
 const createFakeSession = () => {
   let current: FakeSessionPayload | null = null
   const revokedUids: number[] = []
+  // deleteOtherKunTokenSessions 的调用: 吊销这个账号除 keptJti 之外的会话
+  const revokedOthers: { uid: number; keptJti: string }[] = []
+  // reissueKunSessionToken 的调用: 当前会话换上新戳重签
+  const reissued: { uid: number; jti: string; stamp: Date }[] = []
   const deletedCookies: string[] = []
   const setCookies: unknown[][] = []
   // 吊销会话时的回调, 用于在吊销那一刻观察库里的状态
@@ -580,6 +589,8 @@ const createFakeSession = () => {
 
   return {
     revokedUids,
+    revokedOthers,
+    reissued,
     deletedCookies,
     setCookies,
     signIn: (uid: number, role: number, name = `user-${uid}`) => {
@@ -594,10 +605,21 @@ const createFakeSession = () => {
     sessionModule: {
       verifyHeaderCookie: async () => current
     },
-    jwtModule: {
+    // server/auth/session 里 securityEvents 用到的三个会话存储函数
+    sessionStoreModule: {
       deleteKunToken: async (uid: number) => {
         revokedUids.push(uid)
         onRevoke?.(uid)
+      },
+      deleteOtherKunTokenSessions: async (uid: number, keptJti: string) => {
+        revokedOthers.push({ uid, keptJti })
+        return 0
+      },
+      reissueKunSessionToken: async (
+        payload: { uid: number; jti: string },
+        stamp: Date
+      ) => {
+        reissued.push({ uid: payload.uid, jti: payload.jti, stamp })
       }
     },
     headersModule: {
@@ -613,6 +635,8 @@ const createFakeSession = () => {
     reset: () => {
       current = null
       revokedUids.length = 0
+      revokedOthers.length = 0
+      reissued.length = 0
       deletedCookies.length = 0
       setCookies.length = 0
       onRevoke = null
@@ -704,7 +728,7 @@ export const createCredentialFakes = () => {
       redis: kv.module,
       budget: budget.module,
       session: session.sessionModule,
-      jwt: session.jwtModule,
+      sessionStore: session.sessionStoreModule,
       headers: session.headersModule
     },
     reset: () => {
@@ -728,6 +752,7 @@ export const makeUser = (
   enable_2fa: false,
   two_factor_secret: '',
   two_factor_backup: [],
+  security_stamp: null,
   ...overrides
 })
 

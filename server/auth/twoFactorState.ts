@@ -7,6 +7,7 @@ import {
   verifyEnrollmentCode
 } from './secondFactor'
 import { consumeStepUpBackupCode } from './stepUp'
+import { applyKunCredentialChange } from './securityEvents'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { StepUpPassed } from './stepUp'
 
@@ -37,8 +38,10 @@ export const beginEnrollment = async (
     kunMoyuMoe.titleShort,
     user.name || passed.uid.toString()
   )
-  const updated = await prisma.user.updateMany({
-    where: { id: passed.uid, enable_2fa: false },
+  const updated = await applyKunCredentialChange(prisma, {
+    uid: passed.uid,
+    event: '2fa-secret-staged',
+    where: { enable_2fa: false },
     data: {
       two_factor_secret: key.secret,
       two_factor_backup: [],
@@ -84,38 +87,46 @@ export const confirmEnrollment = async (
   }
 
   const codes = issueBackupCodes()
-  const updated = await prisma.user.updateMany({
-    where: {
-      id: uid,
-      enable_2fa: false,
-      two_factor_secret: user.two_factor_secret
-    },
+  const updated = await applyKunCredentialChange(prisma, {
+    uid,
+    event: '2fa-enabled',
+    where: { enable_2fa: false, two_factor_secret: user.two_factor_secret },
     data: { enable_2fa: true, two_factor_backup: codes.stored }
   })
   if (!updated.count) {
     return TWO_FACTOR_STATE_CHANGED
   }
 
-  return { backupCode: codes.plain }
+  // stamp 交给 finishKunSecurityEvent, 不回给客户端
+  return { backupCode: codes.plain, stamp: updated.stamp }
 }
 
 // 关闭只有两种授权: 本人刚通过二次验证, 或管理员代为关闭 (由后台路由鉴权并写审计日志)。
 // 必须在事务里调: 本人用备份码证明时, 备份码的消费与关闭要么都做、要么都不做。
 //   backup-code-gone: 备份码在校验之后被别的请求先用掉了
 //   not-enabled: 该账号此刻并未启用
+// 关闭成功时带上这次写下的安全戳, 提交之后交给 finishKunSecurityEvent
 export const disableTwoFactor = async (
   by:
     | StepUpPassed<'twoFactor.disable'>
     | { kind: 'admin-override'; adminUid: number; uid: number },
   tx: Prisma.TransactionClient
-): Promise<'disabled' | 'backup-code-gone' | 'not-enabled'> => {
-  if (!('kind' in by) && !(await consumeStepUpBackupCode(by, tx))) {
-    return 'backup-code-gone'
+): Promise<
+  | { outcome: 'disabled'; stamp: Date | null }
+  | { outcome: 'backup-code-gone' | 'not-enabled' }
+> => {
+  const isAdmin = 'kind' in by
+  if (!isAdmin && !(await consumeStepUpBackupCode(by, tx))) {
+    return { outcome: 'backup-code-gone' }
   }
 
-  const updated = await tx.user.updateMany({
-    where: { id: by.uid, enable_2fa: true },
+  const updated = await applyKunCredentialChange(tx, {
+    uid: by.uid,
+    event: isAdmin ? '2fa-disabled-by-admin' : '2fa-disabled',
+    where: { enable_2fa: true },
     data: { enable_2fa: false, two_factor_secret: '', two_factor_backup: [] }
   })
-  return updated.count === 1 ? 'disabled' : 'not-enabled'
+  return updated.count === 1
+    ? { outcome: 'disabled', stamp: updated.stamp }
+    : { outcome: 'not-enabled' }
 }

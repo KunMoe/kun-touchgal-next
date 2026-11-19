@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { delKv, getKv } from '~/lib/redis'
-import { deleteKunToken } from '~/app/api/utils/jwt'
+import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import {
   findRevertibleEmailChange,
   revertEmailChange,
@@ -136,7 +136,7 @@ export const POST = async (req: NextRequest) => {
 
   // 邮箱已经改回来了。把这个账号的全部会话登出: 改走邮箱的人手里多半还握着一个
   try {
-    await deleteKunToken(result.uid)
+    await finishKunSecurityEvent(result.uid, 'email-reverted')
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to revoke sessions after email revert', error)

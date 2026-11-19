@@ -11,7 +11,7 @@ const fakes = await vi.hoisted(async () =>
 vi.mock('~/prisma/index', () => fakes.modules.prisma)
 vi.mock('~/lib/redis', () => fakes.modules.redis)
 vi.mock('~/middleware/_verifyHeaderCookie', () => fakes.modules.session)
-vi.mock('~/app/api/utils/jwt', () => fakes.modules.jwt)
+vi.mock('~/server/auth/session', () => fakes.modules.sessionStore)
 
 import {
   jsonRequest,

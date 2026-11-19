@@ -15,6 +15,11 @@ import {
   KUN_BANNED_LOGIN_MESSAGE
 } from '~/server/auth/session'
 import { kunCookieOptions } from '~/server/auth/cookieOptions'
+import { stampValueOf } from '~/server/auth/securityStamp'
+import {
+  applyKunCredentialChange,
+  finishKunSecurityEvent
+} from '~/server/auth/securityEvents'
 import { loginSchema } from '~/validations/auth'
 import { prisma } from '~/prisma/index'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
@@ -33,10 +38,14 @@ const upgradePasswordHash = async (
   previousPasswordHash: string
 ) => {
   try {
-    await prisma.user.updateMany({
-      where: { id: userId, password: previousPasswordHash },
+    // 以旧哈希为条件: 并发改了密码就命中 0 行, 不会把新密码覆盖回去。密码没变, 不刷新安全戳
+    await applyKunCredentialChange(prisma, {
+      uid: userId,
+      event: 'password-rehashed',
+      where: { password: previousPasswordHash },
       data: { password: await hashPassword(password) }
     })
+    await finishKunSecurityEvent(userId, 'password-rehashed')
   } catch {
     return
   }
@@ -86,8 +95,14 @@ const login = async (
       return '2FA 验证服务暂不可用, 请稍后重试'
     }
 
+    // 带上这一行的安全戳: 两步之间 (最长 10 分钟) 改了密码, 第二步就要求重新登录
     const tempToken = generateKunStatelessToken(
-      { id: user.id, require2FA: true, jti },
+      {
+        id: user.id,
+        require2FA: true,
+        jti,
+        cs: stampValueOf(user.security_stamp)
+      },
       TWO_FACTOR_CHALLENGE_TTL_SECONDS
     )
     const cookie = await cookies()

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import { deleteKunTokenSession } from '~/app/api/utils/jwt'
+import { deleteKunTokenSession } from '~/server/auth/session'
 
 export async function POST(req: NextRequest) {
   const payload = await verifyHeaderCookie(req)

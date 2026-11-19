@@ -61,7 +61,7 @@ vi.mock('~/app/api/utils/message', () => ({
   createMessage: createMessageMock
 }))
 
-vi.mock('~/app/api/user/session/cache', () => ({
+vi.mock('~/server/auth/sessionCache', () => ({
   invalidateUserSession: invalidateUserSessionMock
 }))
 

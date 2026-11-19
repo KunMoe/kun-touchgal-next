@@ -4,6 +4,7 @@ import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { enableUser2FASchema } from '~/validations/user'
 import { confirmEnrollment } from '~/server/auth/twoFactorState'
+import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 
 export const POST = async (req: NextRequest) => {
   const input = await kunParsePostBody(req, enableUser2FASchema)
@@ -18,5 +19,13 @@ export const POST = async (req: NextRequest) => {
   const result = await confirmEnrollment(payload.uid, input.token, {
     ip: getRemoteIp(req.headers)
   })
-  return NextResponse.json(result)
+  if (typeof result === 'string') {
+    return NextResponse.json(result)
+  }
+
+  await finishKunSecurityEvent(payload.uid, '2fa-enabled', {
+    current: payload,
+    stamp: result.stamp
+  })
+  return NextResponse.json({ backupCode: result.backupCode })
 }

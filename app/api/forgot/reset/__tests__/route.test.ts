@@ -10,7 +10,13 @@ const redis = await vi.hoisted(async () =>
 )
 
 const db = vi.hoisted(() => {
-  type Row = { id: number; name: string; email: string; password: string }
+  type Row = {
+    id: number
+    name: string
+    email: string
+    password: string
+    security_stamp?: Date
+  }
   const users = new Map<number, Row>()
   const queries: string[] = []
   return {
@@ -23,14 +29,18 @@ const db = vi.hoisted(() => {
           const row = users.get(args.where.id)
           return row ? { ...row } : null
         },
-        update: async (args: { where: { id: number }; data: Partial<Row> }) => {
-          queries.push(`update ${JSON.stringify(Object.keys(args.data))}`)
+        // 凭据经 applyKunCredentialChange 写: 只按 id 的平铺 WHERE
+        updateMany: async (args: {
+          where: { id: number }
+          data: Partial<Row>
+        }) => {
+          queries.push(`updateMany ${JSON.stringify(Object.keys(args.data))}`)
           const row = users.get(args.where.id)
           if (!row) {
-            throw new Error('Record to update not found.')
+            return { count: 0 }
           }
           users.set(row.id, { ...row, ...args.data })
-          return { ...users.get(row.id) }
+          return { count: 1 }
         }
       }
     }
@@ -168,10 +178,12 @@ describe('POST /api/forgot/reset', () => {
       expect(stored).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/)
       expect(needsPasswordRehash(stored)).toBe(false)
       await expect(verifyPassword(NEW_PASSWORD, stored)).resolves.toBe(true)
+      // 新密码与安全戳在同一条语句里写入 (重置之后签发早于它的令牌一律作废)
       expect(db.queries).toEqual([
         `findUnique ${JSON.stringify({ where: { id: UID } })}`,
-        'update ["password"]'
+        'updateMany ["password","security_stamp"]'
       ])
+      expect(db.users.get(UID)!.security_stamp).toBeInstanceOf(Date)
       expect(redis.has(resetKey(token))).toBe(false)
       await expect(verifyKunTokenPayload(a)).resolves.toBeNull()
       await expect(verifyKunTokenPayload(b)).resolves.toBeNull()

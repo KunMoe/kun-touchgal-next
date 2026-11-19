@@ -106,7 +106,8 @@ describe('verifyAndLoadUser 用户缓存', () => {
       name: 'kun-new',
       role: 2,
       status: 0,
-      blocked_tag_ids: [9]
+      blocked_tag_ids: [9],
+      securityStamp: 0
     })
 
     const result = await verifyKunTokenWithUser(token)
@@ -118,7 +119,8 @@ describe('verifyAndLoadUser 用户缓存', () => {
       name: 'kun-new',
       role: 2,
       status: 0,
-      blocked_tag_ids: [9]
+      blocked_tag_ids: [9],
+      securityStamp: 0
     })
     expect(result?.payload).toMatchObject({ uid: 7, name: 'kun-new', role: 2 })
   })
@@ -130,7 +132,8 @@ describe('verifyAndLoadUser 用户缓存', () => {
       name: 'kun',
       role: 3,
       status: 0,
-      blocked_tag_ids: []
+      blocked_tag_ids: [],
+      securityStamp: 0
     })
     expect((await verifyKunTokenWithUser(token))?.payload.role).toBe(3)
 
@@ -140,7 +143,8 @@ describe('verifyAndLoadUser 用户缓存', () => {
         name: 'kun',
         role,
         status: 0,
-        blocked_tag_ids: []
+        blocked_tag_ids: [],
+        securityStamp: 0
       })
       expect((await verifyKunTokenWithUser(token))?.payload.role).toBe(1)
     }
@@ -152,7 +156,8 @@ describe('verifyAndLoadUser 用户缓存', () => {
       name: 'kun',
       role: 1,
       status: 2,
-      blocked_tag_ids: []
+      blocked_tag_ids: [],
+      securityStamp: 0
     })
 
     const result = await verifyKunTokenWithUser(token)
@@ -169,18 +174,28 @@ describe('verifyAndLoadUser 用户缓存', () => {
       name: 'kun',
       role: 1,
       status: 0,
-      blocked_tag_ids: [1, 2]
+      blocked_tag_ids: [1, 2],
+      security_stamp: null
     }
     findUniqueMock.mockResolvedValue(dbUser)
+    // 缓存与解析结果里的安全戳是毫秒值, 库里的 null 记作 0
+    const authUser = {
+      id: 7,
+      name: 'kun',
+      role: 1,
+      status: 0,
+      blocked_tag_ids: [1, 2],
+      securityStamp: 0
+    }
 
     const result = await verifyKunTokenWithUser(token)
 
     expect(findUniqueMock).toHaveBeenCalledTimes(1)
-    expect(setCachedAuthUserMock).toHaveBeenCalledWith(7, dbUser, {
+    expect(setCachedAuthUserMock).toHaveBeenCalledWith(7, authUser, {
       generation: '0',
       version: '0'
     })
-    expect(result?.user).toEqual(dbUser)
+    expect(result?.user).toEqual(authUser)
   })
 
   it('token 已被 deleteKunToken 删除时, 即便旧缓存仍在也拒绝且不读缓存 (闸门 A 不变量)', async () => {
@@ -192,7 +207,8 @@ describe('verifyAndLoadUser 用户缓存', () => {
       name: 'kun',
       role: 4,
       status: 0,
-      blocked_tag_ids: []
+      blocked_tag_ids: [],
+      securityStamp: 0
     })
 
     const result = await verifyKunTokenWithUser(token)

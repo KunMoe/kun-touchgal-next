@@ -2,6 +2,7 @@ import { prisma } from '~/prisma/index'
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { resetEmailSchema } from '~/validations/user'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
@@ -85,9 +86,9 @@ const updateEmail = async (req: NextRequest) => {
     return noticeError
   }
 
-  let failure
+  let committed: Awaited<ReturnType<typeof commitEmailChange>>
   try {
-    failure = await commitEmailChange(stepUp.passed, {
+    committed = await commitEmailChange(stepUp.passed, {
       oldEmail: user.email,
       newEmail: input.email,
       revertTokenHash: revert.hash
@@ -95,10 +96,14 @@ const updateEmail = async (req: NextRequest) => {
   } catch {
     return '更新邮箱失败, 请稍后重试'
   }
-  if (failure) {
-    return failure
+  if (typeof committed === 'string') {
+    return committed
   }
 
+  await finishKunSecurityEvent(payload.uid, 'email-changed', {
+    current: payload,
+    stamp: committed.stamp
+  })
   await delKv(input.email).catch(() => undefined)
 }
 

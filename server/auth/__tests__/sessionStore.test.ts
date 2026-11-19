@@ -131,6 +131,7 @@ describe('签发 (mintKunSessionToken)', () => {
     expect(Object.keys(decoded).sort()).toEqual([
       'aud',
       'auth_time',
+      'cs',
       'exp',
       'iat',
       'iss',

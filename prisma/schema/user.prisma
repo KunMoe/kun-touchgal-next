@@ -26,6 +26,9 @@ model user {
   enable_2fa        Boolean  @default(false)
   two_factor_secret String   @default("")
   two_factor_backup String[] @default([])
+  // 安全戳: 凭据或安全属性变更时与凭据写在同一条语句里 (server/auth/securityEvents.ts)。
+  // 站点令牌的 cs 必须与它相等, OIDC 令牌签发得比它早就失效; null 视为 0
+  security_stamp    DateTime?
 
   admin_log admin_log[]
   patch_tag patch_tag[]

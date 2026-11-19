@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
-import { deleteKunToken } from '~/app/api/utils/jwt'
+import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { kunTx } from '~/server/db/tx'
 import { disableTwoFactor } from '~/server/auth/twoFactorState'
@@ -39,11 +39,11 @@ const disableUser2FAByAdmin = async (
   }
 
   const failure = await kunTx('admin.user.twoFactor.disable', async (ctx) => {
-    const outcome = await disableTwoFactor(
+    const disabled = await disableTwoFactor(
       { kind: 'admin-override', adminUid, uid: input.uid },
       ctx.tx
     )
-    if (outcome !== 'disabled') {
+    if (disabled.outcome !== 'disabled') {
       ctx.fail('该用户尚未启用两步验证')
     }
 
@@ -59,7 +59,7 @@ const disableUser2FAByAdmin = async (
     return failure
   }
 
-  await deleteKunToken(input.uid)
+  await finishKunSecurityEvent(input.uid, '2fa-disabled-by-admin')
   return {}
 }
 

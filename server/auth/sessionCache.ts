@@ -97,6 +97,8 @@ export interface AuthUserCache {
   role: number
   status: number
   blocked_tag_ids: number[]
+  // 安全戳的毫秒值 (库里为 null 时是 0), 解析会话时与令牌的 cs 比较
+  securityStamp: number
 }
 
 const getAuthUserCacheKey = (
@@ -116,7 +118,9 @@ const parseCachedAuthUser = (value: string | null): AuthUserCache | null => {
       typeof user.name !== 'string' ||
       typeof user.role !== 'number' ||
       typeof user.status !== 'number' ||
-      !Array.isArray(user.blocked_tag_ids)
+      !Array.isArray(user.blocked_tag_ids) ||
+      // 上线之前写入的条目没有安全戳: 当作未命中回源, 不拿 undefined 去比
+      typeof user.securityStamp !== 'number'
     ) {
       return null
     }

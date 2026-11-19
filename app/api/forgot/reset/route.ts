@@ -4,7 +4,10 @@ import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { forgotPasswordResetSchema } from '~/validations/forgot'
 import { prisma } from '~/prisma/index'
 import { hashPassword } from '~/app/api/utils/algorithm'
-import { deleteKunToken } from '~/app/api/utils/jwt'
+import {
+  applyKunCredentialChange,
+  finishKunSecurityEvent
+} from '~/server/auth/securityEvents'
 import { getKv, delKv } from '~/lib/redis'
 import {
   createForgotPasswordResetKey,
@@ -36,12 +39,16 @@ const resetPassword = async (
   }
 
   const hashedPassword = await hashPassword(input.newPassword)
-  await prisma.user.update({
-    where: { id: user.id },
+  const { count } = await applyKunCredentialChange(prisma, {
+    uid: user.id,
+    event: 'password-reset',
     data: { password: hashedPassword }
   })
+  if (!count) {
+    return INVALID_LINK_MESSAGE
+  }
 
-  await deleteKunToken(user.id)
+  await finishKunSecurityEvent(user.id, 'password-reset')
 }
 
 export const POST = async (req: NextRequest) => {

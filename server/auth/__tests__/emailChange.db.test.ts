@@ -61,11 +61,13 @@ describe.skipIf(!dbContractUrl)(
 
     const change = async (uid: number, oldEmail: string, newEmail: string) => {
       const revert = emailChange.issueRevertToken()
-      const failure = await emailChange.commitEmailChange(passed(uid), {
+      const result = await emailChange.commitEmailChange(passed(uid), {
         oldEmail,
         newEmail,
         revertTokenHash: revert.hash
       })
+      // 成功时带回这次写下的安全戳 (交给 finishKunSecurityEvent), 失败是文案
+      const failure = typeof result === 'string' ? result : undefined
       return { failure, token: revert.token }
     }
 
@@ -238,12 +240,13 @@ describe.skipIf(!dbContractUrl)(
           return user
         }
 
-        const changeWith = (
+        // 失败回文案, 成功回 undefined (提交带回的安全戳这里用不上)
+        const changeWith = async (
           uid: number,
           oldEmail: string,
           backupCode: string
-        ) =>
-          emailChange.commitEmailChange(
+        ) => {
+          const result = await emailChange.commitEmailChange(
             { ...passed(uid), backupCode },
             {
               oldEmail,
@@ -251,6 +254,8 @@ describe.skipIf(!dbContractUrl)(
               revertTokenHash: emailChange.issueRevertToken().hash
             }
           )
+          return typeof result === 'string' ? result : undefined
+        }
 
         const storedCodes = async (uid: number) =>
           (await prisma.user.findUniqueOrThrow({ where: { id: uid } }))

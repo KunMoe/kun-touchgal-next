@@ -1,11 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Account, KoaContextWithOIDC, RefreshToken } from 'oidc-provider'
+import type {
+  AccessToken,
+  Account,
+  AuthorizationCode,
+  KoaContextWithOIDC,
+  RefreshToken
+} from 'oidc-provider'
 
 // Characterization of the OIDC findAccount mapping in lib/oidc/account.ts
-const { findUniqueMock } = vi.hoisted(() => ({ findUniqueMock: vi.fn() }))
+const { findUniqueMock, stampMode } = vi.hoisted(() => ({
+  findUniqueMock: vi.fn(),
+  // 安全戳不一致时是否拒绝 (强制模式); 影子模式只记日志
+  stampMode: { enforce: true }
+}))
 
 vi.mock('~/prisma/index', () => ({
   prisma: { user: { findUnique: findUniqueMock } }
+}))
+vi.mock('~/server/auth/securityStamp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/auth/securityStamp')>()),
+  rejectOnStampMismatch: vi.fn(() => stampMode.enforce)
 }))
 
 import { findAccount } from '~/lib/oidc/account'
@@ -19,6 +33,7 @@ const userRow = (overrides: Record<string, unknown> = {}) => ({
   avatar: 'https://img.test/a.webp',
   bio: 'hello',
   status: 0,
+  security_stamp: null,
   ...overrides
 })
 
@@ -28,6 +43,7 @@ const claimsFor = async (account: Account | undefined, scope: string) =>
 beforeEach(() => {
   vi.resetAllMocks()
   findUniqueMock.mockResolvedValue(userRow())
+  stampMode.enforce = true
 })
 
 describe('findAccount', () => {
@@ -43,7 +59,8 @@ describe('findAccount', () => {
         email: true,
         avatar: true,
         bio: true,
-        status: true
+        status: true,
+        security_stamp: true
       }
     })
   })
@@ -130,22 +147,72 @@ describe('findAccount', () => {
     })
   })
 
-  it('[current: refresh token survives password change] ignores the token argument entirely', async () => {
-    // A refresh token issued long ago (iat 0); nothing in the row or the select can tell
-    // whether the password changed since, so the account resolves exactly as without a token
-    const staleToken = {
-      kind: 'RefreshToken',
-      iat: 0
-    } as unknown as RefreshToken
+  describe('令牌签发得比安全戳早 (改密、重置之后)', () => {
+    // 戳 = 1000 秒; 令牌的 iat / iiat 以秒计
+    const STAMP = new Date(1_000_000)
+    const token = (kind: string, fields: Record<string, number>) =>
+      ({ kind, ...fields }) as unknown as
+        RefreshToken | AccessToken | AuthorizationCode
 
-    const withToken = await findAccount(ctx, '7', staleToken)
-    const withoutToken = await findAccount(ctx, '7')
+    beforeEach(() => {
+      findUniqueMock.mockResolvedValue(userRow({ security_stamp: STAMP }))
+    })
 
-    expect(withToken?.accountId).toBe('7')
-    expect(await claimsFor(withToken, 'openid profile email')).toStrictEqual(
-      await claimsFor(withoutToken, 'openid profile email')
-    )
-    expect(findUniqueMock.mock.calls[0]).toEqual(findUniqueMock.mock.calls[1])
+    it.each([
+      ['RefreshToken', { iat: 2000, iiat: 999 }],
+      ['AccessToken', { iat: 999 }],
+      ['AuthorizationCode', { iat: 999 }]
+    ])('%s: 不再给出身份', async (kind, fields) => {
+      await expect(
+        findAccount(ctx, '7', token(kind, fields))
+      ).resolves.toBeUndefined()
+    })
+
+    it('refresh token 按最初签发时刻 (iiat) 比, 轮换出来的新 iat 不算', async () => {
+      await expect(
+        findAccount(ctx, '7', token('RefreshToken', { iat: 5000, iiat: 999 }))
+      ).resolves.toBeUndefined()
+      expect(
+        (
+          await findAccount(
+            ctx,
+            '7',
+            token('RefreshToken', { iat: 5000, iiat: 1000 })
+          )
+        )?.accountId
+      ).toBe('7')
+    })
+
+    it('与变更同一秒或之后签发的令牌照常放行', async () => {
+      for (const iat of [1000, 1001]) {
+        expect(
+          (await findAccount(ctx, '7', token('AccessToken', { iat })))
+            ?.accountId
+        ).toBe('7')
+      }
+    })
+
+    it('不带令牌 (授权端点载入账号) 时不比较', async () => {
+      expect((await findAccount(ctx, '7'))?.accountId).toBe('7')
+    })
+
+    it('库里没有戳 (从未变更) 时任何令牌都放行', async () => {
+      findUniqueMock.mockResolvedValue(userRow())
+
+      expect(
+        (await findAccount(ctx, '7', token('RefreshToken', { iat: 0 })))
+          ?.accountId
+      ).toBe('7')
+    })
+
+    it('影子模式: 只记日志, 照常给出身份', async () => {
+      stampMode.enforce = false
+
+      expect(
+        (await findAccount(ctx, '7', token('AccessToken', { iat: 999 })))
+          ?.accountId
+      ).toBe('7')
+    })
   })
 
   it('serves claims from the row read in findAccount (no re-read)', async () => {

@@ -6,6 +6,7 @@ import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { beginTwoFactorEnrollmentSchema } from '~/validations/user'
 import { requireStepUp } from '~/server/auth/stepUp'
 import { beginEnrollment } from '~/server/auth/twoFactorState'
+import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 
 export const POST = async (req: NextRequest) => {
   const payload = await verifyHeaderCookie(req)
@@ -29,6 +30,7 @@ export const POST = async (req: NextRequest) => {
   if (typeof key === 'string') {
     return NextResponse.json(key)
   }
+  await finishKunSecurityEvent(payload.uid, '2fa-secret-staged')
 
   return NextResponse.json({
     ...key,

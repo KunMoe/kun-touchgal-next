@@ -119,8 +119,9 @@ describe('POST /api/auth/login with 2FA', () => {
     const jti = createChallengeMock.mock.calls[0][0]
     expect(jti).toEqual(expect.any(String))
     expect(createChallengeMock).toHaveBeenCalledWith(jti, 7)
+    // 带上第一步读到的安全戳 (库里为 null 时是 0), 第二步拿它与自己读到的那一行比
     expect(generateStatelessTokenMock).toHaveBeenCalledWith(
-      { id: 7, require2FA: true, jti },
+      { id: 7, require2FA: true, jti, cs: 0 },
       600
     )
     expect(createChallengeMock.mock.invocationCallOrder[0]).toBeLessThan(

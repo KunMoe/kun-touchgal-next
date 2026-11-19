@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'crypto'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { consumeStepUpBackupCode, STEP_UP_BACKUP_CODE_GONE } from './stepUp'
+import { applyKunCredentialChange } from './securityEvents'
 import type { StepUpPassed } from './stepUp'
 
 // 自助改邮箱的台账 (user_email_change, 一行是一次变更) 与建立在它上面的两条规则:
@@ -44,7 +45,8 @@ export const isEmailChangeCoolingDown = async (uid: number) => {
   return !!recent
 }
 
-// 返回失败文案; 成功返回 undefined。唯一约束冲突 (新邮箱刚被别人占用) 照常抛出
+// 返回失败文案; 成功返回这次写下的安全戳 (策略不刷新时为 null), 交给 finishKunSecurityEvent。
+// 唯一约束冲突 (新邮箱刚被别人占用) 照常抛出
 export const commitEmailChange = (
   passed: StepUpPassed<'email.change'>,
   change: { oldEmail: string; newEmail: string; revertTokenHash: string }
@@ -52,8 +54,10 @@ export const commitEmailChange = (
   const now = new Date()
   return kunTx('email.change', async (ctx) => {
     // 以旧邮箱为条件: 并发的两次变更只有一个命中, 另一个等到行锁后重新判定落空
-    const updated = await ctx.tx.user.updateMany({
-      where: { id: passed.uid, email: change.oldEmail },
+    const updated = await applyKunCredentialChange(ctx.tx, {
+      uid: passed.uid,
+      event: 'email-changed',
+      where: { email: change.oldEmail },
       data: { email: change.newEmail }
     })
     if (!updated.count) {
@@ -84,6 +88,7 @@ export const commitEmailChange = (
         expires: new Date(now.getTime() + WINDOW_MS)
       }
     })
+    return { stamp: updated.stamp }
   })
 }
 
@@ -127,8 +132,10 @@ export const revertEmailChange = async (
       ctx.fail('not-found')
     }
 
-    const restored = await ctx.tx.user.updateMany({
-      where: { id: row.user_id, email: row.new_email },
+    const restored = await applyKunCredentialChange(ctx.tx, {
+      uid: row.user_id,
+      event: 'email-reverted',
+      where: { email: row.new_email },
       data: { email: row.old_email }
     })
     if (!restored.count) {
@@ -153,8 +160,10 @@ export const revertLegacyEmailChange = async (legacy: {
 }): Promise<EmailChangeRevert> => {
   const now = new Date()
   const failure = await kunTx('email.revertLegacy', async (ctx) => {
-    const direct = await ctx.tx.user.updateMany({
-      where: { id: legacy.uid, email: legacy.newEmail },
+    const direct = await applyKunCredentialChange(ctx.tx, {
+      uid: legacy.uid,
+      event: 'email-reverted',
+      where: { email: legacy.newEmail },
       data: { email: legacy.oldEmail }
     })
     if (direct.count) {
@@ -176,8 +185,10 @@ export const revertLegacyEmailChange = async (legacy: {
       where: { id: next.id, reverted: null },
       data: { reverted: now }
     })
-    const chained = await ctx.tx.user.updateMany({
-      where: { id: legacy.uid, email: next.new_email },
+    const chained = await applyKunCredentialChange(ctx.tx, {
+      uid: legacy.uid,
+      event: 'email-reverted',
+      where: { email: next.new_email },
       data: { email: legacy.oldEmail }
     })
     if (!claimed.count || !chained.count) {

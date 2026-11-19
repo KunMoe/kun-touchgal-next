@@ -6,19 +6,20 @@ const {
   transactionMock,
   updateUserMock,
   createLogMock,
-  deleteTokenMock,
+  finishMock,
   hashPasswordMock
 } = vi.hoisted(() => ({
   findUserMock: vi.fn(),
   transactionMock: vi.fn(),
   updateUserMock: vi.fn(),
   createLogMock: vi.fn(),
-  deleteTokenMock: vi.fn(),
+  finishMock: vi.fn(),
   hashPasswordMock: vi.fn()
 }))
 
+// 凭据与权限列经 applyKunCredentialChange 写入 (平铺 WHERE 的 updateMany)
 const transactionClient = {
-  user: { update: updateUserMock },
+  user: { updateMany: updateUserMock },
   admin_log: { create: createLogMock }
 }
 
@@ -29,8 +30,9 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/jwt', () => ({
-  deleteKunToken: deleteTokenMock
+vi.mock('~/server/auth/securityEvents', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/auth/securityEvents')>()),
+  finishKunSecurityEvent: finishMock
 }))
 
 vi.mock('~/app/api/utils/algorithm', () => ({
@@ -68,9 +70,9 @@ beforeEach(() => {
   findUserMock
     .mockResolvedValueOnce(reservedNameUser)
     .mockResolvedValueOnce({ role: 4, name: 'root-admin' })
-  updateUserMock.mockResolvedValue({})
+  updateUserMock.mockResolvedValue({ count: 1 })
   createLogMock.mockResolvedValue({})
-  deleteTokenMock.mockResolvedValue(undefined)
+  finishMock.mockResolvedValue({ revokedOthers: 0 })
   transactionMock.mockImplementation(
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
       callback(transactionClient)
@@ -97,7 +99,7 @@ describe('updateUser 保留用户名', () => {
         bio: ''
       }
     })
-    expect(deleteTokenMock).toHaveBeenCalledWith(7)
+    expect(finishMock).toHaveBeenCalledWith(7, 'admin-edited')
   })
 
   it('拒绝把用户改名为保留词, 不落库', async () => {
@@ -113,7 +115,7 @@ describe('updateUser 保留用户名', () => {
     // 保留词在重名查询之前拦下, 不多打一次库
     expect(findUserMock).toHaveBeenCalledTimes(2)
     expect(transactionMock).not.toHaveBeenCalled()
-    expect(deleteTokenMock).not.toHaveBeenCalled()
+    expect(finishMock).not.toHaveBeenCalled()
   })
 
   it('允许把存量保留名用户改成非保留名', async () => {
@@ -167,7 +169,7 @@ describe('updateUser 角色按 delta 判定', () => {
       )
 
       expect(transactionMock).not.toHaveBeenCalled()
-      expect(deleteTokenMock).not.toHaveBeenCalled()
+      expect(finishMock).not.toHaveBeenCalled()
     }
   )
 
@@ -186,7 +188,7 @@ describe('updateUser 角色按 delta 判定', () => {
     expect(updateUserMock).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ role: to }) })
     )
-    expect(deleteTokenMock).toHaveBeenCalledWith(7)
+    expect(finishMock).toHaveBeenCalledWith(7, 'admin-edited')
   })
 
   it('操作者在库里已不是超级管理员时不能改任何人的角色', async () => {

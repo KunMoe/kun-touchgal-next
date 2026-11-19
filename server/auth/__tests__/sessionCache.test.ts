@@ -30,7 +30,8 @@ const authUser: AuthUserCache = {
   name: 'kun',
   role: 1,
   status: 0,
-  blocked_tag_ids: [10, 20]
+  blocked_tag_ids: [10, 20],
+  securityStamp: 0
 }
 
 beforeEach(() => {

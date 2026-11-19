@@ -225,7 +225,7 @@ describe('disableTwoFactor', () => {
 
     await expect(
       inTx((tx) => disableTwoFactor(passed('twoFactor.disable'), tx))
-    ).resolves.toBe('disabled')
+    ).resolves.toEqual({ outcome: 'disabled', stamp: null })
     expect(fakes.db.user(7)).toMatchObject({
       enable_2fa: false,
       two_factor_secret: '',
@@ -238,7 +238,7 @@ describe('disableTwoFactor', () => {
 
     await expect(
       inTx((tx) => disableTwoFactor(passed('twoFactor.disable'), tx))
-    ).resolves.toBe('not-enabled')
+    ).resolves.toEqual({ outcome: 'not-enabled' })
     // 待确认的密钥不归「关闭」管
     expect(fakes.db.user(7)?.two_factor_secret).toBe(TOTP_SECRET)
   })
@@ -248,9 +248,9 @@ describe('disableTwoFactor', () => {
     fakes.db.insertUser(enabled())
     const proved = { ...passed('twoFactor.disable'), backupCode: BACKUP[0] }
 
-    await expect(inTx((tx) => disableTwoFactor(proved, tx))).resolves.toBe(
-      'disabled'
-    )
+    await expect(
+      inTx((tx) => disableTwoFactor(proved, tx))
+    ).resolves.toMatchObject({ outcome: 'disabled' })
     const writes = fakes.db.queries.filter(
       (query) => !query.endsWith('findUnique')
     )
@@ -264,9 +264,9 @@ describe('disableTwoFactor', () => {
     })
     const proved = { ...passed('twoFactor.disable'), backupCode: BACKUP[0] }
 
-    await expect(inTx((tx) => disableTwoFactor(proved, tx))).resolves.toBe(
-      'backup-code-gone'
-    )
+    await expect(inTx((tx) => disableTwoFactor(proved, tx))).resolves.toEqual({
+      outcome: 'backup-code-gone'
+    })
     expect(fakes.db.user(7)).toMatchObject({
       enable_2fa: true,
       two_factor_backup: [hashTwoFactorBackupCode(BACKUP[1])]

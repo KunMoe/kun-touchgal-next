@@ -98,8 +98,9 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/utils/jwt', () => ({
-  deleteKunToken: deleteTokenMock
+// 删号之后的吊销走策略表 (account-deleted: 删光会话); 这里只关心它在什么时候被调
+vi.mock('~/server/auth/securityEvents', () => ({
+  finishKunSecurityEvent: deleteTokenMock
 }))
 
 vi.mock('~/app/api/admin/resource/delete', () => ({
@@ -470,6 +471,7 @@ describe('deleteUser', () => {
     // 清理随每次 attempt 在事务内执行 (deleteMany 幂等, 重试安全)
     expect(deleteOrphanReportsMock).toHaveBeenCalledTimes(2)
     expect(deleteTokenMock).toHaveBeenCalledTimes(1)
+    expect(deleteTokenMock).toHaveBeenCalledWith(7, 'account-deleted')
     // recalcPatchType 与 enqueueSearchOutbox 事务内两次尝试各跑一次; 首次尝试(91)
     // 的入队在回滚事务内、随事务一并丢弃(与 recalc 同), 不泄漏靠事务原子性
     expect(recalcPatchTypeMock.mock.calls).toEqual([

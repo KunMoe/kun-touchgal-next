@@ -49,7 +49,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - 评论 / 评价 / 资源的物理删除与 `status` 写入只走 `server/content/**` 的命令，在 `kunTx`（`server/db/tx.ts`）里调用；事务里的业务失败用 `ctx.fail`，不要 `return` 字符串（等于提交）。lint 的 `kun/inv-content-05/06` 执法。
 - 权限判断走 `constants/permission.ts` 的 `can(subject, capability)` 与属性谓词，不写角色数字比较；需要操作者的服务收 `KunActor`（`constants/role.ts`，只由 `resolveKunSiteSession` 构造），路由把会话 payload 原样下传。lint 的 `kun/inv-authz-01..04` 执法。
 - 请求视角（会话、作品可见性、列表缓存准入）只从 `server/viewer` 取：Route Handler 用 `viewerContextFromRequest(req)` 建一次后往下传，页面与读取器用 `getViewerContext()`；service 收 `PatchVisibility` / `ListView`，不收拼好的 `where`。lint 的 `kun/inv-viewer-01/02` 执法。
-- 账户安全属性（密码、邮箱、2FA）的二次验证只走 `server/auth`：路由调 `requireStepUp`，要哪些因子由 `STEP_UP_POLICY` 一张表决定，并排在任何目标查重之前；TOTP / 备份码只经 `secondFactor.ts`，2FA 三列只由 `twoFactorState.ts` 条件写入，改邮箱走 `emailChange.ts` 的台账。`requireStepUp` 不放进事务；备份码由收 `StepUpPassed` 的状态迁移在自己的事务里消费。不要在路由里裸调 `time2fa`、`verifyPassword`、`checkTotp` 或 `consumeTwoFactorBackupCode`。lint 的 `kun/inv-auth-01..03` 执法。
+- 账户安全属性（密码、邮箱、2FA）的二次验证只走 `server/auth`：路由调 `requireStepUp`，要哪些因子由 `STEP_UP_POLICY` 一张表决定，并排在任何目标查重之前；TOTP / 备份码只经 `secondFactor.ts`，2FA 三列只由 `twoFactorState.ts` 条件写入，改邮箱走 `emailChange.ts` 的台账。`requireStepUp` 不放进事务；备份码由收 `StepUpPassed` 的状态迁移在自己的事务里消费。不要在路由里裸调 `time2fa`、`verifyPassword`、`checkTotp` 或 `consumeTwoFactorBackupCode`。写凭据与权限列（密码、邮箱、2FA、角色、封禁）一律经 `server/auth/securityEvents.ts` 的 `applyKunCredentialChange`，提交之后调 `finishKunSecurityEvent`；哪个事件刷新安全戳、登出哪些会话只写在 `KUN_SECURITY_POLICY`，路由不自己删会话键。lint 的 `kun/inv-auth-01..05` 执法。
 - 项目自有 helper / export 多带 `kun` 前缀；跨组件、需持久化的状态放 `store/*`（Zustand）。
 - 缓存 TTL 常量在 `config/cache.ts`，Redis key 统一经 `lib/redis.ts` 前缀。
 - 代码风格（Prettier）：单引号、无分号、2 空格缩进、无尾逗号。

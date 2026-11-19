@@ -1,7 +1,7 @@
 import { prisma } from '~/prisma/index'
 import { redis } from '~/lib/redis'
 import { isReservedUsername } from '~/constants/reserved-usernames.server'
-import { deleteKunToken } from '~/server/auth/session'
+import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 
 // 一次性迁移: 将用户名命中保留词表的存量用户统一改名为「用户{id}」。
 // 默认 dry-run 只打印清单; 加 --apply 才写库。存量保留名用户里含 uid 1
@@ -93,9 +93,11 @@ const migrateReservedUsernames = async () => {
     }
     // JWT payload 携带 name, 照抄管理端改名路径硬删旧 token 使其重新登录。
     // 与改名分开 catch: 此处失败改名已生效, 旧 token 的 name 会在刷新时自愈
-    await deleteKunToken(user.id).catch((error) => {
-      console.warn(`[warn] id=${user.id} 改名成功但删除旧 token 失败`, error)
-    })
+    await finishKunSecurityEvent(user.id, 'username-reserved-migrated').catch(
+      (error) => {
+        console.warn(`[warn] id=${user.id} 改名成功但删除旧 token 失败`, error)
+      }
+    )
   }
 
   if (apply) {

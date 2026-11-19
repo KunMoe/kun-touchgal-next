@@ -1,11 +1,15 @@
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParseDeleteQuery } from '~/app/api/utils/parseQuery'
+import { prisma } from '~/prisma/index'
 import {
   deleteKunTokenSession,
-  deleteOtherKunTokenSessions,
   getKunLoginSessions
-} from '~/app/api/utils/jwt'
+} from '~/server/auth/session'
+import {
+  applyKunCredentialChange,
+  finishKunSecurityEvent
+} from '~/server/auth/securityEvents'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { revokeLoginSessionSchema } from '~/validations/user'
 
@@ -25,11 +29,18 @@ export const POST = async (req: NextRequest) => {
     return NextResponse.json('用户未登录')
   }
 
-  const revokedCount = await deleteOtherKunTokenSessions(
+  // 没有凭据要写, 只按策略刷新安全戳 (刷新了的话当前会话随后重签)
+  const { stamp } = await applyKunCredentialChange(prisma, {
+    uid: payload.uid,
+    event: 'other-sessions-revoked',
+    data: {}
+  })
+  const { revokedOthers } = await finishKunSecurityEvent(
     payload.uid,
-    payload.jti
+    'other-sessions-revoked',
+    { current: payload, stamp }
   )
-  return NextResponse.json({ revokedCount })
+  return NextResponse.json({ revokedCount: revokedOthers })
 }
 
 export const DELETE = async (req: NextRequest) => {

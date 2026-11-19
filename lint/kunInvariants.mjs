@@ -122,6 +122,14 @@ const roleComparedToConstant = () =>
 const ROLE_KEY =
   ":matches([computed=false][key.name='role'], [key.value='role'])"
 
+// inv-auth-04。user 表上的凭据与权限列: 写它们要与安全戳在同一条语句里 (securityEvents.ts)
+const CREDENTIAL_COLUMNS =
+  'password|email|enable_2fa|two_factor_secret|two_factor_backup|role|status|security_stamp'
+const USER_UPDATE = `CallExpression[callee.property.name=/^(update|updateMany|updateManyAndReturn|upsert)$/][callee.object.property.name='user']`
+const USER_PAYLOAD = inlineObjectOf(
+  `${USER_UPDATE} > ObjectExpression > Property${keyIs('/^(data|update)$/')}`
+)
+
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
   {
@@ -820,6 +828,82 @@ export const KUN_INVARIANTS = [
         "import { hashTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'",
         "import { secondFactorCodeSchema } from '~/validations/secondFactor'",
         "import { requireStepUp } from '~/server/auth/stepUp'"
+      ]
+    }
+  },
+  {
+    id: 'inv-auth-04',
+    aliases: ['T09'],
+    statement:
+      'server/auth/** 之外, user 表的 update / updateMany / upsert 写入体里不得出现凭据与权限列 (password、email、enable_2fa、two_factor_secret、two_factor_backup、role、status、security_stamp), 也不得展开; 这些列经 server/auth/securityEvents.ts 的 applyKunCredentialChange 写, 提交之后调 finishKunSecurityEvent',
+    reason:
+      '「哪个账号事件吊销什么」只写在 KUN_SECURITY_POLICY 一张表里, 安全戳与凭据写在同一条语句里。绕过它直接写凭据, 新的写路径就不刷新戳、不吊销会话 (曾有 4 条安全写路径一个会话都不吊销, 要逐个路由去审); 写入体里的展开 (...rest) 带着 role / status / email 写进去, 语法上看不见, 后台编辑用户曾是唯一的逃逸点。本条只认 <x>.user.<method>(...) 的形状: 把 delegate 解构出来、raw SQL 看不到',
+    removeWhen: '凭据列不再由应用层写入',
+    files: [
+      'app/**/*.ts',
+      'server/**/*.ts',
+      'lib/**/*.ts',
+      'utils/**/*.ts',
+      'scripts/**/*.ts'
+    ],
+    // migration/ 里是一次性的存量修复脚本 (备份码改存哈希), 不是账号事件
+    ignores: ['server/auth/**', '**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `${USER_PAYLOAD} > Property${keyIs(`/^(${CREDENTIAL_COLUMNS})$/`)}`,
+        `${USER_PAYLOAD} > :matches(SpreadElement, Property[computed=true])`
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "export const run = (prisma: any) => prisma.user.update({ where: { id: 1 }, data: { password: 'h' } })",
+        "export const run = (tx: any) => tx.user.updateMany({ where: { id: 1, email: 'a' }, data: { email: 'b' } })",
+        'export const run = (ctx: any) => ctx.tx.user.updateMany({ where: { id: 1 }, data: { role: { set: 2 } } })',
+        'export const run = (prisma: any) => prisma.user.update({ where: { id: 1 }, data: { status: 2 } as any })',
+        "export const run = (prisma: any) => prisma.user.upsert({ where: { id: 1 }, create: { name: 'x' }, update: { enable_2fa: false } })",
+        'export const run = (prisma: any, rest: any) => prisma.user.update({ where: { id: 1 }, data: { name: rest.name, ...rest } })',
+        "export const run = (prisma: any, key: string) => prisma.user.update({ where: { id: 1 }, data: { [key]: 'x' } })",
+        "export const run = (prisma: any) => prisma.user.update({ where: { id: 1 }, data: { 'two_factor_secret': '' } })"
+      ],
+      good: [
+        "export const run = (prisma: any) => prisma.user.update({ where: { id: 1, status: 0 }, data: { name: 'x' } })",
+        'export const run = (prisma: any) => prisma.user.updateMany({ where: { id: 1, role: { lt: 2 } }, data: { moemoepoint: { increment: 1 } } })',
+        "export const run = (prisma: any) => prisma.user.create({ data: { name: 'x', email: 'a', password: 'h' } })",
+        'export const run = (prisma: any) => prisma.patch.update({ where: { id: 1 }, data: { status: 1 } })',
+        "export const run = (prisma: any) => applyKunCredentialChange(prisma, { uid: 1, event: 'password-reset', data: { password: 'h' } })"
+      ]
+    }
+  },
+  {
+    id: 'inv-auth-05',
+    aliases: ['T09'],
+    statement:
+      'deleteKunToken 与 deleteOtherKunTokenSessions 只许在 server/auth/** 里导入; 账号事件之后的吊销一律经 securityEvents.ts 的 finishKunSecurityEvent, 由策略表决定删哪些会话',
+    reason:
+      '提交之后逐个删 Redis 键是卫生清理, 吊销是否成立由安全戳决定; 每个写路径各自记得调删键函数, 新路径照样会漏, 而且看不出这个事件该删全部、删其它还是都不删。只登出这一个会话的 deleteKunTokenSession 不在此列',
+    removeWhen: '这两个函数不再从模块导出',
+    // app/api/utils/jwt.ts 是迁移期整模块转出的旧路径
+    ignores: ['server/auth/**', 'app/api/utils/jwt.ts', '**/__tests__/**'],
+    enforce: {
+      kind: 'import',
+      sources: [/(^|\/)(server\/auth\/session|jwt)(\.[cm]?[jt]sx?)?$/],
+      importNames: ['deleteKunToken', 'deleteOtherKunTokenSessions', '*']
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import { deleteKunToken } from '~/server/auth/session'",
+        "import { deleteOtherKunTokenSessions } from '~/app/api/utils/jwt'",
+        "import { deleteKunToken as revoke } from '../../server/auth/session.ts'",
+        "import * as session from '~/server/auth/session'",
+        "export * from '~/app/api/utils/jwt'"
+      ],
+      good: [
+        "import { finishKunSecurityEvent } from '~/server/auth/securityEvents'",
+        "import { deleteKunTokenSession } from '~/server/auth/session'",
+        "import { resolveKunSiteSession } from '~/server/auth/session'"
       ]
     }
   }
