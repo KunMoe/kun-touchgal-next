@@ -10,11 +10,18 @@ const redis = await vi.hoisted(async () =>
   (await import('~/server/auth/__tests__/_redisFake')).createRedisFake()
 )
 
-const { users, cookieDeletes, stampWrites } = vi.hoisted(() => ({
+const { users, cookieDeletes, cookieSets, stampWrites } = vi.hoisted(() => ({
   users: new Map<
     number,
-    { id: number; name: string; role: number; status: number }
+    {
+      id: number
+      name: string
+      role: number
+      status: number
+      security_stamp?: Date | null
+    }
   >(),
+  cookieSets: [] as { name: string; value: string }[],
   cookieDeletes: [] as string[],
   stampWrites: [] as { uid: number; data: Record<string, unknown> }[]
 }))
@@ -33,7 +40,12 @@ vi.mock('~/prisma/index', () => ({
         data: Record<string, unknown>
       }) => {
         stampWrites.push({ uid: args.where.id, data: args.data })
-        return { count: Object.keys(args.data).length ? 1 : 0 }
+        const row = users.get(args.where.id)
+        if (!row || !Object.keys(args.data).length) {
+          return { count: 0 }
+        }
+        users.set(row.id, { ...row, ...args.data })
+        return { count: 1 }
       }
     }
   }
@@ -42,6 +54,9 @@ vi.mock('next/headers', () => ({
   cookies: async () => ({
     delete: (name: string) => {
       cookieDeletes.push(name)
+    },
+    set: (name: string, value: string) => {
+      cookieSets.push({ name, value })
     }
   })
 }))
@@ -88,6 +103,7 @@ beforeEach(() => {
   redis.reset()
   users.clear()
   cookieDeletes.length = 0
+  cookieSets.length = 0
   stampWrites.length = 0
   users.set(UID, { id: UID, name: 'kun', role: 1, status: 0 })
   users.set(OTHER_UID, { id: OTHER_UID, name: 'other', role: 1, status: 0 })
@@ -151,11 +167,27 @@ describe('POST /api/user/setting/session', () => {
     const response = await POST(request('POST', current.token))
 
     expect(await response.json()).toEqual({ revokedCount: 2 })
-    expect(await verifyKunTokenPayload(current.token)).not.toBeNull()
     await expect(verifyKunTokenPayload(b.token)).resolves.toBeNull()
     await expect(verifyKunTokenPayload(c.token)).resolves.toBeNull()
     expect(await verifyKunTokenPayload(foreign.token)).not.toBeNull()
     expect(cookieDeletes).toEqual([])
+
+    // 策略表 other-sessions-revoked: 刷新安全戳 (被退出的设备手里的 OIDC 令牌一并作废),
+    // 当前会话以同一个 jti 带着新戳重签并写回 cookie
+    expect(stampWrites).toEqual([
+      { uid: UID, data: { security_stamp: new Date(T0) } }
+    ])
+    expect(cookieSets).toHaveLength(1)
+    const reissued = cookieSets[0]
+    expect(reissued.name).toBe(AUTH_COOKIE)
+    expect(
+      JSON.parse(
+        Buffer.from(reissued.value.split('.')[1], 'base64url').toString()
+      )
+    ).toMatchObject({ jti: current.jti, cs: T0 })
+    expect(await verifyKunTokenPayload(reissued.value)).not.toBeNull()
+    // 手里的旧令牌对不上 Redis 里的新令牌了
+    await expect(verifyKunTokenPayload(current.token)).resolves.toBeNull()
   })
 
   it('returns 用户未登录 without a valid session', async () => {

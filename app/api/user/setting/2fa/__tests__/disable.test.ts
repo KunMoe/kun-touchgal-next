@@ -13,6 +13,7 @@ vi.mock('~/prisma/index', () => fakes.modules.prisma)
 vi.mock('~/lib/redis', () => fakes.modules.redis)
 vi.mock('~/server/auth/attemptBudget', () => fakes.modules.budget)
 vi.mock('~/middleware/_verifyHeaderCookie', () => fakes.modules.session)
+vi.mock('~/server/auth/session', () => fakes.modules.sessionStore)
 
 import { hashTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'
 import {
@@ -133,6 +134,20 @@ describe('POST /api/user/setting/2fa/disable', () => {
       expect(await read(response)).toEqual(DISABLED)
       expectDisabled()
       expect(db.transactions).toEqual([{ committed: true }])
+      // 策略表 2fa-disabled: 其它设备登出, 当前会话带着刚写下的安全戳重签
+      const stamp = db.user(UID)?.security_stamp
+      expect(stamp).toBeInstanceOf(Date)
+      expect(session.revokedOthers).toEqual([
+        { uid: UID, keptJti: `jti-${UID}` }
+      ])
+      expect(session.reissued).toEqual([{ uid: UID, jti: `jti-${UID}`, stamp }])
+    })
+
+    it('a wrong code revokes no session', async () => {
+      await post({ token: wrongTotp(TOTP_SECRET) })
+
+      expect(session.revokedOthers).toEqual([])
+      expect(session.reissued).toEqual([])
     })
 
     it('rejects a wrong code and leaves the row unchanged', async () => {

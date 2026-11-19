@@ -20,6 +20,7 @@ vi.mock('~/prisma/index', () => fakes.modules.prisma)
 vi.mock('~/lib/redis', () => fakes.modules.redis)
 vi.mock('~/server/auth/attemptBudget', () => fakes.modules.budget)
 vi.mock('~/middleware/_verifyHeaderCookie', () => fakes.modules.session)
+vi.mock('~/server/auth/session', () => fakes.modules.sessionStore)
 
 import { hashPassword } from '~/server/auth/algorithm'
 import {

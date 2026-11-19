@@ -70,11 +70,11 @@ describe('KUN_SECURITY_POLICY', () => {
       'password-changed': { bumpStamp: true, current: 'revoke', redis: 'all' },
       'password-reset': { bumpStamp: true, current: 'none', redis: 'all' },
       'password-rehashed': { bumpStamp: false, current: 'none', redis: 'none' },
-      'email-changed': { bumpStamp: false, current: 'none', redis: 'none' },
-      'email-reverted': { bumpStamp: false, current: 'none', redis: 'all' },
+      'email-changed': { bumpStamp: true, current: 'keep', redis: 'others' },
+      'email-reverted': { bumpStamp: true, current: 'none', redis: 'all' },
       '2fa-secret-staged': { bumpStamp: false, current: 'none', redis: 'none' },
-      '2fa-enabled': { bumpStamp: false, current: 'none', redis: 'none' },
-      '2fa-disabled': { bumpStamp: false, current: 'none', redis: 'none' },
+      '2fa-enabled': { bumpStamp: true, current: 'keep', redis: 'others' },
+      '2fa-disabled': { bumpStamp: true, current: 'keep', redis: 'others' },
       '2fa-disabled-by-admin': {
         bumpStamp: false,
         current: 'none',
@@ -88,7 +88,7 @@ describe('KUN_SECURITY_POLICY', () => {
         redis: 'all'
       },
       'other-sessions-revoked': {
-        bumpStamp: false,
+        bumpStamp: true,
         current: 'keep',
         redis: 'others'
       },
@@ -172,16 +172,45 @@ describe('finishKunSecurityEvent', () => {
     expect(reissueMock).not.toHaveBeenCalled()
   })
 
-  it('redis: others 保留当前会话, 返回删掉了几个', async () => {
+  it('redis: others + current: keep: 删掉其它会话, 当前会话带着新戳重签, 返回删掉了几个', async () => {
     const result = await finishKunSecurityEvent(7, 'other-sessions-revoked', {
       current,
-      stamp: null
+      stamp: NOW
     })
 
     expect(deleteOthersMock).toHaveBeenCalledWith(7, 'current-jti')
     expect(deleteKunTokenMock).not.toHaveBeenCalled()
+    expect(cookieDeleteMock).not.toHaveBeenCalled()
+    expect(reissueMock).toHaveBeenCalledWith(current, NOW)
     expect(result).toEqual({ revokedOthers: 2 })
-    // 这个事件此刻不刷新戳: 当前会话的令牌仍然有效, 不必重签
+    // 先失效鉴权缓存 (里面还是旧戳) 再重签
+    expect(invalidateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      reissueMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  it.each(['email-changed', '2fa-enabled', '2fa-disabled'] as const)(
+    '%s: 其它设备登出, 当前会话重签',
+    async (event) => {
+      await finishKunSecurityEvent(7, event, { current, stamp: NOW })
+
+      expect(deleteOthersMock).toHaveBeenCalledWith(7, 'current-jti')
+      expect(reissueMock).toHaveBeenCalledWith(current, NOW)
+      expect(deleteKunTokenMock).not.toHaveBeenCalled()
+    }
+  )
+
+  it('刷新了戳却没传新戳: 抛错, 不留一个带旧戳的当前会话', async () => {
+    await expect(
+      finishKunSecurityEvent(7, 'email-changed', { current, stamp: null })
+    ).rejects.toThrow()
+    expect(reissueMock).not.toHaveBeenCalled()
+  })
+
+  it('撤销邮箱变更: 删光会话, 没有当前会话要处理', async () => {
+    await finishKunSecurityEvent(7, 'email-reverted')
+
+    expect(deleteKunTokenMock).toHaveBeenCalledWith(7)
     expect(reissueMock).not.toHaveBeenCalled()
   })
 

@@ -12,6 +12,7 @@ vi.mock('~/prisma/index', () => fakes.modules.prisma)
 vi.mock('~/lib/redis', () => fakes.modules.redis)
 vi.mock('~/server/auth/attemptBudget', () => fakes.modules.budget)
 vi.mock('~/middleware/_verifyHeaderCookie', () => fakes.modules.session)
+vi.mock('~/server/auth/session', () => fakes.modules.sessionStore)
 
 import { hashTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'
 import {
@@ -128,6 +129,12 @@ describe('POST /api/user/setting/2fa/enable', () => {
 
     expect(Object.keys(body)).toEqual(['backupCode'])
     expectEnabledWith(body.backupCode)
+    // 策略表 2fa-enabled: 其它设备登出, 当前会话带着刚写下的安全戳重签
+    const stamp = db.user(UID)?.security_stamp
+    expect(stamp).toEqual(FIXED_NOW)
+    expect(session.revokedOthers).toEqual([{ uid: UID, keptJti: `jti-${UID}` }])
+    expect(session.reissued).toEqual([{ uid: UID, jti: `jti-${UID}`, stamp }])
+    expect(session.revokedUids).toEqual([])
   })
 
   // X07-02: 已启用的账号再提交正确的验证码, 曾经会悄悄换发全部备份码

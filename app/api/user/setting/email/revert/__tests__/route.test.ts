@@ -193,6 +193,8 @@ describe('POST /api/user/setting/email/revert', () => {
       expect(db.transactions).toEqual([{ committed: true }])
       // 改走邮箱的人手里多半还握着一个会话; 登出发生在邮箱改回之后
       expect(session.revokedUids).toEqual([UID])
+      // 策略表 email-reverted: 与改回邮箱同一条语句刷新安全戳, 已签发给依赖方的 OIDC 令牌一并作废
+      expect(db.user(UID)?.security_stamp).toBeInstanceOf(Date)
       expect(emailAtRevoke).toBe(OLD_EMAIL)
     }
   )

@@ -225,11 +225,13 @@ describe('disableTwoFactor', () => {
 
     await expect(
       inTx((tx) => disableTwoFactor(passed('twoFactor.disable'), tx))
-    ).resolves.toEqual({ outcome: 'disabled', stamp: null })
+    ).resolves.toEqual({ outcome: 'disabled', stamp: expect.any(Date) })
+    // 安全戳与关闭写在同一条语句里 (策略表 2fa-disabled 刷新戳)
     expect(fakes.db.user(7)).toMatchObject({
       enable_2fa: false,
       two_factor_secret: '',
-      two_factor_backup: []
+      two_factor_backup: [],
+      security_stamp: expect.any(Date)
     })
   })
 

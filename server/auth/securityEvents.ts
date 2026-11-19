@@ -44,11 +44,15 @@ export const KUN_SECURITY_POLICY = {
   'password-reset': { bumpStamp: true, current: 'none', redis: 'all' },
   // 登录时把旧格式的哈希换成新格式: 密码没变, 不动任何会话
   'password-rehashed': { bumpStamp: false, current: 'none', redis: 'none' },
-  'email-changed': { bumpStamp: false, current: 'none', redis: 'none' },
-  'email-reverted': { bumpStamp: false, current: 'none', redis: 'all' },
+  // 改邮箱、启用 / 关闭 2FA: 其它设备全部登出, 发起变更的这台保留 (重签)
+  'email-changed': { bumpStamp: true, current: 'keep', redis: 'others' },
+  // 撤销邮箱变更 (邮件链接, 没有当前会话): 改走邮箱的人手里多半还握着一个会话, 全部登出,
+  // 刷新戳让已签发给依赖方的 OIDC 令牌一并作废
+  'email-reverted': { bumpStamp: true, current: 'none', redis: 'all' },
+  // 只生成待确认的密钥: 2FA 还没生效, 不动会话
   '2fa-secret-staged': { bumpStamp: false, current: 'none', redis: 'none' },
-  '2fa-enabled': { bumpStamp: false, current: 'none', redis: 'none' },
-  '2fa-disabled': { bumpStamp: false, current: 'none', redis: 'none' },
+  '2fa-enabled': { bumpStamp: true, current: 'keep', redis: 'others' },
+  '2fa-disabled': { bumpStamp: true, current: 'keep', redis: 'others' },
   '2fa-disabled-by-admin': { bumpStamp: false, current: 'none', redis: 'all' },
   // 改权 (降权 / 封禁) 必须删光会话: 鉴权缓存只在命中 Redis 会话之后才读, 删掉会话是「旧权限
   // 缓存不被采信」的根闸门 (只轮转缓存版本键会被吞掉失败)
@@ -60,8 +64,9 @@ export const KUN_SECURITY_POLICY = {
     current: 'none',
     redis: 'all'
   },
+  // 「退出其它设备」: 刷新戳让被退出的设备手里的 OIDC 令牌也作废
   'other-sessions-revoked': {
-    bumpStamp: false,
+    bumpStamp: true,
     current: 'keep',
     redis: 'others'
   },
