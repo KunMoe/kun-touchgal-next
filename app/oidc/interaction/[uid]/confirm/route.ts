@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import type { KoaContextWithOIDC } from 'oidc-provider'
 import { errors } from 'oidc-provider'
 import { getOidcProvider } from '~/lib/oidc/provider'
+import { findAccount } from '~/lib/oidc/account'
 import { buildRequestBridge } from '~/lib/oidc/webToNode'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { OIDC_MOUNT_PATH } from '~/config/oidc'
@@ -65,6 +67,15 @@ export const GET = async (
     if (needsFreshLogin(details, authTime)) {
       // 去站点登录页重新输入凭据, 登录后回到交互页再走一次 confirm
       return NextResponse.redirect(loginUrl)
+    }
+    // 站点会话判为有效 (鉴权缓存还没过期), provider 却已认不出这个账号 (刚封禁或删号):
+    // 照样写进 login 结果的话, 授权端点载不到账号又要求登录, 浏览器在两边之间来回跳转不停
+    if (!(await findAccount({} as KoaContextWithOIDC, String(payload.uid)))) {
+      await provider.interactionFinished(bridge.req, bridge.res, {
+        error: 'access_denied',
+        error_description: '该账号当前无法授权'
+      })
+      return bridge.toResponse()
     }
     await provider.interactionFinished(bridge.req, bridge.res, {
       login: { accountId: String(payload.uid), ts: siteAuthTime }

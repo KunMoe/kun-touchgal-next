@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { errors } from 'oidc-provider'
 
 const {
+  findAccountMock,
   verifyHeaderCookieMock,
   getOidcProviderMock,
   buildRequestBridgeMock,
@@ -13,6 +14,7 @@ const {
   grantAddOIDCClaimsMock,
   grantAddResourceScopeMock
 } = vi.hoisted(() => ({
+  findAccountMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
   getOidcProviderMock: vi.fn(),
   buildRequestBridgeMock: vi.fn(),
@@ -39,6 +41,10 @@ vi.mock('next/server', () => ({
 
 vi.mock('~/lib/oidc/provider', () => ({
   getOidcProvider: getOidcProviderMock
+}))
+
+vi.mock('~/lib/oidc/account', () => ({
+  findAccount: findAccountMock
 }))
 
 vi.mock('~/lib/oidc/webToNode', () => ({
@@ -106,6 +112,7 @@ describe('OIDC confirm route GET', () => {
     buildRequestBridgeMock.mockResolvedValue(createBridge())
     // 交互创建于 INTERACTION_IAT, 只因为 provider 会话缺失而要登录
     interactionDetailsMock.mockResolvedValue(loginDetails(['no_session']))
+    findAccountMock.mockResolvedValue({ accountId: '7' })
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(NOW * 1000)
   })
@@ -155,6 +162,23 @@ describe('OIDC confirm route GET', () => {
       'http://localhost/login?from=%2Foidc%2Finteraction%2Fuid123'
     )
     expect(interactionFinishedMock).not.toHaveBeenCalled()
+  })
+
+  it('站点会话仍判为有效但 provider 认不出这个账号 (刚封禁): 以 access_denied 结束, 不写 login 结果', async () => {
+    verifyHeaderCookieMock.mockResolvedValue({ uid: 7, iat: SITE_LOGIN_IAT })
+    findAccountMock.mockResolvedValue(undefined)
+    interactionFinishedMock.mockResolvedValue(undefined)
+
+    const res = await GET(getRequest(), routeContext())
+
+    expect(findAccountMock).toHaveBeenCalledWith(expect.anything(), '7')
+    expect(interactionFinishedMock).toHaveBeenCalledTimes(1)
+    expect(interactionFinishedMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ error: 'access_denied' })
+    )
+    expect(res.status).toBe(303)
   })
 
   it('interaction 读不到时同样回落到 interaction 页', async () => {
