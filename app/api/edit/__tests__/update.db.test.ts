@@ -39,7 +39,7 @@ vi.mock('~/app/api/edit/batchTag', async (importOriginal) => {
   }
 })
 
-const CONFLICT = '该游戏已被他人修改, 请刷新后重试'
+const CONFLICT = '该游戏在您打开编辑页之后已被修改, 请刷新后重试'
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe.skipIf(!dbContractUrl)('galgame rewrite on real PostgreSQL', () => {

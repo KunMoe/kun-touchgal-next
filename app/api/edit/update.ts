@@ -131,15 +131,16 @@ export const updateGalgame = async (
         // released 缺省即不动, 以库里的值参与比较
         released: input.released ?? storedFields.released
       })
-      // 库里的值既不是表单打开时读到的那一份, 也不是这次要写的那一份: 期间有人改过, 照写
-      // 会把对方的修改悄悄盖掉。等于这次要写的那一份时放行: 那是上一次提交的主事务已落库、
+      // 库里的值既不是表单打开时读到的那一份, 也不是这次要写的那一份: 期间被改过, 照写
+      // 会把那次修改悄悄盖掉。文案不说「被他人」: 改它的也可能是提交者自己 (另一个页签、
+      // 保存之后又后退回到旧表单)。等于这次要写的那一份时放行: 那是上一次提交的主事务已落库、
       // 后面的标签步骤失败之后的重试, 拦下它用户就只能看到冲突提示。标签差量可交换, 不进指纹
       const current = galgameEditFingerprint(storedFields)
       if (
         current !== baseFingerprint &&
         current !== galgameEditFingerprint(next)
       ) {
-        return fail('该游戏已被他人修改, 请刷新后重试')
+        return fail('该游戏在您打开编辑页之后已被修改, 请刷新后重试')
       }
 
       await tx.patch.update({

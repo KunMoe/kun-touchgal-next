@@ -468,7 +468,7 @@ describe('updateGalgame 的编辑并发令牌', () => {
         1
       )
 
-      expect(res).toBe('该游戏已被他人修改, 请刷新后重试')
+      expect(res).toBe('该游戏在您打开编辑页之后已被修改, 请刷新后重试')
       expect(lockPatchRowMock).toHaveBeenCalledTimes(1)
       expectNothingWritten()
     }
@@ -499,7 +499,7 @@ describe('updateGalgame 的编辑并发令牌', () => {
     })
 
     expect(await updateGalgame(input, 1)).toBe(
-      '该游戏已被他人修改, 请刷新后重试'
+      '该游戏在您打开编辑页之后已被修改, 请刷新后重试'
     )
     expectNothingWritten()
   })
