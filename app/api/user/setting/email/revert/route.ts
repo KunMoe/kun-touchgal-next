@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { delKv, getKv } from '~/lib/redis'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import {
@@ -6,6 +6,7 @@ import {
   revertEmailChange,
   revertLegacyEmailChange
 } from '~/server/auth/emailChange'
+import type { NextRequest } from 'next/server'
 import type { EmailChangeRevert } from '~/server/auth/emailChange'
 import {
   createEmailChangeRevertConfirmResponse,
@@ -87,7 +88,7 @@ const getLegacyRevertPayload = async (token: string) => {
   }
 }
 
-export const GET = async (req: NextRequest) => {
+const showRevertConfirm = async (req: NextRequest) => {
   const token = new URL(req.url).searchParams.get('token')?.trim() || ''
   if (!token) {
     return invalidLink()
@@ -105,7 +106,7 @@ export const GET = async (req: NextRequest) => {
   return createEmailChangeRevertConfirmResponse(token, payload.oldEmail)
 }
 
-export const POST = async (req: NextRequest) => {
+const revert = async (req: NextRequest) => {
   const token = await getTokenFromBody(req)
   if (!token) {
     return invalidLink()
@@ -151,3 +152,14 @@ export const POST = async (req: NextRequest) => {
     `账户邮箱已恢复为 ${result.oldEmail}, 该账户的全部登录会话已被登出。建议您立即修改密码并检查 2FA 设置。`
   )
 }
+
+// 凭邮件里的一次性撤销令牌, 不需要登录 (旧邮箱的持有者多半已经登不上这个账号)
+export const GET = kunRoute.get({
+  auth: 'public',
+  handler: ({ req }) => showRevertConfirm(req)
+})
+
+export const POST = kunRoute.post({
+  auth: 'public',
+  handler: ({ req }) => revert(req)
+})

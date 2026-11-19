@@ -1,6 +1,5 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { hashPassword } from '~/app/api/utils/algorithm'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
@@ -81,21 +80,20 @@ const register = async (
   return getUserStatus(user.id)
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, registerServerSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
+export const POST = kunRoute.post({
+  auth: 'public',
+  input: registerServerSchema,
+  handler: async ({ req, input }) => {
+    const ip = getRemoteIp(req.headers)
+    if (!ip) {
+      return '读取请求头失败'
+    }
 
-  const ip = getRemoteIp(req.headers)
-  if (!ip) {
-    return NextResponse.json('读取请求头失败')
+    const response = await register(
+      input,
+      ip,
+      req.headers.get('user-agent') ?? ''
+    )
+    return response
   }
-
-  const response = await register(
-    input,
-    ip,
-    req.headers.get('user-agent') ?? ''
-  )
-  return NextResponse.json(response)
-}
+})

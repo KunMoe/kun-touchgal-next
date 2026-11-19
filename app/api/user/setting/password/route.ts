@@ -1,7 +1,6 @@
 import { prisma } from '~/prisma/index'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import * as z from 'zod'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { hashPassword } from '~/server/auth/algorithm'
 import { requireStepUp } from '~/server/auth/stepUp'
 import {
@@ -10,16 +9,14 @@ import {
 } from '~/server/auth/securityEvents'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { passwordSchema } from '~/validations/user'
+import type { NextRequest } from 'next/server'
+import type { KunRoutePayload } from '~/app/api/utils/kunRoute'
 
-const updatePassword = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, passwordSchema)
-  if (typeof input === 'string') {
-    return input
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return '用户未登录'
-  }
+const updatePassword = async (
+  req: NextRequest,
+  input: z.infer<typeof passwordSchema>,
+  payload: KunRoutePayload
+) => {
   const ip = getRemoteIp(req.headers)
   if (!ip) {
     return '读取请求头失败'
@@ -53,10 +50,11 @@ const updatePassword = async (req: NextRequest) => {
   })
 }
 
-export const POST = async (req: NextRequest) => {
-  const res = await updatePassword(req)
-  if (typeof res === 'string') {
-    return NextResponse.json(res)
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: passwordSchema,
+  handler: async ({ req, input, actor }) => {
+    const res = await updatePassword(req, input, actor)
+    return typeof res === 'string' ? res : {}
   }
-  return NextResponse.json({})
-}
+})

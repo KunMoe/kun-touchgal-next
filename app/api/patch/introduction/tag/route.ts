@@ -1,10 +1,10 @@
 import * as z from 'zod'
-import { kunParsePostBody, kunParsePutBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { patchTagChangeSchema } from '~/validations/patch'
 import { enqueueSearchOutbox } from '~/server/search/sync'
 import { invalidateTagListCache } from '~/app/api/tag/cache'
-import { createPatchRelationHandler } from '~/app/api/patch/introduction/_relationRoute'
+import { patchRelationHandler } from '~/app/api/patch/introduction/_relationRoute'
 
 const handlePatchTagAction = (type: 'add' | 'delete') => {
   const isAdd = type === 'add'
@@ -46,18 +46,22 @@ const handlePatchTagAction = (type: 'add' | 'delete') => {
   }
 }
 
-export const POST = createPatchRelationHandler({
-  schema: patchTagChangeSchema,
+export const POST = kunRoute.post({
+  auth: 'user',
   capability: 'tag.manage',
-  parseBody: kunParsePostBody,
-  mutate: handlePatchTagAction('add'),
-  invalidateListCache: invalidateTagListCache
+  input: patchTagChangeSchema,
+  handler: patchRelationHandler({
+    mutate: handlePatchTagAction('add'),
+    invalidateListCache: invalidateTagListCache
+  })
 })
 
-export const PUT = createPatchRelationHandler({
-  schema: patchTagChangeSchema,
+export const PUT = kunRoute.put({
+  auth: 'user',
   capability: 'tag.manage',
-  parseBody: kunParsePutBody,
-  mutate: handlePatchTagAction('delete'),
-  invalidateListCache: invalidateTagListCache
+  input: patchTagChangeSchema,
+  handler: patchRelationHandler({
+    mutate: handlePatchTagAction('delete'),
+    invalidateListCache: invalidateTagListCache
+  })
 })

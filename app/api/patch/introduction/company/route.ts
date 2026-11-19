@@ -1,10 +1,10 @@
 import * as z from 'zod'
-import { kunParsePostBody, kunParsePutBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma'
 import { patchCompanyChangeSchema } from '~/validations/patch'
 import { enqueueSearchOutbox } from '~/server/search/sync'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
-import { createPatchRelationHandler } from '~/app/api/patch/introduction/_relationRoute'
+import { patchRelationHandler } from '~/app/api/patch/introduction/_relationRoute'
 
 const handlePatchCompanyAction = (type: 'add' | 'delete') => {
   const isAdd = type === 'add'
@@ -49,18 +49,22 @@ const handlePatchCompanyAction = (type: 'add' | 'delete') => {
   }
 }
 
-export const POST = createPatchRelationHandler({
-  schema: patchCompanyChangeSchema,
+export const POST = kunRoute.post({
+  auth: 'user',
   capability: 'company.manage',
-  parseBody: kunParsePostBody,
-  mutate: handlePatchCompanyAction('add'),
-  invalidateListCache: invalidateCompanyListCache
+  input: patchCompanyChangeSchema,
+  handler: patchRelationHandler({
+    mutate: handlePatchCompanyAction('add'),
+    invalidateListCache: invalidateCompanyListCache
+  })
 })
 
-export const PUT = createPatchRelationHandler({
-  schema: patchCompanyChangeSchema,
+export const PUT = kunRoute.put({
+  auth: 'user',
   capability: 'company.manage',
-  parseBody: kunParsePutBody,
-  mutate: handlePatchCompanyAction('delete'),
-  invalidateListCache: invalidateCompanyListCache
+  input: patchCompanyChangeSchema,
+  handler: patchRelationHandler({
+    mutate: handlePatchCompanyAction('delete'),
+    invalidateListCache: invalidateCompanyListCache
+  })
 })

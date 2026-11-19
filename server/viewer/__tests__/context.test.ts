@@ -365,6 +365,19 @@ describe('两个适配器', () => {
     ).resolves.toBeNull()
   })
 
+  it('fromRequest 对同一个请求对象只建一个上下文: verifyHeaderCookie 与 handler 再取视角只校验一次会话', async () => {
+    const req = makeReq(`${TOKEN}=good`)
+
+    expect(viewerContextFromRequest(req)).toBe(viewerContextFromRequest(req))
+    await verifyRequestCookie(req)
+    await viewerContextFromRequest(req).visibility()
+    expect(verifyKunTokenWithUserMock).toHaveBeenCalledTimes(1)
+
+    // 别的请求对象另建一个
+    await verifyRequestCookie(makeReq(`${TOKEN}=good`))
+    expect(verifyKunTokenWithUserMock).toHaveBeenCalledTimes(2)
+  })
+
   it('Route Handler 侧的 verifyHeaderCookie 返回会话 payload 或 null', async () => {
     await expect(
       verifyRequestCookie(makeReq(`${TOKEN}=good`))

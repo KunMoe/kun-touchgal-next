@@ -17,7 +17,10 @@ describe('captcha challenge route', () => {
   it('签发 format 1 挑战 (c=50, s=32, d=4)', async () => {
     process.env.KUN_CAP_SECRET = 'test-secret-test-secret-test-secret'
 
-    const body = await (await POST()).json()
+    const request = new Request('http://localhost/api/auth/captcha/challenge', {
+      method: 'POST'
+    }) as unknown as Parameters<typeof POST>[0]
+    const body = await (await POST(request)).json()
 
     expect(body.challenge).toEqual({ c: 50, s: 32, d: 4 })
     expect(body).not.toHaveProperty('format')

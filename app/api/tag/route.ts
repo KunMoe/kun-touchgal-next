@@ -1,12 +1,5 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import {
-  kunParseDeleteQuery,
-  kunParseGetQuery,
-  kunParsePostBody,
-  kunParsePutBody
-} from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   createTagSchema,
   getTagByIdSchema,
@@ -16,69 +9,34 @@ import { createTag } from './create'
 import { updateTag } from './update'
 import { getTagById } from './get'
 import { deleteTag } from './delete'
-import { can } from '~/constants/permission'
 
 const tagIdSchema = z.object({
   tagId: z.coerce.number().min(1).max(9999999)
 })
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, getTagByIdSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
+export const GET = kunRoute.get({
+  auth: 'public',
+  input: getTagByIdSchema,
+  handler: ({ input }) => getTagById(input)
+})
 
-  const response = await getTagById(input)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  capability: 'tag.manage',
+  input: createTagSchema,
+  handler: ({ input, actor }) => createTag(input, actor.uid)
+})
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, createTagSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'tag.manage')) {
-    return NextResponse.json('本页面仅管理员可访问')
-  }
+export const PUT = kunRoute.put({
+  auth: 'user',
+  capability: 'tag.manage',
+  input: updateTagSchema,
+  handler: ({ input }) => updateTag(input)
+})
 
-  const response = await createTag(input, payload.uid)
-  return NextResponse.json(response)
-}
-
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, updateTagSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'tag.manage')) {
-    return NextResponse.json('本页面仅管理员可访问')
-  }
-
-  const response = await updateTag(input)
-  return NextResponse.json(response)
-}
-
-export const DELETE = async (req: NextRequest) => {
-  const input = kunParseDeleteQuery(req, tagIdSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  if (!can(payload, 'tag.manage')) {
-    return NextResponse.json('本页面仅管理员可访问')
-  }
-
-  const response = await deleteTag(input.tagId)
-  return NextResponse.json(response)
-}
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  capability: 'tag.manage',
+  input: tagIdSchema,
+  handler: ({ input }) => deleteTag(input.tagId)
+})

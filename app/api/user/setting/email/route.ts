@@ -1,7 +1,6 @@
 import { prisma } from '~/prisma/index'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import * as z from 'zod'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import { tokenStampOf } from '~/server/auth/securityStamp'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
@@ -16,6 +15,8 @@ import {
   issueRevertToken
 } from '~/server/auth/emailChange'
 import { sendEmailChangeNotification } from './_emailChange'
+import type { NextRequest } from 'next/server'
+import type { KunRoutePayload } from '~/app/api/utils/kunRoute'
 
 const NOTICE_FAILED = '发送旧邮箱安全通知失败, 请稍后重试'
 
@@ -27,15 +28,11 @@ const isEmailTaken = async (uid: number, email: string) => {
   return !!existedUser && existedUser.id !== uid
 }
 
-const updateEmail = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, resetEmailSchema)
-  if (typeof input === 'string') {
-    return input
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return '用户未登录'
-  }
+const updateEmail = async (
+  req: NextRequest,
+  input: z.infer<typeof resetEmailSchema>,
+  payload: KunRoutePayload
+) => {
   const ip = getRemoteIp(req.headers)
   if (!ip) {
     return '读取请求头失败'
@@ -112,10 +109,11 @@ const updateEmail = async (req: NextRequest) => {
   await delKv(input.email).catch(() => undefined)
 }
 
-export const POST = async (req: NextRequest) => {
-  const res = await updateEmail(req)
-  if (typeof res === 'string') {
-    return NextResponse.json(res)
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: resetEmailSchema,
+  handler: async ({ req, input, actor }) => {
+    const res = await updateEmail(req, input, actor)
+    return typeof res === 'string' ? res : {}
   }
-  return NextResponse.json({})
-}
+})

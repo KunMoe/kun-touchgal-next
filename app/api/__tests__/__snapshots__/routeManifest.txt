@@ -1,0 +1,43 @@
+POST /api/auth/captcha/challenge                         public
+POST /api/auth/captcha/redeem                            public
+GET /api/auth/check-temp-token                           public
+POST /api/auth/email-notice/disable                      public
+POST /api/auth/login                                     public
+POST /api/auth/register                                  public
+POST /api/auth/send-register-code                        public
+POST /api/auth/verify-2fa                                public
+GET /api/company/all                                     public
+GET /api/company                                         public
+PUT /api/company                                         user capability=company.manage
+POST /api/company                                        user capability=company.manage
+DELETE /api/company                                      user capability=company.manage
+POST /api/company/search                                 public
+GET /api/edit/duplicate                                  public
+POST /api/forgot/request                                 public
+POST /api/forgot/reset                                   public
+POST /api/message                                        public
+POST /api/patch/introduction/company                     user capability=company.manage
+PUT /api/patch/introduction/company                      user capability=company.manage
+GET /api/patch/introduction                              public
+POST /api/patch/introduction/tag                         user capability=tag.manage
+PUT /api/patch/introduction/tag                          user capability=tag.manage
+GET /api/patch/moyu                                      public
+POST /api/search/tag                                     public
+GET /api/tag                                             public
+POST /api/tag                                            user capability=tag.manage
+PUT /api/tag                                             user capability=tag.manage
+DELETE /api/tag                                          user capability=tag.manage
+POST /api/upload/resource                                public csrf=handler
+GET /api/user/session                                    public
+GET /api/user/setting/email/revert                       public
+POST /api/user/setting/email/revert                      public
+POST /api/user/setting/email                             user
+POST /api/user/setting/password                          user
+POST /api/user/setting/send-reset-email-code             user
+GET /oidc/[...path]                                      public
+POST /oidc/[...path]                                     public
+PUT /oidc/[...path]                                      public
+DELETE /oidc/[...path]                                   public
+PATCH /oidc/[...path]                                    public
+HEAD /oidc/[...path]                                     public
+OPTIONS /oidc/[...path]                                  public

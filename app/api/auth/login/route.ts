@@ -1,8 +1,7 @@
 import * as z from 'zod'
 import { randomUUID } from 'crypto'
 import { cookies } from 'next/headers'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   DUMMY_PASSWORD_HASH,
   hashPassword,
@@ -128,15 +127,14 @@ const login = async (
   return typeof state === 'string' ? state : { ...state, require2FA: false }
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, loginSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
+export const POST = kunRoute.post({
+  auth: 'public',
+  input: loginSchema,
+  handler: async ({ req, input }) => {
+    const response = await login(input, {
+      ip: getRemoteIp(req.headers),
+      userAgent: req.headers.get('user-agent') ?? ''
+    })
+    return response
   }
-
-  const response = await login(input, {
-    ip: getRemoteIp(req.headers),
-    userAgent: req.headers.get('user-agent') ?? ''
-  })
-  return NextResponse.json(response)
-}
+})

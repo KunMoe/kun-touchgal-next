@@ -8,6 +8,8 @@
 // 登记门槛: 必须有能报错的 bad 样例 (lint/__tests__/kunInvariants.test.ts 逐条执行)。
 // 这里只收由机器执行的代码约束, 不收生产状态和审查流程。
 
+import { LEGACY_ROUTE_FILES } from './legacyRouteFiles.mjs'
+
 /**
  * @typedef {{
  *   id: `inv-${string}`,
@@ -129,6 +131,26 @@ const USER_UPDATE = `CallExpression[callee.property.name=/^(update|updateMany|up
 const USER_PAYLOAD = inlineObjectOf(
   `${USER_UPDATE} > ObjectExpression > Property${keyIs('/^(data|update)$/')}`
 )
+
+// inv-route-01/02 共用。Route Handler 的导出名 (Next 认的 HTTP 方法) 与入口构造器
+const HTTP_METHOD = '/^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$/'
+const KUN_ROUTE_CALL =
+  "CallExpression[callee.type='MemberExpression'][callee.object.name='kunRoute']"
+const ROUTE_EXPORT = `ExportNamedDeclaration > VariableDeclaration > VariableDeclarator[id.name=${HTTP_METHOD}]`
+const HTTP_METHODS = [
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'DELETE',
+  'PATCH',
+  'OPTIONS'
+]
+// 过渡期认的身份闸门: 会话适配器、视角上下文、后台两个文件内 helper
+const ROUTE_GATE_CALL =
+  'CallExpression[callee.name=/^(verifyHeaderCookie|viewerContextFromRequest|verifyAdmin|ensureAdmin)$/]'
+// 路径里的 [id] / [...path] 在 glob 里是字符类, 要转义成字面量
+const literalGlob = (path) => path.replace(/[[\]]/g, '\\$&')
 
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
@@ -907,6 +929,94 @@ export const KUN_INVARIANTS = [
         "import { finishKunSecurityEvent } from '~/server/auth/securityEvents'",
         "import { deleteKunTokenSession } from '~/server/auth/session'",
         "import { resolveKunSiteSession } from '~/server/auth/session'"
+      ]
+    }
+  },
+  {
+    id: 'inv-route-01',
+    aliases: ['T10'],
+    statement:
+      '导出的 HTTP 方法一律写成 export const <方法> = kunRoute.<同名小写方法>({ ... }): 参数是行内对象字面量, auth、capability、order、csrf、form 是字面量; 身份从 handler 的 actor 取, 不再调 verifyHeaderCookie, 声明 public 的 handler 里也不建视角上下文',
+    reason:
+      '访问级别以前写在 handler 体内, 是一段整段删掉也能通过类型、lint 与测试的语句: 外部抓取五路由匿名可达约 5 个月、@提及搜索约 18 个月, 都靠人工评审才发现; 「调了 verifyHeaderCookie 却不判空」的可选登录与忘了拦截在代码上长得一样。做成入口定义上的必填字面量后, 漏写编译不过, app/api/__tests__/routeManifest.test.ts 才能静态读出全站访问清单',
+    removeWhen: 'Route Handler 改由别的、同样带必填访问声明的机制定义',
+    files: ['app/**/route.ts'],
+    ignores: LEGACY_ROUTE_FILES.map(literalGlob),
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `ExportNamedDeclaration > FunctionDeclaration[id.name=${HTTP_METHOD}]`,
+        `ExportSpecifier[exported.name=${HTTP_METHOD}]`,
+        `${ROUTE_EXPORT}:not([init.type='CallExpression'][init.callee.type='MemberExpression'][init.callee.object.name='kunRoute'])`,
+        ...HTTP_METHODS.map(
+          (method) =>
+            `${ROUTE_EXPORT}[id.name='${method}'][init.callee.object.name='kunRoute']:not([init.callee.property.name='${method.toLowerCase()}'])`
+        ),
+        `${KUN_ROUTE_CALL}:not([arguments.length=1][arguments.0.type='ObjectExpression'])`,
+        `${KUN_ROUTE_CALL} > ObjectExpression > :matches(SpreadElement, Property[computed=true])`,
+        `${KUN_ROUTE_CALL} > ObjectExpression:not(:has(> Property[key.name='auth']))`,
+        `${KUN_ROUTE_CALL} > ObjectExpression > Property[key.name=/^(auth|capability|order|csrf|form)$/]:not([value.type='Literal'])`,
+        "CallExpression[callee.name='verifyHeaderCookie']",
+        // esquery 的 :has 里多级子选择器 (> A > B) 不生效, 要逐级嵌套
+        `${KUN_ROUTE_CALL}:has(> ObjectExpression:has(> Property[key.name='auth'][value.value='public'])) CallExpression[callee.name='viewerContextFromRequest']`
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample/route.ts',
+      bad: [
+        'export async function GET() { return Response.json({}) }',
+        'export const POST = async () => Response.json({})',
+        'const handler = kunRoute.get({ auth: "public", handler: async () => ({}) })\nexport { handler as GET }',
+        'const handler = kunRoute.get({ auth: "public", handler: async () => ({}) })\nexport const GET = handler',
+        'export const POST = kunRoute.get({ auth: "public", handler: async () => ({}) })',
+        'export const GET = kunRoute.get(def)',
+        'export const GET = kunRoute.get({ ...def })',
+        'export const GET = kunRoute.get({ handler: async () => ({}) })',
+        'export const GET = kunRoute.get({ auth: level, handler: async () => ({}) })',
+        "export const GET = kunRoute.get({ auth: 'user', capability: cap, handler: async () => ({}) })",
+        "export const GET = kunRoute.get({ ['auth']: 'public', handler: async () => ({}) })",
+        "export const GET = kunRoute.get({ auth: 'optional', handler: async ({ req }) => ({ uid: (await verifyHeaderCookie(req))?.uid }) })",
+        "export const GET = kunRoute.get({ auth: 'public', handler: async ({ req }) => viewerContextFromRequest(req).listView() })"
+      ],
+      good: [
+        "export const GET = kunRoute.get({ auth: 'public', handler: async () => ({}) })",
+        "export const DELETE = kunRoute.delete({ auth: 'user', capability: 'admin.access', input: schema, handler: async ({ input }) => input })",
+        "export const POST = kunRoute.post({ auth: 'user', order: 'auth-first', form: true, input: schema, legacyDeny: { unauthenticated: '用户未认证' }, handler: async () => ({}) })",
+        "export const GET = kunRoute.get({ auth: 'optional', handler: async ({ req }) => viewerContextFromRequest(req).listView() })",
+        "export const runtime = 'nodejs'\nexport const dynamic = 'force-dynamic'"
+      ]
+    }
+  },
+  {
+    id: 'inv-route-02',
+    aliases: ['T10'],
+    statement:
+      '过渡清单 (lint/legacyRouteFiles.mjs) 里还没改成 kunRoute 的 route 文件: 每个导出的 handler 体内都要有身份闸门调用 (verifyHeaderCookie、viewerContextFromRequest、verifyAdmin、ensureAdmin), 不是函数的导出只能是 kunRoute 调用',
+    reason:
+      '迁移分片进行期间, 清单里的旧文件新加一个方法也不能「整段没写」访问判断; 访问级别的正式声明由 inv-route-01 执法',
+    removeWhen: 'LEGACY_ROUTE_FILES 清空',
+    files: LEGACY_ROUTE_FILES.map(literalGlob),
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `${ROUTE_EXPORT} > :matches(ArrowFunctionExpression, FunctionExpression).init:not(:has(${ROUTE_GATE_CALL}))`,
+        `ExportNamedDeclaration > FunctionDeclaration[id.name=${HTTP_METHOD}]:not(:has(${ROUTE_GATE_CALL}))`,
+        `${ROUTE_EXPORT}:not([init.type=/^(ArrowFunctionExpression|FunctionExpression)$/], [init.type='CallExpression'][init.callee.object.name='kunRoute'])`,
+        `ExportSpecifier[exported.name=${HTTP_METHOD}]`
+      ]
+    },
+    examples: {
+      file: LEGACY_ROUTE_FILES[0],
+      bad: [
+        'export const GET = async () => Response.json({})',
+        'export async function POST() { return Response.json({}) }',
+        'const handler = async () => Response.json({})\nexport const GET = handler',
+        'const handler = async () => Response.json({})\nexport { handler as GET }'
+      ],
+      good: [
+        'export const GET = async (req) => { const payload = await verifyHeaderCookie(req); return Response.json(payload) }',
+        'export async function POST(req) { await verifyAdmin(req); return Response.json({}) }',
+        "export const PUT = kunRoute.put({ auth: 'user', handler: async () => ({}) })"
       ]
     }
   }

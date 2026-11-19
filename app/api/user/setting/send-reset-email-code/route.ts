@@ -1,23 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import * as z from 'zod'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { sendVerificationCodeEmail } from '~/app/api/utils/sendVerificationCodeEmail'
 import { sendResetEmailVerificationCodeSchema } from '~/validations/user'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
+import type { NextRequest } from 'next/server'
 
-const sendCode = async (req: NextRequest) => {
-  const input = await kunParsePostBody(
-    req,
-    sendResetEmailVerificationCodeSchema
-  )
-  if (typeof input === 'string') {
-    return input
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return '用户未登录'
-  }
+const sendCode = async (
+  req: NextRequest,
+  input: z.infer<typeof sendResetEmailVerificationCodeSchema>
+) => {
   if (!getRemoteIp(req.headers)) {
     return '读取请求头失败'
   }
@@ -37,10 +29,11 @@ const sendCode = async (req: NextRequest) => {
   }
 }
 
-export const POST = async (req: NextRequest) => {
-  const res = await sendCode(req)
-  if (typeof res === 'string') {
-    return NextResponse.json(res)
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: sendResetEmailVerificationCodeSchema,
+  handler: async ({ req, input }) => {
+    const res = await sendCode(req, input)
+    return typeof res === 'string' ? res : {}
   }
-  return NextResponse.json({})
-}
+})

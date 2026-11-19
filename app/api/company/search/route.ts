@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
 import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { searchCompanySchema } from '~/validations/company'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 
 const searchCompany = async (input: z.infer<typeof searchCompanySchema>) => {
   const { query } = input
@@ -37,12 +36,8 @@ const searchCompany = async (input: z.infer<typeof searchCompanySchema>) => {
   })
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, searchCompanySchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const response = await searchCompany(input)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'public',
+  input: searchCompanySchema,
+  handler: ({ input }) => searchCompany(input)
+})

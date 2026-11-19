@@ -1,6 +1,5 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { forgotPasswordResetSchema } from '~/validations/forgot'
 import { prisma } from '~/prisma/index'
 import { hashPassword } from '~/app/api/utils/algorithm'
@@ -51,16 +50,15 @@ const resetPassword = async (
   await finishKunSecurityEvent(user.id, 'password-reset')
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, forgotPasswordResetSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
+export const POST = kunRoute.post({
+  auth: 'public',
+  input: forgotPasswordResetSchema,
+  handler: async ({ input }) => {
+    const response = await resetPassword(input)
+    if (typeof response === 'string') {
+      return response
+    }
 
-  const response = await resetPassword(input)
-  if (typeof response === 'string') {
-    return NextResponse.json(response)
+    return {}
   }
-
-  return NextResponse.json({})
-}
+})

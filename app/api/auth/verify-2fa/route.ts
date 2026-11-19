@@ -1,7 +1,6 @@
 import * as z from 'zod'
 import { cookies } from 'next/headers'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { establishKunSession } from '~/server/auth/session'
 import { prisma } from '~/prisma/index'
 import { getUserStatus } from '~/app/api/user/status/service'
@@ -90,57 +89,61 @@ const verifyLogin2FA = async (
   return getUserStatus(user.id)
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, verifyLogin2FASchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const tempToken = parseCookies(req.headers.get('cookie') ?? '')[
-    'kun-galgame-patch-moe-2fa-token'
-  ]
-  if (!tempToken) {
-    return NextResponse.json('未找到临时令牌')
-  }
-  const payload = verify2FA(tempToken)
-  if (!payload) {
-    return NextResponse.json('2FA 临时令牌已过期, 时效为 10 分钟')
-  }
-
-  const ip = getRemoteIp(req.headers)
-  let reservation: TwoFactorAttemptReservation
-  try {
-    reservation = await reserveTwoFactorAttempt(payload.jti, payload.id, ip)
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to reserve 2FA attempt', error)
-    return NextResponse.json('2FA 验证服务暂不可用, 请稍后重试')
-  }
-
-  if (!reservation.allowed) {
-    const cookie = await cookies()
-    cookie.delete('kun-galgame-patch-moe-2fa-token')
-    if (reservation.reason === 'expired' || reservation.reason === 'invalid') {
-      return NextResponse.json('2FA 临时令牌已失效, 请重新登录')
+// 认的是登录第一步签发的 2FA 临时令牌, 不是站点会话
+export const POST = kunRoute.post({
+  auth: 'public',
+  input: verifyLogin2FASchema,
+  handler: async ({ req, input }) => {
+    const tempToken = parseCookies(req.headers.get('cookie') ?? '')[
+      'kun-galgame-patch-moe-2fa-token'
+    ]
+    if (!tempToken) {
+      return '未找到临时令牌'
     }
-    return NextResponse.json('2FA 尝试次数过多, 请稍后重新登录')
-  }
+    const payload = verify2FA(tempToken)
+    if (!payload) {
+      return '2FA 临时令牌已过期, 时效为 10 分钟'
+    }
 
-  let response: Awaited<ReturnType<typeof verifyLogin2FA>>
-  try {
-    response = await verifyLogin2FA(input, payload, {
-      ip,
-      userAgent: req.headers.get('user-agent') ?? ''
-    })
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to verify 2FA', error)
-    return NextResponse.json('2FA 验证服务暂不可用, 请稍后重试')
-  }
+    const ip = getRemoteIp(req.headers)
+    let reservation: TwoFactorAttemptReservation
+    try {
+      reservation = await reserveTwoFactorAttempt(payload.jti, payload.id, ip)
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to reserve 2FA attempt', error)
+      return '2FA 验证服务暂不可用, 请稍后重试'
+    }
 
-  if (typeof response === 'string' && reservation.remainingAttempts === 0) {
-    const cookie = await cookies()
-    cookie.delete('kun-galgame-patch-moe-2fa-token')
-    return NextResponse.json('2FA 尝试次数过多, 请重新登录')
+    if (!reservation.allowed) {
+      const cookie = await cookies()
+      cookie.delete('kun-galgame-patch-moe-2fa-token')
+      if (
+        reservation.reason === 'expired' ||
+        reservation.reason === 'invalid'
+      ) {
+        return '2FA 临时令牌已失效, 请重新登录'
+      }
+      return '2FA 尝试次数过多, 请稍后重新登录'
+    }
+
+    let response: Awaited<ReturnType<typeof verifyLogin2FA>>
+    try {
+      response = await verifyLogin2FA(input, payload, {
+        ip,
+        userAgent: req.headers.get('user-agent') ?? ''
+      })
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to verify 2FA', error)
+      return '2FA 验证服务暂不可用, 请稍后重试'
+    }
+
+    if (typeof response === 'string' && reservation.remainingAttempts === 0) {
+      const cookie = await cookies()
+      cookie.delete('kun-galgame-patch-moe-2fa-token')
+      return '2FA 尝试次数过多, 请重新登录'
+    }
+    return response
   }
-  return NextResponse.json(response)
-}
+})

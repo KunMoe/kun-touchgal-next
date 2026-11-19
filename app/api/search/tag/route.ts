@@ -1,6 +1,5 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { searchTagSchema } from '~/validations/search'
 
@@ -64,12 +63,8 @@ const searchTag = async (input: z.infer<typeof searchTagSchema>) => {
   return suggestions
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, searchTagSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const response = await searchTag(input)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'public',
+  input: searchTagSchema,
+  handler: ({ input }) => searchTag(input)
+})

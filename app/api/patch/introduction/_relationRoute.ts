@@ -1,16 +1,10 @@
-import { NextResponse } from 'next/server'
-import * as z from 'zod'
 import { prisma } from '~/prisma'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { queueSearchSync } from '~/server/search/sync'
-import { can } from '~/constants/permission'
-import type { NextRequest } from 'next/server'
-import type { KunCapability } from '~/constants/permission'
 
 // 关联变更后的缓存失效: 列表缓存 + 补丁详情缓存。后者会抛 (cache.ts 内 re-throw),
 // 前者内部吞错永不 reject, 故只有后者包 try。company/fetch 路由主流程是外部抓取
-// 语义, 套不进 createPatchRelationHandler, 但共用这段失效。
+// 语义, 套不进 patchRelationHandler, 但共用这段失效。
 // 搜索同步刻意不并入: 两类调用点语义不同 (见 createPatchRelationHandler 内注释)
 export const invalidatePatchRelationCaches = async (
   uniqueId: string,
@@ -24,39 +18,22 @@ export const invalidatePatchRelationCaches = async (
   }
 }
 
-// tag / company 各自 POST(增) 与 PUT(删) 共四个 handler 的公共编排:
-// 解析 -> 能力门 -> 补丁存在性 -> 变更事务 -> 失效。
-// mutate 返回关系是否真的发生变化, 无变化则一处缓存都不动
-export const createPatchRelationHandler = <
-  T extends z.ZodType<{ patchId: number }>
->(options: {
-  schema: T
-  capability: KunCapability
-  parseBody: (req: NextRequest, schema: T) => Promise<z.infer<T> | string>
-  mutate: (input: z.infer<T>) => Promise<boolean>
+// tag / company 各自 POST(增) 与 PUT(删) 共四个 handler 的公共编排, 作为 kunRoute 的 handler:
+// 解析与能力门在各路由文件的 kunRoute 声明里 (先解析后鉴权, #52), 这里接着做
+// 补丁存在性 -> 变更事务 -> 失效。mutate 返回关系是否真的发生变化, 无变化则一处缓存都不动
+export const patchRelationHandler = <T extends { patchId: number }>(options: {
+  mutate: (input: T) => Promise<boolean>
   invalidateListCache: () => Promise<void>
 }) => {
-  return async (req: NextRequest) => {
-    const input = await options.parseBody(req, options.schema)
-    if (typeof input === 'string') {
-      return NextResponse.json(input)
-    }
+  return async ({ input }: { input: T }) => {
     const { patchId } = input
-
-    const payload = await verifyHeaderCookie(req)
-    if (!payload) {
-      return NextResponse.json('用户未登录')
-    }
-    if (!can(payload, options.capability)) {
-      return NextResponse.json('本页面仅管理员可访问')
-    }
 
     const patch = await prisma.patch.findUnique({
       where: { id: patchId },
       select: { unique_id: true }
     })
     if (!patch) {
-      return NextResponse.json('未找到 Galgame')
+      return '未找到 Galgame'
     }
 
     const changed = await options.mutate(input)
@@ -71,6 +48,6 @@ export const createPatchRelationHandler = <
       // 未入队、必须 queueSearchSync, 故这一步留在调用点而非失效函数里
       queueSearchSync(patchId)
     }
-    return NextResponse.json({})
+    return {}
   }
 }

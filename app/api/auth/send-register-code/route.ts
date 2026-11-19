@@ -1,6 +1,5 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { sendVerificationCodeEmail } from '~/app/api/utils/sendVerificationCodeEmail'
 import { sendRegisterEmailVerificationCodeServerSchema } from '~/validations/reserved-username.server'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
@@ -48,19 +47,15 @@ const sendRegisterCode = async (
   return {}
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(
-    req,
-    sendRegisterEmailVerificationCodeServerSchema
-  )
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
+export const POST = kunRoute.post({
+  auth: 'public',
+  input: sendRegisterEmailVerificationCodeServerSchema,
+  handler: async ({ req, input }) => {
+    if (!getRemoteIp(req.headers)) {
+      return '读取请求头失败'
+    }
 
-  if (!getRemoteIp(req.headers)) {
-    return NextResponse.json('读取请求头失败')
+    const response = await sendRegisterCode(input, req.headers)
+    return response
   }
-
-  const response = await sendRegisterCode(input, req.headers)
-  return NextResponse.json(response)
-}
+})

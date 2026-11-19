@@ -1,8 +1,7 @@
 import * as z from 'zod'
 import { delKv, getKv } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { disableEmailNoticeSchema } from '~/validations/auth'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 
@@ -32,12 +31,9 @@ const disableEmailNotice = async (
   return {}
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, disableEmailNoticeSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const res = await disableEmailNotice(input)
-  return NextResponse.json(res)
-}
+// 凭邮件里的验证码退订, 不需要登录
+export const POST = kunRoute.post({
+  auth: 'public',
+  input: disableEmailNoticeSchema,
+  handler: ({ input }) => disableEmailNotice(input)
+})

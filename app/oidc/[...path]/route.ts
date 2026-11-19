@@ -1,3 +1,4 @@
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { handleOidcCallback } from '~/lib/oidc/webToNode'
 import type { NextRequest } from 'next/server'
 
@@ -5,12 +6,14 @@ import type { NextRequest } from 'next/server'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const handler = (req: NextRequest) => handleOidcCallback(req)
+// 原样透传给 oidc-provider: 授权、令牌、登出等端点各自按协议认客户端凭据与 provider 会话,
+// 不读站点会话; 请求体也由 provider 自己读
+const handler = ({ req }: { req: NextRequest }) => handleOidcCallback(req)
 
-export const GET = handler
-export const POST = handler
-export const PUT = handler
-export const DELETE = handler
-export const PATCH = handler
-export const HEAD = handler
-export const OPTIONS = handler
+export const GET = kunRoute.get({ auth: 'public', handler })
+export const POST = kunRoute.post({ auth: 'public', handler })
+export const PUT = kunRoute.put({ auth: 'public', handler })
+export const DELETE = kunRoute.delete({ auth: 'public', handler })
+export const PATCH = kunRoute.patch({ auth: 'public', handler })
+export const HEAD = kunRoute.head({ auth: 'public', handler })
+export const OPTIONS = kunRoute.options({ auth: 'public', handler })

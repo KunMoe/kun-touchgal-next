@@ -1,14 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { getMoyuPatchResourceSchema } from '~/validations/patch'
 import { getMoyuPatchResources } from './service'
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, getMoyuPatchResourceSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const response = await getMoyuPatchResources(input.vndbId)
-  return NextResponse.json(response)
-}
+export const GET = kunRoute.get({
+  auth: 'public',
+  input: getMoyuPatchResourceSchema,
+  handler: ({ input }) => getMoyuPatchResources(input.vndbId)
+})
