@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AuthUserCache } from '~/app/api/user/session/cache'
+import type { AuthUserCache } from '~/server/auth/sessionCache'
 
 const jti = 'j1'
 const token = 'tok'
@@ -51,7 +51,7 @@ vi.mock('~/prisma/index', () => ({
   prisma: { user: { findUnique: findUniqueMock } }
 }))
 
-vi.mock('~/app/api/user/session/cache', () => ({
+vi.mock('~/server/auth/sessionCache', () => ({
   getUserSessionInvalidationKv: vi.fn(() => ({ key: 'k', value: 'v' })),
   invalidateUserSession: invalidateUserSessionMock,
   getUserSessionCacheScope: getUserSessionCacheScopeMock,

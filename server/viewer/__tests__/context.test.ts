@@ -15,7 +15,7 @@ const {
   renderCache: new Map<unknown, unknown>()
 }))
 
-vi.mock('~/app/api/utils/jwt', () => ({
+vi.mock('~/server/auth/session', () => ({
   verifyKunTokenWithUser: verifyKunTokenWithUserMock
 }))
 

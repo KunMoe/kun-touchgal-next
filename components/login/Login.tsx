@@ -14,7 +14,7 @@ import { useRouter } from '@bprogress/next/app'
 import toast from 'react-hot-toast'
 import { KunCaptchaModal } from '~/components/kun/auth/CaptchaModal'
 import { KunTextDivider } from '~/components/kun/TextDivider'
-import type { UserState } from '~/store/userStore'
+import type { UserState } from '~/types/api/session'
 
 type LoginFormData = z.infer<typeof loginSchema>
 

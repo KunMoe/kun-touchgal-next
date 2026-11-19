@@ -1,5 +1,31 @@
 import type { MessageUnreadStatus } from './message'
-import type { UserState } from '~/store/userStore'
+
+// 登录、注册、2FA 第二步与 /api/user/session 回给客户端的用户状态 (客户端存进 userStore)
+export interface UserState {
+  uid: number
+  name: string
+  avatar: string
+  bio: string
+  moemoepoint: number
+  role: number
+  dailyCheckIn: number
+  dailyImageLimit: number
+  dailyUploadLimit: number
+  enableEmailNotice: boolean
+  allowPrivateMessage: boolean
+  blockedTagIds: number[]
+
+  enableRedirect: boolean
+  excludedDomains: string[]
+  delaySeconds: number
+}
+
+// 登录第一步通过、等待 2FA 第二步时的临时令牌载荷 (cookie kun-galgame-patch-moe-2fa-token)
+export interface KunGalgameStatelessPayload {
+  require2FA: boolean
+  id: number
+  jti: string
+}
 
 export interface UserSession {
   user: UserState

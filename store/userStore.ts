@@ -1,24 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-
-export interface UserState {
-  uid: number
-  name: string
-  avatar: string
-  bio: string
-  moemoepoint: number
-  role: number
-  dailyCheckIn: number
-  dailyImageLimit: number
-  dailyUploadLimit: number
-  enableEmailNotice: boolean
-  allowPrivateMessage: boolean
-  blockedTagIds: number[]
-
-  enableRedirect: boolean
-  excludedDomains: string[]
-  delaySeconds: number
-}
+import type { UserState } from '~/types/api/session'
 
 export interface UserStore {
   user: UserState

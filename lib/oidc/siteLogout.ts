@@ -1,7 +1,7 @@
 import 'server-only'
 import { createViewerContext } from '~/server/viewer/context'
-import { deleteKunTokenSession } from '~/app/api/utils/jwt'
-import { kunCookieOptions } from '~/app/api/utils/cookieOptions'
+import { deleteKunTokenSession } from '~/server/auth/session'
+import { kunCookieOptions } from '~/server/auth/cookieOptions'
 import type Provider from 'oidc-provider'
 import type { KoaContextWithOIDC } from 'oidc-provider'
 

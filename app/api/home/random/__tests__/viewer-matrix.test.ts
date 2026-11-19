@@ -15,7 +15,7 @@ import {
 } from '~/server/viewer/__tests__/viewerMatrix'
 
 vi.mock(
-  '~/app/api/utils/jwt',
+  '~/server/auth/session',
   async () => (await import('~/server/viewer/__tests__/viewerMatrix')).jwtModule
 )
 vi.mock(

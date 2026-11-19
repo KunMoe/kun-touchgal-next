@@ -140,6 +140,23 @@ describe('OIDC confirm route GET', () => {
     expect(res.headers.get('location')).toBe(resumeUrl)
   })
 
+  it('令牌带 auth_time 时以它为认证时刻 (重签过的令牌 iat 比登录晚)', async () => {
+    verifyHeaderCookieMock.mockResolvedValue({
+      uid: 7,
+      auth_time: SITE_LOGIN_IAT,
+      iat: INTERACTION_IAT + 5
+    })
+    interactionDetailsMock.mockResolvedValue(loginDetails(['login_prompt']))
+
+    const res = await GET(getRequest(), routeContext())
+
+    // 认证发生在交互开始之前: 即使令牌是交互之后重签的, prompt=login 也要重新登录
+    expect(res.headers.get('location')).toBe(
+      'http://localhost/login?from=%2Foidc%2Finteraction%2Fuid123'
+    )
+    expect(interactionFinishedMock).not.toHaveBeenCalled()
+  })
+
   it('interaction 读不到时同样回落到 interaction 页', async () => {
     verifyHeaderCookieMock.mockResolvedValue({ uid: 7, iat: SITE_LOGIN_IAT })
     interactionDetailsMock.mockRejectedValue(

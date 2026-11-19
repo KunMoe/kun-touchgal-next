@@ -56,9 +56,10 @@ export const GET = async (
   const provider = getOidcProvider()
   const bridge = await buildRequestBridge(req, false, { skipBody: true })
   bridge.req.push(null)
-  // 认证时刻是站点登录的时刻 (签发站点令牌的 iat), 不是此刻: 否则 id_token 的 auth_time
-  // 恒为确认时刻, max_age / prompt=login 的重新认证要求被一个旧 cookie 零交互满足
-  const authTime = payload.iat ?? 0
+  // 认证时刻是站点登录的时刻 (令牌的 auth_time; 之前签发的令牌没有它, 取 iat), 不是此刻:
+  // 否则 id_token 的 auth_time 恒为确认时刻, max_age / prompt=login 的重新认证要求被一个旧 cookie 零交互满足
+  const siteAuthTime = payload.auth_time ?? payload.iat
+  const authTime = siteAuthTime ?? 0
   try {
     const details = await provider.interactionDetails(bridge.req, bridge.res)
     if (needsFreshLogin(details, authTime)) {
@@ -66,7 +67,7 @@ export const GET = async (
       return NextResponse.redirect(loginUrl)
     }
     await provider.interactionFinished(bridge.req, bridge.res, {
-      login: { accountId: String(payload.uid), ts: payload.iat }
+      login: { accountId: String(payload.uid), ts: siteAuthTime }
     })
   } catch (error) {
     // interaction 已被消费或过期（如后台 fetch 跑完 303 链后的重放）：

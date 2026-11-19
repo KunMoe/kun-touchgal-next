@@ -8,7 +8,7 @@ const { verifyKunTokenWithUserMock, hasPendingResourceMock } = vi.hoisted(
   })
 )
 
-vi.mock('~/app/api/utils/jwt', () => ({
+vi.mock('~/server/auth/session', () => ({
   verifyKunTokenWithUser: verifyKunTokenWithUserMock
 }))
 

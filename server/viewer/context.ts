@@ -1,6 +1,6 @@
 import 'server-only'
 import { parseCookies } from '~/utils/cookies'
-import { verifyKunTokenWithUser } from '~/app/api/utils/jwt'
+import { verifyKunTokenWithUser } from '~/server/auth/session'
 import { shouldBypassSharedCache } from '~/app/api/utils/contentVisibility'
 import {
   PUBLIC_VISIBILITY,

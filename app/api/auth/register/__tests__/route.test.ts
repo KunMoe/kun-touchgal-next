@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
-  cookieSetMock,
+  establishSessionMock,
   delKvMock,
   findFirstMock,
   getKvMock,
@@ -9,17 +9,13 @@ const {
   userCreateMock,
   verifyVerificationCodeMock
 } = vi.hoisted(() => ({
-  cookieSetMock: vi.fn(),
+  establishSessionMock: vi.fn(),
   delKvMock: vi.fn(),
   findFirstMock: vi.fn(),
   getKvMock: vi.fn(),
   kunParsePostBodyMock: vi.fn(),
   userCreateMock: vi.fn(),
   verifyVerificationCodeMock: vi.fn()
-}))
-
-vi.mock('next/headers', () => ({
-  cookies: async () => ({ set: cookieSetMock })
 }))
 
 vi.mock('next/server', () => ({
@@ -44,12 +40,8 @@ vi.mock('~/app/api/utils/verifyVerificationCode', () => ({
   verifyVerificationCode: verifyVerificationCodeMock
 }))
 
-vi.mock('~/app/api/utils/jwt', () => ({
-  generateKunToken: vi.fn(async () => 'kun-token')
-}))
-
-vi.mock('~/app/api/utils/cookieOptions', () => ({
-  kunCookieOptions: (maxAge: number) => ({ maxAge })
+vi.mock('~/server/auth/session', () => ({
+  establishKunSession: establishSessionMock
 }))
 
 vi.mock('~/lib/redis', () => ({
@@ -63,8 +55,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
-vi.mock('~/app/api/admin/setting/redirect/getRedirectConfig', () => ({
-  getRedirectConfig: vi.fn(async () => ({}))
+vi.mock('~/app/api/user/status/service', () => ({
+  getUserStatus: vi.fn(async (uid: number) => ({ uid, name: 'tester' }))
 }))
 
 import { Prisma } from '~/prisma/generated/prisma/client'
@@ -104,6 +96,7 @@ beforeEach(() => {
   })
   getKvMock.mockResolvedValue(null)
   delKvMock.mockResolvedValue(undefined)
+  establishSessionMock.mockResolvedValue({ ok: true })
 })
 
 describe('POST /api/auth/register with register disabled', () => {
@@ -118,7 +111,7 @@ describe('POST /api/auth/register with register disabled', () => {
     expect(userCreateMock).not.toHaveBeenCalled()
     expect(findFirstMock).not.toHaveBeenCalled()
     expect(verifyVerificationCodeMock).not.toHaveBeenCalled()
-    expect(cookieSetMock).not.toHaveBeenCalled()
+    expect(establishSessionMock).not.toHaveBeenCalled()
   })
 
   it('creates a user while the kill switch is off', async () => {
@@ -127,10 +120,9 @@ describe('POST /api/auth/register with register disabled', () => {
 
     expect(body).toMatchObject({ uid: 7, name: 'tester' })
     expect(userCreateMock).toHaveBeenCalledTimes(1)
-    expect(cookieSetMock).toHaveBeenCalledWith(
-      'kun-galgame-patch-moe-token',
-      'kun-token',
-      { maxAge: 30 * 24 * 60 * 60 }
+    expect(establishSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7, name: 'tester', role: 1 }),
+      { ip: '203.0.113.8', userAgent: 'vitest' }
     )
   })
 })
@@ -163,7 +155,7 @@ describe('POST /api/auth/register verification code consumption', () => {
     const body = await response.json()
 
     expect(body).toMatchObject({ uid: 7 })
-    expect(cookieSetMock).toHaveBeenCalled()
+    expect(establishSessionMock).toHaveBeenCalled()
   })
 })
 
@@ -181,7 +173,7 @@ describe('POST /api/auth/register unique constraint fallback', () => {
     await expect(response.json()).resolves.toBe(
       '您的用户名或邮箱已经有人注册了, 请修改'
     )
-    expect(cookieSetMock).not.toHaveBeenCalled()
+    expect(establishSessionMock).not.toHaveBeenCalled()
     expect(delKvMock).not.toHaveBeenCalled()
   })
 
@@ -189,7 +181,7 @@ describe('POST /api/auth/register unique constraint fallback', () => {
     userCreateMock.mockRejectedValue(new Error('connection lost'))
 
     await expect(POST(createRequest())).rejects.toThrow('connection lost')
-    expect(cookieSetMock).not.toHaveBeenCalled()
+    expect(establishSessionMock).not.toHaveBeenCalled()
   })
 })
 

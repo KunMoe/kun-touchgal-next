@@ -21,7 +21,7 @@ import { EmailVerification } from '~/components/kun/verification-code/Code'
 import { useRouter } from '@bprogress/next/app'
 import { KunTextDivider } from '~/components/kun/TextDivider'
 import { KUN_EMAIL_DOMAIN_WHITELIST } from '~/constants/email/whitelist'
-import type { UserState } from '~/store/userStore'
+import type { UserState } from '~/types/api/session'
 
 type RegisterFormData = z.infer<typeof registerSchema>
 

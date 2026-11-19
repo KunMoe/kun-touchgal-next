@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken'
-import type { KunGalgameStatelessPayload } from '~/app/api/utils/jwt'
+import type { KunGalgameStatelessPayload } from '~/types/api/session'
 
 export const verify2FA = (token: string) => {
   try {

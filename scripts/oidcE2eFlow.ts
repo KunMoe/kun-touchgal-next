@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from 'crypto'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
-import jwt from 'jsonwebtoken'
 import { prisma } from '~/prisma/index'
-import { deleteKunTokenSession, generateKunToken } from '~/app/api/utils/jwt'
+import {
+  deleteKunTokenSession,
+  mintKunSessionToken
+} from '~/server/auth/session'
 
 // 端到端跑一遍 Authorization Code + PKCE 流程，验证 login→consent→code→token→userinfo。
 // 运行：pnpm exec esno scripts/oidcE2eFlow.ts
@@ -45,11 +47,8 @@ const main = async () => {
   if (!user) {
     throw new Error('数据库无用户，无法测试')
   }
-  const token = await generateKunToken(user.id, user.name, user.role, '30d')
-  testSession = {
-    uid: user.id,
-    jti: (jwt.decode(token) as { jti: string }).jti
-  }
+  const { token, jti } = await mintKunSessionToken(user.id)
+  testSession = { uid: user.id, jti }
   jar.set('kun-galgame-patch-moe-token', token)
   console.log('测试用户:', user)
 

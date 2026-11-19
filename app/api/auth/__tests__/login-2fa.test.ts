@@ -4,16 +4,20 @@ const {
   checkCaptchaMock,
   cookieSetMock,
   createChallengeMock,
+  establishSessionMock,
   findFirstMock,
   generateStatelessTokenMock,
+  getUserStatusMock,
   kunParsePostBodyMock,
   verifyPasswordMock
 } = vi.hoisted(() => ({
   checkCaptchaMock: vi.fn(),
   cookieSetMock: vi.fn(),
   createChallengeMock: vi.fn(),
+  establishSessionMock: vi.fn(),
   findFirstMock: vi.fn(),
   generateStatelessTokenMock: vi.fn(),
+  getUserStatusMock: vi.fn(),
   kunParsePostBodyMock: vi.fn(),
   verifyPasswordMock: vi.fn()
 }))
@@ -43,12 +47,13 @@ vi.mock('~/app/api/utils/algorithm', () => ({
   verifyPassword: verifyPasswordMock
 }))
 
-vi.mock('~/app/api/utils/jwt', () => ({
+vi.mock('~/server/auth/session', () => ({
+  establishKunSession: establishSessionMock,
   generateKunStatelessToken: generateStatelessTokenMock,
-  generateKunToken: vi.fn()
+  KUN_BANNED_LOGIN_MESSAGE: 'banned'
 }))
 
-vi.mock('~/app/api/utils/cookieOptions', () => ({
+vi.mock('~/server/auth/cookieOptions', () => ({
   kunCookieOptions: (maxAge: number) => ({ maxAge })
 }))
 
@@ -62,12 +67,8 @@ vi.mock('~/app/api/utils/verifyKunCaptcha', () => ({
   checkKunCaptchaExist: checkCaptchaMock
 }))
 
-vi.mock('~/app/api/admin/setting/redirect/getRedirectConfig', () => ({
-  getRedirectConfig: vi.fn()
-}))
-
 vi.mock('~/app/api/user/status/service', () => ({
-  updateUserLastLoginTime: vi.fn()
+  getUserStatus: getUserStatusMock
 }))
 
 vi.mock('~/app/api/utils/getRemoteIp', () => ({
@@ -142,5 +143,54 @@ describe('POST /api/auth/login with 2FA', () => {
     )
     expect(generateStatelessTokenMock).not.toHaveBeenCalled()
     expect(cookieSetMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /api/auth/login without 2FA', () => {
+  const row = {
+    id: 7,
+    name: 'tester',
+    email: 'tester@example.com',
+    password: 'password-hash',
+    role: 1,
+    status: 0,
+    enable_2fa: false,
+    avatar: ''
+  }
+
+  beforeEach(() => {
+    findFirstMock.mockResolvedValue(row)
+    establishSessionMock.mockResolvedValue({ ok: true })
+    getUserStatusMock.mockResolvedValue({ uid: 7, name: 'tester' })
+  })
+
+  it('建立会话用的是校验密码时读到的那一行, 回给客户端的状态取自 getUserStatus', async () => {
+    const body = await (await POST(createRequest())).json()
+
+    expect(establishSessionMock).toHaveBeenCalledWith(row, {
+      ip: '203.0.113.8',
+      userAgent: 'vitest'
+    })
+    expect(getUserStatusMock).toHaveBeenCalledWith(7)
+    expect(body).toEqual({ uid: 7, name: 'tester', require2FA: false })
+    expect(createChallengeMock).not.toHaveBeenCalled()
+  })
+
+  it('会话没建成时原样回它的消息, 不读用户状态', async () => {
+    establishSessionMock.mockResolvedValue({ ok: false, message: 'banned' })
+
+    const body = await (await POST(createRequest())).json()
+
+    expect(body).toBe('banned')
+    expect(getUserStatusMock).not.toHaveBeenCalled()
+  })
+
+  it('封禁的账号在建立会话之前就被拒绝', async () => {
+    findFirstMock.mockResolvedValue({ ...row, status: 2 })
+
+    const body = await (await POST(createRequest())).json()
+
+    expect(body).toBe('banned')
+    expect(establishSessionMock).not.toHaveBeenCalled()
   })
 })

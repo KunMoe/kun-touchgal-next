@@ -7,9 +7,9 @@ import toast from 'react-hot-toast'
 import { useUserStore } from '~/store/userStore'
 import { kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
 import { resolveKunLoginRedirect } from '~/utils/loginRedirect'
-import { UserState } from '~/store/userStore'
+import type { UserState } from '~/types/api/session'
 import { KunTextDivider } from '~/components/kun/TextDivider'
-import type { KunGalgameStatelessPayload } from '~/app/api/utils/jwt'
+import type { KunGalgameStatelessPayload } from '~/types/api/session'
 
 export const TwoFactor = () => {
   const [token, setToken] = useState('')

@@ -6,13 +6,12 @@ const {
   cookieDeleteMock,
   cookieSetMock,
   findUniqueMock,
-  generateKunTokenMock,
-  getRedirectConfigMock,
+  establishSessionMock,
+  getUserStatusMock,
   kunParsePostBodyMock,
   parseCookiesMock,
   reserveAttemptMock,
   checkTotpMock,
-  updateLastLoginMock,
   verify2FAMock
 } = vi.hoisted(() => ({
   consumeBackupCodeMock: vi.fn(),
@@ -20,13 +19,12 @@ const {
   cookieDeleteMock: vi.fn(),
   cookieSetMock: vi.fn(),
   findUniqueMock: vi.fn(),
-  generateKunTokenMock: vi.fn(),
-  getRedirectConfigMock: vi.fn(),
+  establishSessionMock: vi.fn(),
+  getUserStatusMock: vi.fn(),
   kunParsePostBodyMock: vi.fn(),
   parseCookiesMock: vi.fn(),
   reserveAttemptMock: vi.fn(),
   checkTotpMock: vi.fn(),
-  updateLastLoginMock: vi.fn(),
   verify2FAMock: vi.fn()
 }))
 
@@ -51,24 +49,16 @@ vi.mock('~/app/api/utils/parseQuery', () => ({
   kunParsePostBody: kunParsePostBodyMock
 }))
 
-vi.mock('~/app/api/utils/jwt', () => ({
-  generateKunToken: generateKunTokenMock
-}))
-
-vi.mock('~/app/api/utils/cookieOptions', () => ({
-  kunCookieOptions: (maxAge: number) => ({ maxAge })
+vi.mock('~/server/auth/session', () => ({
+  establishKunSession: establishSessionMock
 }))
 
 vi.mock('~/prisma/index', () => ({
   prisma: { user: { findUnique: findUniqueMock } }
 }))
 
-vi.mock('~/app/api/admin/setting/redirect/getRedirectConfig', () => ({
-  getRedirectConfig: getRedirectConfigMock
-}))
-
 vi.mock('~/app/api/user/status/service', () => ({
-  updateUserLastLoginTime: updateLastLoginMock
+  getUserStatus: getUserStatusMock
 }))
 
 vi.mock('~/server/auth/secondFactor', () => ({
@@ -149,8 +139,8 @@ beforeEach(() => {
   findUniqueMock.mockResolvedValue(user)
   checkTotpMock.mockResolvedValue('invalid')
   consumeChallengeMock.mockResolvedValue(true)
-  generateKunTokenMock.mockResolvedValue('access-token')
-  getRedirectConfigMock.mockResolvedValue({})
+  establishSessionMock.mockResolvedValue({ ok: true })
+  getUserStatusMock.mockResolvedValue({ uid: 7, name: 'tester' })
 })
 
 describe('POST /api/auth/verify-2fa', () => {
@@ -167,7 +157,7 @@ describe('POST /api/auth/verify-2fa', () => {
       'kun-galgame-patch-moe-2fa-token'
     )
     expect(consumeChallengeMock).not.toHaveBeenCalled()
-    expect(generateKunTokenMock).not.toHaveBeenCalled()
+    expect(establishSessionMock).not.toHaveBeenCalled()
   })
 
   it('allows an earlier reserved correct request to finish after the fifth failure', async () => {
@@ -190,7 +180,7 @@ describe('POST /api/auth/verify-2fa', () => {
     )
     expect(await correctResponse.json()).toMatchObject({ uid: 7 })
     expect(consumeChallengeMock).toHaveBeenCalledTimes(1)
-    expect(generateKunTokenMock).toHaveBeenCalledTimes(1)
+    expect(establishSessionMock).toHaveBeenCalledTimes(1)
   })
 
   it('rejects uid or uid-ip limits before reading the user credential', async () => {
@@ -218,13 +208,14 @@ describe('POST /api/auth/verify-2fa', () => {
       '203.0.113.8'
     )
     expect(consumeChallengeMock.mock.invocationCallOrder[0]).toBeLessThan(
-      generateKunTokenMock.mock.invocationCallOrder[0]
+      establishSessionMock.mock.invocationCallOrder[0]
     )
-    expect(cookieSetMock).toHaveBeenCalledWith(
-      'kun-galgame-patch-moe-token',
-      'access-token',
-      { maxAge: 2592000 }
-    )
+    // 会话由 establishKunSession 建立 (签发、写 cookie、记登录时间、复核封禁)
+    expect(establishSessionMock).toHaveBeenCalledWith(user, {
+      ip: '203.0.113.8',
+      userAgent: 'vitest'
+    })
+    expect(getUserStatusMock).toHaveBeenCalledWith(7)
   })
 
   it('does not issue a second session when the same token is replayed', async () => {
@@ -240,7 +231,7 @@ describe('POST /api/auth/verify-2fa', () => {
     await expect(secondResponse.json()).resolves.toBe(
       '2FA 临时令牌已失效, 请重新登录'
     )
-    expect(generateKunTokenMock).toHaveBeenCalledTimes(1)
+    expect(establishSessionMock).toHaveBeenCalledTimes(1)
   })
 
   it('checks the TOTP code for this user against the stored secret', async () => {
@@ -261,7 +252,7 @@ describe('POST /api/auth/verify-2fa', () => {
       '该验证码已经使用过, 请等身份验证器显示新的验证码后再试'
     )
     expect(consumeChallengeMock).not.toHaveBeenCalled()
-    expect(generateKunTokenMock).not.toHaveBeenCalled()
+    expect(establishSessionMock).not.toHaveBeenCalled()
   })
 
   it('fails closed when the used time step cannot be recorded', async () => {
@@ -273,7 +264,7 @@ describe('POST /api/auth/verify-2fa', () => {
       '2FA 验证服务暂不可用, 请稍后重试'
     )
     expect(consumeChallengeMock).not.toHaveBeenCalled()
-    expect(generateKunTokenMock).not.toHaveBeenCalled()
+    expect(establishSessionMock).not.toHaveBeenCalled()
   })
 
   it('takes a backup code through the atomic consume, not the TOTP check', async () => {
@@ -301,6 +292,16 @@ describe('POST /api/auth/verify-2fa', () => {
       '2FA 验证服务暂不可用, 请稍后重试'
     )
     expect(findUniqueMock).not.toHaveBeenCalled()
-    expect(generateKunTokenMock).not.toHaveBeenCalled()
+    expect(establishSessionMock).not.toHaveBeenCalled()
+  })
+
+  it('第一步之后被封禁: 第二步通过也不建立会话, 回封禁消息', async () => {
+    checkTotpMock.mockResolvedValue('ok')
+    establishSessionMock.mockResolvedValue({ ok: false, message: 'banned' })
+
+    const response = await POST(createRequest())
+
+    await expect(response.json()).resolves.toBe('banned')
+    expect(getUserStatusMock).not.toHaveBeenCalled()
   })
 })

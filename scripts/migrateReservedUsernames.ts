@@ -1,7 +1,7 @@
 import { prisma } from '~/prisma/index'
 import { redis } from '~/lib/redis'
 import { isReservedUsername } from '~/constants/reserved-usernames.server'
-import { deleteKunToken } from '~/app/api/utils/jwt'
+import { deleteKunToken } from '~/server/auth/session'
 
 // 一次性迁移: 将用户名命中保留词表的存量用户统一改名为「用户{id}」。
 // 默认 dry-run 只打印清单; 加 --apply 才写库。存量保留名用户里含 uid 1

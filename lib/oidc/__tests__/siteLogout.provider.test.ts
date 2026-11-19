@@ -22,7 +22,7 @@ const {
   hasPendingResourceMock: vi.fn()
 }))
 
-vi.mock('~/app/api/utils/jwt', () => ({
+vi.mock('~/server/auth/session', () => ({
   verifyKunTokenWithUser: verifyKunTokenWithUserMock,
   deleteKunTokenSession: deleteKunTokenSessionMock
 }))

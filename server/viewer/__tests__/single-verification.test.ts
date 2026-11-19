@@ -13,7 +13,7 @@ import {
 // React cache 共用同一个上下文。视角矩阵的用例刻意不数校验次数, 这里逐个入口数
 const { verifyMock } = vi.hoisted(() => ({ verifyMock: vi.fn() }))
 
-vi.mock('~/app/api/utils/jwt', async () => {
+vi.mock('~/server/auth/session', async () => {
   const { jwtModule } = await import('~/server/viewer/__tests__/viewerMatrix')
   verifyMock.mockImplementation(jwtModule.verifyKunTokenWithUser)
   return { verifyKunTokenWithUser: verifyMock }

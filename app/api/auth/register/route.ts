@@ -1,20 +1,17 @@
 import * as z from 'zod'
-import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { hashPassword } from '~/app/api/utils/algorithm'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
-import { generateKunToken } from '~/app/api/utils/jwt'
-import { kunCookieOptions } from '~/app/api/utils/cookieOptions'
+import { establishKunSession } from '~/server/auth/session'
 import { registerServerSchema } from '~/validations/reserved-username.server'
 import { checkDisableRegister } from '~/app/api/utils/checkDisableRegister'
 import { delKv } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
-import { getRedirectConfig } from '~/app/api/admin/setting/redirect/getRedirectConfig'
-import type { UserState } from '~/store/userStore'
+import { getUserStatus } from '~/app/api/user/status/service'
 
 const register = async (
   input: z.infer<typeof registerServerSchema>,
@@ -76,34 +73,12 @@ const register = async (
 
   await delKv(email).catch(() => {})
 
-  const token = await generateKunToken(user.id, name, user.role, '30d', {
-    ip,
-    userAgent
-  })
-  const cookie = await cookies()
-  cookie.set(
-    'kun-galgame-patch-moe-token',
-    token,
-    kunCookieOptions(30 * 24 * 60 * 60)
-  )
-
-  const redirectConfig = await getRedirectConfig()
-  const responseData: UserState = {
-    uid: user.id,
-    name: user.name,
-    avatar: user.avatar,
-    bio: user.bio,
-    moemoepoint: user.moemoepoint,
-    role: user.role,
-    dailyCheckIn: user.daily_check_in,
-    dailyImageLimit: user.daily_image_count,
-    dailyUploadLimit: user.daily_upload_size,
-    enableEmailNotice: user.enable_email_notice,
-    allowPrivateMessage: user.allow_private_message,
-    blockedTagIds: user.blocked_tag_ids,
-    ...redirectConfig
+  const established = await establishKunSession(user, { ip, userAgent })
+  if (!established.ok) {
+    return established.message
   }
-  return responseData
+
+  return getUserStatus(user.id)
 }
 
 export const POST = async (req: NextRequest) => {

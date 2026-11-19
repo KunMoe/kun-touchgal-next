@@ -22,7 +22,7 @@ import {
   invalidateUserSession,
   setCachedAuthUser,
   type AuthUserCache
-} from '~/app/api/user/session/cache'
+} from '~/server/auth/sessionCache'
 
 const uid = 7
 const authUser: AuthUserCache = {
