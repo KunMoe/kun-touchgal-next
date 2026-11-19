@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
-  handleBatchPatchTagsMock,
+  saveManualTagChangeMock,
   tagFindManyMock,
   tagCreateManyMock,
   tagRelationFindManyMock,
@@ -14,7 +14,7 @@ const {
   invalidateTagCacheMock,
   invalidateCompanyCacheMock
 } = vi.hoisted(() => ({
-  handleBatchPatchTagsMock: vi.fn(),
+  saveManualTagChangeMock: vi.fn(),
   tagFindManyMock: vi.fn(),
   tagCreateManyMock: vi.fn(),
   tagRelationFindManyMock: vi.fn(),
@@ -29,7 +29,7 @@ const {
 }))
 
 vi.mock('~/app/api/edit/batchTag', () => ({
-  handleBatchPatchTags: handleBatchPatchTagsMock
+  saveManualTagChange: saveManualTagChangeMock
 }))
 
 vi.mock('~/app/api/tag/cache', () => ({
@@ -66,6 +66,8 @@ vi.mock('~/prisma/index', () => ({
 
 import { processSubmittedExternalData } from '~/app/api/edit/processExternalData'
 
+const NO_TAG_CHANGE = { removeTagIds: [], addTagNames: [] }
+
 const EMPTY_DATA = {
   vndbTags: [],
   vndbDevelopers: [],
@@ -84,10 +86,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   // rejected 任务会真打日志, 静音以免注入失败的用例刷屏, 断言对 errorSpy 做 (expect(console.x) 会触 no-console)
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-  handleBatchPatchTagsMock.mockResolvedValue({
-    success: true,
-    changed: false
-  })
+  saveManualTagChangeMock.mockResolvedValue({ changed: false })
   tagFindManyMock.mockResolvedValue([])
   tagCreateManyMock.mockResolvedValue({ count: 1 })
   tagRelationFindManyMock.mockResolvedValue([])
@@ -115,7 +114,7 @@ describe('processSubmittedExternalData cache invalidation', () => {
         vndbTags: ['ADV'],
         vndbDevelopers: ['Key']
       },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -142,7 +141,7 @@ describe('processSubmittedExternalData cache invalidation', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, vndbTags: ['ADV'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -159,7 +158,7 @@ describe('processSubmittedExternalData cache invalidation', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, vndbDevelopers: ['Key'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -177,13 +176,60 @@ describe('processSubmittedExternalData cache invalidation', () => {
         bangumiDevelopers: ['AliceSoft'],
         steamDevelopers: ['Navel']
       },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
     expect(companyCreateManyMock).toHaveBeenCalledTimes(1)
     expect(companyCreateManyMock.mock.calls[0][0].data).toHaveLength(3)
     expect(invalidateCompanyCacheMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+// 手动标签的差量原样交给写入函数。旧协议里空数组既表示「不动」又表示「清空」, 这里曾用
+// userTags.length 短路, 清空全部标签的提交因此不生效
+describe('processSubmittedExternalData manual tag change', () => {
+  it('passes a remove-only change through instead of skipping it', async () => {
+    const change = { removeTagIds: [11, 12], addTagNames: [] }
+
+    await processSubmittedExternalData(1, EMPTY_DATA, change, 7)
+
+    expect(saveManualTagChangeMock).toHaveBeenCalledTimes(1)
+    expect(saveManualTagChangeMock).toHaveBeenCalledWith(1, change, 7)
+  })
+
+  it('invalidates the tag list only when the manual change took effect', async () => {
+    await processSubmittedExternalData(
+      1,
+      EMPTY_DATA,
+      { removeTagIds: [404], addTagNames: [] },
+      7
+    )
+    expect(invalidateTagCacheMock).not.toHaveBeenCalled()
+
+    saveManualTagChangeMock.mockResolvedValueOnce({ changed: true })
+    await processSubmittedExternalData(
+      1,
+      EMPTY_DATA,
+      { removeTagIds: [11], addTagNames: ['纯爱'] },
+      7
+    )
+    expect(invalidateTagCacheMock).toHaveBeenCalledTimes(1)
+  })
+
+  // 用户手填的标签写不进去要让请求失败, 不能像外部来源那样只记日志
+  it('lets a failed manual change reject without touching external data', async () => {
+    saveManualTagChangeMock.mockRejectedValueOnce(new Error('deadlock'))
+
+    await expect(
+      processSubmittedExternalData(
+        1,
+        { ...EMPTY_DATA, vndbTags: ['ADV'] },
+        { removeTagIds: [], addTagNames: ['纯爱'] },
+        7
+      )
+    ).rejects.toThrow('deadlock')
+    expect(tagFindManyMock).not.toHaveBeenCalled()
   })
 })
 
@@ -199,7 +245,7 @@ describe('processSubmittedExternalData company dedup', () => {
         dlsiteCircleName: 'Key',
         dlsiteCircleLink: 'https://key.example.com'
       },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -217,7 +263,7 @@ describe('processSubmittedExternalData company dedup', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, vndbDevelopers: ['x'.repeat(108), 'Key'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -236,7 +282,7 @@ describe('processSubmittedExternalData company dedup', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, vndbDevelopers: ['Key'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -253,7 +299,7 @@ describe('processSubmittedExternalData company dedup', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, vndbDevelopers: ['Key'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -267,7 +313,7 @@ describe('processSubmittedExternalData tag length guard', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, vndbTags: ['x'.repeat(108), 'ADV'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -281,7 +327,7 @@ describe('processSubmittedExternalData tag length guard', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, bangumiTags: ['x'.repeat(108)] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -295,11 +341,12 @@ describe('processSubmittedExternalData tag source', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, dlsiteTags: ['純愛'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
-    expect(handleBatchPatchTagsMock).not.toHaveBeenCalled()
+    // DLsite 标签走外部来源通道, 不混进手动标签的差量
+    expect(saveManualTagChangeMock).toHaveBeenCalledWith(1, NO_TAG_CHANGE, 7)
     expect(tagCreateManyMock).toHaveBeenCalledTimes(1)
     expect(tagCreateManyMock.mock.calls[0][0].data).toEqual([
       { name: '純愛', user_id: 7, source: 'dlsite' }
@@ -310,7 +357,7 @@ describe('processSubmittedExternalData tag source', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, vndbTags: ['ADV'], dlsiteTags: ['ADV', '純愛'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -329,7 +376,7 @@ describe('processSubmittedExternalData rejected task logging', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, vndbTags: ['ADV'], vndbDevelopers: ['Key'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -346,7 +393,7 @@ describe('processSubmittedExternalData rejected task logging', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, vndbTags: ['ADV'] },
-      [],
+      NO_TAG_CHANGE,
       7
     )
 
@@ -361,7 +408,7 @@ describe('processSubmittedExternalData aliases', () => {
     await processSubmittedExternalData(
       1,
       { ...EMPTY_DATA, steamAliases: ['Removed Alias'] } as typeof EMPTY_DATA,
-      [],
+      NO_TAG_CHANGE,
       7
     )
 

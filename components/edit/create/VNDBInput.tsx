@@ -1,69 +1,72 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Button, Input } from '@heroui/react'
 import toast from 'react-hot-toast'
 import { fetchVNDBDetails } from '~/utils/vndb'
-import { mergePatchAlias } from '~/utils/mergePatchAlias'
+import { normalizeExternalId } from '~/utils/normalizeExternalId'
 import { FetchPreview } from '~/components/edit/components/FetchPreview'
-import type { PatchFormDataShape } from '~/components/edit/types'
+import {
+  applyFetchMerge,
+  fetchedForCurrentId,
+  mergeVndbFetch
+} from '~/components/edit/form/merge'
+import type { KunFormUpdate, PatchFormDataShape } from '~/components/edit/types'
+import type {
+  KunFetchedFor,
+  VndbFetchResult
+} from '~/components/edit/form/merge'
 
-interface PreviewData {
-  titles: string[]
-  released: string
-  tags: string[]
-  developers: string[]
-}
-
-interface Props<T extends PatchFormDataShape> {
+interface Props {
   errors: string | undefined
-  data: T
-  setData: (data: T) => void
+  data: PatchFormDataShape
+  update: KunFormUpdate<PatchFormDataShape>
 }
 
-export const VNDBInput = <T extends PatchFormDataShape>({
-  errors,
-  data,
-  setData
-}: Props<T>) => {
-  const [preview, setPreview] = useState<PreviewData | null>(null)
-
-  useEffect(() => {
-    setPreview(null)
-  }, [data.vndbId])
+export const VNDBInput = ({ errors, data, update }: Props) => {
+  const [fetched, setFetched] = useState<KunFetchedFor<VndbFetchResult> | null>(
+    null
+  )
+  // 只认最后一次发起的抓取, 较早的应答晚到时丢弃
+  const tokenRef = useRef(0)
+  const preview = fetchedForCurrentId(fetched, 'vndb', data.vndbId)
 
   const handleFetchData = async () => {
-    const rawInput = data.vndbId.trim()
-    if (!rawInput) {
+    const requestedId = normalizeExternalId('vndb', data.vndbId)
+    if (!requestedId) {
       toast.error('VNDB ID 不可为空')
       return
     }
 
-    const normalizedInput = rawInput.toLowerCase()
-    if (!/^v\d+$/.test(normalizedInput)) {
+    if (!/^v\d+$/.test(requestedId)) {
       toast.error('VNDB ID 需要以 v 开头')
       return
     }
 
+    const token = ++tokenRef.current
+    const isStale = () => token !== tokenRef.current
+
     try {
       toast('正在从 VNDB 获取数据...')
-      const { titles, released, tags, developers } =
-        await fetchVNDBDetails(normalizedInput)
+      const result = await fetchVNDBDetails(requestedId)
+      if (isStale()) {
+        return
+      }
 
-      setPreview({ titles, released, tags, developers })
-
-      setData({
-        ...data,
-        vndbId: normalizedInput,
-        alias: mergePatchAlias(data.alias, titles, data.name),
-        released: released || data.released,
-        vndbTags: tags,
-        vndbDevelopers: developers
-      })
+      const applied = applyFetchMerge(update, (prev) =>
+        mergeVndbFetch(prev, requestedId, result)
+      )
+      if (!applied) {
+        return
+      }
+      setFetched({ forId: requestedId, data: result })
 
       toast.success('获取数据成功! 已为您自动添加游戏别名')
     } catch (error) {
-      setPreview(null)
+      if (isStale()) {
+        return
+      }
+      setFetched(null)
       if (
         error instanceof Error &&
         (error.message === 'VNDB_API_ERROR' ||
@@ -88,7 +91,7 @@ export const VNDBInput = <T extends PatchFormDataShape>({
         labelPlacement="outside"
         placeholder="请输入 VNDB ID, 例如 v19658"
         value={data.vndbId}
-        onChange={(e) => setData({ ...data, vndbId: e.target.value })}
+        onChange={(e) => update({ vndbId: e.target.value })}
         isInvalid={!!errors}
         errorMessage={errors}
       />

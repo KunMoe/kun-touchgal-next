@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { isValidElement, type ReactElement, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { Patch, PatchIntroduction } from '~/types/api/patch'
@@ -25,7 +23,8 @@ const { PatchHeaderClientEffects } =
   await import('~/components/patch/header/ClientEffects')
 
 // /[id] 的 patch 与 intro 会进 Flight 载荷, 给每个访客下发一份 (C54).
-// markdown 原文与 tags 只给 role≥3 的 /edit/rewrite 预填; intro.tag 只有登录用户可见.
+// markdown 原文与 tags 客户端用不到: 重写页 /edit/rewrite/[uniqueId] 自己读库, 不再由
+// 详情页替它预填; intro.tag 只有登录用户可见.
 // 匿名 HTML gz 中位 -809B (3.9%), role<3 -295B
 const MARKDOWN = '# kun\n\n![](https://example.com/a.webp)\n\n简介原文'
 
@@ -87,7 +86,7 @@ const collect = (node: ReactNode, out: ReactElement[] = []) => {
   return out
 }
 
-const render = (options: { uid?: number; canRewrite: boolean }) => {
+const render = (options: { uid?: number } = {}) => {
   const patch = createPatch()
   const intro = createIntro()
   const elements = collect(
@@ -109,81 +108,44 @@ const render = (options: { uid?: number; canRewrite: boolean }) => {
 
 describe('/[id] 客户端 props 裁剪', () => {
   it('客户端组件共用同一个 patch 引用, 否则 Flight 会序列化两份', () => {
-    const { effects, info } = render({ uid: 2, canRewrite: true })
+    const { effects, info } = render({ uid: 2 })
     expect(effects.patch).toBe(info.patch)
   })
 
   it.each([
-    ['匿名', undefined, false],
-    ['role<3', 2, false],
-    ['role≥3', 2, true]
-  ])('%s: patch 上不带 markdown 原文与 tags', (_, uid, canRewrite) => {
-    const { effects } = render({ uid, canRewrite })
+    ['匿名', undefined],
+    ['登录用户', 2]
+  ])('%s: patch 上不带 markdown 原文与 tags', (_, uid) => {
+    const { effects } = render({ uid })
     expect(effects.patch).toMatchObject({ introduction: '', tags: [] })
   })
 
-  it('非管理员的客户端 props 不含 markdown 原文', () => {
+  // 详情页不认角色: 能进重写页的管理员在这里拿到的也是同一份裁剪过的载荷
+  it('任何角色的客户端 props 都不含 markdown 原文与 patch.tags', () => {
     for (const uid of [undefined, 2]) {
-      const { effects, info, tabs } = render({ uid, canRewrite: false })
-      expect(effects.rewrite).toBeNull()
+      const { effects, info, tabs } = render({ uid })
+      expect(Object.keys(effects).sort()).toEqual(['isNsfwBlocked', 'patch'])
       const payload = JSON.stringify([effects, info, tabs])
       expect(payload).not.toContain(JSON.stringify(MARKDOWN))
       expect(payload).not.toContain('![](')
+      // 标签名只可能经 intro.tag (登录后的标签页签) 出现, 不在 patch 上
+      expect(JSON.stringify([effects, info])).not.toContain('标签甲')
     }
   })
 
-  it('role≥3 经 rewrite 拿到预填所需的原文与 tags', () => {
-    const { effects } = render({ uid: 2, canRewrite: true })
-    expect(effects.rewrite).toEqual({
-      introduction: MARKDOWN,
-      tags: ['标签甲', '标签乙']
-    })
-  })
-
   it('匿名不下发 intro.tag, 登录后原样下发', () => {
-    const anonymous = render({ canRewrite: false })
+    const anonymous = render()
     expect(anonymous.tabs.intro).toMatchObject({ tag: [] })
     expect(JSON.stringify(anonymous.tabs)).not.toContain('标签甲')
 
-    const loggedIn = render({ uid: 2, canRewrite: false })
+    const loggedIn = render({ uid: 2 })
     expect(loggedIn.tabs.intro).toBe(loggedIn.intro)
   })
 
   // cache() 返回的对象与 generateMetadata 共用
   it('不原地修改传入的 patch 与 intro', () => {
-    const { patch, intro } = render({ canRewrite: false })
+    const { patch, intro } = render()
     expect(patch).toEqual(createPatch())
     expect(intro).toEqual(createIntro())
-  })
-})
-
-const readSource = (file: string) =>
-  readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf-8')
-
-describe('/edit/rewrite 预填来源', () => {
-  const effectsSource = readSource('../ClientEffects.tsx')
-
-  it('store 的原文与 tags 只取自 rewrite', () => {
-    expect(effectsSource).not.toContain('patch.introduction')
-    expect(effectsSource).not.toContain('patch.tags')
-    expect(effectsSource).toContain('introduction: rewrite.introduction')
-    expect(effectsSource).toContain('tag: rewrite.tags')
-  })
-
-  // 用空值 setData 会让 PUT /edit 的全量同步删光该 patch 的标签
-  it('无 rewrite 时清空 store 而不是用空值预填', () => {
-    expect(effectsSource).toMatch(
-      /if \(!rewrite\) \{\s*resetData\(\)\s*return\s*\}/
-    )
-  })
-
-  it('下发门槛与 /edit/rewrite 的准入一致', () => {
-    // 两处引用能力表里的同一项, 阈值只有一份
-    expect(readSource('../../../../app/[id]/page.tsx')).toContain(
-      "canRewrite={can(payload, 'galgame.rewrite')}"
-    )
-    expect(readSource('../../../../app/edit/rewrite/page.tsx')).toContain(
-      "if (!can(payload, 'galgame.rewrite')) {"
-    )
   })
 })

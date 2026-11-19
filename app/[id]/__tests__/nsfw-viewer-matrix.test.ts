@@ -199,8 +199,7 @@ describe('app/[id]/page 默认导出: NSFW 视角', () => {
         patch: buildPageData('nsfw').patch,
         intro: buildPageData('nsfw').intro,
         uid: row.uid,
-        nsfwAllowed: row.nsfwAllowed,
-        canRewrite: false
+        nsfwAllowed: row.nsfwAllowed
       }
     ])
     expect(recording.prisma).toEqual([])

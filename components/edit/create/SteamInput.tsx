@@ -1,80 +1,86 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Button, Input } from '@heroui/react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
+import { normalizeExternalId } from '~/utils/normalizeExternalId'
 import { FetchPreview } from '~/components/edit/components/FetchPreview'
-import type { PatchFormDataShape } from '~/components/edit/types'
+import {
+  applyFetchMerge,
+  buildDuplicateCheckQuery,
+  fetchedForCurrentId,
+  mergeSteamFetch,
+  steamAliasTitles
+} from '~/components/edit/form/merge'
+import type { KunFormUpdate, PatchFormDataShape } from '~/components/edit/types'
+import type {
+  KunFetchedFor,
+  SteamFetchResult
+} from '~/components/edit/form/merge'
 
-interface SteamPreview {
-  name: string
-  aliases: {
-    english?: string
-    japanese?: string
-    tchinese?: string
-  }
-  releaseDate: string
-  tags: string[]
-  developers: { name: string; link: string }[]
-}
-
-interface Props<T extends PatchFormDataShape> {
+interface Props {
   errors?: string
-  data: T
-  setData: (data: T) => void
+  data: PatchFormDataShape
+  update: KunFormUpdate<PatchFormDataShape>
   excludeId?: number
 }
 
-export const SteamInput = <T extends PatchFormDataShape>({
-  errors,
-  data,
-  setData,
-  excludeId
-}: Props<T>) => {
-  const [preview, setPreview] = useState<SteamPreview | null>(null)
-  const [duplicateUniqueId, setDuplicateUniqueId] = useState<string | null>(
-    null
+export const SteamInput = ({ errors, data, update, excludeId }: Props) => {
+  const [fetched, setFetched] =
+    useState<KunFetchedFor<SteamFetchResult> | null>(null)
+  const [duplicate, setDuplicate] = useState<KunFetchedFor<string> | null>(null)
+  // 只认最后一次发起的抓取, 较早的应答晚到时丢弃
+  const tokenRef = useRef(0)
+  const preview = fetchedForCurrentId(fetched, 'steam', data.steamId)
+  const duplicateUniqueId = fetchedForCurrentId(
+    duplicate,
+    'steam',
+    data.steamId
   )
 
-  useEffect(() => {
-    setPreview(null)
-    setDuplicateUniqueId(null)
-  }, [data.steamId])
-
   const handleFetch = async () => {
-    const rawInput = data.steamId.trim()
-    if (!rawInput) {
+    const requestedId = normalizeExternalId('steam', data.steamId)
+    if (!requestedId) {
       toast.error('Steam ID 不可为空')
       return
     }
 
-    if (!/^\d+$/.test(rawInput)) {
+    if (!/^\d+$/.test(requestedId)) {
       toast.error('Steam ID 必须为纯数字')
       return
     }
 
+    const token = ++tokenRef.current
+    const isStale = () => token !== tokenRef.current
+
     const duplicateResult = await kunFetchGet<
       KunResponse<{ uniqueId: string }>
-    >('/edit/duplicate', {
-      steamId: rawInput,
-      ...(excludeId ? { excludeId: String(excludeId) } : {})
-    })
+    >(
+      '/edit/duplicate',
+      buildDuplicateCheckQuery('steam', requestedId, { excludeId })
+    )
+    if (isStale()) {
+      return
+    }
 
     if (typeof duplicateResult !== 'string' && duplicateResult?.uniqueId) {
-      setDuplicateUniqueId(duplicateResult.uniqueId)
+      setDuplicate({ forId: requestedId, data: duplicateResult.uniqueId })
       toast.error('发现重复游戏条目, 请勿重复提交')
       return
     }
-    setDuplicateUniqueId(null)
+    setDuplicate(null)
 
     try {
       toast('正在从 Steam 获取数据...')
-      const result = await kunFetchPost<KunResponse<SteamPreview>>(
+      const result = await kunFetchPost<KunResponse<SteamFetchResult>>(
         '/edit/steam',
-        { steamId: rawInput }
+        { steamId: requestedId }
       )
+      if (isStale()) {
+        return
+      }
 
       if (typeof result === 'string') {
         toast.error(result)
@@ -86,42 +92,22 @@ export const SteamInput = <T extends PatchFormDataShape>({
         return
       }
 
-      setPreview(result)
-
-      const extraAliases = [
-        result.aliases.japanese,
-        result.aliases.english,
-        result.aliases.tchinese
-      ]
-        .map((a) => a?.trim())
-        .filter((a): a is string => !!a)
-
-      const alias = [...new Set([...data.alias, ...extraAliases])].filter(
-        (a) => a !== data.name
+      const applied = applyFetchMerge(update, (prev) =>
+        mergeSteamFetch(prev, requestedId, result)
       )
-
-      setData({
-        ...data,
-        alias,
-        released: result.releaseDate || data.released,
-        steamTags: result.tags,
-        steamDevelopers: result.developers.map((d) => d.name)
-      })
+      if (!applied) {
+        return
+      }
+      setFetched({ forId: requestedId, data: result })
 
       toast.success(`确认: ${result.name}`)
     } catch (error) {
-      setPreview(null)
+      if (isStale()) {
+        return
+      }
+      setFetched(null)
       toast.error('Steam API 请求失败, 请稍后重试')
     }
-  }
-
-  const getAliasChips = () => {
-    if (!preview) return []
-    return [
-      preview.aliases.japanese,
-      preview.aliases.english,
-      preview.aliases.tchinese
-    ].filter((a): a is string => !!a?.trim())
   }
 
   return (
@@ -132,7 +118,7 @@ export const SteamInput = <T extends PatchFormDataShape>({
         labelPlacement="outside"
         placeholder="请输入 Steam App ID, 例如 3655150"
         value={data.steamId}
-        onChange={(e) => setData({ ...data, steamId: e.target.value })}
+        onChange={(e) => update({ steamId: e.target.value })}
         isInvalid={!!errors}
         errorMessage={errors}
       />
@@ -159,7 +145,7 @@ export const SteamInput = <T extends PatchFormDataShape>({
         <FetchPreview
           fields={[
             { label: '游戏名', value: preview.name },
-            { label: '别名', value: getAliasChips() },
+            { label: '别名', value: steamAliasTitles(preview) },
             { label: '标签', value: preview.tags },
             { label: '发售日期', value: preview.releaseDate },
             {

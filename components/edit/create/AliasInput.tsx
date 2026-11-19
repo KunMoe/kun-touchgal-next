@@ -13,8 +13,8 @@ interface Props {
 }
 
 export const AliasInput = ({ errors }: Props) => {
-  const { data, setData } = useCreatePatchStore(
-    useShallow((state) => ({ data: state.data, setData: state.setData }))
+  const { data, update } = useCreatePatchStore(
+    useShallow((state) => ({ data: state.data, update: state.update }))
   )
   const [newAlias, setNewAlias] = useState<string>('')
 
@@ -25,16 +25,13 @@ export const AliasInput = ({ errors }: Props) => {
       return
     }
     if (newAlias.trim()) {
-      setData({ ...data, alias: [...data.alias, alias] })
+      update((prev) => ({ alias: [...prev.alias, alias] }))
       setNewAlias('')
     }
   }
 
   const removeAlias = (index: number) => {
-    setData({
-      ...data,
-      alias: data.alias.filter((_, i) => i !== index)
-    })
+    update((prev) => ({ alias: prev.alias.filter((_, i) => i !== index) }))
   }
 
   return (
@@ -75,7 +72,7 @@ export const AliasInput = ({ errors }: Props) => {
       <p className="text-sm text-default-500">支持鼠标和触摸拖拽调整顺序</p>
       <SortableAliasChips
         values={data.alias}
-        onReorder={(nextAlias) => setData({ ...data, alias: nextAlias })}
+        onReorder={(nextAlias) => update({ alias: nextAlias })}
         onRemove={removeAlias}
       />
     </div>

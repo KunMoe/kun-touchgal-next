@@ -339,7 +339,8 @@ describe('createGalgame', () => {
     expect(processSubmittedExternalDataMock).toHaveBeenCalledWith(
       42,
       expect.objectContaining({ dlsiteTags: ['純愛'] }),
-      ['标签一'],
+      // 建档时手动标签全部是新增, 没有可移除的
+      { removeTagIds: [], addTagNames: ['标签一'] },
       1
     )
   }, 30000)

@@ -5,6 +5,8 @@ const {
   patchFindUniqueMock,
   patchFindFirstMock,
   transactionMock,
+  lockPatchRowMock,
+  storedPatchFindUniqueMock,
   patchUpdateMock,
   aliasDeleteManyMock,
   aliasCreateManyMock,
@@ -16,6 +18,8 @@ const {
   patchFindUniqueMock: vi.fn(),
   patchFindFirstMock: vi.fn(),
   transactionMock: vi.fn(),
+  lockPatchRowMock: vi.fn(),
+  storedPatchFindUniqueMock: vi.fn(),
   patchUpdateMock: vi.fn(),
   aliasDeleteManyMock: vi.fn(),
   aliasCreateManyMock: vi.fn(),
@@ -26,7 +30,9 @@ const {
 }))
 
 const transactionClient = {
-  patch: { update: patchUpdateMock },
+  // lockPatchRows 的 SELECT … FOR NO KEY UPDATE
+  $executeRaw: lockPatchRowMock,
+  patch: { findUnique: storedPatchFindUniqueMock, update: patchUpdateMock },
   patch_alias: {
     deleteMany: aliasDeleteManyMock,
     createMany: aliasCreateManyMock
@@ -54,6 +60,27 @@ vi.mock('~/app/api/edit/processExternalData', () => ({
 }))
 
 import { updateGalgame } from '../update'
+import {
+  galgameEditFieldsFromRow,
+  galgameEditFingerprint
+} from '../_editFields'
+
+// 事务里在行锁下读到的当前值 (形状同 GALGAME_EDIT_SELECT)
+const makeStoredRow = () => ({
+  name: '改之前的名字',
+  introduction: '改之前的游戏介绍文本, 足够长',
+  content_limit: 'sfw',
+  released: '2025-12-31',
+  vndb_id: null as string | null,
+  vndb_relation_id: null as string | null,
+  bangumi_id: null as number | null,
+  steam_id: null as number | null,
+  dlsite_code: null as string | null,
+  alias: [{ name: '旧别名' }]
+})
+
+const fingerprintOf = (row: ReturnType<typeof makeStoredRow>) =>
+  galgameEditFingerprint(galgameEditFieldsFromRow(row))
 
 const makeInput = () => ({
   id: 5,
@@ -73,33 +100,50 @@ const makeInput = () => ({
   steamDevelopers: [],
   dlsiteTags: [],
   introduction: '这是一段足够长的游戏介绍文本',
-  tag: ['标签一'],
+  removeTagIds: [11],
+  addTagNames: ['标签一'],
   alias: ['别名一'],
   contentLimit: 'sfw',
-  released: '2026-01-01'
+  released: '2026-01-01' as string | undefined,
+  // 表单打开时读到的就是库里现在这一份
+  baseFingerprint: fingerprintOf(makeStoredRow())
+})
+
+// 提交落库之后库里的样子: 重试时行锁下读到的就是它
+const storedRowAfter = (input: ReturnType<typeof makeInput>) => ({
+  ...makeStoredRow(),
+  name: input.name,
+  introduction: input.introduction,
+  content_limit: input.contentLimit,
+  released: input.released ?? makeStoredRow().released,
+  alias: input.alias.map((name) => ({ name }))
 })
 
 // 忠实模拟 Prisma 交互式事务的提交语义: 回调 resolve 即提交, 只有抛出才回滚.
 // 断言 committed 才能区分"回滚"与"提交了半成品", 只断言返回值的话两者长得一模一样
 let committed = false
 
-describe('updateGalgame', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    committed = false
-    patchFindUniqueMock.mockResolvedValue({ id: 5, unique_id: 'abcd1234' })
-    patchFindFirstMock.mockResolvedValue(null)
-    patchUpdateMock.mockResolvedValue({})
-    invalidatePatchContentCacheMock.mockResolvedValue(undefined)
-    transactionMock.mockImplementation(
-      async (callback: (tx: typeof transactionClient) => unknown) => {
-        const result = await callback(transactionClient)
-        committed = true
-        return result
-      }
-    )
-  })
+beforeEach(() => {
+  vi.clearAllMocks()
+  committed = false
+  patchFindUniqueMock.mockResolvedValue({ id: 5, unique_id: 'abcd1234' })
+  patchFindFirstMock.mockResolvedValue(null)
+  lockPatchRowMock.mockResolvedValue(1)
+  storedPatchFindUniqueMock.mockResolvedValue(makeStoredRow())
+  patchUpdateMock.mockResolvedValue({})
+  aliasDeleteManyMock.mockResolvedValue({ count: 1 })
+  aliasCreateManyMock.mockResolvedValue({ count: 1 })
+  invalidatePatchContentCacheMock.mockResolvedValue(undefined)
+  transactionMock.mockImplementation(
+    async (callback: (tx: typeof transactionClient) => unknown) => {
+      const result = await callback(transactionClient)
+      committed = true
+      return result
+    }
+  )
+})
 
+describe('updateGalgame', () => {
   it('vndb_id 与 relation_id 组合被其它 Galgame 占用时返回重复提示, 不开启事务', async () => {
     patchFindFirstMock.mockResolvedValue({ id: 99, unique_id: 'deadbeef' })
 
@@ -312,24 +356,168 @@ describe('updateGalgame', () => {
 
     expect(res).toEqual({})
     expect(committed).toBe(true)
-    expect(transactionMock).toHaveBeenCalledTimes(2)
+    // patch 字段与别名在同一个事务里: 行锁 → 读当前值 → 写字段 → 换别名 → 入队
+    expect(transactionMock).toHaveBeenCalledTimes(1)
     expect(patchUpdateMock).toHaveBeenCalledTimes(1)
     expect(aliasDeleteManyMock).toHaveBeenCalledTimes(1)
     expect(aliasCreateManyMock).toHaveBeenCalledTimes(1)
     expect(enqueueSearchOutboxMock).toHaveBeenCalledWith(transactionClient, 5)
+    const order = [
+      lockPatchRowMock,
+      storedPatchFindUniqueMock,
+      patchUpdateMock,
+      aliasDeleteManyMock,
+      aliasCreateManyMock,
+      enqueueSearchOutboxMock
+    ].map((mock) => mock.mock.invocationCallOrder[0])
+    expect(order).toEqual([...order].sort((a, b) => a - b))
     expect(processSubmittedExternalDataMock).toHaveBeenCalledTimes(1)
     expect(queueSearchSyncMock).toHaveBeenCalledWith(5)
     expect(invalidatePatchContentCacheMock).toHaveBeenCalledWith('abcd1234')
   })
 
-  it('DLsite 标签随外部来源透传, 不混入手动标签', async () => {
+  it('DLsite 标签随外部来源透传, 手动标签按差量原样下传', async () => {
     await updateGalgame({ ...makeInput(), dlsiteTags: ['純愛'] }, 1)
 
     expect(processSubmittedExternalDataMock).toHaveBeenCalledWith(
       5,
       expect.objectContaining({ dlsiteTags: ['純愛'] }),
-      ['标签一'],
+      { removeTagIds: [11], addTagNames: ['标签一'] },
       1
     )
+  })
+
+  it('写入的是规范化之后的值: 提交落库后库里的值与本次提交的指纹一致', async () => {
+    await updateGalgame(
+      {
+        ...makeInput(),
+        name: '  测试 Galgame  ',
+        vndbId: ' V19658 ',
+        dlsiteCode: 'rj123456',
+        bangumiId: '123456'
+      },
+      1
+    )
+
+    expect(patchUpdateMock).toHaveBeenCalledWith({
+      where: { id: 5 },
+      data: {
+        name: '测试 Galgame',
+        vndb_id: 'v19658',
+        vndb_relation_id: null,
+        bangumi_id: 123456,
+        steam_id: null,
+        dlsite_code: 'RJ123456',
+        introduction: '这是一段足够长的游戏介绍文本',
+        content_limit: 'sfw',
+        released: '2026-01-01'
+      }
+    })
+  })
+
+  it('released 缺省时不动库里的值, 也不因此被判成冲突', async () => {
+    const res = await updateGalgame({ ...makeInput(), released: undefined }, 1)
+
+    expect(res).toEqual({})
+    expect(patchUpdateMock.mock.calls[0][0].data.released).toBe('2025-12-31')
+  })
+})
+
+describe('updateGalgame 的编辑并发令牌', () => {
+  const expectNothingWritten = () => {
+    expect(committed).toBe(false)
+    expect(patchUpdateMock).not.toHaveBeenCalled()
+    expect(aliasDeleteManyMock).not.toHaveBeenCalled()
+    expect(aliasCreateManyMock).not.toHaveBeenCalled()
+    expect(enqueueSearchOutboxMock).not.toHaveBeenCalled()
+    expect(processSubmittedExternalDataMock).not.toHaveBeenCalled()
+    expect(queueSearchSyncMock).not.toHaveBeenCalled()
+    expect(invalidatePatchContentCacheMock).not.toHaveBeenCalled()
+  }
+
+  // 表单打开时的别名是 [别名甲, 别名乙]
+  const baseRow = () => ({
+    ...makeStoredRow(),
+    alias: [{ name: '别名甲' }, { name: '别名乙' }]
+  })
+
+  it.each([
+    ['名字', { name: '别人改过的名字' }],
+    ['介绍', { introduction: '别人改过的游戏介绍文本, 足够长' }],
+    ['分级', { content_limit: 'nsfw' }],
+    ['发售日期', { released: '2024-01-01' }],
+    ['外部 ID', { steam_id: 654321 }],
+    ['别名', { alias: [{ name: '别名甲' }] }],
+    ['别名顺序', { alias: [{ name: '别名乙' }, { name: '别名甲' }] }]
+  ])(
+    '表单打开之后%s被别人改过: 回滚并返回冲突提示, 什么都不写',
+    async (_, changedByOther) => {
+      storedPatchFindUniqueMock.mockResolvedValue({
+        ...baseRow(),
+        ...changedByOther
+      })
+
+      const res = await updateGalgame(
+        { ...makeInput(), baseFingerprint: fingerprintOf(baseRow()) },
+        1
+      )
+
+      expect(res).toBe('该游戏已被他人修改, 请刷新后重试')
+      expect(lockPatchRowMock).toHaveBeenCalledTimes(1)
+      expectNothingWritten()
+    }
+  )
+
+  // 上一次提交的主事务已落库、后面的标签步骤失败: 用户重试时带的还是旧基线
+  it('库里已经是本次提交的值时放行, 重试不会被冲突提示卡住', async () => {
+    const input = makeInput()
+    storedPatchFindUniqueMock.mockResolvedValue(storedRowAfter(input))
+
+    const res = await updateGalgame(input, 1)
+
+    expect(res).toEqual({})
+    expect(committed).toBe(true)
+    expect(processSubmittedExternalDataMock).toHaveBeenCalledWith(
+      5,
+      expect.anything(),
+      { removeTagIds: [11], addTagNames: ['标签一'] },
+      1
+    )
+  })
+
+  it('库里是本次提交的值但别名顺序不同: 不是重试, 判冲突', async () => {
+    const input = { ...makeInput(), alias: ['别名一', '别名二'] }
+    storedPatchFindUniqueMock.mockResolvedValue({
+      ...storedRowAfter(input),
+      alias: [{ name: '别名二' }, { name: '别名一' }]
+    })
+
+    expect(await updateGalgame(input, 1)).toBe(
+      '该游戏已被他人修改, 请刷新后重试'
+    )
+    expectNothingWritten()
+  })
+
+  it('预检之后、取到行锁之前条目被删: 返回未找到, 什么都不写', async () => {
+    storedPatchFindUniqueMock.mockResolvedValue(null)
+
+    expect(await updateGalgame(makeInput(), 1)).toBe(
+      '该 ID 下未找到对应 Galgame'
+    )
+    expectNothingWritten()
+  })
+
+  it('别名与 patch 字段在同一个事务里: 换别名失败时字段更新一起回滚', async () => {
+    aliasCreateManyMock.mockRejectedValue(new Error('connection lost'))
+
+    await expect(updateGalgame(makeInput(), 1)).rejects.toThrow(
+      'connection lost'
+    )
+
+    expect(transactionMock).toHaveBeenCalledTimes(1)
+    expect(patchUpdateMock).toHaveBeenCalledTimes(1)
+    expect(aliasDeleteManyMock).toHaveBeenCalledTimes(1)
+    expect(committed).toBe(false)
+    expect(processSubmittedExternalDataMock).not.toHaveBeenCalled()
   })
 })

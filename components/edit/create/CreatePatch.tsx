@@ -15,15 +15,15 @@ import { PublishButton } from './PublishButton'
 import { PatchIntroduction } from './PatchIntroduction'
 import { ContentLimit } from './ContentLimit'
 import { DuplicateCheckButton } from './DuplicateCheckButton'
-import { BatchTag } from '../components/BatchTag'
+import { TagField } from '../components/TagField'
 import { ReleaseDateInput } from '../components/ReleaseDateInput'
 import { CompanySummary } from '../components/CompanySummary'
 import { KunLoading } from '~/components/kun/Loading'
 import type { CreatePatchRequestData } from '~/store/editStore'
 
 export const CreatePatch = () => {
-  const { data, setData } = useCreatePatchStore(
-    useShallow((state) => ({ data: state.data, setData: state.setData }))
+  const { data, update } = useCreatePatchStore(
+    useShallow((state) => ({ data: state.data, update: state.update }))
   )
   const [isStoreHydrated, setIsStoreHydrated] = useState(false)
   const [errors, setErrors] = useState<
@@ -73,23 +73,15 @@ export const CreatePatch = () => {
           </div>
         </CardHeader>
         <CardBody className="mt-4 space-y-12">
-          <VNDBInput data={data} setData={setData} errors={errors.vndbId} />
+          <VNDBInput data={data} update={update} errors={errors.vndbId} />
           <VNDBRelationInput
             data={data}
-            setData={setData}
+            update={update}
             errors={errors.vndbRelationId}
           />
-          <BangumiInput
-            data={data}
-            setData={setData}
-            errors={errors.bangumiId}
-          />
-          <SteamInput data={data} setData={setData} errors={errors.steamId} />
-          <DLSiteInput
-            data={data}
-            setData={setData}
-            errors={errors.dlsiteCode}
-          />
+          <BangumiInput data={data} update={update} errors={errors.bangumiId} />
+          <SteamInput data={data} update={update} errors={errors.steamId} />
+          <DLSiteInput data={data} update={update} errors={errors.dlsiteCode} />
 
           <div className="space-y-2">
             <h2 className="text-xl">游戏名称 (必须)</h2>
@@ -99,7 +91,7 @@ export const CreatePatch = () => {
               labelPlacement="outside"
               placeholder="输入游戏名称, 这会作为游戏的标题"
               value={data.name}
-              onChange={(e) => setData({ ...data, name: e.target.value })}
+              onChange={(e) => update({ name: e.target.value })}
               isInvalid={!!errors.name}
               errorMessage={errors.name}
             />
@@ -111,17 +103,17 @@ export const CreatePatch = () => {
 
           <AliasInput errors={errors.alias} />
 
-          <CompanySummary data={data} setData={setData} />
+          <CompanySummary data={data} update={update} />
 
           <ReleaseDateInput
             date={data.released}
             setDate={(date) => {
-              setData({ ...data, released: date })
+              update({ released: date })
             }}
             errors={errors.released}
           />
 
-          <BatchTag data={data} setData={setData} errors={errors.tag} />
+          <TagField data={data} update={update} errors={errors.tag} />
 
           <ContentLimit errors={errors.contentLimit} />
 

@@ -1,12 +1,12 @@
 'use client'
 
 import { Chip } from '@heroui/react'
-import type { PatchFormDataShape } from '~/components/edit/types'
+import type { KunFormUpdate, PatchFormDataShape } from '~/components/edit/types'
 import { removeExternalCompany } from '~/utils/removeExternalPatchData'
 
-interface Props<T extends PatchFormDataShape> {
-  data: T
-  setData: (data: T) => void
+interface Props {
+  data: PatchFormDataShape
+  update: KunFormUpdate<PatchFormDataShape>
 }
 
 interface CompanyEntry {
@@ -14,10 +14,7 @@ interface CompanyEntry {
   source: string
 }
 
-export const CompanySummary = <T extends PatchFormDataShape>({
-  data,
-  setData
-}: Props<T>) => {
+export const CompanySummary = ({ data, update }: Props) => {
   const entries: CompanyEntry[] = []
 
   for (const name of data.vndbDevelopers) {
@@ -51,7 +48,9 @@ export const CompanySummary = <T extends PatchFormDataShape>({
             key={`${entry.source}-${entry.name}`}
             variant="flat"
             size="sm"
-            onClose={() => setData(removeExternalCompany(data, entry.name))}
+            onClose={() =>
+              update((prev) => removeExternalCompany(prev, entry.name))
+            }
           >
             {entry.name}
             <span className="ml-1 text-default-400">({entry.source})</span>

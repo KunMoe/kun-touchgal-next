@@ -16,6 +16,7 @@ import { patchCreateSchema } from '~/validations/edit'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { postToIndexNow } from './_postToIndexNow'
 import { processSubmittedExternalData } from './processExternalData'
+import { normalizeGalgameExternalIds } from './_editFields'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { queueSearchSync, enqueueSearchOutbox } from '~/server/search/sync'
 
@@ -64,11 +65,6 @@ type CreateGalgameInput = Omit<
 export const createGalgame = async (input: CreateGalgameInput, uid: number) => {
   const {
     name,
-    vndbId,
-    vndbRelationId,
-    bangumiId,
-    steamId,
-    dlsiteCode,
     dlsiteCircleName,
     dlsiteCircleLink,
     vndbTags,
@@ -89,15 +85,13 @@ export const createGalgame = async (input: CreateGalgameInput, uid: number) => {
 
   const galgameUniqueId = crypto.randomBytes(4).toString('hex')
 
-  const normalizedVndbId = vndbId?.trim() ? vndbId.trim().toLowerCase() : ''
-  const normalizedVndbRelationId = vndbRelationId?.trim()
-    ? vndbRelationId.trim().toLowerCase()
-    : ''
-  const normalizedDlsiteCode = dlsiteCode?.trim()
-    ? dlsiteCode.trim().toUpperCase()
-    : ''
-  const normalizedBangumiId = bangumiId ? Number(bangumiId) : null
-  const normalizedSteamId = steamId ? Number(steamId) : null
+  const {
+    vndbId: normalizedVndbId,
+    vndbRelationId: normalizedVndbRelationId,
+    bangumiId: normalizedBangumiId,
+    steamId: normalizedSteamId,
+    dlsiteCode: normalizedDlsiteCode
+  } = normalizeGalgameExternalIds(input)
   const [vndbPatch, dlsitePatch, bangumiPatch, steamPatch] = await Promise.all([
     // 查询与即将写入的 (vndb_id, vndb_relation_id) 形态完全一致的行(空值按 null
     // 匹配): 单独 vndb_id / 单独 relation_id 也不允许重复, 但同 vndb_id 不同
@@ -263,7 +257,8 @@ export const createGalgame = async (input: CreateGalgameInput, uid: number) => {
       dlsiteCircleName: dlsiteCircleName ?? '',
       dlsiteCircleLink: dlsiteCircleLink ?? ''
     },
-    tag,
+    // 新建的条目没有现存标签可移除, 手动标签全部是新增
+    { removeTagIds: [], addTagNames: tag },
     uid
   )
 

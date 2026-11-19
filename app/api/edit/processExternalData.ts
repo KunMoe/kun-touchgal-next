@@ -1,7 +1,8 @@
 import { prisma } from '~/prisma/index'
-import { handleBatchPatchTags } from './batchTag'
+import { saveManualTagChange } from './batchTag'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
 import { invalidateTagListCache } from '~/app/api/tag/cache'
+import type { ManualTagChange } from './batchTag'
 
 interface SubmittedExternalData {
   vndbTags: string[]
@@ -154,16 +155,14 @@ export const ensureCompanies = async (
 export const processSubmittedExternalData = async (
   patchId: number,
   data: SubmittedExternalData,
-  userTags: string[],
+  tagChange: ManualTagChange,
   uid: number
 ) => {
+  // 空差量就是不动 (不开事务), 不再靠「数组为空」猜调用方是想清空还是没有意图
+  const manualTags = await saveManualTagChange(patchId, tagChange, uid)
   const mutationState: ExternalDataMutationState = {
-    tagChanged: false,
+    tagChanged: manualTags.changed,
     companyChanged: false
-  }
-  if (userTags.length) {
-    const result = await handleBatchPatchTags(patchId, userTags, uid)
-    mutationState.tagChanged = result.changed
   }
 
   const tagTask = ensureTagsWithSources(

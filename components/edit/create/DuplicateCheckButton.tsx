@@ -7,6 +7,7 @@ import Link from 'next/link'
 import localforage from 'localforage'
 import { createPatchEditStoreKey, useCreatePatchStore } from '~/store/editStore'
 import { kunFetchGet } from '~/utils/kunFetch'
+import { normalizeExternalId } from '~/utils/normalizeExternalId'
 
 interface DuplicateResponse {
   uniqueId: string
@@ -20,9 +21,9 @@ export const DuplicateCheckButton = () => {
   )
 
   const buildPayload = () => ({
-    vndbId: data.vndbId.trim().toLowerCase(),
-    vndbRelationId: data.vndbRelationId.trim().toLowerCase(),
-    dlsiteCode: data.dlsiteCode.trim().toUpperCase(),
+    vndbId: normalizeExternalId('vndb', data.vndbId),
+    vndbRelationId: normalizeExternalId('vndbRelation', data.vndbRelationId),
+    dlsiteCode: normalizeExternalId('dlsite', data.dlsiteCode),
     title: data.name.trim()
   })
 

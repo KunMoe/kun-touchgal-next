@@ -1,20 +1,21 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
+import { useStore } from 'zustand'
 import { Button, Card, CardBody, CardHeader } from '@heroui/react'
-import { useRewritePatchStore } from '~/store/rewriteStore'
+import { createRewriteFormStore } from '~/store/rewriteStore'
 import { KunDualEditorProvider } from '~/components/kun/milkdown/DualEditorProvider'
 import toast from 'react-hot-toast'
 import { kunFetchPut } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { patchUpdateSchema } from '~/validations/edit'
 import { useRouter } from '@bprogress/next/app'
+import { normalizeStringArray } from '~/utils/normalizeStringArray'
 import { removePatchNameFromAlias } from '~/utils/removePatchNameFromAlias'
 import { GameNameInput } from './GameNameInput'
 import { AliasManager } from './AliasManager'
 import { ContentLimit } from './ContentLimit'
-import { BatchTag } from '../components/BatchTag'
+import { TagField } from '../components/TagField'
 import { ReleaseDateInput } from '../components/ReleaseDateInput'
 import { CompanySummary } from '../components/CompanySummary'
 import { VNDBInput } from '../create/VNDBInput'
@@ -22,16 +23,36 @@ import { VNDBRelationInput } from '../create/VNDBRelationInput'
 import { BangumiInput } from '../create/BangumiInput'
 import { SteamInput } from '../create/SteamInput'
 import { DLSiteInput } from '../create/DLSiteInput'
-import type { RewritePatchData } from '~/store/rewriteStore'
+import type * as z from 'zod'
+import type { GalgameRewriteInitial } from '~/types/api/edit'
 
-export const RewritePatch = () => {
+type SubmitErrors = Partial<
+  Record<keyof z.infer<typeof patchUpdateSchema>, string>
+>
+
+interface Props {
+  initial: GalgameRewriteInitial
+}
+
+export const RewritePatch = ({ initial }: Props) => {
   const router = useRouter()
-  const { data, setData } = useRewritePatchStore(
-    useShallow((state) => ({ data: state.data, setData: state.setData }))
+  // 表单 store 用页面读到的基线建一次, 随本组件存活。只在这里读 initial: 之后页面
+  // 再下发新的基线, 也不拿它去配已经填了一半的表单
+  const [store] = useState(() => createRewriteFormStore(initial))
+  const data = useStore(store, (state) => state.data)
+  const update = useStore(store, (state) => state.update)
+  const existingTags = useStore(store, (state) => state.existingTags)
+  const baseFingerprint = useStore(store, (state) => state.baseFingerprint)
+  const [errors, setErrors] = useState<SubmitErrors>({})
+
+  const getIntroduction = useCallback(
+    () => store.getState().data.introduction,
+    [store]
   )
-  const [errors, setErrors] = useState<
-    Partial<Record<keyof RewritePatchData, string>>
-  >({})
+  const setIntroduction = useCallback(
+    (introduction: string) => store.getState().update({ introduction }),
+    [store]
+  )
 
   const addAlias = (newAlias: string) => {
     const alias = newAlias.trim()
@@ -39,23 +60,28 @@ export const RewritePatch = () => {
       toast.error('请不要使用重复的别名')
       return
     }
-    if (newAlias.trim()) {
-      setData({ ...data, alias: [...data.alias, alias] })
+    if (alias) {
+      update((prev) => ({ alias: [...prev.alias, alias] }))
     }
   }
 
   const [rewriting, setRewriting] = useState(false)
   const handleSubmit = async () => {
+    // 标签按意图提交: 现存的只报要移除的 id, 文本框里的是要新增的名字。
+    // 不回传「现存标签的名字全集」: 那份名单一旦陈旧, 提交就会复活已删的标签
+    const { tag, ...fields } = data
     const submitData = {
-      ...data,
-      alias: removePatchNameFromAlias(data.alias, data.name)
+      ...fields,
+      alias: removePatchNameFromAlias(data.alias, data.name),
+      addTagNames: normalizeStringArray(tag),
+      baseFingerprint
     }
     const result = patchUpdateSchema.safeParse(submitData)
     if (!result.success) {
-      const newErrors: Partial<Record<keyof RewritePatchData, string>> = {}
+      const newErrors: SubmitErrors = {}
       result.error.issues.forEach((err) => {
         if (err.path.length) {
-          newErrors[err.path[0] as keyof RewritePatchData] = err.message
+          newErrors[err.path[0] as keyof SubmitErrors] = err.message
           toast.error(err.message)
         }
       })
@@ -89,35 +115,35 @@ export const RewritePatch = () => {
           </div>
         </CardHeader>
         <CardBody className="mt-4 space-y-12">
-          <VNDBInput data={data} setData={setData} errors={errors.vndbId} />
+          <VNDBInput data={data} update={update} errors={errors.vndbId} />
           <VNDBRelationInput
             data={data}
-            setData={setData}
+            update={update}
             errors={errors.vndbRelationId}
             excludeId={data.id}
           />
           <BangumiInput
             data={data}
-            setData={setData}
+            update={update}
             errors={errors.bangumiId}
             excludeId={data.id}
           />
           <SteamInput
             data={data}
-            setData={setData}
+            update={update}
             errors={errors.steamId}
             excludeId={data.id}
           />
           <DLSiteInput
             data={data}
-            setData={setData}
+            update={update}
             errors={errors.dlsiteCode}
             excludeId={data.id}
           />
 
           <GameNameInput
             name={data.name}
-            onChange={(name) => setData({ ...data, name })}
+            onChange={(name) => update({ name })}
             error={errors.name}
           />
 
@@ -126,40 +152,55 @@ export const RewritePatch = () => {
             {errors.introduction && (
               <p className="text-xs text-danger-500">{errors.introduction}</p>
             )}
-            <KunDualEditorProvider storeName="patchRewrite" />
+            <KunDualEditorProvider
+              getMarkdown={getIntroduction}
+              setMarkdown={setIntroduction}
+            />
           </div>
 
-          <CompanySummary data={data} setData={setData} />
+          <CompanySummary data={data} update={update} />
 
           <AliasManager
             aliasList={data.alias}
             onAddAlias={addAlias}
             onRemoveAlias={(index) =>
-              setData({
-                ...data,
-                alias: data.alias.filter((_, i) => i !== index)
-              })
+              update((prev) => ({
+                alias: prev.alias.filter((_, i) => i !== index)
+              }))
             }
-            onReorderAlias={(nextAlias) =>
-              setData({
-                ...data,
-                alias: nextAlias
-              })
-            }
+            onReorderAlias={(nextAlias) => update({ alias: nextAlias })}
             errors={errors.alias}
           />
 
           <ReleaseDateInput
             date={data.released}
             setDate={(date) => {
-              setData({ ...data, released: date })
+              update({ released: date })
             }}
             errors={errors.released}
           />
 
-          <BatchTag data={data} setData={setData} errors={errors.tag} />
+          <TagField
+            data={data}
+            update={update}
+            errors={errors.addTagNames ?? errors.removeTagIds}
+            existing={{
+              tags: existingTags,
+              removeTagIds: data.removeTagIds,
+              onToggleRemove: (id) =>
+                update((prev) => ({
+                  removeTagIds: prev.removeTagIds.includes(id)
+                    ? prev.removeTagIds.filter((item) => item !== id)
+                    : [...prev.removeTagIds, id]
+                }))
+            }}
+          />
 
-          <ContentLimit errors={errors.contentLimit} />
+          <ContentLimit
+            contentLimit={data.contentLimit}
+            onChange={(contentLimit) => update({ contentLimit })}
+            errors={errors.contentLimit}
+          />
 
           <Button
             color="primary"

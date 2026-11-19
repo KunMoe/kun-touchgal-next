@@ -1,76 +1,85 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Button, Input } from '@heroui/react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
+import { normalizeExternalId } from '~/utils/normalizeExternalId'
 import { FetchPreview } from '~/components/edit/components/FetchPreview'
-import type { PatchFormDataShape } from '~/components/edit/types'
+import {
+  applyFetchMerge,
+  buildDuplicateCheckQuery,
+  fetchedForCurrentId,
+  mergeBangumiFetch
+} from '~/components/edit/form/merge'
+import type { KunFormUpdate, PatchFormDataShape } from '~/components/edit/types'
+import type {
+  BangumiFetchResult,
+  KunFetchedFor
+} from '~/components/edit/form/merge'
 
-interface BangumiPreview {
-  name: string
-  nameCn: string
-  released: string
-  tags: string[]
-  developers: string[]
-}
-
-interface Props<T extends PatchFormDataShape> {
+interface Props {
   errors?: string
-  data: T
-  setData: (data: T) => void
+  data: PatchFormDataShape
+  update: KunFormUpdate<PatchFormDataShape>
   excludeId?: number
 }
 
-export const BangumiInput = <T extends PatchFormDataShape>({
-  errors,
-  data,
-  setData,
-  excludeId
-}: Props<T>) => {
-  const [preview, setPreview] = useState<BangumiPreview | null>(null)
-  const [duplicateUniqueId, setDuplicateUniqueId] = useState<string | null>(
-    null
+export const BangumiInput = ({ errors, data, update, excludeId }: Props) => {
+  const [fetched, setFetched] =
+    useState<KunFetchedFor<BangumiFetchResult> | null>(null)
+  const [duplicate, setDuplicate] = useState<KunFetchedFor<string> | null>(null)
+  // 只认最后一次发起的抓取, 较早的应答晚到时丢弃
+  const tokenRef = useRef(0)
+  const preview = fetchedForCurrentId(fetched, 'bangumi', data.bangumiId)
+  const duplicateUniqueId = fetchedForCurrentId(
+    duplicate,
+    'bangumi',
+    data.bangumiId
   )
 
-  useEffect(() => {
-    setPreview(null)
-    setDuplicateUniqueId(null)
-  }, [data.bangumiId])
-
   const handleFetch = async () => {
-    const rawInput = data.bangumiId.trim()
-    if (!rawInput) {
+    const requestedId = normalizeExternalId('bangumi', data.bangumiId)
+    if (!requestedId) {
       toast.error('Bangumi ID 不可为空')
       return
     }
 
-    if (!/^\d+$/.test(rawInput)) {
+    if (!/^\d+$/.test(requestedId)) {
       toast.error('Bangumi ID 必须为纯数字')
       return
     }
 
+    const token = ++tokenRef.current
+    const isStale = () => token !== tokenRef.current
+
     const duplicateResult = await kunFetchGet<
       KunResponse<{ uniqueId: string }>
-    >('/edit/duplicate', {
-      bangumiId: rawInput,
-      ...(excludeId ? { excludeId: String(excludeId) } : {})
-    })
+    >(
+      '/edit/duplicate',
+      buildDuplicateCheckQuery('bangumi', requestedId, { excludeId })
+    )
+    if (isStale()) {
+      return
+    }
 
     if (typeof duplicateResult !== 'string' && duplicateResult?.uniqueId) {
-      setDuplicateUniqueId(duplicateResult.uniqueId)
+      setDuplicate({ forId: requestedId, data: duplicateResult.uniqueId })
       toast.error('发现重复游戏条目, 请勿重复提交')
       return
     }
-    setDuplicateUniqueId(null)
+    setDuplicate(null)
 
     try {
       toast('正在从 Bangumi 获取数据...')
-      const result = await kunFetchPost<KunResponse<BangumiPreview>>(
+      const result = await kunFetchPost<KunResponse<BangumiFetchResult>>(
         '/edit/bangumi',
-        { bangumiId: rawInput }
+        { bangumiId: requestedId }
       )
+      if (isStale()) {
+        return
+      }
 
       if (typeof result === 'string') {
         toast.error(result)
@@ -83,26 +92,20 @@ export const BangumiInput = <T extends PatchFormDataShape>({
         return
       }
 
-      setPreview(result)
-
-      const extraAliases = [result.name, result.nameCn]
-        .map((n) => n?.trim())
-        .filter((n): n is string => !!n)
-      const alias = [...new Set([...data.alias, ...extraAliases])].filter(
-        (a) => a !== data.name
+      const applied = applyFetchMerge(update, (prev) =>
+        mergeBangumiFetch(prev, requestedId, result)
       )
-
-      setData({
-        ...data,
-        alias,
-        released: result.released || data.released,
-        bangumiTags: result.tags,
-        bangumiDevelopers: result.developers
-      })
+      if (!applied) {
+        return
+      }
+      setFetched({ forId: requestedId, data: result })
 
       toast.success(`确认: ${displayName}`)
     } catch (error) {
-      setPreview(null)
+      if (isStale()) {
+        return
+      }
+      setFetched(null)
       toast.error('Bangumi API 请求失败, 请稍后重试')
     }
   }
@@ -115,7 +118,7 @@ export const BangumiInput = <T extends PatchFormDataShape>({
         labelPlacement="outside"
         placeholder="请输入 Bangumi 条目 ID, 例如 172612"
         value={data.bangumiId}
-        onChange={(e) => setData({ ...data, bangumiId: e.target.value })}
+        onChange={(e) => update({ bangumiId: e.target.value })}
         isInvalid={!!errors}
         errorMessage={errors}
       />

@@ -89,7 +89,7 @@ export const PatchHeaderActions = ({ patch }: PatchHeaderActionsProps) => {
               variant="bordered"
               isIconOnly
               size="sm"
-              onPress={() => router.push('/edit/rewrite')}
+              onPress={() => router.push(`/edit/rewrite/${patch.uniqueId}`)}
               aria-label="编辑游戏信息"
               title="编辑游戏信息"
             >

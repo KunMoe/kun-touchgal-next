@@ -1,21 +1,7 @@
-import { RewritePatch } from '~/components/edit/rewrite/RewritePatch'
-import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import { redirect } from 'next/navigation'
-import { kunMetadata } from './metadata'
-import { can } from '~/constants/permission'
-import type { Metadata } from 'next'
 
-export const metadata: Metadata = kunMetadata
-
-export default async function Kun() {
-  const payload = await verifyHeaderCookie()
-  if (!can(payload, 'galgame.rewrite')) {
-    redirect('/')
-  }
-
-  return (
-    <div className="flex items-center justify-center flex-1 max-w-5xl mx-auto w-96">
-      <RewritePatch />
-    </div>
-  )
+// 重写页搬到了 /edit/rewrite/[uniqueId], 由页面自己读取要编辑的游戏。
+// 不带 id 的旧地址无从得知要编辑哪一个
+export default function Kun() {
+  redirect('/')
 }

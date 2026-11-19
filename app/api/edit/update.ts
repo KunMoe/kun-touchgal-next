@@ -1,27 +1,30 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
+import { lockPatchRows } from '~/server/content/patchLock'
 import { patchUpdateSchema } from '~/validations/edit'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { processSubmittedExternalData } from './processExternalData'
 import { queueSearchSync, enqueueSearchOutbox } from '~/server/search/sync'
-import { normalizeStringArray } from '~/utils/normalizeStringArray'
+import {
+  GALGAME_EDIT_SELECT,
+  galgameEditFieldsFromRow,
+  galgameEditFingerprint,
+  normalizeGalgameEditInput,
+  normalizeGalgameExternalIds
+} from './_editFields'
 
 export const updateGalgame = async (
   input: z.infer<typeof patchUpdateSchema>,
   uid: number
 ) => {
-  const normalizedVndbId = input.vndbId?.trim()
-    ? input.vndbId.trim().toLowerCase()
-    : ''
-  const normalizedVndbRelationId = input.vndbRelationId?.trim()
-    ? input.vndbRelationId.trim().toLowerCase()
-    : ''
-  const normalizedDlsiteCode = input.dlsiteCode?.trim()
-    ? input.dlsiteCode.trim().toUpperCase()
-    : ''
-  const normalizedBangumiId = input.bangumiId ? Number(input.bangumiId) : null
-  const normalizedSteamId = input.steamId ? Number(input.steamId) : null
+  const {
+    vndbId: normalizedVndbId,
+    vndbRelationId: normalizedVndbRelationId,
+    bangumiId: normalizedBangumiId,
+    steamId: normalizedSteamId,
+    dlsiteCode: normalizedDlsiteCode
+  } = normalizeGalgameExternalIds(input)
 
   // 存在性检查与四条外部 ID 预检互不依赖, 并行发出 (与 create.ts 同形态); 并发
   // 兜底靠唯一索引 + 下方事务的 P2002 回退, 预检只负责给出可读的业务错误
@@ -98,33 +101,70 @@ export const updateGalgame = async (
     steamTags,
     steamDevelopers,
     dlsiteTags,
-    name,
-    alias,
-    introduction,
-    contentLimit,
-    released
+    removeTagIds,
+    addTagNames,
+    baseFingerprint
   } = input
 
-  // 事务性入队：patch 字段更新与写出箱入队原子提交，关闭崩溃丢失窗口
+  // patch 字段、别名与写出箱入队在同一个事务里提交: 别名整份替换不再另开事务, 冲突或撞
+  // 唯一索引时两者一起回滚
   const updateResult = await kunTx(
     'edit.update',
-    async ({ tx }) => {
+    async ({ tx, fail }) => {
+      // 先锁 patch 行再读: 当前值要在锁下读到才作数, 否则另一次保存可以夹在读与写之间。
+      // 别名只在这把锁下整份替换, 锁序固定为 patch 行 → patch_alias
+      await lockPatchRows(tx, [id])
+      const stored = await tx.patch.findUnique({
+        where: { id },
+        select: GALGAME_EDIT_SELECT
+      })
+      if (!stored) {
+        return fail('该 ID 下未找到对应 Galgame')
+      }
+
+      const storedFields = galgameEditFieldsFromRow(stored)
+      const next = normalizeGalgameEditInput({
+        ...input,
+        // released 缺省即不动, 以库里的值参与比较
+        released: input.released ?? storedFields.released
+      })
+      // 库里的值既不是表单打开时读到的那一份, 也不是这次要写的那一份: 期间有人改过, 照写
+      // 会把对方的修改悄悄盖掉。等于这次要写的那一份时放行: 那是上一次提交的主事务已落库、
+      // 后面的标签步骤失败之后的重试, 拦下它用户就只能看到冲突提示。标签差量可交换, 不进指纹
+      const current = galgameEditFingerprint(storedFields)
+      if (
+        current !== baseFingerprint &&
+        current !== galgameEditFingerprint(next)
+      ) {
+        return fail('该游戏已被他人修改, 请刷新后重试')
+      }
+
       await tx.patch.update({
         where: { id },
         data: {
-          name,
-          vndb_id: normalizedVndbId ? normalizedVndbId : null,
-          vndb_relation_id: normalizedVndbRelationId
-            ? normalizedVndbRelationId
-            : null,
-          bangumi_id: normalizedBangumiId,
-          steam_id: normalizedSteamId,
-          dlsite_code: normalizedDlsiteCode ? normalizedDlsiteCode : null,
-          introduction,
-          content_limit: contentLimit,
-          released
+          name: next.name,
+          vndb_id: next.vndbId,
+          vndb_relation_id: next.vndbRelationId,
+          bangumi_id: next.bangumiId,
+          steam_id: next.steamId,
+          dlsite_code: next.dlsiteCode,
+          introduction: next.introduction,
+          content_limit: next.contentLimit,
+          released: next.released
         }
       })
+
+      await tx.patch_alias.deleteMany({
+        where: { patch_id: id }
+      })
+      // 批内去重已由 normalizeGalgameEditInput 做掉; patch_alias 无 (patch_id, name) 唯一
+      // 约束, skipDuplicates 在这里是空操作, 照旧留着
+      await tx.patch_alias.createMany({
+        data: next.alias.map((name) => ({ name, patch_id: id })),
+        skipDuplicates: true
+      })
+
+      // 事务性入队：patch 字段更新与写出箱入队原子提交，关闭崩溃丢失窗口
       await enqueueSearchOutbox(tx, id)
     },
     {
@@ -142,30 +182,6 @@ export const updateGalgame = async (
     return updateResult
   }
 
-  const aliasFailure = await kunTx(
-    'edit.update.alias',
-    async ({ tx: prisma }) => {
-      await prisma.patch_alias.deleteMany({
-        where: { patch_id: id }
-      })
-
-      // patch_alias 无 (patch_id, name) 唯一约束, skipDuplicates 挡不住批内重复,
-      // 与 POST 路径(route.ts 的 checkStringArrayValid)对齐在应用层去重
-      const aliasData = normalizeStringArray(alias).map((name) => ({
-        name,
-        patch_id: id
-      }))
-
-      await prisma.patch_alias.createMany({
-        data: aliasData,
-        skipDuplicates: true
-      })
-    }
-  )
-  if (typeof aliasFailure === 'string') {
-    return aliasFailure
-  }
-
   await processSubmittedExternalData(
     id,
     {
@@ -179,7 +195,7 @@ export const updateGalgame = async (
       dlsiteCircleName: dlsiteCircleName ?? '',
       dlsiteCircleLink: dlsiteCircleLink ?? ''
     },
-    input.tag,
+    { removeTagIds, addTagNames },
     uid
   )
 

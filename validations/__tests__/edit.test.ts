@@ -37,16 +37,25 @@ describe('外部 ID 的 int4 范围校验', () => {
 // patch_tag.name 是 VarChar(107) 而 patch_alias.name 是 VarChar(1007)。标签上限
 // 若放行 108+ 字符, 会在 patch 主事务提交后的 batchTag 才抛 22001 冒泡成 500
 describe('update 标签与别名的长度上限', () => {
-  it('tag 拒绝超过 107 字符的元素', () => {
+  it('addTagNames 拒绝超过 107 字符的元素', () => {
     expect(
-      patchUpdateSchema.shape.tag.safeParse(['x'.repeat(108)]).success
+      patchUpdateSchema.shape.addTagNames.safeParse(['x'.repeat(108)]).success
     ).toBe(false)
   })
 
-  it('tag 接受 107 字符边界值', () => {
+  it('addTagNames 接受 107 字符边界值', () => {
     expect(
-      patchUpdateSchema.shape.tag.safeParse(['x'.repeat(107)]).success
+      patchUpdateSchema.shape.addTagNames.safeParse(['x'.repeat(107)]).success
     ).toBe(true)
+  })
+
+  it('addTagNames 的元素先 trim, 只剩空白的拒绝', () => {
+    expect(patchUpdateSchema.shape.addTagNames.parse([' 纯爱 '])).toEqual([
+      '纯爱'
+    ])
+    expect(patchUpdateSchema.shape.addTagNames.safeParse(['  ']).success).toBe(
+      false
+    )
   })
 
   it('alias 保持 500 上限不随标签一并收紧', () => {
@@ -59,23 +68,41 @@ describe('update 标签与别名的长度上限', () => {
   })
 })
 
-// PUT 的 tag 承载 patch 全部现存标签(rewrite store 整份灌入 patch.tags, batchTag 全量
-// 同步), 条数上限只是单请求成本上界, 不能与 POST 手动标签的 100 对齐: 快照中 91 个
-// patch 标签数超过 100, 最大 165, VNDB 单来源可达 132
-describe('update 标签与别名的条数上限', () => {
-  it('tag 接受 165 个元素 (存量最大值, 上限不可降回 100)', () => {
-    const tags = Array.from({ length: 165 }, (_, i) => `标签${i}`)
-    expect(patchUpdateSchema.shape.tag.safeParse(tags).success).toBe(true)
-  })
-
-  it('tag 接受 1000 个元素并拒绝 1001 个', () => {
-    const build = (n: number) => Array.from({ length: n }, (_, i) => `t${i}`)
-    expect(patchUpdateSchema.shape.tag.safeParse(build(1000)).success).toBe(
+// PUT 的手动标签按差量提交, 不再回传现存标签的全集: 新增与 POST 的手动标签同为 100;
+// 移除至多是全部现存标签 (快照中单个 Galgame 最多 165 个), 1000 只是单请求的成本上界
+describe('update 标签差量与别名的条数上限', () => {
+  it('removeTagIds 接受 165 个元素 (清空标签最多的那个 Galgame)', () => {
+    const ids = Array.from({ length: 165 }, (_, i) => i + 1)
+    expect(patchUpdateSchema.shape.removeTagIds.safeParse(ids).success).toBe(
       true
     )
-    expect(patchUpdateSchema.shape.tag.safeParse(build(1001)).success).toBe(
-      false
+  })
+
+  it('removeTagIds 接受 1000 个元素并拒绝 1001 个', () => {
+    const build = (n: number) => Array.from({ length: n }, (_, i) => i + 1)
+    expect(
+      patchUpdateSchema.shape.removeTagIds.safeParse(build(1000)).success
+    ).toBe(true)
+    expect(
+      patchUpdateSchema.shape.removeTagIds.safeParse(build(1001)).success
+    ).toBe(false)
+  })
+
+  it('addTagNames 接受 100 个元素并拒绝 101 个 (与 POST 口径一致)', () => {
+    const build = (n: number) => Array.from({ length: n }, (_, i) => `t${i}`)
+    expect(
+      patchUpdateSchema.shape.addTagNames.safeParse(build(100)).success
+    ).toBe(true)
+    expect(
+      patchUpdateSchema.shape.addTagNames.safeParse(build(101)).success
+    ).toBe(false)
+  })
+
+  it('两项都可以是空数组: 空差量即不动', () => {
+    expect(patchUpdateSchema.shape.removeTagIds.safeParse([]).success).toBe(
+      true
     )
+    expect(patchUpdateSchema.shape.addTagNames.safeParse([]).success).toBe(true)
   })
 
   it('alias 接受 100 个元素并拒绝 101 个 (与 POST 口径一致)', () => {
@@ -85,6 +112,68 @@ describe('update 标签与别名的条数上限', () => {
     )
     expect(patchUpdateSchema.shape.alias.safeParse(build(101)).success).toBe(
       false
+    )
+  })
+})
+
+// patch_tag.id 是 int4: 越界的值进了查询抛 P2020, 冒泡成 500
+describe('update removeTagIds 的元素', () => {
+  const parse = (value: unknown) =>
+    patchUpdateSchema.shape.removeTagIds.safeParse([value])
+
+  it('接受正整数直到 int4 上界', () => {
+    expect(parse(1).success).toBe(true)
+    expect(parse(2147483647).success).toBe(true)
+  })
+
+  it('拒绝超出 int4 的值', () => {
+    expect(parse(2147483648).success).toBe(false)
+  })
+
+  it.each([0, -1, 1.5, Number.NaN, '12', null])('拒绝 %s', (value) => {
+    expect(parse(value).success).toBe(false)
+  })
+})
+
+// 指纹是 sha256 的十六进制小写; 形状不对的直接拒绝, 不拿去和库里的值比
+describe('update baseFingerprint', () => {
+  const parse = (value: unknown) =>
+    patchUpdateSchema.shape.baseFingerprint.safeParse(value)
+
+  it('接受 64 位十六进制小写', () => {
+    expect(parse('0123456789abcdef'.repeat(4)).success).toBe(true)
+  })
+
+  it.each([
+    ['缺省', undefined],
+    ['空串', ''],
+    ['63 位', 'a'.repeat(63)],
+    ['65 位', 'a'.repeat(65)],
+    ['大写', 'A'.repeat(64)],
+    ['非十六进制', 'g'.repeat(64)]
+  ])('拒绝%s', (_, value) => {
+    expect(parse(value).success).toBe(false)
+  })
+
+  it('旧页面按旧协议发来的请求校验失败, 不会被当成无条件覆盖', () => {
+    const result = patchUpdateSchema.safeParse({
+      id: 5,
+      name: '测试 Galgame',
+      vndbId: '',
+      vndbRelationId: '',
+      bangumiId: '',
+      steamId: '',
+      dlsiteCode: '',
+      introduction: '这是一段足够长的游戏介绍文本',
+      // 旧协议: 现存标签的名字全集
+      tag: ['标签一'],
+      alias: [],
+      contentLimit: 'sfw',
+      released: ''
+    })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues.map((issue) => issue.path[0])).toEqual(
+      expect.arrayContaining(['removeTagIds', 'addTagNames', 'baseFingerprint'])
     )
   })
 })
@@ -186,7 +275,9 @@ describe('steamAliases 不再是提交字段', () => {
       ...externalIds,
       id: 5,
       alias: ['保留的别名'],
-      tag: [],
+      removeTagIds: [],
+      addTagNames: [],
+      baseFingerprint: '0'.repeat(64),
       steamAliases: ['已删除的 Steam 别名']
     })
     expect(parsed).not.toHaveProperty('steamAliases')

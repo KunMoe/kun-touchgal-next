@@ -143,20 +143,32 @@ export const patchUpdateSchema = z.object({
     .refine(isIntroductionWithinByteLimit, {
       message: '游戏介绍内容体积过大，请精简后再提交'
     }),
-  // 条数上限是 batchTag 单请求成本上界(嵌套 OR 查询约 0.3ms/元素, 超 3 万元素撞 PG
-  // 绑定参数上限在主事务提交后才 500), 不是产品上限: PUT 的 tag 承载 patch 全部现存
-  // 标签(rewrite store 整份灌入 patch.tags, batchTag 全量同步), 外部来源即可把单个
-  // patch 推到 165 个, 不能与 POST 手动标签的 100 对齐
-  tag: z
+  // 手动标签按差量提交: 要移除的现存标签给 id, 要新增的给名字, 都为空即不动。请求不再
+  // 回传现存标签的全集, 所以新增的条数可以与 POST 的手动标签同为 100; 移除至多是全部
+  // 现存标签 (外部来源能把单个 Galgame 推到 165 个), 1000 只是单请求的成本上界
+  removeTagIds: z
+    .array(
+      z
+        .number({ message: '标签 ID 必须为数字' })
+        .int({ message: '标签 ID 必须为整数' })
+        .positive({ message: '标签 ID 必须为正数' })
+        // patch_tag.id 是 int4, 越界的值进了查询会抛 P2020
+        .max(INT4_MAX, { message: '标签 ID 超出可用范围' }),
+      // 发布前打开的编辑页按旧协议提交时没有这两个字段
+      { message: '标签改动的格式不正确, 请刷新页面后重试' }
+    )
+    .max(1000, { message: '一次最多移除 1000 个标签' }),
+  addTagNames: z
     .array(
       z
         .string()
         .trim()
         .min(1, { message: '单个标签至少一个字符' })
         // patch_tag.name 是 VarChar(107), 放行更长会在事务提交后的 batchTag 才抛 22001
-        .max(107, { message: '单个标签至多 107 个字符' })
+        .max(107, { message: '单个标签至多 107 个字符' }),
+      { message: '标签改动的格式不正确, 请刷新页面后重试' }
     )
-    .max(1000, { message: '一个 Galgame 最多提交 1000 个标签' }),
+    .max(100, { message: '一次最多新增 100 个标签' }),
   alias: z
     .array(
       z
@@ -170,7 +182,11 @@ export const patchUpdateSchema = z.object({
   released: z
     .string()
     .max(107, { message: '发售日期最多 107 个字符' })
-    .optional()
+    .optional(),
+  // 打开编辑页时读到的字段指纹 (sha256), 原样带回; 服务端据此发现期间别人的修改
+  baseFingerprint: z
+    .string({ message: '编辑基线无效, 请刷新页面后重试' })
+    .regex(/^[0-9a-f]{64}$/, { message: '编辑基线无效, 请刷新页面后重试' })
 })
 
 export const duplicateSchema = z

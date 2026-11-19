@@ -10,8 +10,8 @@ interface Props {
 }
 
 export const ContentLimit = ({ errors }: Props) => {
-  const { data, setData } = useCreatePatchStore(
-    useShallow((state) => ({ data: state.data, setData: state.setData }))
+  const { data, update } = useCreatePatchStore(
+    useShallow((state) => ({ data: state.data, update: state.update }))
   )
 
   return (
@@ -24,9 +24,9 @@ export const ContentLimit = ({ errors }: Props) => {
         isSelected={data.contentLimit === 'nsfw'}
         onValueChange={(value) => {
           if (value) {
-            setData({ ...data, contentLimit: 'nsfw' })
+            update({ contentLimit: 'nsfw' })
           } else {
-            setData({ ...data, contentLimit: 'sfw' })
+            update({ contentLimit: 'sfw' })
           }
         }}
       >

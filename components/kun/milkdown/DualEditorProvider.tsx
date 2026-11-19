@@ -4,8 +4,6 @@ import { useCallback, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { Tab, Tabs } from '@heroui/tabs'
 import { Code, Edit } from 'lucide-react'
-import { useCreatePatchStore } from '~/store/editStore'
-import { useRewritePatchStore } from '~/store/rewriteStore'
 import { KunEditor } from './Editor'
 import { KunLoading } from '~/components/kun/Loading'
 
@@ -18,66 +16,31 @@ const Codemirror = dynamic(
 )
 
 interface Props {
-  storeName: 'patchCreate' | 'patchRewrite'
+  // 两个函数的引用必须稳定: 它们是 codemirror 初始化 effect 的依赖, 每次渲染换一个
+  // 新引用会让编辑器反复重建。getMarkdown 在首帧就要给出原文: 两个编辑器都只在
+  // 初始化时读一次值
+  getMarkdown: () => string
+  setMarkdown: (markdown: string) => void
 }
 
-export const KunDualEditorProvider = ({ storeName }: Props) => {
+export const KunDualEditorProvider = ({ getMarkdown, setMarkdown }: Props) => {
   const [cmAPI, setCmAPI] = useState({
     update: (_: string) => {}
   })
 
-  const getCreatePatchData = useCreatePatchStore((state) => state.getData)
-  const setCreatePatchData = useCreatePatchStore((state) => state.setData)
-  const getRewritePatchData = useRewritePatchStore((state) => state.getData)
-  const setRewritePatchData = useRewritePatchStore((state) => state.setData)
-
   const saveMarkdown = useCallback(
     (markdown: string) => {
-      if (storeName === 'patchCreate') {
-        setCreatePatchData({ ...getCreatePatchData(), introduction: markdown })
-      } else if (storeName === 'patchRewrite') {
-        setRewritePatchData({
-          ...getRewritePatchData(),
-          introduction: markdown
-        })
-      }
+      setMarkdown(markdown)
       cmAPI.update(markdown)
     },
-    [
-      cmAPI,
-      getCreatePatchData,
-      getRewritePatchData,
-      setCreatePatchData,
-      setRewritePatchData,
-      storeName
-    ]
+    [cmAPI, setMarkdown]
   )
-
-  const getMarkdown = useCallback(() => {
-    if (storeName === 'patchCreate') {
-      return getCreatePatchData().introduction
-    } else if (storeName === 'patchRewrite') {
-      return getRewritePatchData().introduction
-    }
-    return ''
-  }, [getCreatePatchData, getRewritePatchData, storeName])
 
   const onCodemirrorChange = useCallback(
     (getCode: () => string) => {
-      const value = getCode()
-      if (storeName === 'patchCreate') {
-        setCreatePatchData({ ...getCreatePatchData(), introduction: value })
-      } else if (storeName === 'patchRewrite') {
-        setRewritePatchData({ ...getRewritePatchData(), introduction: value })
-      }
+      setMarkdown(getCode())
     },
-    [
-      getCreatePatchData,
-      getRewritePatchData,
-      setCreatePatchData,
-      setRewritePatchData,
-      storeName
-    ]
+    [setMarkdown]
   )
 
   return (

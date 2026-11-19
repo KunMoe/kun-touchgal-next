@@ -28,7 +28,6 @@ export const KunNavigationBreadcrumb = () => {
   const hideBreadcrumbRoutes = [
     '/',
     '/edit/create',
-    '/edit/rewrite',
     '/redirect',
     '/friend-link',
     '/apply',
@@ -41,6 +40,7 @@ export const KunNavigationBreadcrumb = () => {
     hideBreadcrumbRoutes.includes(pathname) ||
     pathname === '/admin' ||
     pathname.startsWith('/admin/') ||
+    pathname.startsWith('/edit/rewrite/') ||
     pathname === '/login' ||
     pathname.startsWith('/login/') ||
     pathname.startsWith('/auth/') ||

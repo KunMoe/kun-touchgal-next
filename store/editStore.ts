@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import type { KunFormUpdate } from '~/components/edit/types'
 
 export interface CreatePatchData {
   name: string
@@ -30,8 +31,7 @@ export interface CreatePatchRequestData extends CreatePatchData {
 
 interface StoreState {
   data: CreatePatchData
-  getData: () => CreatePatchData
-  setData: (data: CreatePatchData) => void
+  update: KunFormUpdate<CreatePatchData>
   resetData: () => void
 }
 
@@ -62,10 +62,15 @@ const initialState: CreatePatchData = {
 
 export const useCreatePatchStore = create<StoreState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       data: initialState,
-      getData: () => get().data,
-      setData: (data: CreatePatchData) => set({ data }),
+      update: (patch) =>
+        set((state) => ({
+          data: {
+            ...state.data,
+            ...(typeof patch === 'function' ? patch(state.data) : patch)
+          }
+        })),
       resetData: () => set({ data: initialState })
     }),
     {

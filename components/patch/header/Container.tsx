@@ -10,23 +10,18 @@ interface PatchHeaderProps {
   intro: PatchIntroduction
   uid?: number
   nsfwAllowed: boolean
-  canRewrite: boolean
 }
 
 export const PatchHeaderContainer = ({
   patch,
   intro,
   uid,
-  nsfwAllowed,
-  canRewrite
+  nsfwAllowed
 }: PatchHeaderProps) => {
   const isNsfwBlocked = patch.contentLimit === 'nsfw' && !nsfwAllowed
   // 各客户端组件必须共用同一个 patch 引用, Flight 才只序列化一次. markdown 原文与
-  // tags 只用于 /edit/rewrite 预填, 仅对能进入该页的 role≥3 经 rewrite 单独下发
+  // tags 客户端用不到: 重写页 /edit/rewrite/[uniqueId] 自己读库, 不从这里取
   const clientPatch = { ...patch, introduction: '', tags: [] }
-  const rewrite = canRewrite
-    ? { introduction: patch.introduction, tags: patch.tags }
-    : null
   // intro.tag 只有登录用户可见 (IntroductionTab 按 uid 渲染 PatchTag)
   const clientIntro = uid ? intro : { ...intro, tag: [] }
 
@@ -42,8 +37,6 @@ export const PatchHeaderContainer = ({
         <>
           <PatchHeaderClientEffects
             patch={clientPatch}
-            rewrite={rewrite}
-            released={intro.released}
             isNsfwBlocked={isNsfwBlocked}
           />
           <KunAutoImageViewer />

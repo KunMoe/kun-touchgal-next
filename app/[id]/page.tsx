@@ -11,7 +11,6 @@ import { getViewerContext } from '~/server/viewer/fromHeaders'
 import { getPatchPageTitle } from '~/utils/patch/getPatchPageTitle'
 import { after } from 'next/server'
 import { notFound } from 'next/navigation'
-import { can } from '~/constants/permission'
 import type { Metadata } from 'next'
 
 const isValidPatchId = (id: string) => /^[A-Za-z0-9]{8}$/.test(id)
@@ -76,7 +75,6 @@ export default async function Kun({ params }: Props) {
         intro={pageData.intro}
         uid={payload?.uid}
         nsfwAllowed={nsfwAllowed}
-        canRewrite={can(payload, 'galgame.rewrite')}
       />
     </div>
   )

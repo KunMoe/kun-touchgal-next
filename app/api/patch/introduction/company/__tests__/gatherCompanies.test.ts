@@ -9,7 +9,7 @@ const {
   companyCreateManyMock,
   companyUpdateManyMock,
   companyRelationCreateManyAndReturnMock,
-  handleBatchPatchTagsMock,
+  saveManualTagChangeMock,
   invalidateTagCacheMock,
   invalidateCompanyCacheMock
 } = vi.hoisted(() => ({
@@ -21,7 +21,7 @@ const {
   companyCreateManyMock: vi.fn(),
   companyUpdateManyMock: vi.fn(),
   companyRelationCreateManyAndReturnMock: vi.fn(),
-  handleBatchPatchTagsMock: vi.fn(),
+  saveManualTagChangeMock: vi.fn(),
   invalidateTagCacheMock: vi.fn(),
   invalidateCompanyCacheMock: vi.fn()
 }))
@@ -43,7 +43,7 @@ vi.mock('~/app/api/edit/bangumi/_developers', () => ({
 }))
 
 vi.mock('~/app/api/edit/batchTag', () => ({
-  handleBatchPatchTags: handleBatchPatchTagsMock
+  saveManualTagChange: saveManualTagChangeMock
 }))
 
 vi.mock('~/app/api/tag/cache', () => ({

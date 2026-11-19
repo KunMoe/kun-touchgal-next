@@ -1,93 +1,86 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Button, Input } from '@heroui/react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
+import { normalizeExternalId } from '~/utils/normalizeExternalId'
 import { FetchPreview } from '~/components/edit/components/FetchPreview'
-import type { PatchFormDataShape } from '~/components/edit/types'
-import { normalizeStringArray } from '~/utils/normalizeStringArray'
+import {
+  applyFetchMerge,
+  buildDuplicateCheckQuery,
+  fetchedForCurrentId,
+  mergeDlsiteFetch,
+  parseDlsiteTags
+} from '~/components/edit/form/merge'
+import type { KunFormUpdate, PatchFormDataShape } from '~/components/edit/types'
+import type {
+  DlsiteFetchResult,
+  KunFetchedFor
+} from '~/components/edit/form/merge'
 
-interface DlsiteResponse {
-  rj_code: string
-  title_default: string
-  title_jp?: string
-  title_en?: string
-  release_date?: string
-  tags?: string
-  circle_name?: string
-  circle_link?: string
-}
-
-interface PreviewData {
-  titleDefault: string
-  titleJp: string
-  titleEn: string
-  tags: string[]
-  circleName: string
-  releaseDate: string
-}
-
-const parseTags = (raw?: string) =>
-  normalizeStringArray(raw?.split(/[,，]/) ?? [])
-
-interface Props<T extends PatchFormDataShape> {
+interface Props {
   errors?: string
-  data: T
-  setData: (data: T) => void
+  data: PatchFormDataShape
+  update: KunFormUpdate<PatchFormDataShape>
   excludeId?: number
 }
 
-export const DLSiteInput = <T extends PatchFormDataShape>({
-  errors,
-  data,
-  setData,
-  excludeId
-}: Props<T>) => {
-  const [preview, setPreview] = useState<PreviewData | null>(null)
-  const [duplicateUniqueId, setDuplicateUniqueId] = useState<string | null>(
-    null
+export const DLSiteInput = ({ errors, data, update, excludeId }: Props) => {
+  const [fetched, setFetched] =
+    useState<KunFetchedFor<DlsiteFetchResult> | null>(null)
+  const [duplicate, setDuplicate] = useState<KunFetchedFor<string> | null>(null)
+  // 只认最后一次发起的抓取, 较早的应答晚到时丢弃
+  const tokenRef = useRef(0)
+  const preview = fetchedForCurrentId(fetched, 'dlsite', data.dlsiteCode)
+  const duplicateUniqueId = fetchedForCurrentId(
+    duplicate,
+    'dlsite',
+    data.dlsiteCode
   )
 
-  useEffect(() => {
-    setPreview(null)
-    setDuplicateUniqueId(null)
-  }, [data.dlsiteCode])
-
   const handleFetch = async () => {
-    const rawCode = data.dlsiteCode.trim()
-    if (!rawCode) {
+    const requestedId = normalizeExternalId('dlsite', data.dlsiteCode)
+    if (!requestedId) {
       toast.error('DLSite Code 不可为空')
       return
     }
 
-    const normalized = rawCode.toUpperCase()
-    if (!/^(RJ|VJ)\d+$/.test(normalized)) {
+    if (!/^(RJ|VJ)\d+$/.test(requestedId)) {
       toast.error('DLSite Code 需要以 RJ 或 VJ 开头')
       return
     }
 
+    const token = ++tokenRef.current
+    const isStale = () => token !== tokenRef.current
+
     const duplicateResult = await kunFetchGet<
       KunResponse<{ uniqueId: string }>
-    >('/edit/duplicate', {
-      dlsiteCode: normalized,
-      ...(excludeId ? { excludeId: String(excludeId) } : {})
-    })
+    >(
+      '/edit/duplicate',
+      buildDuplicateCheckQuery('dlsite', requestedId, { excludeId })
+    )
+    if (isStale()) {
+      return
+    }
 
     if (typeof duplicateResult !== 'string' && duplicateResult?.uniqueId) {
-      setDuplicateUniqueId(duplicateResult.uniqueId)
+      setDuplicate({ forId: requestedId, data: duplicateResult.uniqueId })
       toast.error('发现重复游戏条目, 请勿重复提交')
       return
     }
-    setDuplicateUniqueId(null)
+    setDuplicate(null)
 
     try {
       toast('正在从 DLSite 获取数据...')
-      const result = await kunFetchPost<KunResponse<DlsiteResponse>>(
+      const result = await kunFetchPost<KunResponse<DlsiteFetchResult>>(
         '/edit/dlsite',
-        { code: normalized }
+        { code: requestedId }
       )
+      if (isStale()) {
+        return
+      }
 
       if (typeof result === 'string') {
         toast.error(result)
@@ -99,36 +92,20 @@ export const DLSiteInput = <T extends PatchFormDataShape>({
         return
       }
 
-      const parsedTags = parseTags(result.tags)
-
-      setPreview({
-        titleDefault: result.title_default,
-        titleJp: result.title_jp?.trim() ?? '',
-        titleEn: result.title_en?.trim() ?? '',
-        tags: parsedTags,
-        circleName: result.circle_name?.trim() ?? '',
-        releaseDate: result.release_date ?? ''
-      })
-
-      const alias = normalizeStringArray([
-        ...data.alias,
-        result.title_jp,
-        result.title_en
-      ]).filter((a) => a !== data.name)
-
-      setData({
-        ...data,
-        dlsiteCode: normalized,
-        dlsiteCircleName: result.circle_name?.trim() ?? '',
-        dlsiteCircleLink: result.circle_link?.trim() ?? '',
-        alias,
-        dlsiteTags: parsedTags,
-        released: result.release_date || data.released
-      })
+      const applied = applyFetchMerge(update, (prev) =>
+        mergeDlsiteFetch(prev, requestedId, result)
+      )
+      if (!applied) {
+        return
+      }
+      setFetched({ forId: requestedId, data: result })
 
       toast.success('已获取 DLSite 数据并自动写入表单')
     } catch (error) {
-      setPreview(null)
+      if (isStale()) {
+        return
+      }
+      setFetched(null)
       toast.error('DLSite API 请求失败, 请稍后重试')
     }
   }
@@ -141,7 +118,7 @@ export const DLSiteInput = <T extends PatchFormDataShape>({
         labelPlacement="outside"
         placeholder="请输入 DLSite Code, 例如 RJ01405813 或 VJ012345"
         value={data.dlsiteCode}
-        onChange={(e) => setData({ ...data, dlsiteCode: e.target.value })}
+        onChange={(e) => update({ dlsiteCode: e.target.value })}
         isInvalid={!!errors}
         errorMessage={errors}
       />
@@ -167,12 +144,12 @@ export const DLSiteInput = <T extends PatchFormDataShape>({
       {preview && (
         <FetchPreview
           fields={[
-            { label: '默认标题', value: preview.titleDefault },
-            { label: '日文标题', value: preview.titleJp },
-            { label: '英文标题', value: preview.titleEn },
-            { label: '标签', value: preview.tags },
-            { label: '社团', value: preview.circleName },
-            { label: '发售日期', value: preview.releaseDate }
+            { label: '默认标题', value: preview.title_default },
+            { label: '日文标题', value: preview.title_jp?.trim() ?? '' },
+            { label: '英文标题', value: preview.title_en?.trim() ?? '' },
+            { label: '标签', value: parseDlsiteTags(preview.tags) },
+            { label: '社团', value: preview.circle_name?.trim() ?? '' },
+            { label: '发售日期', value: preview.release_date ?? '' }
           ]}
         />
       )}

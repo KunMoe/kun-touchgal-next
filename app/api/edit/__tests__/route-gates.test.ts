@@ -55,9 +55,11 @@ const updateBody = (overrides: Record<string, unknown> = {}) => ({
   steamId: '',
   dlsiteCode: '',
   introduction: '这是一段足够长的游戏介绍文本',
-  tag: ['标签一'],
+  removeTagIds: [11],
+  addTagNames: ['标签一'],
   alias: [],
   contentLimit: 'sfw',
+  baseFingerprint: 'a'.repeat(64),
   ...overrides
 })
 
@@ -174,8 +176,30 @@ describe('PUT /api/edit 闸门 (galgame.rewrite)', () => {
     expect(updateGalgameMock.mock.calls[0][0]).toMatchObject({
       id: 42,
       name: '测试 Galgame',
-      tag: ['标签一']
+      removeTagIds: [11],
+      addTagNames: ['标签一'],
+      baseFingerprint: 'a'.repeat(64)
     })
+  })
+
+  // 发布前打开的编辑页还按旧协议提交 (tag 是现存标签的名字全集, 没有基线指纹):
+  // 整个请求被拒, 提示刷新, 不会落到按名全量同步或无条件覆盖
+  it('旧协议的请求体被拒并提示刷新, 不调 service', async () => {
+    const {
+      removeTagIds: _removeTagIds,
+      addTagNames: _addTagNames,
+      baseFingerprint: _baseFingerprint,
+      ...legacy
+    } = updateBody({ tag: ['标签一'] })
+    const res = await PUT(putRequest(legacy))
+
+    const message: string = await res.json()
+    expect(message.split('\n')).toEqual([
+      '标签改动的格式不正确, 请刷新页面后重试',
+      '标签改动的格式不正确, 请刷新页面后重试',
+      '编辑基线无效, 请刷新页面后重试'
+    ])
+    expect(updateGalgameMock).not.toHaveBeenCalled()
   })
 
   it('service 返回错误串时原样返回', async () => {
