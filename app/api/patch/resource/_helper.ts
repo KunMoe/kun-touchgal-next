@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto'
-import { copyObject, deleteFileFromS3, headObject } from '~/lib/s3'
-import { acquireKvLock, delKv, getKv, releaseKvLock } from '~/lib/redis'
+import { copyObject, deleteFileFromS3 } from '~/lib/s3'
+import { acquireKvLock, delKv, releaseKvLock } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { lockPatchRows } from '~/server/content/patchLock'
@@ -9,30 +9,21 @@ import {
   enqueueS3Deletion,
   kickS3DeletionDrain
 } from '~/server/storage/s3Outbox'
+import {
+  discardStagedUpload,
+  readUploadToken,
+  verifyStagedObject
+} from '~/server/storage/stagedUpload'
 import { deletePendingModerationTasks } from '~/server/moderation/submit'
 import { deletePendingAppeals } from '~/server/moderation/appeal'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import {
-  OBJECT_STORAGE_MAX_FILE_SIZE_BYTES,
-  OBJECT_STORAGE_MAX_FILE_SIZE_ERROR,
   RESOURCE_DAILY_UPLOAD_LIMIT_MB,
   RESOURCE_S3_COPY_TIMEOUT_MS
 } from '~/constants/resource'
 
-interface UploadTokenMeta {
-  s3Key: string
-  fileName: string
-  declared: number
-  uid: number
-}
-
 const BIND_LOCK_TTL_SECONDS = 60
-
-const cleanupRejectedUpload = async (token: string, s3Key: string) => {
-  await deleteFileFromS3(s3Key).catch(() => undefined)
-  await delKv(`upload:${token}`).catch(() => undefined)
-}
 
 export const bindUploadedResource = async (
   patchId: number,
@@ -46,28 +37,15 @@ export const bindUploadedResource = async (
   }
 
   try {
-    const raw = await getKv(`upload:${token}`)
-    if (!raw) {
-      return '上传 token 已过期或不存在, 请重新上传文件'
+    const meta = await readUploadToken(token, uid)
+    if (typeof meta === 'string') {
+      return meta
     }
-    const meta = JSON.parse(raw) as UploadTokenMeta
-    if (meta.uid !== uid) {
-      return '上传 token 不属于当前用户'
+    const verified = await verifyStagedObject(token, meta)
+    if (typeof verified === 'string') {
+      return verified
     }
-
-    const info = await headObject(meta.s3Key).catch(() => null)
-    if (!info) {
-      return '文件未上传成功, 请重新上传'
-    }
-    const actualSize = Number(info.ContentLength ?? 0)
-    if (actualSize !== meta.declared) {
-      await cleanupRejectedUpload(token, meta.s3Key)
-      return '文件大小不一致, 请重新上传'
-    }
-    if (actualSize >= OBJECT_STORAGE_MAX_FILE_SIZE_BYTES) {
-      await cleanupRejectedUpload(token, meta.s3Key)
-      return OBJECT_STORAGE_MAX_FILE_SIZE_ERROR
-    }
+    const actualSize = verified.size
     const fileSizeMB = Number((actualSize / (1024 * 1024)).toFixed(3))
     const quota = await prisma.user.updateMany({
       where: {
@@ -79,7 +57,7 @@ export const bindUploadedResource = async (
       data: { daily_upload_size: { increment: fileSizeMB } }
     })
     if (quota.count === 0) {
-      await cleanupRejectedUpload(token, meta.s3Key)
+      await discardStagedUpload(token, meta)
       return '您今日的上传大小已达到 5GB 限额'
     }
 

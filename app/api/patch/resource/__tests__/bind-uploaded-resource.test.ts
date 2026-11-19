@@ -198,30 +198,21 @@ describe('bindUploadedResource 令牌', () => {
     expect(delKvMock).not.toHaveBeenCalled()
   })
 
-  // 预期翻转 (S2): 令牌内容改由 schema 解析, 损坏的内容按令牌无效返回文案, 不再抛错
-  it('令牌内容不是 JSON: 抛出解析错误, 锁照常释放', async () => {
-    getKvMock.mockResolvedValue('not-json')
+  it.each([
+    ['不是 JSON', 'not-json'],
+    ['缺字段', '{}'],
+    ['大小不是正整数', meta({ declared: 0 })],
+    [
+      '暂存 key 不在 patch/tmp/ 之下',
+      meta({ s3Key: 'patch/1/resource/x/a.zip' })
+    ]
+  ])('令牌内容%s: 按令牌无效处理, 不拿它去碰对象存储', async (_, raw) => {
+    getKvMock.mockResolvedValue(raw)
 
-    await expect(bind()).rejects.toBeInstanceOf(SyntaxError)
+    expect(await bind()).toBe(TOKEN_MISSING)
     expect(headObjectMock).not.toHaveBeenCalled()
+    expect(deleteFileFromS3Mock).not.toHaveBeenCalled()
     expect(releaseKvLockMock).toHaveBeenCalledTimes(1)
-  })
-
-  // 预期翻转 (S2): 形状不对的令牌一律按令牌无效处理
-  it('令牌是 JSON 但缺字段: 因 uid 对不上被当成别人的令牌', async () => {
-    getKvMock.mockResolvedValue('{}')
-
-    expect(await bind()).toBe(TOKEN_FOREIGN)
-    expect(headObjectMock).not.toHaveBeenCalled()
-  })
-
-  // 预期翻转 (S2): 暂存 key 必须落在 patch/tmp/ 之下, 否则按令牌无效处理
-  it('令牌里的 key 不在暂存前缀下: 照样拿去 HEAD', async () => {
-    getKvMock.mockResolvedValue(meta({ s3Key: 'patch/1/resource/x/game.zip' }))
-
-    await bind()
-
-    expect(headObjectMock).toHaveBeenCalledWith('patch/1/resource/x/game.zip')
   })
 })
 

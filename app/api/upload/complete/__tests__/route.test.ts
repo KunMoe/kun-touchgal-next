@@ -43,6 +43,7 @@ const MB = 1024 * 1024
 const SIZE = 2 * MB
 const TOKEN = 'upload-token-0001'
 const STAGING_KEY = `patch/tmp/${UID}/${'a'.repeat(64)}/game.zip`
+const TOKEN_MISSING = '上传 token 已过期或不存在, 请重新上传文件'
 
 const meta = (overrides: Record<string, unknown> = {}) =>
   JSON.stringify({
@@ -111,12 +112,11 @@ describe('POST /api/upload/complete 前置闸门顺序', () => {
 })
 
 describe('POST /api/upload/complete 令牌', () => {
-  // 预期翻转 (S2): 与 bind 统一为「…请重新上传文件」
   it('令牌不存在: 返回过期文案, 不碰对象存储', async () => {
     getKvMock.mockResolvedValue(null)
     const res = await complete()
 
-    expect(await res.json()).toBe('上传 token 已过期或不存在, 请重新上传')
+    expect(await res.json()).toBe(TOKEN_MISSING)
     expect(getKvMock).toHaveBeenCalledWith(`upload:${TOKEN}`)
     expect(headObjectMock).not.toHaveBeenCalled()
   })
@@ -130,23 +130,29 @@ describe('POST /api/upload/complete 令牌', () => {
     expectNoCleanup()
   })
 
-  // 预期翻转 (S2): 令牌内容改由 schema 解析, 损坏的内容按令牌无效返回文案, 不再抛错
-  it('令牌内容不是 JSON: 抛出解析错误', async () => {
-    getKvMock.mockResolvedValue('not-json')
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  it.each([
+    ['不是 JSON', 'not-json'],
+    ['缺字段', '{}'],
+    [
+      '暂存 key 不在 patch/tmp/ 之下',
+      meta({ s3Key: 'patch/1/resource/x/a.zip' })
+    ]
+  ])('令牌内容%s: 按令牌无效处理, 不拿它去碰对象存储', async (_, raw) => {
+    getKvMock.mockResolvedValue(raw)
+    const res = await complete()
 
-    await expect(complete()).rejects.toBeInstanceOf(SyntaxError)
+    expect(await res.json()).toBe(TOKEN_MISSING)
     expect(headObjectMock).not.toHaveBeenCalled()
+    expectNoCleanup()
   })
 })
 
 describe('POST /api/upload/complete 暂存对象校验', () => {
-  // 预期翻转 (S2): 与 bind 统一为「…请重新上传」
   it('HEAD 失败: 返回未上传成功, 令牌与暂存都留着供重试', async () => {
     headObjectMock.mockRejectedValue(new Error('NotFound'))
     const res = await complete()
 
-    expect(await res.json()).toBe('文件未上传成功, 请重试')
+    expect(await res.json()).toBe('文件未上传成功, 请重新上传')
     expectNoCleanup()
   })
 

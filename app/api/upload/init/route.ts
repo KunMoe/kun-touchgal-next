@@ -1,22 +1,17 @@
 import * as z from 'zod'
-import { randomBytes } from 'crypto'
-import { setKv } from '~/lib/redis'
-import { presignPutObject } from '~/lib/s3'
 import {
   ALLOWED_EXTENSIONS,
   OBJECT_STORAGE_MAX_FILE_SIZE_BYTES,
   OBJECT_STORAGE_MAX_FILE_SIZE_ERROR,
   RESOURCE_DAILY_UPLOAD_LIMIT_MB
 } from '~/constants/resource'
-import { sanitizeFileName } from '~/utils/sanitizeFileName'
 import { prisma } from '~/prisma'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { can } from '~/constants/permission'
+import { createStagedUpload } from '~/server/storage/stagedUpload'
 
 const MIN_FILE_SIZE = 1024
-const UPLOAD_TOKEN_TTL_SECONDS = 24 * 60 * 60
-const PRESIGN_TTL_SECONDS = 2 * 60 * 60
 
 const initSchema = z.object({
   fileName: z.string().min(1).max(300),
@@ -79,32 +74,10 @@ export const POST = kunRoute.post({
       return '您有至少一个 Galgame 资源在待审核阶段, 请等待审核结束后再发布资源'
     }
 
-    const sanitizedName = sanitizeFileName(input.fileName)
-    const randomSegment = randomBytes(32).toString('hex')
-    const s3Key = `patch/tmp/${payload.uid}/${randomSegment}/${sanitizedName}`
-
-    const uploadUrl = await presignPutObject(
-      s3Key,
-      input.fileSize,
-      PRESIGN_TTL_SECONDS
-    )
-
-    const token = randomBytes(24).toString('base64url')
-    await setKv(
-      `upload:${token}`,
-      JSON.stringify({
-        s3Key,
-        fileName: sanitizedName,
-        declared: input.fileSize,
-        uid: payload.uid
-      }),
-      UPLOAD_TOKEN_TTL_SECONDS
-    )
-
-    return {
-      uploadUrl,
-      token,
-      expiresIn: PRESIGN_TTL_SECONDS
-    }
+    return createStagedUpload({
+      uid: payload.uid,
+      fileName: input.fileName,
+      fileSize: input.fileSize
+    })
   }
 })
