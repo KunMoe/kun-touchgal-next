@@ -6,6 +6,7 @@ import {
   createConversationSchema
 } from '~/validations/conversation'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
+import { kunTx } from '~/server/db/tx'
 import { can } from '~/constants/permission'
 import type { Conversation } from '~/types/api/conversation'
 import type { KunActor } from '~/constants/role'
@@ -216,20 +217,19 @@ export const getOrCreateConversation = async (
     return insufficient
   }
 
-  let created: { id: number } | null
+  let created: { id: number } | string
   try {
     // 条件更新即 CAS: 余额守卫必须落在 WHERE 里. 上面那次读取自事务之外, 只是省一次
     // 往返的快速失败, 不是安全边界; 并发请求读到同一份快照会一起通过它, 各扣一次把
     // 余额扣成负数 (唯一索引只约束同一对用户, 对 N 个不同目标并发不设防).
-    // 谓词用 REQUIRED 而非 COST, 保留「需要 20 才能开一个, 付 10」的语义.
-    // 余额不足时返回 null 而非错误字符串: 回调返回字符串照样提交事务
-    created = await prisma.$transaction(async (tx) => {
+    // 谓词用 REQUIRED 而非 COST, 保留「需要 20 才能开一个, 付 10」的语义
+    created = await kunTx('conversation.create', async ({ tx, fail }) => {
       const { count } = await tx.user.updateMany({
         where: { id: uid, moemoepoint: { gte: MOEMOEPOINT_REQUIRED } },
         data: { moemoepoint: { decrement: MOEMOEPOINT_COST } }
       })
       if (!count) {
-        return null
+        fail(insufficient)
       }
 
       return tx.user_conversation.create({
@@ -240,7 +240,7 @@ export const getOrCreateConversation = async (
     return recoverDuplicate(error)
   }
 
-  if (!created) {
+  if (typeof created === 'string') {
     // CAS 落空不只有余额不足一种成因: 余额在 20~29 时与同目标并发, 赢家扣费后
     // 落败者 EPQ 重求值落空, 走不到 create 撞 P2002, recoverDuplicate 不可达,
     // 而此刻会话已由赢家建好, 必须回读而不是报「萌萌点不足」. isNew 为 false

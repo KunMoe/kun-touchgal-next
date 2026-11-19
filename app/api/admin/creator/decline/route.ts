@@ -4,6 +4,7 @@ import { kunRoute } from '~/app/api/utils/kunRoute'
 import { createMessage } from '~/app/api/utils/message'
 import { declineCreatorSchema } from '~/validations/admin'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { kunTx } from '~/server/db/tx'
 
 const approveCreator = async (
   input: z.infer<typeof declineCreatorSchema>,
@@ -34,16 +35,16 @@ const approveCreator = async (
     return '未找到该管理员'
   }
 
-  const result = await prisma.$transaction(async (prisma) => {
-    // 幂等闸门: 仅未处理 (0/1) 的申请可拒绝, 同时挡掉「通过后再拒绝」;
-    // 命中 0 行时事务内尚无任何写入, 提前返回提交空事务无害
+  const failure = await kunTx('admin.creator.decline', async (ctx) => {
+    const { tx: prisma } = ctx
+    // 幂等闸门: 仅未处理 (0/1) 的申请可拒绝, 同时挡掉「通过后再拒绝」
     const handled = await prisma.user_message.updateMany({
       where: { id: messageId, status: { in: [0, 1] } },
       // status: 0 - unread, 1 - read, 2 - approve, 3 - decline
       data: { status: { set: 3 } }
     })
     if (!handled.count) {
-      return '该申请已被处理, 请刷新后重试'
+      ctx.fail('该申请已被处理, 请刷新后重试')
     }
 
     await createMessage(
@@ -63,16 +64,14 @@ const approveCreator = async (
         content: `管理员 ${admin.name} 拒绝了一位创作者申请\n\n拒绝原因:${reason}\n创作者信息:\n用户名:${creator.name}\n已发布资源数:${creator._count.patch_resource}`
       }
     })
-
-    return {}
   })
-  if (typeof result === 'string') {
-    return result
+  if (typeof failure === 'string') {
+    return failure
   }
   if (message.sender_id) {
     await invalidateUnread(message.sender_id).catch(() => undefined)
   }
-  return result
+  return {}
 }
 
 export const PUT = kunRoute.put({

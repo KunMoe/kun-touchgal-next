@@ -23,8 +23,10 @@ import { resourceSubject } from '~/server/moderation/subject'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import { can } from '~/constants/permission'
 import { linkStorageGateError } from './storageGate'
+import { kunTx } from '~/server/db/tx'
 import type { PatchResource } from '~/types/api/patch'
 import type { KunActor } from '~/constants/role'
+import type { KunTxContext } from '~/server/db/tx'
 
 export const createPatchResource = async (
   input: z.infer<typeof patchResourceCreateSchema>,
@@ -144,7 +146,8 @@ export const createPatchResource = async (
     throw error
   }
 
-  const resourcePromise = prisma.$transaction(async (prisma) => {
+  // 回调单独成句, 不写进 kunTx 的参数里: 带着选项内联的话 prettier 会把整段事务体重缩进
+  const createInTx = async ({ tx: prisma }: KunTxContext) => {
     const newResource = await prisma.patch_resource.create({
       data: {
         patch_id: patchId,
@@ -235,12 +238,14 @@ export const createPatchResource = async (
     }
 
     return resource
+  }
+  const resource = await kunTx('resource.create', createInTx, {
+    // 没有提交则行未落库: 已绑定对象无 DB 引用, 兜底清理
+    onRollback: () => abandonBoundResourceObjects(boundObjects, patchId)
   })
-  // 事务抛错回滚使行未落库: 已绑定对象无 DB 引用, 兜底清理
-  const resource = await resourcePromise.catch(async (error: unknown) => {
-    await abandonBoundResourceObjects(boundObjects, patchId)
-    throw error
-  })
+  if (typeof resource === 'string') {
+    return resource
+  }
 
   queueSearchSync(patchId)
   // 事务提交后失效: 事务内失效会被并发读回填旧值 (M-04), 且 Redis 故障不应回滚写入

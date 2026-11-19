@@ -12,8 +12,7 @@ export interface EncodedPatchBanner {
 }
 
 // 校验与编码不依赖 patch id, 拆出来供 create.ts 在事务外先跑完: 这里所有"返回字符串即
-// 错误"的路径 (像素守卫 / 编码限流 / 体积超限) 都必须发生在建行之前. 若留在交互式事务
-// 内, 回调 return 字符串会被 Prisma 当作正常结束而提交, 留下一条只建了一半的 patch 行.
+// 错误"的路径 (像素守卫 / 编码限流 / 体积超限) 都发生在建行之前, 失败时还没有任何写入.
 export const encodePatchBanner = async (
   image: ArrayBuffer,
   originalImage?: ArrayBuffer

@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
-import { Prisma } from '~/prisma/generated/prisma/client'
+import { kunTx } from '~/server/db/tx'
 import {
   buildPatchBannerKeys,
   encodePatchBanner,
@@ -152,109 +152,97 @@ export const createGalgame = async (input: CreateGalgameInput, uid: number) => {
     return `Galgame Steam ID 与游戏 ID 为 ${steamPatch.unique_id} 的游戏重复`
   }
 
-  // 编码与校验必须在事务外完成: 它返回字符串表示业务错误, 若在事务回调内 return,
-  // Prisma 会把回调正常结束当作提交, 留下一条 banner 为空、无别名/标签/搜索文档的
-  // 孤儿 patch 行 (status 默认 0, 会直接出现在公开列表里)
+  // 编码与校验在事务外完成: 编码可达十几秒, 不占着事务与连接
   const encodedBanner = await encodePatchBanner(banner, bannerOriginal)
   if (typeof encodedBanner === 'string') {
     return encodedBanner
   }
 
-  // keys 在上传前就赋值: putPatchBannerToS3 内部 Promise.all 部分成功后抛错时已有
-  // 对象落盘, DeleteObject 幂等, 宁多删不漏删
-  let uploadedBanner: { patchId: number; keys: string[] } | null = null
-
-  const res = await prisma
-    .$transaction(
-      async (prisma) => {
-        const patch = await prisma.patch.create({
-          data: {
-            name,
-            unique_id: galgameUniqueId,
-            vndb_id: normalizedVndbId ? normalizedVndbId : null,
-            vndb_relation_id: normalizedVndbRelationId
-              ? normalizedVndbRelationId
-              : null,
-            bangumi_id: normalizedBangumiId,
-            steam_id: normalizedSteamId,
-            dlsite_code: normalizedDlsiteCode ? normalizedDlsiteCode : null,
-            introduction,
-            user_id: uid,
-            banner: '',
-            released,
-            content_limit: contentLimit
-          }
-        })
-
-        const newId = patch.id
-
-        uploadedBanner = {
-          patchId: newId,
-          keys: buildPatchBannerKeys(newId, Boolean(encodedBanner.fullBanner))
+  // 事务里有 S3 上传, 不能开 retry: 重放后提交的话, 上一轮上传的对象没有人清理
+  const res = await kunTx(
+    'edit.create',
+    async ({ tx: prisma, onRollback }) => {
+      const patch = await prisma.patch.create({
+        data: {
+          name,
+          unique_id: galgameUniqueId,
+          vndb_id: normalizedVndbId ? normalizedVndbId : null,
+          vndb_relation_id: normalizedVndbRelationId
+            ? normalizedVndbRelationId
+            : null,
+          bangumi_id: normalizedBangumiId,
+          steam_id: normalizedSteamId,
+          dlsite_code: normalizedDlsiteCode ? normalizedDlsiteCode : null,
+          introduction,
+          user_id: uid,
+          banner: '',
+          released,
+          content_limit: contentLimit
         }
-        await putPatchBannerToS3(encodedBanner, newId)
+      })
 
-        const imageLink = `${process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL}/patch/${newId}/banner/banner.avif`
+      const newId = patch.id
 
-        await prisma.patch.update({
-          where: { id: newId },
-          data: { banner: imageLink }
-        })
-
-        // Ensure rating_stat row exists for this patch
-        await prisma.patch_rating_stat.create({
-          data: { patch_id: newId }
-        })
-
-        if (alias.length) {
-          const aliasData = alias.map((name) => ({
-            name,
-            patch_id: newId
-          }))
-          await prisma.patch_alias.createMany({
-            data: aliasData,
-            skipDuplicates: true
-          })
-        }
-
-        await prisma.user.update({
-          where: { id: uid },
-          data: {
-            daily_image_count: { increment: 1 },
-            moemoepoint: { increment: 3 }
-          }
-        })
-
-        // 事务性入队：与 patch.create 原子提交，关闭崩溃丢失窗口；tags 由后续
-        // processSubmittedExternalData 独立事务写入，drain 读最新状态仍会纳入
-        await enqueueSearchOutbox(prisma, newId)
-
-        return { patchId: newId }
-      },
-      { timeout: 60000 }
-    )
-    .catch(async (error) => {
-      // 事务已回滚 (或 commit 结果不确定), 补偿清理已上传的 banner 对象; P2002 发生在
-      // patch.create, 早于上传, 彼时 uploadedBanner 仍为 null 不会触发清理
-      if (uploadedBanner) {
-        await cleanupRolledBackBanner(
-          uploadedBanner.patchId,
-          uploadedBanner.keys
+      // 没有提交 (或 commit 结果不确定) 时补偿清理已上传的 banner 对象。登记在上传之前:
+      // putPatchBannerToS3 内部 Promise.all 部分成功后抛错时已有对象落盘, DeleteObject
+      // 幂等, 宁多删不漏删
+      onRollback('banner', () =>
+        cleanupRolledBackBanner(
+          newId,
+          buildPatchBannerKeys(newId, Boolean(encodedBanner.fullBanner))
         )
+      )
+      await putPatchBannerToS3(encodedBanner, newId)
+
+      const imageLink = `${process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL}/patch/${newId}/banner/banner.avif`
+
+      await prisma.patch.update({
+        where: { id: newId },
+        data: { banner: imageLink }
+      })
+
+      // Ensure rating_stat row exists for this patch
+      await prisma.patch_rating_stat.create({
+        data: { patch_id: newId }
+      })
+
+      if (alias.length) {
+        const aliasData = alias.map((name) => ({
+          name,
+          patch_id: newId
+        }))
+        await prisma.patch_alias.createMany({
+          data: aliasData,
+          skipDuplicates: true
+        })
       }
+
+      await prisma.user.update({
+        where: { id: uid },
+        data: {
+          daily_image_count: { increment: 1 },
+          moemoepoint: { increment: 3 }
+        }
+      })
+
+      // 事务性入队：与 patch.create 原子提交，关闭崩溃丢失窗口；tags 由后续
+      // processSubmittedExternalData 独立事务写入，drain 读最新状态仍会纳入
+      await enqueueSearchOutbox(prisma, newId)
+
+      return { patchId: newId }
+    },
+    {
+      timeout: 60000,
       // bangumi_id / steam_id / dlsite_code / (vndb_id, vndb_relation_id) 组合及其
       // 单独形态部分唯一索引 (db/migrations/0007_patch_vndb_solo_unique.notx.sql) 兜底并发创建:
       // 预检与 patch.create 之间隔着 encodePatchBanner, 实测可达十几秒,
-      // 两个填同一外部 ID 的请求会双双通过预检. 字符串在此处返回是安全的(事务已回滚),
-      // 但切勿把它挪进事务回调 —— 那会被当作正常结束而提交
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        return '您填写的外部 ID 已经被其它 Galgame 使用, 请检查后重试'
+      // 两个填同一外部 ID 的请求会双双通过预检. P2002 发生在 patch.create, 早于上传,
+      // 彼时还没有登记 banner 的清理
+      violations: {
+        P2002: '您填写的外部 ID 已经被其它 Galgame 使用, 请检查后重试'
       }
-      throw error
-    })
+    }
+  )
 
   if (typeof res === 'string') {
     return res

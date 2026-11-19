@@ -3,6 +3,7 @@ import { kunRoute } from '~/app/api/utils/kunRoute'
 import { parseConversationId } from '~/validations/conversation'
 import { getUnreadMessageStatus } from '~/app/api/message/unread/service'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { kunTx } from '~/server/db/tx'
 
 const markConversationAsRead = async (conversationId: number, uid: number) => {
   const conversation = await prisma.user_conversation.findUnique({
@@ -21,16 +22,15 @@ const markConversationAsRead = async (conversationId: number, uid: number) => {
 
   // 锁必须是首条: 发送方的插入+递增会排到本事务提交之后, 封死「updateMany 扑空,
   // 发送方在间隙里插入并递增, 清零把在途消息的角标抹掉」的交错. 只包事务不前置锁
-  // 无效 —— READ COMMITTED 逐语句取快照, 清零照样盲写.
-  // 锁行落空只能返回 false 由外层转错误字符串: 回调 return 字符串也会提交
-  const locked = await prisma.$transaction(async (tx) => {
+  // 无效 —— READ COMMITTED 逐语句取快照, 清零照样盲写
+  const failure = await kunTx('conversation.read', async ({ tx, fail }) => {
     const rows = await tx.$queryRaw<{ id: number }[]>`
       SELECT id FROM user_conversation
       WHERE id = ${conversationId}
       FOR UPDATE
     `
     if (!rows.length) {
-      return false
+      fail('会话不存在')
     }
 
     await tx.user_private_message.updateMany({
@@ -46,15 +46,9 @@ const markConversationAsRead = async (conversationId: number, uid: number) => {
       where: { id: conversationId },
       data: isUserA ? { user_a_unread_count: 0 } : { user_b_unread_count: 0 }
     })
-
-    return true
   })
 
-  if (!locked) {
-    return '会话不存在'
-  }
-
-  return {}
+  return failure ?? {}
 }
 
 export const PUT = kunRoute.put({

@@ -5,6 +5,7 @@ import { adminHandleFeedbackSchema } from '~/validations/admin'
 import { sliceUntilDelimiterFromEnd } from '~/app/api/utils/sliceUntilDelimiterFromEnd'
 import { createMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { kunTx } from '~/server/db/tx'
 
 const handleFeedback = async (
   input: z.infer<typeof adminHandleFeedbackSchema>
@@ -27,16 +28,16 @@ const handleFeedback = async (
   const handleResult = input.content ? input.content : '无处理留言'
   const feedbackContent = `您的反馈已处理\n\n反馈内容：${SLICED_CONTENT}\n处理回复：${handleResult}`
 
-  const result = await prisma.$transaction(async (prisma) => {
-    // 幂等闸门: 仅未处理 (0) 的反馈可命中, 防止并发双击重复通知;
-    // 命中 0 行时事务内尚无任何写入, 提前返回提交空事务无害
+  const failure = await kunTx('admin.feedback.handle', async (ctx) => {
+    const { tx: prisma } = ctx
+    // 幂等闸门: 仅未处理 (0) 的反馈可命中, 防止并发双击重复通知
     const handled = await prisma.user_message.updateMany({
       where: { id: input.messageId, status: 0 },
       // status: 0 - unread, 1 - read, 2 - approve, 3 - decline
       data: { status: { set: 1 } }
     })
     if (!handled.count) {
-      return '该反馈已被处理'
+      ctx.fail('该反馈已被处理')
     }
 
     await createMessage(
@@ -48,14 +49,12 @@ const handleFeedback = async (
       },
       prisma
     )
-
-    return {}
   })
-  if (typeof result === 'string') {
-    return result
+  if (typeof failure === 'string') {
+    return failure
   }
   await invalidateUnread(senderId).catch(() => undefined)
-  return result
+  return {}
 }
 
 export const POST = kunRoute.post({

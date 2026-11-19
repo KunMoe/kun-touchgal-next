@@ -315,6 +315,10 @@ describe('createGalgame', () => {
 
     expect(typeof res).toBe('object')
     expect(committed).toBe(true)
+    // 事务里有 banner 上传, 靠 60 秒超时撑住; 执行器自己的选项不能混进 Prisma 的事务选项
+    expect(transactionMock).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: 60000
+    })
     expect(patchCreateMock).toHaveBeenCalledTimes(1)
     expect(uploadImageToS3Mock).toHaveBeenCalledTimes(2)
     expect(patchUpdateMock).toHaveBeenCalledTimes(1)

@@ -20,7 +20,9 @@ const {
   invalidateResourceListCacheMock,
   invalidatePatchContentCacheMock,
   invalidateUserPendingResourceCacheMock,
-  kickS3DeletionDrainMock
+  kickS3DeletionDrainMock,
+  abandonBoundResourceObjectsMock,
+  txState
 } = vi.hoisted(() => ({
   resourceFindUniqueMock: vi.fn(),
   patchFindUniqueMock: vi.fn(),
@@ -41,7 +43,9 @@ const {
   invalidateResourceListCacheMock: vi.fn(),
   invalidatePatchContentCacheMock: vi.fn(),
   invalidateUserPendingResourceCacheMock: vi.fn(),
-  kickS3DeletionDrainMock: vi.fn()
+  kickS3DeletionDrainMock: vi.fn(),
+  abandonBoundResourceObjectsMock: vi.fn(),
+  txState: { committed: false }
 }))
 
 const transactionClient = {
@@ -60,6 +64,7 @@ vi.mock('~/prisma/index', () => ({
 }))
 
 vi.mock('~/app/api/patch/resource/_helper', () => ({
+  abandonBoundResourceObjects: abandonBoundResourceObjectsMock,
   bindUploadedResource: bindUploadedResourceMock,
   enqueueResourceLinkDeletions: enqueueResourceLinkDeletionsMock,
   recalcPatchType: recalcPatchTypeMock
@@ -194,6 +199,13 @@ const expectNoWriteNoSideEffects = () => {
   expect(kickS3DeletionDrainMock).not.toHaveBeenCalled()
 }
 
+// 被拦下的编辑必须提交: 已重绑对象的清理入队写在事务里, 回滚就丢了。返回的是同一句
+// 文案, 入队的调用也照样发生过, 只有看事务是否提交才分得出来
+const expectCleanupCommitted = () => {
+  expect(txState.committed).toBe(true)
+  expect(abandonBoundResourceObjectsMock).not.toHaveBeenCalled()
+}
+
 beforeEach(() => {
   vi.resetAllMocks()
   patchFindUniqueMock.mockResolvedValue({ id: 10 })
@@ -202,9 +214,14 @@ beforeEach(() => {
   planTextModerationMock.mockResolvedValue(INTERCEPT)
   invalidatePatchContentCacheMock.mockResolvedValue(undefined)
   recalcPatchTypeMock.mockResolvedValue('patch-10')
+  txState.committed = false
+  // 回调正常返回即提交, 抛出才回滚
   transactionMock.mockImplementation(
-    async (callback: (client: typeof transactionClient) => unknown) =>
-      callback(transactionClient)
+    async (callback: (client: typeof transactionClient) => unknown) => {
+      const result = await callback(transactionClient)
+      txState.committed = true
+      return result
+    }
   )
 })
 
@@ -320,8 +337,7 @@ describe('更新资源在行锁下复检守卫', () => {
   })
 
   // 复检拦截时 bind 已完成 (对象复制到 finalKey, staging 与 token 已删):
-  // return 字符串会提交事务且不走 .catch 的 abandon 兜底, 已重绑对象
-  // 必须随本事务入队清理, 否则成无 DB 引用的永久公开孤儿
+  // 已重绑对象必须随本事务入队清理并提交, 否则成无 DB 引用的永久公开孤儿
   // 新上传对象存储的用例以创作者 (role 2) 在补丁分区提交: 这是允许新用对象存储的最低角色与分区
   it('复检拦截时已重绑的 s3 对象随本事务入队清理', async () => {
     resourceFindUniqueMock.mockResolvedValue(
@@ -355,6 +371,7 @@ describe('更新资源在行锁下复检守卫', () => {
       transactionClient,
       [{ content: 'new-c', patchId: 10, hash: '', s3Key: 'new-k' }]
     )
+    expectCleanupCommitted()
   })
 
   it('待审核复检拦截同样入队清理已重绑对象', async () => {
@@ -389,6 +406,7 @@ describe('更新资源在行锁下复检守卫', () => {
       transactionClient,
       [{ content: 'new-c', patchId: 10, hash: '', s3Key: 'new-k' }]
     )
+    expectCleanupCommitted()
   })
 })
 
@@ -474,6 +492,7 @@ describe('更新资源在行锁下重算 links diff', () => {
       transactionClient,
       [{ content: 'new-c', patchId: 10, hash: '', s3Key: 'new-k' }]
     )
+    expectCleanupCommitted()
   })
 })
 
@@ -536,6 +555,7 @@ describe('更新资源在行锁下复判存储闸门', () => {
       transactionClient,
       [{ content: 'new-c', patchId: 10, hash: '', s3Key: 'new-k' }]
     )
+    expectCleanupCommitted()
   })
 
   it('锁下这条链接还在且没变: 照常保存', async () => {

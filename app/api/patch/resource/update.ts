@@ -25,10 +25,12 @@ import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import { can } from '~/constants/permission'
 import { markResourcePendingReview } from '~/server/content/resource/edit'
 import { linkStorageGateError } from './storageGate'
+import { kunTx } from '~/server/db/tx'
 import type { ResourceStatus } from '~/constants/contentStatus'
 import type { ContentGuard } from '~/server/content/guard'
 import type { PatchResource } from '~/types/api/patch'
 import type { KunActor } from '~/constants/role'
+import type { KunTxContext } from '~/server/db/tx'
 
 // 守卫是入口算好的数据: 允许编辑的状态, 以及是否要求作者本人。同一份守卫在事务外的
 // 快照上判一次 (快速失败), 在行锁下再判一次
@@ -208,12 +210,9 @@ export const updatePatchResource = async (
     throw error
   }
 
-  // update 覆写前的权威行状态, 由事务内行锁读取后回填; 提交后的失效闸门读它
-  // 而非事务外快照 (锁下复检保证回填必然发生, 快照初值仅满足赋值定型)
-  let previousStatus = resource.status
-  let previousSection = resource.section
-
-  const updatedResourcePromise = prisma.$transaction(async (prisma) => {
+  // 回调单独成句, 不写进 kunTx 的参数里: 带着选项内联的话 prettier 会把整段事务体重缩进
+  const updateInTx = async (ctx: KunTxContext) => {
+    const { tx: prisma } = ctx
     // 行锁读 update 覆写前的状态: 事务外快照与提交之间存在并发 approve (2→0) /
     // AI 审核放行 (3→0) / 隐藏 (0→1) 窗口, 用快照判定会漏失效或多失效 (64fedb7f 同型);
     // 与 moderation apply 的 FOR UPDATE 互斥, 加锁顺序 (先 patch_resource 后 patch) 与其一致
@@ -224,8 +223,8 @@ export const updatePatchResource = async (
     // 管理员隐藏 (0→1) 若不复检, 预筛拦截会把隐藏行写回待审核 (3), AI 放行 (3→0)
     // 即静默撤销管理员隐藏. 拦截型任务与 status=3 同事务写入, status 复检已覆盖
     // 并发任务, 无需重查 hasPendingModeration. 被拦时已重绑的新对象随本事务入队
-    // 清理后再 return (return 字符串会提交事务, 与下方冲突分支同构): 此前无行
-    // 变更, 提交的只有这份清理入队; abandon 兜底只覆盖事务 reject, 不覆盖此处
+    // 清理, 以 commitWith 提交 (与下方冲突分支同构): 此前无行变更, 提交的只有这份
+    // 清理入队; abandon 兜底只在没有提交时执行, 不覆盖此处
     // 作者不会变, 锁下只需复检状态
     const guardError = previous
       ? resourceEditGuardError(
@@ -243,10 +242,8 @@ export const updatePatchResource = async (
           s3Key: item.s3Key
         }))
       )
-      return guardError ?? '未找到该资源'
+      return ctx.commitWith(guardError ?? '未找到该资源')
     }
-    previousStatus = previous.status
-    previousSection = previous.section
 
     // 阶段二 (锁下): 重读 links 并重算 diff, 删除入队与保留型链接的 content/s3_key
     // 都以行锁下的当前集合为准 (deleteMany 即将带走的正是这个集合)
@@ -275,7 +272,7 @@ export const updatePatchResource = async (
           s3Key: item.s3Key
         }))
       )
-      return lockedStorageError
+      return ctx.commitWith(lockedStorageError)
     }
 
     const s3LinksToDelete: Array<{
@@ -327,7 +324,7 @@ export const updatePatchResource = async (
           hash = existingLink.hash
         } else {
           // 资格预检通过但锁下行已被并发编辑重建: 本次编辑的语义基础已失效.
-          // 已重绑的新对象随本事务入队清理 —— return 字符串会提交事务, 此前
+          // 已重绑的新对象随本事务入队清理 —— 以 commitWith 提交, 此前
           // 无任何行变更, 提交的只有这份清理入队; 上传暂存仍在, 重试可再次绑定
           await enqueueResourceLinkDeletions(
             prisma,
@@ -338,7 +335,7 @@ export const updatePatchResource = async (
               s3Key: item.s3Key
             }))
           )
-          return '该资源的链接已被修改, 请刷新后重试'
+          return ctx.commitWith('该资源的链接已被修改, 请刷新后重试')
         }
       }
 
@@ -469,18 +466,23 @@ export const updatePatchResource = async (
       }
     }
 
-    return resourceResponse
-  })
-  // 事务抛错回滚会连带撤销冲突分支的事务内清理入队: 已重绑对象在此兜底清理
-  const updatedResource = await updatedResourcePromise.catch(
-    async (error: unknown) => {
-      await abandonBoundResourceObjects([...boundLinks.values()], patchId)
-      throw error
+    // previous 是 update 覆写前的权威行状态 (行锁下读到的): 提交后的失效闸门读它,
+    // 不读事务外快照
+    return {
+      updatedResource: resourceResponse,
+      previousStatus: previous.status,
+      previousSection: previous.section
     }
-  )
-  if (typeof updatedResource === 'string') {
-    return updatedResource
   }
+  const updated = await kunTx('resource.update', updateInTx, {
+    // 没有提交时冲突分支的事务内清理入队也随之撤销: 已重绑对象在此兜底清理
+    onRollback: () =>
+      abandonBoundResourceObjects([...boundLinks.values()], patchId)
+  })
+  if (typeof updated === 'string') {
+    return updated
+  }
+  const { updatedResource, previousStatus, previousSection } = updated
 
   queueSearchSync(patchId)
   // 事务提交后失效: 事务内失效会被并发读回填旧值 (M-04), 且 Redis 故障不应回滚写入

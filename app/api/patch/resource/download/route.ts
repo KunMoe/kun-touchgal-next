@@ -1,18 +1,18 @@
 import * as z from 'zod'
 import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
-import { prisma } from '~/prisma/index'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { delKv, setKvIfAbsent } from '~/lib/redis'
 import { DOWNLOAD_DEDUP_CACHE_DURATION } from '~/config/cache'
 import { updatePatchResourceStatsSchema } from '~/validations/patch'
 import { invalidateResourceStatsListCache } from '~/app/api/resource/cache'
+import { kunTx } from '~/server/db/tx'
 
 const downloadStats = async (
   input: z.infer<typeof updatePatchResourceStatsSchema>,
   dedupKey: string
 ) => {
-  const counted = await prisma.$transaction(async (tx) => {
+  const failure = await kunTx('resource.download', async ({ tx, fail }) => {
     // 校验 link → resource → patch 是完整的一条链, 杜绝用任意三元组交叉刷计数
     const link = await tx.patch_resource_link.findUnique({
       where: { id: input.linkId },
@@ -26,7 +26,7 @@ const downloadStats = async (
       link.resource_id !== input.resourceId ||
       link.resource.patch_id !== input.patchId
     ) {
-      return false
+      fail('资源不存在')
     }
 
     await tx.patch.update({
@@ -43,13 +43,12 @@ const downloadStats = async (
       where: { id: input.linkId },
       data: { download: { increment: 1 } }
     })
-    return true
   })
 
-  if (!counted) {
+  if (typeof failure === 'string') {
     // 三元组不成立: 释放去重槽, 避免毒化该 (身份, 链接) 后续的合法计数
     await delKv(dedupKey)
-    return '资源不存在'
+    return failure
   }
 
   await invalidateResourceStatsListCache()

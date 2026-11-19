@@ -36,8 +36,8 @@ vi.mock('~/prisma/index', () => ({
       count: conversationCountMock,
       create: conversationCreateMock
     },
-    // 回调正常返回即提交, 只有抛出才回滚. committed 必须记录, 否则测不出
-    // 「回调 return 错误字符串也会提交」这类误提交
+    // 回调正常返回即提交, 只有抛出才回滚. committed 必须记录, 否则分不清
+    // 守卫落空时是回滚了还是带着已做的写入提交了
     $transaction: async (callback: (tx: unknown) => unknown) => {
       const result = await callback({
         user: { update: userUpdateMock, updateMany: userUpdateManyMock },
@@ -106,7 +106,7 @@ describe('getOrCreateConversation', () => {
     expect(invalidateUserSessionMock).toHaveBeenCalledWith(UID)
   })
 
-  it('守卫落空时返回错误字符串, 提交的事务里没有任何写入', async () => {
+  it('守卫落空时返回错误字符串, 事务回滚', async () => {
     userUpdateManyMock.mockResolvedValue({ count: 0 })
 
     const result = await getOrCreateConversation(
@@ -116,8 +116,7 @@ describe('getOrCreateConversation', () => {
 
     expect(result).toBe('萌萌点不足，发起私聊需要至少 20 萌萌点')
     expect(conversationCreateMock).not.toHaveBeenCalled()
-    // 事务照常提交 —— 所以回调只能返回 null, 换成错误字符串再往下写就会留下已提交的孤儿行
-    expect(txState.committed).toBe(true)
+    expect(txState.committed).toBe(false)
   })
 
   it('守卫落空但会话已被并发请求建好时, 回读已有会话而非报余额不足', async () => {
@@ -136,8 +135,7 @@ describe('getOrCreateConversation', () => {
     expect(result).toEqual({ conversationId: 9, isNew: false })
     expect(conversationCreateMock).not.toHaveBeenCalled()
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
-    // 落空事务照常提交, 里面没有任何写入
-    expect(txState.committed).toBe(true)
+    expect(txState.committed).toBe(false)
   })
 
   it('撞唯一索引时回读已有会话, 并标记本次未扣费', async () => {
