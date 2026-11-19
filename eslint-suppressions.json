@@ -29,11 +29,6 @@
       "count": 1
     }
   },
-  "app/api/admin/user/delete.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "app/api/patch/banner/route.ts": {
     "no-console": {
       "count": 1

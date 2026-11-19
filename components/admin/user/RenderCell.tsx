@@ -48,7 +48,11 @@ export const RenderCell = (
       return (
         <div className="flex items-center gap-2">
           <UserEdit initialUser={user} onUpdated={actions?.onUpdated} />
-          <UserDelete user={user} onDeleted={actions?.onDeleted} />
+          <UserDelete
+            user={user}
+            onUpdated={actions?.onUpdated}
+            onDeleted={actions?.onDeleted}
+          />
         </div>
       )
     default:

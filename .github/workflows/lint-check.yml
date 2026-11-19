@@ -171,3 +171,4 @@ jobs:
           server/storage/__tests__/s3Outbox.db.test.ts
           migration/__tests__/backfillResourceLinkS3Key.db.test.ts
           server/search/__tests__/sync.db.test.ts
+          server/account/__tests__/deleteAccount.db.test.ts

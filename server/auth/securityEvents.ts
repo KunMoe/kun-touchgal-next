@@ -31,6 +31,7 @@ export type KunSecurityEvent =
   | 'creator-approved'
   | 'username-reserved-migrated'
   | 'other-sessions-revoked'
+  | 'account-deletion-started'
   | 'account-deleted'
   | 'ban-detected'
 
@@ -76,6 +77,13 @@ export const KUN_SECURITY_POLICY = {
     bumpStamp: true,
     current: 'keep',
     redis: 'others'
+  },
+  // 删号的第一步是封禁 (server/account/deleteAccount.ts): 与后台封禁一样删光会话, 之后分批清除
+  // 内容的期间, 该账号的请求都被 status 闸门拒绝
+  'account-deletion-started': {
+    bumpStamp: false,
+    current: 'none',
+    redis: 'all'
   },
   'account-deleted': { bumpStamp: false, current: 'none', redis: 'all' },
   // 解析会话时发现账号已不存在或已封禁 (库给出的正面证据)

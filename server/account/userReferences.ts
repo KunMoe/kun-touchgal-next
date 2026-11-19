@@ -4,7 +4,8 @@
 //
 // 归类规则:
 //   cascade   子行删除的效果只留在库内 (行本身, 或触发器维护的计数), 随 user 行由库级联删除。
-//             被缓存内嵌的 cascade 行在 CASCADE_PROJECTIONS 登记收集函数, 收尾时失效
+//             被共享缓存内嵌的 cascade 行在 deleteAccount.ts 的 CASCADE_PROJECTIONS 登记收集
+//             函数, 收尾时失效
 //   set-null  表达「谁建的 / 谁操作的」: 账号消失, 记录本身留下, 只断开归属 (外键 SetNull,
 //             列可空, 读点显示「已注销用户」)
 //   purge     有库外效果 (S3、搜索索引、审核队列、站内信死链、派生计数): 删除前必须经领域
@@ -48,4 +49,10 @@ export type UserReference = keyof typeof USER_REFERENCES
 
 export type PurgedUserReference = {
   [K in UserReference]: (typeof USER_REFERENCES)[K] extends 'purge' ? K : never
+}[UserReference]
+
+export type CascadedUserReference = {
+  [K in UserReference]: (typeof USER_REFERENCES)[K] extends 'cascade'
+    ? K
+    : never
 }[UserReference]

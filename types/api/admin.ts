@@ -1,6 +1,7 @@
 import type { PatchResource } from '~/types/api/patch'
 import type { PatchComment } from '~/types/api/comment'
 import type { Message } from '~/types/api/message'
+import type { PurgedUserReference } from '~/server/account/userReferences'
 
 export type AdminStatsName =
   'user' | 'active' | 'patch' | 'patch_resource' | 'patch_comment'
@@ -132,6 +133,15 @@ export interface AdminLog {
   content: string
   created: Date | string
 }
+
+// 删号一次请求的结果 (server/account/deleteAccount.ts)。内容多的账号要分几次请求才能清完:
+// done 为 false 时账号已封禁、内容删了一部分, remaining 是各类还剩的行数, 再请求一次即可续上
+export type AdminUserDeletionRemaining = Partial<
+  Record<PurgedUserReference, number>
+>
+
+export type AdminUserDeletionResult =
+  { done: true } | { done: false; remaining: AdminUserDeletionRemaining }
 
 export interface AdminRedirectConfig {
   enableRedirect: boolean

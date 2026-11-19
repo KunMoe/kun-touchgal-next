@@ -97,6 +97,11 @@ describe('KUN_SECURITY_POLICY', () => {
         current: 'keep',
         redis: 'others'
       },
+      'account-deletion-started': {
+        bumpStamp: false,
+        current: 'none',
+        redis: 'all'
+      },
       'account-deleted': { bumpStamp: false, current: 'none', redis: 'all' },
       'ban-detected': { bumpStamp: false, current: 'none', redis: 'all' }
     })

@@ -6,8 +6,8 @@ import type { Prisma } from '~/prisma/generated/prisma/client'
 // 两张表的 content_id 都没有外键, 级联删除带不走, 须用删除前收集的 id。
 // 放在删除之后: 申诉提交会锁内容行, 这样并发提交的申诉不会成为孤儿。
 // 评论通知不在这里清: 它要在评论行删除之前按行反推收件人, 见
-// app/api/patch/comment/notifications.ts。整游戏 / 整号的级联删除不清评论通知,
-// 那里留下的通知死链已裁定另案处理
+// app/api/patch/comment/notifications.ts。整游戏的级联删除 (含删号时删掉其建档的游戏) 不清
+// 评论通知, 那里留下的通知死链已裁定另案处理; 删号对其余评论走后台删除服务, 通知照常清
 export const purgeContentDerivatives = async (
   tx: Prisma.TransactionClient,
   ids: { comment?: number[]; rating?: number[]; resource?: number[] }

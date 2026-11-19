@@ -6,7 +6,7 @@ import {
 } from '~/validations/admin'
 import { getUserInfo } from './get'
 import { updateUser } from './update'
-import { deleteUser } from './delete'
+import { deleteAccount } from '~/server/account/deleteAccount'
 
 const userIdSchema = z.object({
   uid: z.coerce.number({ message: '用户 ID 必须为数字' }).min(1).max(9999999)
@@ -30,5 +30,5 @@ export const DELETE = kunRoute.delete({
   auth: 'user',
   capability: 'admin.access',
   input: userIdSchema,
-  handler: ({ input, actor }) => deleteUser(input, actor.uid)
+  handler: ({ input, actor }) => deleteAccount(input.uid, actor)
 })
