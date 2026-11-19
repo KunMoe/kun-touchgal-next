@@ -48,6 +48,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - 客户端访问内部 API 一律走 `utils/kunFetch.ts`（自带 `credentials: 'include'` 与 `x-requested-with: kun-fetch`），不要手写重复 fetch；用 `kunErrorHandler` / `kunErrorHandlerAsync` 处理 `string | T` 返回值。
 - 响应约定：handler 返回中文错误消息字符串即业务错误（`kunRoute` 以 200 回出），成功返回 typed 对象；要状态码或 cookie 时返回 `NextResponse`，原样透传。
 - 评论 / 评价 / 资源的物理删除与 `status` 写入只走 `server/content/**` 的命令，在 `kunTx`（`server/db/tx.ts`）里调用；事务里的业务失败用 `ctx.fail`，不要 `return` 字符串（等于提交）。lint 的 `kun/inv-content-05/06` 执法。
+- 事务一律经 `kunTx` 开启，不直接调 `prisma.$transaction`（lint 的 `kun/inv-tx-01` 执法）：失败但已做的写入要提交时 `return ctx.commitWith(消息)`；可丢失的提交后副作用用 `ctx.afterCommit`；没提交时的清理用 `onRollback`（选项里的管事务前已存在的产物，`ctx.onRollback` 管回调里才产生的），不要挂 `.catch`；违例文案用 `violations` 选项；回调的输出只走返回值，不写外层变量。
 - 删号只走 `server/account/deleteAccount.ts`（封禁先行 → 分批调用现成删除服务 → user 行锁下复核后收尾）；新增指向 user 的外键先在 `server/account/userReferences.ts` 归类为 cascade / set-null / purge（`prisma/__tests__/user-fk-actions.test.ts` 执法）。
 - 权限判断走 `constants/permission.ts` 的 `can(subject, capability)` 与属性谓词，不写角色数字比较；需要操作者的服务收 `KunActor`（`constants/role.ts`，只由 `resolveKunSiteSession` 构造），路由把会话 payload 原样下传。lint 的 `kun/inv-authz-01..04` 执法。
 - 请求视角（会话、作品可见性、列表缓存准入）只从 `server/viewer` 取：Route Handler 用 `viewerContextFromRequest(req)` 建一次后往下传，页面与读取器用 `getViewerContext()`；service 收 `PatchVisibility` / `ListView`，不收拼好的 `where`。lint 的 `kun/inv-viewer-01/02` 执法。
