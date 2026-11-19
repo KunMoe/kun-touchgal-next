@@ -350,4 +350,57 @@ describe.skipIf(!dbContractUrl)('galgame rewrite on real PostgreSQL', () => {
       alias: winner.alias
     })
   })
+
+  // 外部 ID 是唯一索引列, 改到它们的 UPDATE 要取 FOR UPDATE 级的行锁。事务若先拿较弱的
+  // FOR NO KEY UPDATE、读完再升级, 夹在中间经外键取到 FOR KEY SHARE 的子表插入 (回复评论、
+  // 发资源、收藏) 接着要等我们才能更新计数, 我们升级锁又要等它: 互等, 一方 40P01
+  it('改外部 ID 的提交与同一条目上的子表插入交错: 双方都成功, 不互等', async () => {
+    const user = await newUser()
+    const patch = await newPatch(user.id)
+    const submission = {
+      ...(await submissionFor(patch.unique_id)),
+      bangumiId: '424242'
+    }
+    const gate = new pg.Client({ connectionString: dbContractUrl })
+    const child = new pg.Client({ connectionString: dbContractUrl })
+    await gate.connect()
+    await child.connect()
+    try {
+      // 闸门占住 patch_alias: 提交拿到 patch 行锁之后读别名时停在这里, 正好卡在
+      // 「已持行锁、还没执行 UPDATE」之间
+      await gate.query('BEGIN')
+      await gate.query('LOCK TABLE patch_alias IN ACCESS EXCLUSIVE MODE')
+      const pending = updateGalgame(submission, user.id)
+      await sleep(300)
+
+      // 子表插入对 patch 行做的两件事: 外键检查取 FOR KEY SHARE, 计数触发器再 UPDATE 它
+      await child.query('BEGIN')
+      const childDone = child
+        .query('SELECT id FROM patch WHERE id = $1 FOR KEY SHARE', [patch.id])
+        .then(() =>
+          child.query(
+            'UPDATE patch SET download = download + 1 WHERE id = $1',
+            [patch.id]
+          )
+        )
+        .then(() => child.query('COMMIT'))
+      await sleep(300)
+      await gate.query('COMMIT')
+
+      const [result] = await Promise.all([pending, childDone])
+      expect(result).toEqual({})
+    } finally {
+      await gate.query('ROLLBACK').catch(() => undefined)
+      await child.query('ROLLBACK').catch(() => undefined)
+      await gate.end()
+      await child.end()
+    }
+
+    expect(
+      await prisma.patch.findUniqueOrThrow({
+        where: { id: patch.id },
+        select: { bangumi_id: true, download: true }
+      })
+    ).toEqual({ bangumi_id: 424242, download: 1 })
+  })
 })

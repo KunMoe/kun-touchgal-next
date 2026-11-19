@@ -30,7 +30,7 @@ const {
 }))
 
 const transactionClient = {
-  // lockPatchRows 的 SELECT … FOR NO KEY UPDATE
+  // 事务第一条语句: SELECT … FROM patch … FOR UPDATE
   $executeRaw: lockPatchRowMock,
   patch: { findUnique: storedPatchFindUniqueMock, update: patchUpdateMock },
   patch_alias: {
@@ -371,6 +371,12 @@ describe('updateGalgame', () => {
       enqueueSearchOutboxMock
     ].map((mock) => mock.mock.invocationCallOrder[0])
     expect(order).toEqual([...order].sort((a, b) => a - b))
+    // 行锁一步取到 FOR UPDATE: 先取较弱的锁再升级会与子表插入互等 (update.db.test 实测)
+    const [lockSql, lockedId] = lockPatchRowMock.mock.calls[0]
+    expect(lockSql.join('?')).toBe(
+      'SELECT id FROM patch WHERE id = ? FOR UPDATE'
+    )
+    expect(lockedId).toBe(5)
     expect(processSubmittedExternalDataMock).toHaveBeenCalledTimes(1)
     expect(queueSearchSyncMock).toHaveBeenCalledWith(5)
     expect(invalidatePatchContentCacheMock).toHaveBeenCalledWith('abcd1234')

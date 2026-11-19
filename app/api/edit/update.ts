@@ -1,7 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
-import { lockPatchRows } from '~/server/content/patchLock'
 import { patchUpdateSchema } from '~/validations/edit'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { processSubmittedExternalData } from './processExternalData'
@@ -112,8 +111,12 @@ export const updateGalgame = async (
     'edit.update',
     async ({ tx, fail }) => {
       // 先锁 patch 行再读: 当前值要在锁下读到才作数, 否则另一次保存可以夹在读与写之间。
-      // 别名只在这把锁下整份替换, 锁序固定为 patch 行 → patch_alias
-      await lockPatchRows(tx, [id])
+      // 别名只在这把锁下整份替换, 锁序固定为 patch 行 → patch_alias。
+      // 用 FOR UPDATE, 不用内容命令锁 patch 行的 FOR NO KEY UPDATE: 外部 ID 是唯一索引列,
+      // 改到它们的 UPDATE 本来就要取 FOR UPDATE 级的行锁。先拿较弱的锁、读完再升级的话,
+      // 夹在中间经外键取到 FOR KEY SHARE 的子表插入 (回复评论、发资源、收藏) 接着要等我们
+      // 才能更新计数, 我们升级锁又要等它, 互等。一步到位则只是让对方等到本事务结束
+      await tx.$executeRaw`SELECT id FROM patch WHERE id = ${id} FOR UPDATE`
       const stored = await tx.patch.findUnique({
         where: { id },
         select: GALGAME_EDIT_SELECT
