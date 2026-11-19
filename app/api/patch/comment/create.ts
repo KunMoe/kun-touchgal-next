@@ -131,7 +131,8 @@ export const createPatchComment = async (
 
       return created
     },
-    // patch_id 外键: 补丁的一级评论不取行锁, 补丁不存在或被并发删除时由 INSERT 命中
+    // 外键命中几乎都是 patch_id: 补丁的一级评论不取行锁, 补丁不存在或被并发删除时由
+    // INSERT 发现。评论者自己被并发删号时 user_id 外键也会命中, 那时请求本身已无意义
     { violations: { P2003: '未找到 Galgame' } }
   )
   if (typeof data === 'string') {

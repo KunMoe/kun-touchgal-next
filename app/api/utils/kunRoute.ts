@@ -188,8 +188,9 @@ const authorize = async (
 
 // 违例兜底: handler 里漏翻的三类 Prisma 已知违例 (外键、唯一、目标行不存在) 多半是并发删改,
 // 原样冒出时 Next 回空体 500, kunFetch 抛错, 没写 finally 的提交按钮会一直转圈。这里只认这三个
-// code (不读 meta, #57), 回一句通用文案并记 warn; 精确到操作的文案仍由 service 自己 catch
-// (先于这里生效)。其余异常 (含 P2034、P2020 这类编程或并发信号) 记一条带上下文的 error 后原样重抛
+// code (不读 meta, #57), 回一句通用文案并记 warn; 精确到操作的文案仍由 service 负责
+// (事务里用 kunTx 的 violations 声明, 事务外自己 catch), 先于这里生效。其余异常
+// (含 P2034、P2020 这类编程或并发信号) 记一条带上下文的 error 后原样重抛
 const KUN_VIOLATION_MESSAGE: Readonly<Record<KunViolationCode, string>> = {
   P2002: '数据已存在或已被修改, 请刷新页面后重试',
   P2003: '相关内容不存在或已被删除, 请刷新页面后重试',
