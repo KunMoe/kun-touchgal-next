@@ -167,6 +167,7 @@ jobs:
         run: >-
           pnpm exec vitest run --no-file-parallelism
           server/auth/__tests__/emailChange.db.test.ts
+          server/auth/__tests__/securityEvents.db.test.ts
           server/storage/__tests__/s3Outbox.db.test.ts
           migration/__tests__/backfillResourceLinkS3Key.db.test.ts
           server/search/__tests__/sync.db.test.ts

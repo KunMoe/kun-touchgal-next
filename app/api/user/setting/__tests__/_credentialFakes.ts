@@ -157,12 +157,21 @@ const createFakeDb = () => {
     )
   }
 
+  // 时间列 (security_stamp) 按毫秒值比, 与库里 timestamp(3) 的相等一致
+  const sameValue = (a: unknown, b: unknown) =>
+    a instanceof Date && b instanceof Date
+      ? a.getTime() === b.getTime()
+      : a === b
+
   const matchesFlatWhere = (row: FakeUserRow, where: Record<string, unknown>) =>
     Object.entries(where).every(([key, value]) => {
-      if (!USER_COLUMNS.has(key) || !isScalar(value)) {
+      if (
+        !USER_COLUMNS.has(key) ||
+        !(isScalar(value) || value instanceof Date)
+      ) {
         unsupported('user updateMany where', { [key]: value })
       }
-      return row[key as keyof FakeUserRow] === value
+      return sameValue(row[key as keyof FakeUserRow], value)
     })
 
   // 事务里每笔写记一条撤销动作; 事务外 (journal 为 null) 的写即刻生效、回滚不撤,
@@ -573,6 +582,8 @@ export interface FakeSessionPayload {
   uid: number
   name: string
   role: number
+  // 令牌带的安全戳 (毫秒); 重签之后换成新戳
+  cs?: number
 }
 
 const createFakeSession = () => {
@@ -620,6 +631,11 @@ const createFakeSession = () => {
         stamp: Date
       ) => {
         reissued.push({ uid: payload.uid, jti: payload.jti, stamp })
+        // 浏览器拿到重签后的 cookie: 之后的请求带新戳
+        if (current?.jti === payload.jti) {
+          current = { ...current, cs: stamp.getTime() }
+        }
+        return true
       }
     },
     headersModule: {

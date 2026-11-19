@@ -82,10 +82,15 @@ export const updateUser = async (
     ...(password ? { password: '[REDACTED]' } : {})
   }
 
+  // 改了密码或邮箱的是账号恢复, 要刷新安全戳; 其余资料与权限的改动照旧只删会话
+  const event =
+    hashedPassword || email !== user.email
+      ? 'admin-credentials-changed'
+      : 'admin-edited'
   const result = await prisma.$transaction(async (prisma) => {
     const { count } = await applyKunCredentialChange(prisma, {
       uid,
-      event: 'admin-edited',
+      event,
       data: {
         daily_image_count: dailyImageCount,
         email,
@@ -114,6 +119,6 @@ export const updateUser = async (
   // 改权 (降权 / 封禁) 必须删光会话 (策略表 admin-edited: redis all): 删掉 access token 使
   // 旧凭证校验先行失败, 是「旧鉴权缓存不被采信」的根闸门。不能只轮转缓存版本键, 那一步的
   // 失败会被吞掉, 存活的旧 token 将命中旧权限缓存
-  await finishKunSecurityEvent(uid, 'admin-edited')
+  await finishKunSecurityEvent(uid, event)
   return result
 }

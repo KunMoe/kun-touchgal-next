@@ -47,9 +47,11 @@ export const isEmailChangeCoolingDown = async (uid: number) => {
 
 // 返回失败文案; 成功返回这次写下的安全戳 (策略不刷新时为 null), 交给 finishKunSecurityEvent。
 // 唯一约束冲突 (新邮箱刚被别人占用) 照常抛出
+// currentStamp: 发起变更的会话令牌带的安全戳 (tokenStampOf), 见 applyKunCredentialChange
 export const commitEmailChange = (
   passed: StepUpPassed<'email.change'>,
-  change: { oldEmail: string; newEmail: string; revertTokenHash: string }
+  change: { oldEmail: string; newEmail: string; revertTokenHash: string },
+  currentStamp: number
 ) => {
   const now = new Date()
   return kunTx('email.change', async (ctx) => {
@@ -58,7 +60,8 @@ export const commitEmailChange = (
       uid: passed.uid,
       event: 'email-changed',
       where: { email: change.oldEmail },
-      data: { email: change.newEmail }
+      data: { email: change.newEmail },
+      currentStamp
     })
     if (!updated.count) {
       ctx.fail('账户邮箱已发生变化, 请刷新后重试')

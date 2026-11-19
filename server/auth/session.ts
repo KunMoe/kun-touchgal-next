@@ -5,11 +5,13 @@ import {
   acquireKvLock,
   delKv,
   delKvsAndRemoveKvSetMembers,
+  delKvsAndRemoveKvSetMembersIfKvEquals,
   setKvAndExpireKvIfTtlLessThan,
   getKv,
   getKvs,
   getKvSetMembers,
   releaseKvLock,
+  replaceKvIfExists,
   setKvIfAbsent,
   setKvsAndAddKvSetMembers
 } from '~/lib/redis'
@@ -329,14 +331,18 @@ const issueKunSessionToken = async (
 }
 
 // 安全戳刷新之后保留当前会话 (securityEvents 的 current: 'keep'): 同一个会话 (jti)、同一个
-// 认证时刻与到期时刻, 只换上新戳, 覆盖 Redis 里的令牌并写回 cookie。会话元数据原样保留
+// 认证时刻与到期时刻, 只换上新戳, 覆盖 Redis 里的令牌并写回 cookie。会话元数据原样保留。
+// 只覆盖仍然存在的会话: 这个请求通过鉴权之后会话若已被吊销 (另一处的重置密码、退出其它设备),
+// 就不能借重签把它写回来, 而是清掉 cookie 返回 false。返回是否重签成功
 export const reissueKunSessionToken = async (
   current: KunGalgamePayload,
   stamp: Date
 ) => {
+  const cookie = await cookies()
   const ttlSeconds = getTokenTtlSeconds(current)
   if (ttlSeconds <= 0) {
-    return
+    cookie.delete(KUN_AUTH_TOKEN_COOKIE)
+    return false
   }
   const payload: KunGalgamePayload = {
     iss: current.iss,
@@ -350,14 +356,18 @@ export const reissueKunSessionToken = async (
     exp: current.exp
   }
   const token = jwt.sign(payload, process.env.JWT_SECRET!)
-  const metadata =
-    parseLoginSessionMetadata(
-      await getKv(getLoginSessionKey(current.uid, current.jti))
-    ) ?? createLoginSessionMetadata(current.jti)
-  await setKunTokenSession(payload, token, metadata, ttlSeconds)
+  const replaced = await replaceKvIfExists(
+    getAccessTokenKey(current.uid, current.jti),
+    token,
+    ttlSeconds
+  )
+  if (!replaced) {
+    cookie.delete(KUN_AUTH_TOKEN_COOKIE)
+    return false
+  }
 
-  const cookie = await cookies()
   cookie.set(KUN_AUTH_TOKEN_COOKIE, token, kunCookieOptions(ttlSeconds))
+  return true
 }
 
 export interface KunSessionSubject {
@@ -437,8 +447,9 @@ const ANONYMOUS_SITE_SESSION: KunSiteSession = Object.freeze({
   kind: 'anonymous'
 })
 
-// 验签与形状校验: 不过就是匿名 (伪造、过期、别的密钥签的), 不是基础设施故障
-const decodeKunSessionToken = (token: string) => {
+// 验签与形状校验: 不过就是匿名 (伪造、过期、别的密钥签的), 不是基础设施故障。
+// 只验签、不查 Redis 与库: 不能当作「已登录」, 只用于「这张 cookie 是谁签的」(依赖方登出)
+export const decodeKunSessionToken = (token: string) => {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET!, {
       issuer: process.env.JWT_ISS!,
@@ -542,19 +553,33 @@ export const resolveKunSiteSession = async (
     // 令牌签发之后凭据或安全属性变过 (安全戳刷新了): 这张令牌作废, 删掉这个会话。
     // 按值相等比较: 在途登录在改密之后才写入会话, 只比签发时刻拦不住它
     const tokenStamp = tokenStampOf(payload)
-    if (
-      tokenStamp !== user.securityStamp &&
-      rejectOnStampMismatch('site', {
-        uid: payload.uid,
-        jti: payload.jti,
-        tokenStamp,
-        userStamp: user.securityStamp
-      })
-    ) {
-      await cleanupLoginSessions(payload.uid, [payload.jti]).catch(
-        () => undefined
-      )
-      return ANONYMOUS_SITE_SESSION
+    if (tokenStamp !== user.securityStamp) {
+      const tokenKey = getAccessTokenKey(payload.uid, payload.jti)
+      // 同一会话的并发请求: 重签已把存储里的令牌换成新的, 这个请求手里还是重签之前的 cookie。
+      // 这是重签的正常竞态, 不记成可疑的不一致
+      const superseded = (await getKv(tokenKey)) !== token
+      if (
+        rejectOnStampMismatch(
+          'site',
+          {
+            uid: payload.uid,
+            jti: payload.jti,
+            tokenStamp,
+            userStamp: user.securityStamp
+          },
+          { quiet: superseded }
+        )
+      ) {
+        // 只在存储里仍是这张令牌时才删: 与重签交错时不误删刚重签的会话
+        await delKvsAndRemoveKvSetMembersIfKvEquals(
+          tokenKey,
+          token,
+          [tokenKey, getLoginSessionKey(payload.uid, payload.jti)],
+          getLoginSessionsKey(payload.uid),
+          [payload.jti]
+        ).catch(() => undefined)
+        return ANONYMOUS_SITE_SESSION
+      }
     }
 
     // KunActor 的唯一构造点: 角色取自库或鉴权缓存 (不采信 JWT 里的 claim), 域外的值

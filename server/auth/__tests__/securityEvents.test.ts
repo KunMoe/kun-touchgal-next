@@ -81,6 +81,11 @@ describe('KUN_SECURITY_POLICY', () => {
         redis: 'all'
       },
       'admin-edited': { bumpStamp: false, current: 'none', redis: 'all' },
+      'admin-credentials-changed': {
+        bumpStamp: true,
+        current: 'none',
+        redis: 'all'
+      },
       'creator-approved': { bumpStamp: false, current: 'none', redis: 'none' },
       'username-reserved-migrated': {
         bumpStamp: false,
@@ -138,6 +143,41 @@ describe('applyKunCredentialChange', () => {
     })
 
     expect(updateManyMock.mock.calls[0][0].where.id).toBe(7)
+  })
+
+  it.each([
+    ['令牌不带戳 (0) 时要求库里也是 null', 0, null],
+    [
+      '令牌带戳时要求库里是同一个值',
+      NOW.getTime() - 5000,
+      new Date(NOW.getTime() - 5000)
+    ]
+  ])(
+    '保留并重签当前会话的事件以当前令牌的戳为条件: %s',
+    async (_label, currentStamp, expected) => {
+      await applyKunCredentialChange(db, {
+        uid: 7,
+        event: 'other-sessions-revoked',
+        data: {},
+        currentStamp
+      })
+
+      expect(updateManyMock).toHaveBeenCalledWith({
+        where: { security_stamp: expected, id: 7 },
+        data: { security_stamp: NOW }
+      })
+    }
+  )
+
+  it('保留并重签当前会话的事件不传当前令牌的戳就抛错', async () => {
+    await expect(
+      applyKunCredentialChange(db, {
+        uid: 7,
+        event: 'email-changed',
+        data: { email: 'b' }
+      })
+    ).rejects.toThrow()
+    expect(updateManyMock).not.toHaveBeenCalled()
   })
 
   it('命中 0 行 (前置条件落空): 没有写下戳', async () => {

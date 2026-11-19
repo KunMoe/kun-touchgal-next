@@ -10,6 +10,7 @@ import {
   applyKunCredentialChange,
   finishKunSecurityEvent
 } from '~/server/auth/securityEvents'
+import { tokenStampOf } from '~/server/auth/securityStamp'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { revokeLoginSessionSchema } from '~/validations/user'
 
@@ -30,11 +31,17 @@ export const POST = async (req: NextRequest) => {
   }
 
   // 没有凭据要写, 只按策略刷新安全戳 (刷新了的话当前会话随后重签)
-  const { stamp } = await applyKunCredentialChange(prisma, {
+  const { count, stamp } = await applyKunCredentialChange(prisma, {
     uid: payload.uid,
     event: 'other-sessions-revoked',
-    data: {}
+    data: {},
+    currentStamp: tokenStampOf(payload)
   })
+  // 戳在这个请求通过鉴权之后被别处刷新过 (重置密码、另一台设备也点了退出其它设备):
+  // 这个会话本该失效, 不能接着去删别人的会话再把自己重签回来
+  if (!count) {
+    return NextResponse.json('登录状态已变化, 请重新登录')
+  }
   const { revokedOthers } = await finishKunSecurityEvent(
     payload.uid,
     'other-sessions-revoked',

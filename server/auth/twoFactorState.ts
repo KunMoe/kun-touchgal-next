@@ -58,10 +58,11 @@ export const beginEnrollment = async (
 // 用户的身份验证器算出了这把密钥的验证码, 才启用并发放备份码。条件里带着刚校验过的那把
 // 密钥: 校验与写入之间密钥被换掉、或账号已被另一个请求启用, 都命中 0 行。已启用的账号
 // 再来确认会被直接拒绝, 不会悄悄换发一套备份码
+// ctx.currentStamp: 发起启用的会话令牌带的安全戳 (tokenStampOf), 见 applyKunCredentialChange
 export const confirmEnrollment = async (
   uid: number,
   code: string,
-  ctx: { ip: string }
+  ctx: { ip: string; currentStamp: number }
 ) => {
   const user = await prisma.user.findUnique({
     where: { id: uid },
@@ -78,7 +79,7 @@ export const confirmEnrollment = async (
     uid,
     user.two_factor_secret,
     code,
-    ctx
+    { ip: ctx.ip }
   )
   if (!verified.ok) {
     return verified.reason === 'invalid'
@@ -91,7 +92,8 @@ export const confirmEnrollment = async (
     uid,
     event: '2fa-enabled',
     where: { enable_2fa: false, two_factor_secret: user.two_factor_secret },
-    data: { enable_2fa: true, two_factor_backup: codes.stored }
+    data: { enable_2fa: true, two_factor_backup: codes.stored },
+    currentStamp: ctx.currentStamp
   })
   if (!updated.count) {
     return TWO_FACTOR_STATE_CHANGED
@@ -105,12 +107,14 @@ export const confirmEnrollment = async (
 // 必须在事务里调: 本人用备份码证明时, 备份码的消费与关闭要么都做、要么都不做。
 //   backup-code-gone: 备份码在校验之后被别的请求先用掉了
 //   not-enabled: 该账号此刻并未启用
-// 关闭成功时带上这次写下的安全戳, 提交之后交给 finishKunSecurityEvent
+// 关闭成功时带上这次写下的安全戳, 提交之后交给 finishKunSecurityEvent。
+// 本人关闭要传当前会话令牌带的戳 (currentStamp, 见 applyKunCredentialChange); 管理员代关不传
 export const disableTwoFactor = async (
   by:
     | StepUpPassed<'twoFactor.disable'>
     | { kind: 'admin-override'; adminUid: number; uid: number },
-  tx: Prisma.TransactionClient
+  tx: Prisma.TransactionClient,
+  currentStamp?: number
 ): Promise<
   | { outcome: 'disabled'; stamp: Date | null }
   | { outcome: 'backup-code-gone' | 'not-enabled' }
@@ -124,7 +128,8 @@ export const disableTwoFactor = async (
     uid: by.uid,
     event: isAdmin ? '2fa-disabled-by-admin' : '2fa-disabled',
     where: { enable_2fa: true },
-    data: { enable_2fa: false, two_factor_secret: '', two_factor_backup: [] }
+    data: { enable_2fa: false, two_factor_secret: '', two_factor_backup: [] },
+    currentStamp: isAdmin ? undefined : currentStamp
   })
   return updated.count === 1
     ? { outcome: 'disabled', stamp: updated.stamp }

@@ -5,6 +5,7 @@ import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { enableUser2FASchema } from '~/validations/user'
 import { confirmEnrollment } from '~/server/auth/twoFactorState'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
+import { tokenStampOf } from '~/server/auth/securityStamp'
 
 export const POST = async (req: NextRequest) => {
   const input = await kunParsePostBody(req, enableUser2FASchema)
@@ -17,7 +18,8 @@ export const POST = async (req: NextRequest) => {
   }
 
   const result = await confirmEnrollment(payload.uid, input.token, {
-    ip: getRemoteIp(req.headers)
+    ip: getRemoteIp(req.headers),
+    currentStamp: tokenStampOf(payload)
   })
   if (typeof result === 'string') {
     return NextResponse.json(result)

@@ -94,6 +94,33 @@ describe.skipIf(!dbContractUrl)('security stamp on real PostgreSQL', () => {
     expect(row?.security_stamp?.getTime()).toBe(winners[0].stamp?.getTime())
   })
 
+  it('保留当前会话的事件以当前令牌的戳为条件: 戳已被别处刷新就命中 0 行', async () => {
+    const user = await newUser()
+    const { stamp } = await events.applyKunCredentialChange(prisma, {
+      uid: user.id,
+      event: 'password-reset',
+      data: { password: 'reset-hash' }
+    })
+
+    // 还带着旧戳 (null → 0) 的会话
+    const stale = await events.applyKunCredentialChange(prisma, {
+      uid: user.id,
+      event: 'other-sessions-revoked',
+      data: {},
+      currentStamp: 0
+    })
+    expect(stale).toEqual({ count: 0, stamp: null })
+
+    // 带着当前戳的会话照常写下新戳 (毫秒值相等比较在真库上成立)
+    const fresh = await events.applyKunCredentialChange(prisma, {
+      uid: user.id,
+      event: 'other-sessions-revoked',
+      data: {},
+      currentStamp: stamp?.getTime()
+    })
+    expect(fresh.count).toBe(1)
+  })
+
   it('不刷新戳的事件不碰这一列', async () => {
     const user = await newUser('old-hash')
 

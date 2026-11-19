@@ -36,13 +36,21 @@ vi.mock('~/prisma/index', () => ({
       },
       // 「退出其它设备」只写安全戳 (策略不刷新时 data 为空, Prisma 不发查询)
       updateMany: async (args: {
-        where: { id: number }
+        where: { id: number } & Record<string, unknown>
         data: Record<string, unknown>
       }) => {
         stampWrites.push({ uid: args.where.id, data: args.data })
         const row = users.get(args.where.id)
         if (!row || !Object.keys(args.data).length) {
           return { count: 0 }
+        }
+        // 以当前令牌带的戳为条件 (null 或毫秒值相等)
+        if ('security_stamp' in args.where) {
+          const expected = args.where.security_stamp as Date | null
+          const actual = row.security_stamp ?? null
+          if ((expected?.getTime() ?? null) !== (actual?.getTime() ?? null)) {
+            return { count: 0 }
+          }
         }
         users.set(row.id, { ...row, ...args.data })
         return { count: 1 }
@@ -158,6 +166,20 @@ describe('GET /api/user/setting/session', () => {
 })
 
 describe('POST /api/user/setting/session', () => {
+  it('戳在这个请求通过鉴权之后被别处刷新过: 不删别人的会话, 不重签', async () => {
+    const current = await login()
+    const b = await login()
+    // 别处 (重置密码、另一台设备) 刚把戳刷新了, 这个会话的令牌还带着旧戳
+    users.set(UID, { ...users.get(UID)!, security_stamp: new Date(T0 - 1) })
+    stampWrites.length = 0
+
+    const response = await POST(request('POST', current.token))
+
+    expect(await response.json()).toBe('登录状态已变化, 请重新登录')
+    expect(cookieSets).toEqual([])
+    expect(await verifyKunTokenPayload(b.token)).not.toBeNull()
+  })
+
   it('revokes the other sessions, keeps the current one, returns { revokedCount }', async () => {
     const current = await login()
     const b = await login()

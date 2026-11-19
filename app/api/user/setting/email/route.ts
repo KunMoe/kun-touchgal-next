@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { kunParsePostBody } from '~/app/api/utils/parseQuery'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
+import { tokenStampOf } from '~/server/auth/securityStamp'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { resetEmailSchema } from '~/validations/user'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
@@ -88,11 +89,15 @@ const updateEmail = async (req: NextRequest) => {
 
   let committed: Awaited<ReturnType<typeof commitEmailChange>>
   try {
-    committed = await commitEmailChange(stepUp.passed, {
-      oldEmail: user.email,
-      newEmail: input.email,
-      revertTokenHash: revert.hash
-    })
+    committed = await commitEmailChange(
+      stepUp.passed,
+      {
+        oldEmail: user.email,
+        newEmail: input.email,
+        revertTokenHash: revert.hash
+      },
+      tokenStampOf(payload)
+    )
   } catch {
     return '更新邮箱失败, 请稍后重试'
   }

@@ -273,6 +273,49 @@ export const delKvsAndRemoveKvSetMembers = async (
   })
 }
 
+// 守卫键的值仍等于 expected 时, 才删这些键并从集合里摘掉这些成员 (一段 Lua, 原子)。
+// 返回是否删了。供「这个会话的令牌还是我手里这张才删」一类的条件清理用
+const DEL_KVS_AND_REMOVE_SET_MEMBERS_IF_KV_EQUALS_SCRIPT = `
+  if redis.call("get", KEYS[1]) ~= ARGV[1] then
+    return 0
+  end
+  for i = 3, #KEYS do
+    redis.call("del", KEYS[i])
+  end
+  for i = 2, #ARGV do
+    redis.call("srem", KEYS[2], ARGV[i])
+  end
+  return 1
+`
+
+export const delKvsAndRemoveKvSetMembersIfKvEquals = async (
+  guardKey: string,
+  expected: string,
+  keys: string[],
+  setKey: string,
+  members: string[]
+) => {
+  const result = await evalKvScript<number>(
+    DEL_KVS_AND_REMOVE_SET_MEMBERS_IF_KV_EQUALS_SCRIPT,
+    [guardKey, setKey, ...keys],
+    [expected, ...members]
+  )
+  return result === 1
+}
+
+// 只在键还在时覆盖它的值并设 TTL (SET … XX): 键已被删 (比如会话已被吊销) 就不写, 返回 false
+export const replaceKvIfExists = async (
+  key: string,
+  value: string,
+  time: number
+) => {
+  const keyString = `${KUN_PATCH_REDIS_PREFIX}:${key}`
+  const result = await runRedisCommand(() =>
+    redis.set(keyString, value, 'EX', time, 'XX')
+  )
+  return result === 'OK'
+}
+
 export const getKvSetMembers = async (key: string) => {
   const keyString = `${KUN_PATCH_REDIS_PREFIX}:${key}`
   return runRedisCommand(() => redis.smembers(keyString))

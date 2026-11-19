@@ -10,6 +10,7 @@ import {
   TWO_FACTOR_STATE_CHANGED
 } from '~/server/auth/twoFactorState'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
+import { tokenStampOf } from '~/server/auth/securityStamp'
 
 export const POST = async (req: NextRequest) => {
   const payload = await verifyHeaderCookie(req)
@@ -34,7 +35,11 @@ export const POST = async (req: NextRequest) => {
 
   // 备份码的消费与关闭在同一个事务里, 不能分开提交
   const result = await kunTx('twoFactor.disable', async (ctx) => {
-    const disabled = await disableTwoFactor(stepUp.passed, ctx.tx)
+    const disabled = await disableTwoFactor(
+      stepUp.passed,
+      ctx.tx,
+      tokenStampOf(payload)
+    )
     if (disabled.outcome !== 'disabled') {
       return ctx.fail(
         disabled.outcome === 'backup-code-gone'

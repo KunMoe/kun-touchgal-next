@@ -39,7 +39,7 @@ const passed = <A extends 'twoFactor.enroll' | 'twoFactor.disable'>(
   action: A
 ) => ({ uid: 7, action }) as StepUpPassed<A>
 
-const ctx = { ip: '203.0.113.8' }
+const ctx = { ip: '203.0.113.8', currentStamp: 0 }
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -127,7 +127,7 @@ describe('confirmEnrollment', () => {
       7,
       TOTP_SECRET,
       '123456',
-      ctx
+      { ip: ctx.ip }
     )
   })
 
@@ -224,7 +224,7 @@ describe('disableTwoFactor', () => {
     fakes.db.insertUser(enabled())
 
     await expect(
-      inTx((tx) => disableTwoFactor(passed('twoFactor.disable'), tx))
+      inTx((tx) => disableTwoFactor(passed('twoFactor.disable'), tx, 0))
     ).resolves.toEqual({ outcome: 'disabled', stamp: expect.any(Date) })
     // 安全戳与关闭写在同一条语句里 (策略表 2fa-disabled 刷新戳)
     expect(fakes.db.user(7)).toMatchObject({
@@ -239,7 +239,7 @@ describe('disableTwoFactor', () => {
     fakes.db.insertUser(makeUser({ two_factor_secret: TOTP_SECRET }))
 
     await expect(
-      inTx((tx) => disableTwoFactor(passed('twoFactor.disable'), tx))
+      inTx((tx) => disableTwoFactor(passed('twoFactor.disable'), tx, 0))
     ).resolves.toEqual({ outcome: 'not-enabled' })
     // 待确认的密钥不归「关闭」管
     expect(fakes.db.user(7)?.two_factor_secret).toBe(TOTP_SECRET)
@@ -251,7 +251,7 @@ describe('disableTwoFactor', () => {
     const proved = { ...passed('twoFactor.disable'), backupCode: BACKUP[0] }
 
     await expect(
-      inTx((tx) => disableTwoFactor(proved, tx))
+      inTx((tx) => disableTwoFactor(proved, tx, 0))
     ).resolves.toMatchObject({ outcome: 'disabled' })
     const writes = fakes.db.queries.filter(
       (query) => !query.endsWith('findUnique')
@@ -266,7 +266,9 @@ describe('disableTwoFactor', () => {
     })
     const proved = { ...passed('twoFactor.disable'), backupCode: BACKUP[0] }
 
-    await expect(inTx((tx) => disableTwoFactor(proved, tx))).resolves.toEqual({
+    await expect(
+      inTx((tx) => disableTwoFactor(proved, tx, 0))
+    ).resolves.toEqual({
       outcome: 'backup-code-gone'
     })
     expect(fakes.db.user(7)).toMatchObject({

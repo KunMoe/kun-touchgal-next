@@ -262,6 +262,40 @@ export const createRedisFake = () => {
         }
       }
     },
+    // Mirrors DEL_KVS_AND_REMOVE_SET_MEMBERS_IF_KV_EQUALS_SCRIPT (one atomic Lua)
+    delKvsAndRemoveKvSetMembersIfKvEquals: async (
+      guardKey: string,
+      expected: string,
+      keys: string[],
+      setKey: string,
+      members: string[]
+    ) => {
+      await enter('delKvsAndRemoveKvSetMembersIfKvEquals', [
+        guardKey,
+        expected,
+        keys,
+        setKey,
+        members
+      ])
+      const guard = live(guardKey)
+      if (guard?.type !== 'string' || guard.value !== expected) {
+        return false
+      }
+      keys.forEach(del)
+      if (members.length > 0) {
+        srem(setKey, members)
+      }
+      return true
+    },
+    // SET key value EX time XX
+    replaceKvIfExists: async (key: string, value: string, time: number) => {
+      await enter('replaceKvIfExists', [key, value, time])
+      if (!live(key)) {
+        return false
+      }
+      writeString(key, value, time)
+      return true
+    },
     acquireKvLock: async (key: string, ttlSeconds = 10) => {
       await enter('acquireKvLock', [key, ttlSeconds])
       if (live(key)) {

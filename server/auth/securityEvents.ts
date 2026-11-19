@@ -27,6 +27,7 @@ export type KunSecurityEvent =
   | '2fa-disabled'
   | '2fa-disabled-by-admin'
   | 'admin-edited'
+  | 'admin-credentials-changed'
   | 'creator-approved'
   | 'username-reserved-migrated'
   | 'other-sessions-revoked'
@@ -57,6 +58,12 @@ export const KUN_SECURITY_POLICY = {
   // 改权 (降权 / 封禁) 必须删光会话: 鉴权缓存只在命中 Redis 会话之后才读, 删掉会话是「旧权限
   // 缓存不被采信」的根闸门 (只轮转缓存版本键会被吞掉失败)
   'admin-edited': { bumpStamp: false, current: 'none', redis: 'all' },
+  // 后台替人改了密码或邮箱 (账号恢复): 与本人改密一样刷新戳, 已签发给依赖方的 OIDC 令牌一并作废
+  'admin-credentials-changed': {
+    bumpStamp: true,
+    current: 'none',
+    redis: 'all'
+  },
   // 只把普通用户提为创作者: 升权, 鉴权缓存失效即可, 不登出
   'creator-approved': { bumpStamp: false, current: 'none', redis: 'none' },
   'username-reserved-migrated': {
@@ -79,24 +86,40 @@ type KunUserWriter = Pick<PrismaClient | Prisma.TransactionClient, 'user'>
 
 // 写凭据或安全属性的唯一入口 (server/auth 之外对这几列的字面量写入由 lint 拦住)。
 // 平铺 WHERE 的 updateMany: 调用方的前置条件 (旧邮箱、旧哈希、2FA 状态) 放在 where 里,
-// 并发下由数据库重新判定, 命中 0 行就是没写成。策略要求时安全戳写在同一个 data 里
+// 并发下由数据库重新判定, 命中 0 行就是没写成。策略要求时安全戳写在同一个 data 里。
+// 保留并重签当前会话的事件 (current: keep 且刷新戳) 还要以当前令牌带的戳为条件 (currentStamp,
+// 即 tokenStampOf(payload)): 这个请求通过鉴权之后戳若已被别处刷新 (重置密码、另一台设备
+// 退出其它设备), 它的会话本该失效, 命中 0 行, 不能接着删别人的会话再把自己重签回来
 export const applyKunCredentialChange = async (
   db: KunUserWriter,
   {
     uid,
     event,
     data,
-    where = {}
+    where = {},
+    currentStamp
   }: {
     uid: number
     event: KunSecurityEvent
     data: Prisma.userUpdateManyMutationInput
     where?: Prisma.userWhereInput
+    currentStamp?: number
   }
 ): Promise<{ count: number; stamp: Date | null }> => {
-  const stamp = KUN_SECURITY_POLICY[event].bumpStamp ? new Date() : null
+  const policy: KunSecurityPolicy = KUN_SECURITY_POLICY[event]
+  const keepsCurrent = policy.current === 'keep' && policy.bumpStamp
+  if (keepsCurrent && currentStamp === undefined) {
+    throw new Error(`安全事件 ${event} 需要传入当前令牌的安全戳`)
+  }
+  const stamp = policy.bumpStamp ? new Date() : null
   const { count } = await db.user.updateMany({
-    where: { ...where, id: uid },
+    where: {
+      ...where,
+      ...(keepsCurrent
+        ? { security_stamp: currentStamp ? new Date(currentStamp) : null }
+        : {}),
+      id: uid
+    },
     data: stamp ? { ...data, security_stamp: stamp } : data
   })
   return { count, stamp: count ? stamp : null }

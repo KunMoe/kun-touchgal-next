@@ -59,13 +59,22 @@ describe.skipIf(!dbContractUrl)(
     const passed = (uid: number) =>
       ({ uid, action: 'email.change' }) as StepUpPassed<'email.change'>
 
+    // 发起变更的会话令牌带的是库里当前的戳 (上一次变更之后它已被重签)
+    const currentStampOf = async (uid: number) =>
+      (
+        await prisma.user.findUniqueOrThrow({
+          where: { id: uid },
+          select: { security_stamp: true }
+        })
+      ).security_stamp?.getTime() ?? 0
+
     const change = async (uid: number, oldEmail: string, newEmail: string) => {
       const revert = emailChange.issueRevertToken()
-      const result = await emailChange.commitEmailChange(passed(uid), {
-        oldEmail,
-        newEmail,
-        revertTokenHash: revert.hash
-      })
+      const result = await emailChange.commitEmailChange(
+        passed(uid),
+        { oldEmail, newEmail, revertTokenHash: revert.hash },
+        await currentStampOf(uid)
+      )
       // 成功时带回这次写下的安全戳 (交给 finishKunSecurityEvent), 失败是文案
       const failure = typeof result === 'string' ? result : undefined
       return { failure, token: revert.token }
@@ -252,7 +261,8 @@ describe.skipIf(!dbContractUrl)(
               oldEmail,
               newEmail: address('b'),
               revertTokenHash: emailChange.issueRevertToken().hash
-            }
+            },
+            await currentStampOf(uid)
           )
           return typeof result === 'string' ? result : undefined
         }

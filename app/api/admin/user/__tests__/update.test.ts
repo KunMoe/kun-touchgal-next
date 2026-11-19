@@ -137,6 +137,39 @@ describe('updateUser 保留用户名', () => {
   })
 })
 
+describe('updateUser 改了密码或邮箱 (账号恢复)', () => {
+  it.each([
+    ['设了新密码', { password: 'newpass123' }, false],
+    ['改了邮箱', { email: 'recovered@example.com' }, true]
+  ])('%s: 走刷新安全戳的事件', async (_label, change, checksEmail) => {
+    hashPasswordMock.mockResolvedValue('new-hash')
+    if (checksEmail) {
+      // 新邮箱的查重: 没人占用
+      findUserMock.mockResolvedValueOnce(null)
+    }
+
+    await expect(updateUser({ ...baseInput, ...change }, 99)).resolves.toEqual(
+      {}
+    )
+
+    expect(updateUserMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ security_stamp: expect.any(Date) })
+      })
+    )
+    expect(finishMock).toHaveBeenCalledWith(7, 'admin-credentials-changed')
+  })
+
+  it('只改资料与权限: 不刷新戳', async () => {
+    await updateUser({ ...baseInput, role: 2 }, 99)
+
+    expect(updateUserMock.mock.calls[0][0].data).not.toHaveProperty(
+      'security_stamp'
+    )
+    expect(finishMock).toHaveBeenCalledWith(7, 'admin-edited')
+  })
+})
+
 describe('updateUser 角色按 delta 判定', () => {
   const setup = (targetRole: number, operatorRole = 4) => {
     findUserMock.mockReset()

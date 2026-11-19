@@ -14,14 +14,18 @@ export const tokenStampOf = (payload: { cs?: unknown }) =>
 
 export type KunStampMismatchSource = 'site' | 'two-factor' | 'oidc'
 
-// 记一行可 grep 的日志 (pm2 logs | grep kun-security-stamp), 返回是否应当拒绝
+// 记一行可 grep 的日志 (pm2 logs | grep kun-security-stamp), 返回是否应当拒绝。
+// quiet: 已知的良性竞态 (重签与同一会话的并发请求), 不记日志, 只按模式给结论
 export const rejectOnStampMismatch = (
   source: KunStampMismatchSource,
-  detail: Record<string, string | number | undefined>
+  detail: Record<string, string | number | undefined>,
+  { quiet = false }: { quiet?: boolean } = {}
 ) => {
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[kun-security-stamp] ${JSON.stringify({ mode: KUN_SECURITY_STAMP_MODE, source, ...detail })}`
-  )
+  if (!quiet) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[kun-security-stamp] ${JSON.stringify({ mode: KUN_SECURITY_STAMP_MODE, source, ...detail })}`
+    )
+  }
   return KUN_SECURITY_STAMP_MODE === 'enforce'
 }

@@ -378,12 +378,16 @@ describe('安全戳', () => {
     findUniqueMock.mockResolvedValue(row({ security_stamp: LATER }))
 
     expect(await resolveKunSiteSession(token)).toEqual({ kind: 'anonymous' })
-    expect(rejectOnStampMismatch).toHaveBeenCalledWith('site', {
-      uid: UID,
-      jti,
-      tokenStamp: STAMP.getTime(),
-      userStamp: LATER.getTime()
-    })
+    expect(rejectOnStampMismatch).toHaveBeenCalledWith(
+      'site',
+      {
+        uid: UID,
+        jti,
+        tokenStamp: STAMP.getTime(),
+        userStamp: LATER.getTime()
+      },
+      { quiet: false }
+    )
     expect(redis.has(tokenKey(jti))).toBe(false)
     expect(redis.members(setKey())).toEqual([other.jti])
     // 同一账号带着新戳的会话不受影响
