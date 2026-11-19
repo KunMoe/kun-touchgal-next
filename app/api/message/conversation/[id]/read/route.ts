@@ -1,6 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { parseConversationId } from '~/validations/conversation'
 import { getUnreadMessageStatus } from '~/app/api/message/unread/service'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
@@ -58,27 +57,19 @@ const markConversationAsRead = async (conversationId: number, uid: number) => {
   return {}
 }
 
-export const PUT = async (
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) => {
-  const { id } = await params
-  const conversationId = parseConversationId(id)
-  if (typeof conversationId === 'string') {
-    return NextResponse.json(conversationId)
-  }
+export const PUT = kunRoute.put({
+  auth: 'user',
+  params: ({ id }) => parseConversationId(id),
+  handler: async ({ params: conversationId, actor: payload }) => {
+    const readResponse = await markConversationAsRead(
+      conversationId,
+      payload.uid
+    )
+    if (typeof readResponse === 'string') {
+      return readResponse
+    }
 
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
+    await invalidateUnread(payload.uid)
+    return getUnreadMessageStatus(payload.uid)
   }
-
-  const readResponse = await markConversationAsRead(conversationId, payload.uid)
-  if (typeof readResponse === 'string') {
-    return NextResponse.json(readResponse)
-  }
-
-  await invalidateUnread(payload.uid)
-  const response = await getUnreadMessageStatus(payload.uid)
-  return NextResponse.json(response)
-}
+})

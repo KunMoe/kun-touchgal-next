@@ -1,7 +1,5 @@
 import { randomUUID } from 'crypto'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseFormData } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { avatarSchema } from '~/validations/user'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
@@ -166,18 +164,13 @@ const updateUserAvatar = async (actor: KunActor, avatar: ArrayBuffer) => {
   return { avatar: imageLink }
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParseFormData(req, avatarSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+export const POST = kunRoute.post({
+  auth: 'user',
+  form: true,
+  input: avatarSchema,
+  handler: async ({ input, actor: payload }) => {
+    const avatar = await new Response(input.avatar)?.arrayBuffer()
 
-  const avatar = await new Response(input.avatar)?.arrayBuffer()
-
-  const res = await updateUserAvatar(payload, avatar)
-  return NextResponse.json(res)
-}
+    return updateUserAvatar(payload, avatar)
+  }
+})

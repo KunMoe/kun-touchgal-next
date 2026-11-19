@@ -1,17 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { deleteKunTokenSession } from '~/server/auth/session'
 
-export async function POST(req: NextRequest) {
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
+export const POST = kunRoute.post({
+  auth: 'user',
+  handler: async ({ actor: payload }) => {
+    await deleteKunTokenSession(payload.uid, payload.jti)
+    const cookie = await cookies()
+    cookie.delete('kun-galgame-patch-moe-token')
+
+    return { message: '退出登录成功' }
   }
-
-  await deleteKunTokenSession(payload.uid, payload.jti)
-  const cookie = await cookies()
-  cookie.delete('kun-galgame-patch-moe-token')
-
-  return NextResponse.json({ message: '退出登录成功' })
-}
+})

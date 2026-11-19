@@ -69,7 +69,19 @@ POST /api/company/search                                 public
 GET /api/edit/duplicate                                  public
 POST /api/forgot/request                                 public
 POST /api/forgot/reset                                   public
+GET /api/message/all                                     user
+PUT /api/message/conversation/[id]/read                  user
+GET /api/message/conversation/[id]                       user
+POST /api/message/conversation/[id]                      user
+PUT /api/message/conversation/[id]                       user
+DELETE /api/message/conversation/[id]                    user
+GET /api/message/conversation/check                      user
+GET /api/message/conversation                            user
+POST /api/message/conversation                           user
+PUT /api/message/read                                    user
+DELETE /api/message/read                                 user
 POST /api/message                                        public
+GET /api/message/unread                                  user
 POST /api/patch/introduction/company                     user capability=company.manage
 PUT /api/patch/introduction/company                      user capability=company.manage
 GET /api/patch/introduction                              public
@@ -82,12 +94,49 @@ POST /api/tag                                            user capability=tag.man
 PUT /api/tag                                             user capability=tag.manage
 DELETE /api/tag                                          user capability=tag.manage
 POST /api/upload/resource                                public csrf=handler
+GET /api/user/appeal                                     user
+POST /api/user/appeal                                    user
+POST /api/user/follow/follow                             user
+GET /api/user/follow/follower                            optional
+GET /api/user/follow/following                           optional
+POST /api/user/follow/unfollow                           user
+POST /api/user/image                                     user form
+GET /api/user/mention/search                             user
+GET /api/user/profile/comment                            user legacyDeny.unauthenticated=用户登录失效
+GET /api/user/profile/favorite/folder/patch              optional
+GET /api/user/profile/favorite/folder                    user
+POST /api/user/profile/favorite/folder                   user
+PUT /api/user/profile/favorite/folder                    user
+DELETE /api/user/profile/favorite/folder                 user
+GET /api/user/profile/floating                           optional
+GET /api/user/profile/rating                             user legacyDeny.unauthenticated=用户登录失效
+GET /api/user/profile/resource                           user legacyDeny.unauthenticated=用户登录失效
 GET /api/user/session                                    public
+POST /api/user/setting/2fa/disable                       user order=auth-first
+POST /api/user/setting/2fa/enable                        user
+POST /api/user/setting/2fa/save-secret                   user order=auth-first
+GET /api/user/setting/2fa/status                         optional
+POST /api/user/setting/allow-private-message             user
+POST /api/user/setting/avatar                            user form
+POST /api/user/setting/bio                               user
+GET /api/user/setting/blocked-tag                        user
+POST /api/user/setting/blocked-tag                       user
+DELETE /api/user/setting/blocked-tag                     user
+POST /api/user/setting/email-notice                      user
 GET /api/user/setting/email/revert                       public
 POST /api/user/setting/email/revert                      public
 POST /api/user/setting/email                             user
+GET /api/user/setting/moderation-status                  user
 POST /api/user/setting/password                          user
 POST /api/user/setting/send-reset-email-code             user
+GET /api/user/setting/session                            user
+POST /api/user/setting/session                           user
+DELETE /api/user/setting/session                         user
+POST /api/user/setting/username                          user
+POST /api/user/status/check-in                           user
+GET /api/user/status/info                                user legacyDeny.unauthenticated=请先登录 legacyDeny.unauthenticatedStatus=401
+POST /api/user/status/logout                             user
+GET /api/user/status                                     user legacyDeny.unauthenticated=用户登录失效
 GET /oidc/[...path]                                      public
 POST /oidc/[...path]                                     public
 PUT /oidc/[...path]                                      public

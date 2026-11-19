@@ -1,6 +1,5 @@
 import { prisma } from '~/prisma/index'
-import { NextRequest, NextResponse } from 'next/server'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 
 const get2FAStatus = async (uid?: number) => {
   if (!uid) {
@@ -25,8 +24,7 @@ const get2FAStatus = async (uid?: number) => {
   }
 }
 
-export const GET = async (req: NextRequest) => {
-  const payload = await verifyHeaderCookie(req)
-  const result = await get2FAStatus(payload?.uid)
-  return NextResponse.json(result)
-}
+export const GET = kunRoute.get({
+  auth: 'optional',
+  handler: async ({ actor: payload }) => get2FAStatus(payload?.uid)
+})

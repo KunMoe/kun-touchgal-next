@@ -1,9 +1,7 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 
@@ -69,16 +67,9 @@ const followUser = async (uid: number, currentUserUid: number) => {
   return response
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, uidSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await followUser(input.uid, payload?.uid)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: uidSchema,
+  handler: async ({ input, actor: payload }) =>
+    followUser(input.uid, payload?.uid)
+})

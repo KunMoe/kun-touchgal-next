@@ -1,13 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { getUnreadMessageStatus } from './service'
 
-export const GET = async (req: NextRequest) => {
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await getUnreadMessageStatus(payload.uid)
-  return NextResponse.json(response)
-}
+export const GET = kunRoute.get({
+  auth: 'user',
+  handler: async ({ actor: payload }) => getUnreadMessageStatus(payload.uid)
+})

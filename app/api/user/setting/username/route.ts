@@ -1,6 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
 import { Prisma } from '~/prisma/generated/prisma/client'
@@ -54,26 +52,22 @@ const updateUsername = async (username: string, uid: number) => {
   await invalidateUserSession(uid)
 }
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, usernameServerSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-  // payload.name 来自 verifyAndLoadUser 里的库 / 鉴权缓存, 不是 JWT 里的陈旧字段.
-  // 必须拦在扣费之前: 预检排除自身后, 名字没变的提交会正常走完 updateMany, 白扣
-  // 30 萌萌点 —— 原先是靠预检误命中自己把它挡下的
-  if (input.username === payload.name) {
-    return NextResponse.json('新用户名与当前用户名相同')
-  }
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: usernameServerSchema,
+  handler: async ({ input, actor: payload }) => {
+    // payload.name 来自 verifyAndLoadUser 里的库 / 鉴权缓存, 不是 JWT 里的陈旧字段.
+    // 必须拦在扣费之前: 预检排除自身后, 名字没变的提交会正常走完 updateMany, 白扣
+    // 30 萌萌点 —— 原先是靠预检误命中自己把它挡下的
+    if (input.username === payload.name) {
+      return '新用户名与当前用户名相同'
+    }
 
-  const res = await updateUsername(input.username, payload.uid)
-  if (typeof res === 'string') {
-    return NextResponse.json(res)
-  }
+    const res = await updateUsername(input.username, payload.uid)
+    if (typeof res === 'string') {
+      return res
+    }
 
-  return NextResponse.json({})
-}
+    return {}
+  }
+})

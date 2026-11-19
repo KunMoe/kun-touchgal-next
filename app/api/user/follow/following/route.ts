@@ -1,8 +1,6 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { getUserFollowStatusSchema } from '~/validations/user'
 import type { UserFollow } from '~/types/api/user'
 
@@ -69,13 +67,9 @@ const getUserFollowing = async (
   return { followings, total }
 }
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, getUserFollowStatusSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-
-  const response = await getUserFollowing(input, payload?.uid)
-  return NextResponse.json(response)
-}
+export const GET = kunRoute.get({
+  auth: 'optional',
+  input: getUserFollowStatusSchema,
+  handler: async ({ input, actor: payload }) =>
+    getUserFollowing(input, payload?.uid)
+})

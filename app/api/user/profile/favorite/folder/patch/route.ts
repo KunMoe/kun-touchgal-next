@@ -1,21 +1,15 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { getFavoriteFolderPatchSchema } from '~/validations/user'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, getFavoriteFolderPatchSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-
-  const res = await getPatchByFolder(input, payload?.uid ?? 0)
-  return NextResponse.json(res)
-}
+export const GET = kunRoute.get({
+  auth: 'optional',
+  input: getFavoriteFolderPatchSchema,
+  handler: async ({ input, actor: payload }) =>
+    getPatchByFolder(input, payload?.uid ?? 0)
+})
 
 const getPatchByFolder = async (
   input: z.infer<typeof getFavoriteFolderPatchSchema>,

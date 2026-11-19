@@ -1,21 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { getUserInfoSchema } from '~/validations/user'
 import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
 import { getUserPatchResource } from './service'
 
-export async function GET(req: NextRequest) {
-  const input = kunParseGetQuery(req, getUserInfoSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const ctx = viewerContextFromRequest(req)
-  const viewer = await ctx.viewer()
-  if (!viewer) {
-    return NextResponse.json('用户登录失效')
-  }
-  const visibility = await ctx.visibility()
+export const GET = kunRoute.get({
+  auth: 'user',
+  legacyDeny: { unauthenticated: '用户登录失效' },
+  input: getUserInfoSchema,
+  handler: async ({ req, input, actor: viewer }) => {
+    const visibility = await viewerContextFromRequest(req).visibility()
 
-  const response = await getUserPatchResource(input, visibility, viewer)
-  return NextResponse.json(response)
-}
+    return getUserPatchResource(input, visibility, viewer)
+  }
+})

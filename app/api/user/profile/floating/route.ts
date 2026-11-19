@@ -1,8 +1,6 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import type { KunViewer } from '~/app/api/utils/contentVisibility'
 import type { FloatingCardUser } from '~/types/api/user'
 
@@ -69,13 +67,9 @@ const getUserFloatingProfile = async (
   return user
 }
 
-export async function GET(req: NextRequest) {
-  const input = kunParseGetQuery(req, uidSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-
-  const user = await getUserFloatingProfile(input, payload)
-  return NextResponse.json(user)
-}
+export const GET = kunRoute.get({
+  auth: 'optional',
+  input: uidSchema,
+  handler: async ({ input, actor: payload }) =>
+    getUserFloatingProfile(input, payload)
+})

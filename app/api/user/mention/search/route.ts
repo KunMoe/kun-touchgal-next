@@ -1,7 +1,5 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { searchUserSchema } from '~/validations/user'
 
@@ -23,16 +21,8 @@ const searchUser = async (input: z.infer<typeof searchUserSchema>) => {
   return users
 }
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, searchUserSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload?.uid) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await searchUser(input)
-  return NextResponse.json(response)
-}
+export const GET = kunRoute.get({
+  auth: 'user',
+  input: searchUserSchema,
+  handler: async ({ input }) => searchUser(input)
+})

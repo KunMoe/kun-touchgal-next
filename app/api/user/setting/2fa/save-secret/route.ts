@@ -1,39 +1,32 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { toDataURL } from 'qrcode'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { beginTwoFactorEnrollmentSchema } from '~/validations/user'
 import { requireStepUp } from '~/server/auth/stepUp'
 import { beginEnrollment } from '~/server/auth/twoFactorState'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 
-export const POST = async (req: NextRequest) => {
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+export const POST = kunRoute.post({
+  auth: 'user',
+  order: 'auth-first',
+  input: beginTwoFactorEnrollmentSchema,
+  handler: async ({ req, input, actor: payload }) => {
+    const stepUp = await requireStepUp(payload.uid, 'twoFactor.enroll', input, {
+      ip: getRemoteIp(req.headers)
+    })
+    if (!stepUp.ok) {
+      return stepUp.message
+    }
 
-  const input = await kunParsePostBody(req, beginTwoFactorEnrollmentSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
+    const key = await beginEnrollment(stepUp.passed)
+    if (typeof key === 'string') {
+      return key
+    }
+    await finishKunSecurityEvent(payload.uid, '2fa-secret-staged')
 
-  const stepUp = await requireStepUp(payload.uid, 'twoFactor.enroll', input, {
-    ip: getRemoteIp(req.headers)
-  })
-  if (!stepUp.ok) {
-    return NextResponse.json(stepUp.message)
+    return {
+      ...key,
+      qrCodeUrl: await toDataURL(key.authUrl)
+    }
   }
-
-  const key = await beginEnrollment(stepUp.passed)
-  if (typeof key === 'string') {
-    return NextResponse.json(key)
-  }
-  await finishKunSecurityEvent(payload.uid, '2fa-secret-staged')
-
-  return NextResponse.json({
-    ...key,
-    qrCodeUrl: await toDataURL(key.authUrl)
-  })
-}
+})

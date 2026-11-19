@@ -1,6 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { randomNormalInt } from '~/utils/random'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 
@@ -30,12 +29,7 @@ const checkIn = async (uid: number) => {
   return { randomMoemoepoints }
 }
 
-export async function POST(req: NextRequest) {
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const res = await checkIn(payload.uid)
-  return NextResponse.json(res)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  handler: async ({ actor: payload }) => checkIn(payload.uid)
+})

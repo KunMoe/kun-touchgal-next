@@ -1,16 +1,9 @@
 import * as z from 'zod'
-import { NextRequest, NextResponse } from 'next/server'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import {
   createFavoriteFolderSchema,
   updateFavoriteFolderSchema
 } from '~/validations/user'
-import {
-  kunParseDeleteQuery,
-  kunParseGetQuery,
-  kunParsePostBody,
-  kunParsePutBody
-} from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { getFolders } from './get'
 import { updateFolder } from './update'
 import { createFolder } from './create'
@@ -26,58 +19,27 @@ const patchIdSchema = z.object({
   limit: z.coerce.number().min(1).max(100).optional()
 })
 
-export const GET = async (req: NextRequest) => {
-  const input = kunParseGetQuery(req, patchIdSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+export const GET = kunRoute.get({
+  auth: 'user',
+  input: patchIdSchema,
+  handler: async ({ input, actor: payload }) =>
+    getFolders(input, payload.uid, payload.uid)
+})
 
-  const res = await getFolders(input, payload.uid, payload.uid)
-  return NextResponse.json(res)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: createFavoriteFolderSchema,
+  handler: async ({ input, actor: payload }) => createFolder(input, payload.uid)
+})
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, createFavoriteFolderSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+export const PUT = kunRoute.put({
+  auth: 'user',
+  input: updateFavoriteFolderSchema,
+  handler: async ({ input, actor: payload }) => updateFolder(input, payload.uid)
+})
 
-  const res = await createFolder(input, payload.uid)
-  return NextResponse.json(res)
-}
-
-export const PUT = async (req: NextRequest) => {
-  const input = await kunParsePutBody(req, updateFavoriteFolderSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await updateFolder(input, payload.uid)
-  return NextResponse.json(response)
-}
-
-export const DELETE = async (req: NextRequest) => {
-  const input = kunParseDeleteQuery(req, folderIdSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const res = await deleteFolder(input, payload.uid)
-  return NextResponse.json(res)
-}
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  input: folderIdSchema,
+  handler: async ({ input, actor: payload }) => deleteFolder(input, payload.uid)
+})

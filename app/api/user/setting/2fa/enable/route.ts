@@ -1,33 +1,26 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import { kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { enableUser2FASchema } from '~/validations/user'
 import { confirmEnrollment } from '~/server/auth/twoFactorState'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import { tokenStampOf } from '~/server/auth/securityStamp'
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, enableUser2FASchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: enableUser2FASchema,
+  handler: async ({ req, input, actor: payload }) => {
+    const result = await confirmEnrollment(payload.uid, input.token, {
+      ip: getRemoteIp(req.headers),
+      currentStamp: tokenStampOf(payload)
+    })
+    if (typeof result === 'string') {
+      return result
+    }
 
-  const result = await confirmEnrollment(payload.uid, input.token, {
-    ip: getRemoteIp(req.headers),
-    currentStamp: tokenStampOf(payload)
-  })
-  if (typeof result === 'string') {
-    return NextResponse.json(result)
+    await finishKunSecurityEvent(payload.uid, '2fa-enabled', {
+      current: payload,
+      stamp: result.stamp
+    })
+    return { backupCode: result.backupCode }
   }
-
-  await finishKunSecurityEvent(payload.uid, '2fa-enabled', {
-    current: payload,
-    stamp: result.stamp
-  })
-  return NextResponse.json({ backupCode: result.backupCode })
-}
+})

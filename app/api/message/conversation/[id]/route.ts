@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseGetQuery, kunParsePostBody } from '~/app/api/utils/parseQuery'
+import { kunParseGetQuery } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   parseConversationId,
   getConversationMessagesSchema,
@@ -7,7 +7,6 @@ import {
   updatePrivateMessageSchema,
   deletePrivateMessageSchema
 } from '~/validations/conversation'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import {
   getConversationMessages,
   sendMessage,
@@ -16,113 +15,49 @@ import {
   deleteConversation
 } from './service'
 
-export const GET = async (
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) => {
-  const { id } = await params
-  const conversationId = parseConversationId(id)
-  if (typeof conversationId === 'string') {
-    return NextResponse.json(conversationId)
-  }
+export const GET = kunRoute.get({
+  auth: 'user',
+  params: ({ id }) => parseConversationId(id),
+  input: getConversationMessagesSchema,
+  handler: async ({ params: conversationId, input, actor: payload }) =>
+    getConversationMessages(conversationId, input, payload.uid)
+})
 
-  const input = kunParseGetQuery(req, getConversationMessagesSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
+export const POST = kunRoute.post({
+  auth: 'user',
+  params: ({ id }) => parseConversationId(id),
+  input: sendPrivateMessageSchema,
+  handler: async ({ params: conversationId, input, actor: payload }) =>
+    sendMessage(conversationId, input, payload.uid)
+})
 
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+export const PUT = kunRoute.put({
+  auth: 'user',
+  params: ({ id }) => parseConversationId(id),
+  input: updatePrivateMessageSchema,
+  handler: async ({ params: conversationId, input, actor: payload }) =>
+    updateMessage(conversationId, input, payload.uid)
+})
 
-  const response = await getConversationMessages(
-    conversationId,
-    input,
-    payload.uid
-  )
-  return NextResponse.json(response)
-}
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  params: ({ id }) => parseConversationId(id),
+  handler: async ({ req, params: conversationId, actor: payload }) => {
+    const { searchParams } = new URL(req.url)
 
-export const POST = async (
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) => {
-  const { id } = await params
-  const conversationId = parseConversationId(id)
-  if (typeof conversationId === 'string') {
-    return NextResponse.json(conversationId)
-  }
+    if (searchParams.has('messageId')) {
+      const input = kunParseGetQuery(req, deletePrivateMessageSchema)
+      if (typeof input === 'string') {
+        return input
+      }
 
-  const input = await kunParsePostBody(req, sendPrivateMessageSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await sendMessage(conversationId, input, payload.uid)
-  return NextResponse.json(response)
-}
-
-export const PUT = async (
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) => {
-  const { id } = await params
-  const conversationId = parseConversationId(id)
-  if (typeof conversationId === 'string') {
-    return NextResponse.json(conversationId)
-  }
-
-  const input = await kunParsePostBody(req, updatePrivateMessageSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await updateMessage(conversationId, input, payload.uid)
-  return NextResponse.json(response)
-}
-
-export const DELETE = async (
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) => {
-  const { id } = await params
-  const conversationId = parseConversationId(id)
-  if (typeof conversationId === 'string') {
-    return NextResponse.json(conversationId)
-  }
-
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const { searchParams } = new URL(req.url)
-
-  if (searchParams.has('messageId')) {
-    const input = kunParseGetQuery(req, deletePrivateMessageSchema)
-    if (typeof input === 'string') {
-      return NextResponse.json(input)
+      return deleteMessage(conversationId, input, payload.uid)
     }
 
-    const response = await deleteMessage(conversationId, input, payload.uid)
-    return NextResponse.json(response)
-  }
+    if (searchParams.get('action') !== 'conversation') {
+      return '无效的删除操作类型'
+    }
 
-  if (searchParams.get('action') !== 'conversation') {
-    return NextResponse.json('无效的删除操作类型')
+    return deleteConversation(conversationId, payload.uid)
   }
-
-  const response = await deleteConversation(conversationId, payload.uid)
-  return NextResponse.json(response)
-}
+})

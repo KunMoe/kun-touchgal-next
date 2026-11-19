@@ -1,7 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { kunParseDeleteQuery } from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { clearReadMessageSchema } from '~/validations/message'
 import { getUnreadMessageStatus } from '../unread/service'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
@@ -125,29 +123,18 @@ const clearReadMessage = async (uid: number, type: string) => {
   return {}
 }
 
-export const PUT = async (req: NextRequest) => {
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
+export const PUT = kunRoute.put({
+  auth: 'user',
+  handler: async ({ actor: payload }) => {
+    await readMessage(payload.uid)
+    await invalidateUnread(payload.uid)
+    return getUnreadMessageStatus(payload.uid)
   }
+})
 
-  await readMessage(payload.uid)
-  await invalidateUnread(payload.uid)
-  const response = await getUnreadMessageStatus(payload.uid)
-  return NextResponse.json(response)
-}
-
-export const DELETE = async (req: NextRequest) => {
-  const input = kunParseDeleteQuery(req, clearReadMessageSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await clearReadMessage(payload.uid, input.type)
-  return NextResponse.json(response)
-}
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  input: clearReadMessageSchema,
+  handler: async ({ input, actor: payload }) =>
+    clearReadMessage(payload.uid, input.type)
+})

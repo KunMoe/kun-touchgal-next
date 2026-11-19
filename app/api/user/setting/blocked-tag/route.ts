@@ -1,10 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
-import {
-  kunParseDeleteQuery,
-  kunParsePostBody
-} from '~/app/api/utils/parseQuery'
+import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
 import { blockedTagSchema } from '~/validations/user'
 import {
   appendBlockedTagId,
@@ -107,42 +102,21 @@ const deleteBlockedTag = async (uid: number, tagId: number) => {
   return { blockedTagIds: updatedUser.blocked_tag_ids }
 }
 
-export const GET = async (req: NextRequest) => {
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
+export const GET = kunRoute.get({
+  auth: 'user',
+  handler: async ({ actor: payload }) => getBlockedTags(payload.uid)
+})
 
-  const response = await getBlockedTags(payload.uid)
-  return NextResponse.json(response)
-}
+export const POST = kunRoute.post({
+  auth: 'user',
+  input: blockedTagSchema,
+  handler: async ({ input, actor: payload }) =>
+    addBlockedTag(payload.uid, input.tagId)
+})
 
-export const POST = async (req: NextRequest) => {
-  const input = await kunParsePostBody(req, blockedTagSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await addBlockedTag(payload.uid, input.tagId)
-  return NextResponse.json(response)
-}
-
-export const DELETE = async (req: NextRequest) => {
-  const input = kunParseDeleteQuery(req, blockedTagSchema)
-  if (typeof input === 'string') {
-    return NextResponse.json(input)
-  }
-
-  const payload = await verifyHeaderCookie(req)
-  if (!payload) {
-    return NextResponse.json('用户未登录')
-  }
-
-  const response = await deleteBlockedTag(payload.uid, input.tagId)
-  return NextResponse.json(response)
-}
+export const DELETE = kunRoute.delete({
+  auth: 'user',
+  input: blockedTagSchema,
+  handler: async ({ input, actor: payload }) =>
+    deleteBlockedTag(payload.uid, input.tagId)
+})
