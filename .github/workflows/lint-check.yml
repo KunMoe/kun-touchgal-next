@@ -177,3 +177,5 @@ jobs:
           app/api/edit/__tests__/update.db.test.ts
           prisma/__tests__/pgErrorFixtures.db.test.ts
           app/api/user/status/check-in/__tests__/route.db.test.ts
+          app/api/patch/favorite/__tests__/route.db.test.ts
+          app/api/message/conversation/__tests__/service.db.test.ts
