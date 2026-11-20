@@ -3,6 +3,8 @@
 //   docker run --rm -d --name kun-db-scratch -p 127.0.0.1:55433:5432 --tmpfs /var/lib/postgresql/data -e POSTGRES_PASSWORD=kun postgres:17-alpine
 //   KUN_DB_SCRATCH_URL=postgresql://postgres:kun@127.0.0.1:55433/postgres pnpm db:snapshot --check   # 把全部迁移回放进去
 //   KUN_DB_CONTRACT_URL=postgresql://postgres:kun@127.0.0.1:55433/postgres pnpm exec vitest run server/auth/__tests__/emailChange.db.test.ts
+// 一次跑不止一个文件时加 --no-file-parallelism (CI 就是这样跑的): 各文件共用这一个库, 有的
+// 用例按库里正在等锁的会话数判断时机, 同时起跑会互相干扰, 而入口的空表检查挡不住同时起跑
 // 用例会建用户、写数据, 所以绝不能连到开发库 (那是生产数据的副本)。三道防线:
 // 只认回环地址; 连上之后经应用自己的 prisma 单例核对库名 (.env 里的 KUN_DATABASE_URL 不得
 // 生效); user 表必须是空的

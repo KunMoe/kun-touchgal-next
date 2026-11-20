@@ -281,16 +281,19 @@ describe('关系 _count', () => {
     )
   })
 
-  // 负对照: 落在点赞表自己的列上的条件改变的是数出来的结果 (只数某个人点的赞), 不是恒真过滤
-  it('过滤落在子表自己的列上时不算下推', async () => {
+  // 负对照: 落在点赞表自己的列上的条件改变的是数出来的结果 (只数某个人点的赞), 不是恒真过滤。
+  // 它也不算把聚合限定住: 库可能照样扫完整张表再筛, 所以仍报为整表聚合
+  it('过滤落在子表自己的列上时不算下推, 仍判为整表聚合', async () => {
     await likeCount({ where: { user_id: 9 } })
 
+    const statements = recorder.take()
     expect(() =>
-      expectAggregatePushdown(recorder.take(), {
+      expectAggregatePushdown(statements, {
         ...likes,
         predicateColumn: 'user_id'
       })
     ).toThrow('整表 GROUP BY')
+    expect(wholeTableAggregates(statements)).toEqual([likes.relationTable])
   })
 
   // 负对照: 条件在另一张连接进来的表上, 不是所声明的父表
@@ -305,6 +308,8 @@ describe('关系 _count', () => {
         predicateColumn: 'user_id'
       })
     ).toThrow('整表 GROUP BY')
+    // 但它确实被一张连接进来的表上的等值条件限定着, 不报为整表聚合
+    expect(wholeTableAggregates(statements)).toEqual([])
   })
 
   // 负对照: 与别的条件 OR 在一起的过滤限制不了聚合的范围
@@ -320,11 +325,13 @@ describe('关系 _count', () => {
     expect(wholeTableAggregates(statements)).toEqual([likes.relationTable])
   })
 
-  // 负对照: 只有等值条件才把聚合限制在相关的行上
-  it('聚合子查询只带范围条件时仍判为整表聚合', async () => {
-    await likeCount({ where: { id: { gt: 0 } } })
+  // 负对照: 只有等值条件才把聚合限制在相关的行上, 条件落在父表上也一样
+  it('聚合子查询只带父表上的范围条件时仍判为整表聚合', async () => {
+    await likeCount({ where: { comment: { patch_id: { gt: 0 } } } })
 
-    expect(wholeTableAggregates(recorder.take())).toEqual([likes.relationTable])
+    const statements = recorder.take()
+    expect(statements[0].sql).toMatch(/"patch_id" > \$\d+/)
+    expect(wholeTableAggregates(statements)).toEqual([likes.relationTable])
   })
 })
 

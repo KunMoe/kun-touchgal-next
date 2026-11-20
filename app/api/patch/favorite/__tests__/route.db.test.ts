@@ -15,7 +15,9 @@ import { dbContractUrl, openDbContract } from '~/server/db/__tests__/dbContract'
 // 四个点赞 / 收藏 toggle、评分统计、patch type 重算都靠同一种写法串行化:
 // pg_advisory_xact_lock(域::int, id::int)。它们的单测全是 mock, 证明不了锁到底有没有拿到、
 // 拿的是哪个重载、持有到什么时候、后来者是不是真的在等。这里拿收藏 toggle 当金丝雀,
-// 从路由入口驱动, 在 pg_locks 里看
+// 从路由入口驱动, 在 pg_locks (谁拿着、谁在等哪把锁) 与 pg_stat_activity (各会话停在哪条
+// 语句上) 里看。pg_locks 分不出事务级与会话级的锁, 「事务级」 是从两件事合起来看的:
+// 事务中途锁还在, 提交之后连接还开着而锁没了
 
 const { verifyHeaderCookieMock } = vi.hoisted(() => ({
   verifyHeaderCookieMock: vi.fn()
@@ -234,7 +236,7 @@ describe.skipIf(!dbContractUrl)('favorite toggle on real PostgreSQL', () => {
     values: [folderId]
   })
 
-  it('toggle 拿的是 (481003, 收藏夹 id) 两个 int 键的事务级通告锁: 持有到提交, 同一收藏夹的后来者排在它上面, 别的收藏夹不受牵连', async () => {
+  it('toggle 拿的是 (481003, 收藏夹 id) 两个 int 键的通告锁: 事务走到后面的语句时仍在手里, 提交后连接上不留锁; 同一收藏夹的后来者排在它上面, 别的收藏夹不受牵连', async () => {
     const { patch, folder, otherFolder } = await newScene()
     const key = {
       classid: FAVORITE_LOCK_NAMESPACE,
@@ -267,7 +269,10 @@ describe.skipIf(!dbContractUrl)('favorite toggle on real PostgreSQL', () => {
           query: expect.stringContaining('pg_advisory_xact_lock')
         })
 
-        // 锁键细到收藏夹: 同一用户、同一 Galgame 在另一个收藏夹上的 toggle 不用等
+        // 锁键细到收藏夹: 同一用户、同一 Galgame 在另一个收藏夹上的 toggle 不用等。
+        // 这一步若超时, 先看被冻住的那个 toggle 是不是已经写过 Galgame 这一行: 它停在
+        // 外键检查上, 而收藏数的触发器排在外键检查之后 (触发器按名字的字节序执行,
+        // RI_ConstraintTrigger_* 在 patch_favorite_count_trg 之前), 所以此刻还没有动那一行
         await expect(toggle(otherFolder.id, patch.id)).resolves.toEqual({
           added: true,
           isFavorite: true

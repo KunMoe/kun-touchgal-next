@@ -214,8 +214,8 @@ describe.skipIf(!dbContractUrl)('kunTx on real PostgreSQL', () => {
       ])
     })
 
-    // 不在事务里的单条语句同样会被死锁检测选中 (站内信批量已读是这种形状)。它先开始等锁,
-    // 库先检查到它所在的环, 被回滚的就是它
+    // 不在事务里的单条语句同样会被死锁检测选中 (站内信批量已读是这种形状)。这里让检查只由
+    // 它发起, 被回滚的就是它
     it('不在事务里的单条原生语句被死锁回滚时, 抛出的错误认得出是冲突', async () => {
       const [a, b] = [await newUser(), await newUser()]
       const marker = `kun-tx-contract-${randomUUID()}`
@@ -231,6 +231,11 @@ describe.skipIf(!dbContractUrl)('kunTx on real PostgreSQL', () => {
 
       const holder = prisma.$transaction(
         async (tx) => {
+          // 死锁检查由等待者各自在等满 deadlock_timeout 时做一次, 查到环的那个把自己回滚。
+          // 两边开始等锁只差一两毫秒, 留给定时器的抖动去决定谁先查的话, 这个事务有时会
+          // 成为被回滚的一方。把它自己的时限调到用例跑不到的长度, 检查就只会由那条裸语句
+          // 发起 (它用库的默认值, 1 秒)。改这个参数要超级用户, 回放库与 CI 都是
+          await tx.$executeRawUnsafe(`SET LOCAL deadlock_timeout = '1min'`)
           await lockUser(tx, a.id)
           // 排序在加锁之前: 先锁 b, 再去等被上面占着的 a
           bare = prisma.$queryRawUnsafe(
@@ -240,10 +245,6 @@ describe.skipIf(!dbContractUrl)('kunTx on real PostgreSQL', () => {
           while (!(await isBareWaiting())) {
             await new Promise((resolve) => setTimeout(resolve, 20))
           }
-          // 谁的 deadlock_timeout 先到期, 谁就去做死锁检查并把自己回滚。两边开始等锁只差
-          // 一两毫秒的话, 定时器的抖动就能让这个事务先到期; 晚 200 毫秒再去等, 先到期的
-          // 必是那条裸语句
-          await new Promise((resolve) => setTimeout(resolve, 200))
           await lockUser(tx, b.id)
         },
         { timeout: 20000 }

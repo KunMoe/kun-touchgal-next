@@ -228,16 +228,19 @@ export const expectAggregatePushdown = (
   }
 }
 
-// 没有任何「列 = 参数」合取条件的聚合子查询 (Prisma 写成 WHERE 1=1) 所聚合的表。
-// 对列表查询来说, 这就是每次查询都把这张表整个 GROUP BY 一遍。按连接键取单行的查询里
-// 库能把外层的常量推进聚合, 这个只看 SQL 文本的判据看不出来, 所以只拿它看列表查询
+// 没有被「连接进来的某张父表的一列 = 参数」限定的聚合子查询所聚合的表 (不带过滤时 Prisma
+// 写成 WHERE 1=1)。对列表查询来说, 这就是每次查询都把这张表整个 GROUP BY 一遍。
+// 落在子表自己的列上的条件 (status = $1 这类) 不算限定: 它筛掉一些行, 但只看 SQL 文本分不清
+// 库是按索引取一小段还是扫完整张表再筛, 所以宁可多报, 报出来的由人看过再登记。
+// 按连接键取单行的查询里库能把外层的常量推进聚合, 这个判据同样看不出来, 所以只拿它看列表查询
 export const wholeTableAggregates = (statements: RecordedStatement[]) =>
   aggregateSubqueries(statements)
     .filter(
-      ({ conjuncts }) =>
-        !conjuncts.some((conjunct) =>
-          /^(?:"[^"]+"\.)+"[^"]+" = \$\d+$/.test(conjunct)
-        )
+      ({ joined, conjuncts }) =>
+        !conjuncts.some((conjunct) => {
+          const alias = /^"([^"]+)"\."[^"]+" = \$\d+$/.exec(conjunct)?.[1]
+          return alias !== undefined && joined.has(alias)
+        })
     )
     .map(({ table }) => table)
 
