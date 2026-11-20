@@ -1,6 +1,6 @@
 import * as z from 'zod'
 import { randomBytes } from 'crypto'
-import { delKv, getKv, setKv } from '~/lib/redis'
+import { delKv, getKv, setKv, takeKv } from '~/lib/redis'
 import {
   deleteFileFromS3,
   headObject,
@@ -187,13 +187,20 @@ export const promoteStagedObject = async (
   }
 }
 
-// 转正之后收尾: 先消费令牌, 再尽力删暂存对象。消费失败会抛出, 那时暂存对象还在, 同一枚令牌
-// 可以原样重试 (删除其实已在 Redis 执行、只是应答丢了的那一次除外: 令牌没了, 暂存对象留给
-// 存储的过期规则); 反过来先删对象, 令牌没消费掉时两份字节就都没了
+// 转正之后收尾: 先认领令牌, 再尽力删暂存对象。认领是原子的, 同一枚令牌只有一次转正算数:
+// 绑定锁的租期到了而上一次绑定还没走完时, 两次绑定都会走到这里, 没认领到的一方抛出, 由
+// bindUploadedResource 的 catch 删掉它的正式对象并退回额度。令牌恰好在绑定途中到期的那一次
+// 也算没认领到。令牌不在了就不会再回来, 暂存对象谁也用不上, 所以没认领到时照样删。
+// Redis 不可用时认领本身抛出, 那时暂存对象还在, 同一枚令牌可以原样重试 (删除其实已在 Redis
+// 执行、只是应答丢了的那一次除外: 令牌没了, 暂存对象留给存储的过期规则); 反过来先删对象,
+// 令牌没认领到手时两份字节就都没了
 export const consumeStagedUpload = async (
   token: string,
   meta: UploadTokenMeta
 ) => {
-  await delKv(uploadTokenKey(token))
+  const claimed = await takeKv(uploadTokenKey(token))
   await deleteFileFromS3(meta.s3Key).catch(() => undefined)
+  if (!claimed) {
+    throw new Error('上传 token 已被消费或已过期, 本次转正作废')
+  }
 }

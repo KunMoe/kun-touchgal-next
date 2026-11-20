@@ -11,6 +11,7 @@ const {
   delKvMock,
   getKvMock,
   releaseKvLockMock,
+  takeKvMock,
   userUpdateManyMock,
   enqueueS3DeletionMock,
   invalidateUserSessionMock,
@@ -26,6 +27,7 @@ const {
     delKvMock: vi.fn(),
     getKvMock: vi.fn(),
     releaseKvLockMock: vi.fn(),
+    takeKvMock: vi.fn(),
     userUpdateManyMock,
     enqueueS3DeletionMock: vi.fn(),
     invalidateUserSessionMock: vi.fn(),
@@ -44,7 +46,8 @@ vi.mock('~/lib/redis', () => ({
   acquireKvLock: acquireKvLockMock,
   delKv: delKvMock,
   getKv: getKvMock,
-  releaseKvLock: releaseKvLockMock
+  releaseKvLock: releaseKvLockMock,
+  takeKv: takeKvMock
 }))
 
 vi.mock('~/prisma/index', () => ({ prisma: prismaMock }))
@@ -144,6 +147,7 @@ beforeEach(() => {
   releaseKvLockMock.mockImplementation(record('releaseKvLock', () => undefined))
   getKvMock.mockImplementation(record('getKv', () => meta()))
   delKvMock.mockImplementation(record('delKv', () => undefined))
+  takeKvMock.mockImplementation(record('takeKv', () => true))
   headObjectMock.mockImplementation(async (key: string) => {
     calls.push(`headObject:${site(key)}`)
     return key === STAGING_KEY ? STAGED : promotedHead()
@@ -323,6 +327,7 @@ describe('bindUploadedResource 暂存对象校验', () => {
     expect(await bind()).toBe(NOT_UPLOADED)
     expect(deleteFileFromS3Mock).not.toHaveBeenCalled()
     expect(delKvMock).not.toHaveBeenCalled()
+    expect(takeKvMock).not.toHaveBeenCalled()
     expect(userUpdateManyMock).not.toHaveBeenCalled()
   })
 
@@ -408,7 +413,7 @@ describe('bindUploadedResource 转正', () => {
     expect(copyObjectMock).not.toHaveBeenCalled()
   })
 
-  it('成功路径的顺序: 校验 → 扣额度 → 转正 → 核对正式对象 → 消费令牌 → 删暂存', async () => {
+  it('成功路径的顺序: 校验 → 扣额度 → 转正 → 核对正式对象 → 认领令牌 → 删暂存', async () => {
     await bind()
 
     expect(calls).toEqual([
@@ -418,7 +423,7 @@ describe('bindUploadedResource 转正', () => {
       'user.updateMany',
       'promoteObject',
       'headObject:final',
-      'delKv',
+      'takeKv',
       'deleteFileFromS3:staging',
       'invalidateUserSession',
       'releaseKvLock'
@@ -437,7 +442,7 @@ describe('bindUploadedResource 转正', () => {
     deleteFileFromS3Mock.mockRejectedValue(new Error('s3 down'))
 
     await expect(bind()).resolves.toMatchObject({ size: SIZE })
-    expect(delKvMock).toHaveBeenCalledWith(`upload:${TOKEN}`)
+    expect(takeKvMock).toHaveBeenCalledWith(`upload:${TOKEN}`)
   })
 
   it('复制失败: 删掉可能已生成的正式对象, 退回额度, 原样抛出; 暂存与令牌留着供重试', async () => {
@@ -452,6 +457,7 @@ describe('bindUploadedResource 转正', () => {
       data: { daily_upload_size: { decrement: 2 } }
     })
     expect(delKvMock).not.toHaveBeenCalled()
+    expect(takeKvMock).not.toHaveBeenCalled()
     expect(enqueueS3DeletionMock).not.toHaveBeenCalled()
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
     expect(releaseKvLockMock).toHaveBeenCalledTimes(1)
@@ -481,9 +487,9 @@ describe('bindUploadedResource 转正', () => {
     await expect(bind()).rejects.toBe(failure)
   })
 
-  it('消费令牌失败: 删掉正式对象并退回额度后抛出; 暂存对象还在, 同一枚令牌可以重试', async () => {
+  it('认领令牌时 Redis 不可用: 删掉正式对象并退回额度后抛出; 暂存对象还在, 同一枚令牌可以重试', async () => {
     const failure = new Error('redis down')
-    delKvMock.mockRejectedValue(failure)
+    takeKvMock.mockRejectedValue(failure)
 
     await expect(bind()).rejects.toBe(failure)
 
@@ -493,6 +499,26 @@ describe('bindUploadedResource 转正', () => {
       data: { daily_upload_size: { decrement: 2 } }
     })
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
+  })
+
+  // 绑定锁的租期到了而上一次绑定还没走完时, 同一枚令牌的两次绑定都会走到转正。令牌只有一方
+  // 认领得到, 另一方的正式对象与额度都要退回去; 令牌恰好在绑定途中到期也走这里
+  it('令牌没认领到 (已被另一次绑定消费, 或已到期): 这次转正作废, 删掉正式对象并退回额度后抛出', async () => {
+    takeKvMock.mockResolvedValue(false)
+
+    await expect(bind()).rejects.toThrow('上传 token 已被消费或已过期')
+
+    // 令牌不在了, 暂存对象谁也用不上, 一并删掉
+    expect(deleteFileFromS3Mock.mock.calls).toEqual([
+      [STAGING_KEY],
+      [promotedKey()]
+    ])
+    expect(userUpdateManyMock).toHaveBeenLastCalledWith({
+      where: { id: UID, daily_upload_size: { gte: 2 } },
+      data: { daily_upload_size: { decrement: 2 } }
+    })
+    expect(invalidateUserSessionMock).not.toHaveBeenCalled()
+    expect(releaseKvLockMock).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -521,7 +547,7 @@ describe('bindUploadedResource 转正后核对正式对象的元数据', () => {
     expect(consoleErrorSpy.mock.calls[0][1]).toMatchObject({
       finalKey: promotedKey()
     })
-    expect(delKvMock).toHaveBeenCalledWith(`upload:${TOKEN}`)
+    expect(takeKvMock).toHaveBeenCalledWith(`upload:${TOKEN}`)
   })
 
   it('带文件名参数的 attachment 也算数', async () => {
