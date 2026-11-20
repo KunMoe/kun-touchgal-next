@@ -300,7 +300,8 @@ const getBlacklistEntries = async (): Promise<ModerationBlacklistEntry[]> => {
   return entries
 }
 
-const runModerationBatch = async () => {
+// 导出只为测试: 生产里只由下面的 cron 任务在全局锁内调用
+export const runModerationBatch = async () => {
   // 早于此刻的租约视为过期 (worker 崩溃), 连同未认领的行一起纳入候选; 认领时按行
   // 二次校验租约, 避免与仍在处理该行的其它 worker 撞车
   const leaseStaleBefore = new Date(
