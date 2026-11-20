@@ -9,8 +9,10 @@ const {
   transitionCommentsMock,
   transitionRatingsMock,
   transitionResourcesMock,
-  invalidateUnreadMock
+  invalidateUnreadMock,
+  taskUpdateMock
 } = vi.hoisted(() => ({
+  taskUpdateMock: vi.fn(),
   transactionMock: vi.fn(),
   executeRawMock: vi.fn(),
   claimMock: vi.fn(),
@@ -30,7 +32,10 @@ const transactionClient = {
 const events: string[] = []
 
 vi.mock('~/prisma/index', () => ({
-  prisma: { $transaction: transactionMock }
+  prisma: {
+    $transaction: transactionMock,
+    moderation_task: { updateMany: taskUpdateMock }
+  }
 }))
 
 vi.mock('~/app/api/utils/message', () => ({
@@ -68,7 +73,13 @@ vi.mock('~/lib/s3', () => ({
   deleteFileFromS3: vi.fn()
 }))
 
-import { applyModerationVerdict } from '~/server/moderation/apply'
+import {
+  applyModerationVerdict,
+  markTaskManual,
+  requeueModerationTask
+} from '~/server/moderation/apply'
+import { DependencyFailure } from '~/lib/resilience/failure'
+import { Prisma } from '~/prisma/generated/prisma/client'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
 import { copyObject, deleteFileFromS3 } from '~/lib/s3'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
@@ -95,6 +106,8 @@ const ratingTask = (overrides: Partial<moderation_taskModel> = {}) =>
     tokens_in: 0,
     tokens_out: 0,
     retry: 0,
+    defer_count: 0,
+    failure_kind: '',
     next_attempt: created,
     picked_at: null,
     dry_run: false,
@@ -624,5 +637,109 @@ describe('applyModerationVerdict: 载荷解码', () => {
     expect(invalidateUserSession).toHaveBeenCalledWith(100)
     expect(deleteFileFromS3).not.toHaveBeenCalled()
     expect(purgeCloudflareCache).not.toHaveBeenCalled()
+  })
+})
+
+describe('失败记账留下的痕迹', () => {
+  const avatarTask = () =>
+    ratingTask({
+      content_type: 'avatar',
+      content_id: null,
+      patch_id: null,
+      payload: {
+        pendingKey: 'pending.avif',
+        pendingMiniKey: 'pending-mini.avif',
+        avatarKey: 'avatar.avif',
+        avatarMiniKey: 'avatar-mini.avif',
+        avatarLink: 'https://img.kungal.com/avatar-mini.avif',
+        pendingLink: 'https://img.kungal.com/pending.avif'
+      }
+    })
+
+  // 之前失败过又终于落定的任务: 类别不清掉, AI 拿不准转人工的任务会被管理端按
+  // 「供应商不可用」之类归错类
+  it.each([
+    ['通过', { approved: true }, 'approved'],
+    ['拒绝', { approved: false, rejectCode: 'AD' }, 'rejected'],
+    ['AI 拿不准转人工', { approved: true, manual: true }, 'manual']
+  ])('裁决落定 (%s) 时清掉失败类别', async (_name, options, status) => {
+    await applyModerationVerdict({
+      task: ratingTask({ failure_kind: 'unavailable', defer_count: 3 }),
+      ...options
+    })
+
+    expect(claimMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status, failure_kind: '' })
+      })
+    )
+  })
+
+  it('转人工时写下失败类别与原因, 只动仍在待处理的任务', async () => {
+    taskUpdateMock.mockResolvedValue({ count: 1 })
+
+    await markTaskManual(9, {
+      kind: 'deferral_exhausted',
+      reason: '长'.repeat(600)
+    })
+
+    expect(taskUpdateMock).toHaveBeenCalledWith({
+      where: { id: 9, status: 'pending' },
+      data: {
+        status: 'manual',
+        failure_kind: 'deferral_exhausted',
+        reject_reason: '长'.repeat(500)
+      }
+    })
+  })
+
+  it('重排把两份预算与失败类别一起清零', async () => {
+    taskUpdateMock.mockResolvedValue({ count: 1 })
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(created)
+    try {
+      await requeueModerationTask(9)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(taskUpdateMock).toHaveBeenCalledWith({
+      where: { id: 9, status: 'manual', verdict: { equals: Prisma.DbNull } },
+      data: {
+        status: 'pending',
+        retry: 0,
+        defer_count: 0,
+        failure_kind: '',
+        next_attempt: created,
+        picked_at: null,
+        reject_reason: ''
+      }
+    })
+  })
+
+  // worker 靠范围决定这次失败算谁的: 存储的错误必须在这里说清, 不能以裸的 SDK 错误出去
+  it('头像落地时存储不可用: 以带范围的 DependencyFailure 抛出, 任务不认领', async () => {
+    vi.mocked(copyObject).mockRejectedValueOnce(
+      Object.assign(new Error('Service Unavailable'), {
+        $fault: 'server',
+        $metadata: { httpStatusCode: 503 }
+      })
+    )
+
+    const error = await applyModerationVerdict({
+      task: avatarTask(),
+      approved: true
+    }).then(
+      () => null,
+      (reason: unknown) => reason
+    )
+
+    expect(error).toBeInstanceOf(DependencyFailure)
+    expect(error).toMatchObject({
+      dependency: 's3',
+      scope: 'transient',
+      status: 503
+    })
+    expect(claimMock).not.toHaveBeenCalled()
   })
 })

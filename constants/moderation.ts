@@ -99,7 +99,73 @@ export const MODERATION_REJECT_NOTICE: Record<
   bio: () => '您提交的签名未通过内容审核，未被应用。如有异议请联系管理员。'
 }
 
+// 这条内容自己的失败 (模型输出不合约定、落库被拒等) 最多试几次
 export const MODERATION_MAX_RETRY = 3
+
+// 依赖类失败 (供应商不可用、限流、凭据或地址不对) 最多推迟几次。它与上面那份预算分开:
+// 依赖出问题时不该扣内容的预算, 但也不能无限推迟 —— 一条稳定打崩上游的内容 (只对它超时、
+// 只有它被网关拦下) 单看每次失败都像依赖的问题, 这个上限就是它的止损。记账规则见
+// server/moderation/accounting.ts
+export const MODERATION_MAX_DEFERRALS = 6
+
+// 任务最近一次失败的类别 (moderation_task.failure_kind), 管理端据此区分转人工的原因
+export const MODERATION_FAILURE_KIND = [
+  'unavailable',
+  'rate_limited',
+  'misconfigured',
+  'bad_output',
+  'internal',
+  'crash_loop',
+  'deferral_exhausted'
+] as const
+
+export type ModerationFailureKind = (typeof MODERATION_FAILURE_KIND)[number]
+
+export const MODERATION_FAILURE_KIND_MAP: Record<
+  ModerationFailureKind,
+  string
+> = {
+  unavailable: '供应商不可用',
+  rate_limited: '供应商限流',
+  misconfigured: '配置错误',
+  bad_output: '模型输出异常',
+  internal: '内部错误',
+  crash_loop: '处理反复中断',
+  deferral_exhausted: '多次推迟仍失败'
+}
+
+// 车道 = 一类任务共用的依赖: 文本任务共用文本模型, 头像任务共用视觉模型与对象存储。
+// 一条车道的依赖出问题不拖住另一条
+export const MODERATION_LANE = ['text', 'avatar'] as const
+
+export type ModerationLane = (typeof MODERATION_LANE)[number]
+
+export const MODERATION_LANE_MAP: Record<ModerationLane, string> = {
+  text: '文本',
+  avatar: '头像'
+}
+
+// 车道熔断的阈值 (server/moderation/breaker.ts)
+export const MODERATION_BREAKER = {
+  // 依赖类失败连续 3 次、且跨 2 条不同任务才算依赖的问题
+  dependencyThreshold: 3,
+  minDistinctTasks: 2,
+  // 没有任何成功的前提下, 5 条不同任务都以输出异常 / 内部错误失败, 算系统性故障
+  systematicThreshold: 5,
+  // 打开 30 秒后放一条去探测, 探测失败逐次翻倍, 最长 5 分钟
+  baseOpenMs: 30 * 1000,
+  maxOpenMs: 5 * 60 * 1000
+} as const
+
+// 上线后先以影子模式跑: 熔断器照常观察并记日志 (pm2 logs | grep kun-moderation-breaker),
+// 取任务与失败记账仍是引入车道之前的做法 (每次失败都扣这条任务的 retry)。看过至少一周
+// 的开合日志、确认阈值不会在正常流量下误开之后, 改成 'enforce' 单独发布: 车道打开时不再
+// 取任务, 失败按 accounting.ts 归因
+export const MODERATION_BREAKER_MODE = 'shadow' as 'shadow' | 'enforce'
+
+// 系统性故障检测单独开关: 'log' 只在达到阈值时记一行日志, 不打开车道。一波与内容相关的
+// 坏输出 (例如提示注入攻势) 也会触发它, 所以同样先观察一周再改成 'enforce'
+export const MODERATION_SYSTEMATIC_DETECTION = 'log' as 'log' | 'enforce'
 
 export const MODERATION_BATCH_SIZE = 10
 
@@ -131,7 +197,8 @@ export const MODERATION_LEASE_SECONDS = 1200
 // 网络调用上限约束在锁 TTL 内, 否则挂起的 provider 调用会拖到锁自然过期、触发另一批次
 // 并发重跑. 慢推理模型约 15-20 token/s, 360s 可容纳 5000-7000 token 的思考 —— 审核一段
 // 站内文本远用不到这个量, 合法慢响应不会被误杀; 真正吃满的是陷入循环的病态响应, 由此
-// 超时止损. 不变式链: AI 超时 (360s) < 锁 TTL (600s) < 认领租约 (1200s)
+// 超时止损 (超时属依赖类失败, 止损的次数上界是 MODERATION_MAX_DEFERRALS).
+// 不变式链: AI 超时 (360s) < 锁 TTL (600s) < 认领租约 (1200s)
 export const MODERATION_AI_TIMEOUT_MS = 360 * 1000
 
 // avatar 任务在「认领→结算」窗口内除 AI 调用外还有阻塞式 S3 操作 (取 pending 图、copy

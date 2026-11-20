@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { moderation_taskModel } from '~/prisma/generated/prisma/models'
+import { KUN_MODERATION_HEALTH_KEY } from '~/config/redis'
 import {
   MODERATION_BATCH_SIZE,
   MODERATION_CONCURRENCY,
   MODERATION_LEASE_SECONDS
 } from '~/constants/moderation'
+import { DependencyFailure, classifyHttpStatus } from '~/lib/resilience/failure'
 
 // 批次与失败记账: 取哪些任务、怎么认领、失败算在谁头上。单条任务内部 (黑名单、缓存、
-// 送审视图) 由 moderationTask.test.ts 覆盖
+// 送审视图) 由 moderationTask.test.ts 覆盖; 熔断器与记账规则各自的单测在
+// server/moderation/__tests__/{breaker,accounting}.test.ts, 这里看 worker 怎么把它们接起来
 
 const {
   findTasksMock,
@@ -15,7 +18,9 @@ const {
   findBlacklistMock,
   getKvMock,
   setKvMock,
+  getFileFromS3Mock,
   moderateTextMock,
+  moderateImageMock,
   applyModerationVerdictMock,
   markTaskManualMock
 } = vi.hoisted(() => ({
@@ -24,13 +29,19 @@ const {
   findBlacklistMock: vi.fn(),
   getKvMock: vi.fn(),
   setKvMock: vi.fn(),
+  getFileFromS3Mock: vi.fn(),
   moderateTextMock: vi.fn(),
+  moderateImageMock: vi.fn(),
   applyModerationVerdictMock: vi.fn(),
   markTaskManualMock: vi.fn()
 }))
 
 vi.mock('node-cron', () => ({ default: { createTask: vi.fn() } }))
-vi.mock('sharp', () => ({ default: vi.fn() }))
+vi.mock('sharp', () => ({
+  default: () => ({
+    jpeg: () => ({ toBuffer: async () => Buffer.from('jpeg') })
+  })
+}))
 vi.mock('~/prisma', () => ({
   prisma: {
     moderation_task: { findMany: findTasksMock, updateMany: updateTaskMock },
@@ -38,8 +49,10 @@ vi.mock('~/prisma', () => ({
   }
 }))
 vi.mock('~/lib/redis', () => ({ getKv: getKvMock, setKv: setKvMock }))
-vi.mock('~/lib/s3', () => ({ getFileFromS3: vi.fn() }))
-vi.mock('~/server/image/encodeLimit', () => ({ withEncodeSlot: vi.fn() }))
+vi.mock('~/lib/s3', () => ({ getFileFromS3: getFileFromS3Mock }))
+vi.mock('~/server/image/encodeLimit', () => ({
+  withEncodeSlot: (encode: () => unknown) => encode()
+}))
 vi.mock('~/server/tasks/withTaskLock', () => ({ withTaskLock: vi.fn() }))
 vi.mock('~/server/moderation/apply', () => ({
   applyModerationVerdict: applyModerationVerdictMock,
@@ -48,26 +61,70 @@ vi.mock('~/server/moderation/apply', () => ({
 vi.mock(import('~/server/moderation/ai'), async (importOriginal) => ({
   ...(await importOriginal()),
   moderateText: moderateTextMock,
-  moderateImage: vi.fn()
+  moderateImage: moderateImageMock
 }))
 
 import { ModerationConfigError } from '~/server/moderation/ai'
-import { runModerationBatch } from '~/server/tasks/moderationTask'
+import {
+  createModerationWorker,
+  runModerationBatch
+} from '~/server/tasks/moderationTask'
+import type { ModerationWorker } from '~/server/tasks/moderationTask'
 
 const NOW = new Date('2026-11-20T12:00:00.000Z')
+const at = (offsetMs: number) => new Date(NOW.getTime() + offsetMs)
+const leaseStaleBefore = (now: Date) =>
+  new Date(now.getTime() - MODERATION_LEASE_SECONDS * 1000)
 
+// ---- 内存里的任务表: 两个 prisma 调用与两个落库函数都落在它上面, 用例可以连跑几批、
+// 推进时钟, 最后看每一行停在什么状态
+
+type Row = moderation_taskModel
+type Where = {
+  id?: number
+  status?: string
+  next_attempt?: { lte: Date }
+  OR?: [{ picked_at: null }, { picked_at: { lt: Date } }]
+  content_type?: string | { not: string }
+}
+type UpdateArgs = { where: Where; data: Record<string, unknown> }
+
+let rows: Row[] = []
 let nextTaskId = 1
-let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+
+const matches = (row: Row, where: Where) => {
+  if (where.id !== undefined && row.id !== where.id) {
+    return false
+  }
+  if (where.status !== undefined && row.status !== where.status) {
+    return false
+  }
+  if (where.next_attempt && row.next_attempt > where.next_attempt.lte) {
+    return false
+  }
+  if (
+    where.OR &&
+    row.picked_at !== null &&
+    row.picked_at >= where.OR[1].picked_at.lt
+  ) {
+    return false
+  }
+  if (typeof where.content_type === 'string') {
+    return row.content_type === where.content_type
+  }
+  if (where.content_type) {
+    return row.content_type !== where.content_type.not
+  }
+  return true
+}
 
 // 每条任务的正文各不相同, 模型的 mock 靠它认出是哪一条
 const textOf = (taskId: number) => `评论 #${taskId}#`
 
 // 评论各自成组 (全并发); plain 段不经渲染管线
-const makeTask = (
-  overrides: Partial<moderation_taskModel> = {}
-): moderation_taskModel => {
+const addTask = (overrides: Partial<Row> = {}): Row => {
   const id = nextTaskId++
-  return {
+  const row = {
     id,
     content_type: 'comment',
     content_id: 10,
@@ -77,51 +134,210 @@ const makeTask = (
       v: 2,
       segments: [{ label: '评论', kind: 'plain', value: textOf(id) }]
     },
+    status: 'pending',
     retry: 0,
+    defer_count: 0,
+    failure_kind: '',
+    reject_reason: '',
+    next_attempt: new Date(),
     picked_at: null,
     dry_run: false,
     ...overrides
-  } as moderation_taskModel
+  } as Row
+  rows.push(row)
+  return row
 }
 
-type UpdateArgs = {
-  where: Record<string, unknown>
-  data: Record<string, unknown>
+const addAvatarTask = (overrides: Partial<Row> = {}) =>
+  addTask({
+    content_type: 'avatar',
+    content_id: null,
+    payload: {
+      pendingKey: 'p',
+      pendingMiniKey: 'pm',
+      avatarKey: 'a',
+      avatarMiniKey: 'am',
+      avatarLink: 'https://img.example/a',
+      pendingLink: 'https://img.example/p'
+    },
+    ...overrides
+  })
+
+const rowOf = (task: Row) => rows.find((row) => row.id === task.id)!
+
+// ---- 模型的行为: 默认放行, 用例按任务 id 指定哪一条怎么失败
+
+const verdict = () => ({
+  verdict: { pass: true },
+  model: 'test-model',
+  tokensIn: 1,
+  tokensOut: 1
+})
+
+let modelBehaviour: (taskId: number) => Promise<ReturnType<typeof verdict>>
+
+const taskIdOf = (userMessage: string) =>
+  Number(/#(\d+)#/.exec(userMessage)?.[1])
+
+const httpFailure = (status: number, retryAfterMs: number | null = null) =>
+  new DependencyFailure({
+    dependency: 'moderation_ai',
+    scope: classifyHttpStatus(status),
+    message: `Moderation AI request failed with status ${status}`,
+    status,
+    retryAfterMs
+  })
+
+const badOutput = () =>
+  new DependencyFailure({
+    dependency: 'moderation_ai',
+    scope: 'request',
+    message: 'Moderation verdict is not valid JSON: 好的'
+  })
+
+const failAll = (error: () => unknown) => {
+  modelBehaviour = async () => {
+    throw error()
+  }
 }
+
+const failOnly = (tasks: Row[], error: () => unknown) => {
+  const ids = new Set(tasks.map((task) => task.id))
+  modelBehaviour = async (taskId) => {
+    if (ids.has(taskId)) {
+      throw error()
+    }
+    return verdict()
+  }
+}
+
+const recover = () => {
+  modelBehaviour = async () => verdict()
+}
+
+// ---- 断言用的取数
 
 const updateCalls = () =>
   updateTaskMock.mock.calls.map(([args]) => args as UpdateArgs)
 
-// 认领写入带一个新的租约时间戳; 退避写入把租约清空
-const claimsOf = (taskId: number) =>
+// 认领写入带一个新的租约时间戳; 记账写入把租约清空
+const claimsOf = (task: Row) =>
   updateCalls().filter(
-    ({ where, data }) => where.id === taskId && data.picked_at instanceof Date
+    ({ where, data }) => where.id === task.id && data.picked_at instanceof Date
   )
 
-const backoffsOf = (taskId: number) =>
+const accountingOf = (task: Row) =>
   updateCalls().filter(
-    ({ where, data }) => where.id === taskId && data.picked_at === null
+    ({ where, data }) => where.id === task.id && data.picked_at === null
   )
+
+const fetchCalls = () =>
+  findTasksMock.mock.calls.map(
+    ([args]) => args as { where: Where; orderBy: unknown; take: number }
+  )
+
+const fetchedLanes = () =>
+  fetchCalls().map(({ where, take }) => ({
+    lane: where.content_type === 'avatar' ? 'avatar' : 'text',
+    take
+  }))
+
+const modelCalledFor = () =>
+  moderateTextMock.mock.calls.map(([, message]) => taskIdOf(message as string))
+
+const healthReports = () =>
+  setKvMock.mock.calls
+    .filter(([key]) => key === KUN_MODERATION_HEALTH_KEY)
+    .map(([, value, ttl]) => ({ ...JSON.parse(value as string), ttl }))
+
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+let consoleWarnSpy: ReturnType<typeof vi.spyOn>
+
+const BREAKER_LOG_PREFIX = '[kun-moderation-breaker] '
+
+interface BreakerLog {
+  mode: string
+  lane: string
+  type: string
+  from: string
+  to: string
+  reason: string | null
+}
+
+const breakerLogs = (): BreakerLog[] =>
+  consoleWarnSpy.mock.calls
+    .map((call: unknown[]) => String(call[0]))
+    .filter((line: string) => line.startsWith(BREAKER_LOG_PREFIX))
+    .map((line: string) => JSON.parse(line.slice(BREAKER_LOG_PREFIX.length)))
+
+const newWorker = (mode: ModerationWorker['mode']) =>
+  createModerationWorker({ mode, systematic: 'enforce' })
+
+// 推进时钟后再跑一批; 取任务与调模型的记录只留这一批的
+const runAt = async (worker: ModerationWorker, offsetMs: number) => {
+  vi.setSystemTime(at(offsetMs))
+  findTasksMock.mockClear()
+  moderateTextMock.mockClear()
+  await runModerationBatch(worker)
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(NOW)
   vi.resetAllMocks()
   consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  rows = []
   nextTaskId = 1
-  findTasksMock.mockResolvedValue([])
+  recover()
+
+  findTasksMock.mockImplementation(
+    async ({ where, take }: { where: Where; take: number }) =>
+      rows
+        .filter((row) => matches(row, where))
+        .sort((a, b) => a.next_attempt.getTime() - b.next_attempt.getTime())
+        .slice(0, take)
+        // worker 拿到的是取任务那一刻的快照
+        .map((row) => ({ ...row }))
+  )
+  updateTaskMock.mockImplementation(async ({ where, data }: UpdateArgs) => {
+    const row = rows.find((candidate) => matches(candidate, where))
+    if (!row) {
+      return { count: 0 }
+    }
+    const target = row as unknown as Record<string, unknown>
+    for (const [key, value] of Object.entries(data)) {
+      const increment =
+        typeof value === 'object' && value !== null && 'increment' in value
+          ? Number(value.increment)
+          : null
+      target[key] = increment === null ? value : Number(target[key]) + increment
+    }
+    return { count: 1 }
+  })
+  markTaskManualMock.mockImplementation(
+    async (taskId: number, failure: { kind: string; reason: string }) => {
+      const row = rows.find((candidate) => candidate.id === taskId)!
+      row.status = 'manual'
+      row.failure_kind = failure.kind
+      row.reject_reason = failure.reason
+      return { count: 1 }
+    }
+  )
+  applyModerationVerdictMock.mockImplementation(
+    async ({ task, approved }: { task: Row; approved: boolean }) => {
+      rowOf(task).status = approved ? 'approved' : 'rejected'
+      return true
+    }
+  )
   findBlacklistMock.mockResolvedValue([])
-  updateTaskMock.mockResolvedValue({ count: 1 })
   getKvMock.mockResolvedValue(null)
   setKvMock.mockResolvedValue(undefined)
-  moderateTextMock.mockResolvedValue({
-    verdict: { pass: true },
-    model: 'test-model',
-    tokensIn: 1,
-    tokensOut: 1
-  })
-  applyModerationVerdictMock.mockResolvedValue(true)
-  markTaskManualMock.mockResolvedValue({ count: 1 })
+  getFileFromS3Mock.mockResolvedValue(Buffer.from('avatar'))
+  moderateTextMock.mockImplementation(async (_type, message: string) =>
+    modelBehaviour(taskIdOf(message))
+  )
+  moderateImageMock.mockImplementation(async () => verdict())
 })
 
 afterEach(() => {
@@ -130,38 +346,88 @@ afterEach(() => {
 })
 
 describe('取任务', () => {
-  it('只取待处理、已到重试时刻、租约为空或已过期的任务, 按就绪时刻先后取一批', async () => {
-    await runModerationBatch()
+  it('按车道各取一次: 待处理、已到重试时刻、租约为空或已过期, 按就绪时刻先后', async () => {
+    await runModerationBatch(newWorker('shadow'))
 
-    expect(findTasksMock).toHaveBeenCalledTimes(1)
-    expect(findTasksMock).toHaveBeenCalledWith({
-      where: {
-        status: 'pending',
-        next_attempt: { lte: NOW },
-        OR: [
-          { picked_at: null },
-          {
-            picked_at: {
-              lt: new Date(NOW.getTime() - MODERATION_LEASE_SECONDS * 1000)
-            }
-          }
-        ]
+    const claimable = {
+      status: 'pending',
+      next_attempt: { lte: NOW },
+      OR: [{ picked_at: null }, { picked_at: { lt: leaseStaleBefore(NOW) } }]
+    }
+    expect(fetchCalls()).toEqual([
+      {
+        where: { ...claimable, content_type: { not: 'avatar' } },
+        orderBy: { next_attempt: 'asc' },
+        take: MODERATION_BATCH_SIZE
       },
-      orderBy: { next_attempt: 'asc' },
-      take: MODERATION_BATCH_SIZE
-    })
+      {
+        where: { ...claimable, content_type: 'avatar' },
+        orderBy: { next_attempt: 'asc' },
+        take: MODERATION_BATCH_SIZE
+      }
+    ])
     expect(updateTaskMock).not.toHaveBeenCalled()
+  })
+
+  it('两条车道合起来仍只处理一批的量, 就绪早的先', async () => {
+    const late = Array.from({ length: MODERATION_BATCH_SIZE }, () =>
+      addTask({ next_attempt: at(-1_000) })
+    )
+    const avatars = Array.from({ length: 3 }, () =>
+      addAvatarTask({ next_attempt: at(-5_000) })
+    )
+
+    await runModerationBatch(newWorker('shadow'))
+
+    expect(avatars.map((task) => rowOf(task).status)).toEqual([
+      'approved',
+      'approved',
+      'approved'
+    ])
+    expect(
+      late.filter((task) => rowOf(task).status === 'approved')
+    ).toHaveLength(MODERATION_BATCH_SIZE - 3)
+    expect(late.slice(-3).map((task) => claimsOf(task))).toEqual([[], [], []])
+  })
+
+  it('每批上报一次两条车道的状态, 两分钟不续就过期', async () => {
+    await runModerationBatch(newWorker('enforce'))
+
+    const closed = {
+      state: 'closed',
+      reason: null,
+      since: null,
+      openUntil: null,
+      opens: 0,
+      lastError: ''
+    }
+    expect(healthReports()).toEqual([
+      {
+        at: NOW.getTime(),
+        mode: 'enforce',
+        lanes: { text: closed, avatar: closed },
+        ttl: 120
+      }
+    ])
+  })
+
+  it('状态上报失败不影响审核', async () => {
+    const task = addTask()
+    setKvMock.mockRejectedValue(new Error('redis down'))
+
+    await runModerationBatch(newWorker('enforce'))
+
+    expect(rowOf(task).status).toBe('approved')
   })
 })
 
 describe('认领', () => {
   it('调模型之前先给这一行盖租约, 认领条件与取任务的谓词相同', async () => {
-    const task = makeTask()
-    findTasksMock.mockResolvedValue([task])
+    const task = addTask()
 
-    await runModerationBatch()
+    await runModerationBatch(newWorker('shadow'))
 
-    expect(claimsOf(task.id)).toEqual([
+    expect(claimsOf(task)).toEqual([
       {
         where: {
           id: task.id,
@@ -169,11 +435,7 @@ describe('认领', () => {
           next_attempt: { lte: NOW },
           OR: [
             { picked_at: null },
-            {
-              picked_at: {
-                lt: new Date(NOW.getTime() - MODERATION_LEASE_SECONDS * 1000)
-              }
-            }
+            { picked_at: { lt: leaseStaleBefore(NOW) } }
           ]
         },
         data: { picked_at: NOW }
@@ -181,16 +443,15 @@ describe('认领', () => {
     ])
     expect(moderateTextMock).toHaveBeenCalledTimes(1)
     expect(applyModerationVerdictMock).toHaveBeenCalledTimes(1)
-    expect(backoffsOf(task.id)).toEqual([])
+    expect(accountingOf(task)).toEqual([])
     expect(markTaskManualMock).not.toHaveBeenCalled()
   })
 
   it('没抢到 (另一个 worker 已认领) 就跳过, 不调模型也不记账', async () => {
-    const task = makeTask()
-    findTasksMock.mockResolvedValue([task])
+    addTask()
     updateTaskMock.mockResolvedValue({ count: 0 })
 
-    await runModerationBatch()
+    await runModerationBatch(newWorker('shadow'))
 
     expect(updateTaskMock).toHaveBeenCalledTimes(1)
     expect(moderateTextMock).not.toHaveBeenCalled()
@@ -199,140 +460,73 @@ describe('认领', () => {
   })
 })
 
-describe('失败记账', () => {
-  it('缺模型配置: 不重试, 直接转人工', async () => {
-    const task = makeTask()
-    findTasksMock.mockResolvedValue([task])
-    moderateTextMock.mockRejectedValue(
-      new ModerationConfigError('MODERATION_AI_TEXT_MODEL is not configured')
-    )
-
-    await runModerationBatch()
-
-    expect(markTaskManualMock).toHaveBeenCalledTimes(1)
-    expect(markTaskManualMock).toHaveBeenCalledWith(
-      task.id,
-      'MODERATION_AI_TEXT_MODEL is not configured'
-    )
-    expect(backoffsOf(task.id)).toEqual([])
-  })
-
-  it.each([
-    [0, 1, 5_000],
-    [1, 2, 25_000]
-  ])(
-    '其余错误: 已试 %i 次 → retry 写成 %i, %i 毫秒后再试, 租约清空',
-    async (retry, nextRetry, delayMs) => {
-      const task = makeTask({ retry })
-      findTasksMock.mockResolvedValue([task])
-      moderateTextMock.mockRejectedValue(new Error('upstream 503'))
-
-      await runModerationBatch()
-
-      expect(backoffsOf(task.id)).toEqual([
-        {
-          where: { id: task.id, status: 'pending' },
-          data: {
-            retry: nextRetry,
-            next_attempt: new Date(NOW.getTime() + delayMs),
-            picked_at: null
-          }
-        }
-      ])
-      expect(markTaskManualMock).not.toHaveBeenCalled()
-    }
-  )
-
-  it('第三次失败转人工, 原因带上错误原文', async () => {
-    const task = makeTask({ retry: 2 })
-    findTasksMock.mockResolvedValue([task])
-    moderateTextMock.mockRejectedValue(new Error('upstream 503'))
-
-    await runModerationBatch()
-
-    expect(markTaskManualMock).toHaveBeenCalledTimes(1)
-    expect(markTaskManualMock).toHaveBeenCalledWith(
-      task.id,
-      '审核失败: Error: upstream 503'
-    )
-    expect(backoffsOf(task.id)).toEqual([])
-  })
-})
-
-// 取到时租约非空, 说明上一个 worker 崩在了半路: 既没落裁决也没写退避
-describe('回收过期租约', () => {
-  const stale = new Date(NOW.getTime() - (MODERATION_LEASE_SECONDS + 1) * 1000)
+// 取到时租约非空, 说明上一个 worker 崩在了半路: 既没落裁决也没写退避。两种模式相同
+describe.each(['shadow', 'enforce'] as const)('回收过期租约 (%s)', (mode) => {
+  const stale = () => at(-(MODERATION_LEASE_SECONDS + 1) * 1000)
 
   it('认领的同一条语句里把 retry 加一, 然后照常处理', async () => {
-    const task = makeTask({ picked_at: stale })
-    findTasksMock.mockResolvedValue([task])
+    const task = addTask({ picked_at: stale() })
 
-    await runModerationBatch()
+    await runModerationBatch(newWorker(mode))
 
-    expect(claimsOf(task.id).map(({ data }) => data)).toEqual([
+    expect(claimsOf(task).map(({ data }) => data)).toEqual([
       { picked_at: NOW, retry: { increment: 1 } }
     ])
-    expect(moderateTextMock).toHaveBeenCalledTimes(1)
-    expect(applyModerationVerdictMock).toHaveBeenCalledTimes(1)
+    expect(rowOf(task)).toMatchObject({ status: 'approved', retry: 1 })
   })
 
   it('回收后又抛错: retry 只净加一 (绝对写, 与认领时的自增落在同一个值)', async () => {
-    const task = makeTask({ picked_at: stale })
-    findTasksMock.mockResolvedValue([task])
-    moderateTextMock.mockRejectedValue(new Error('upstream 503'))
+    const task = addTask({ picked_at: stale() })
+    failAll(() => new Error('render crashed'))
 
-    await runModerationBatch()
+    await runModerationBatch(newWorker(mode))
 
-    expect(backoffsOf(task.id).map(({ data }) => data)).toEqual([
+    expect(accountingOf(task).map(({ data }) => data)).toEqual([
       {
         retry: 1,
-        next_attempt: new Date(NOW.getTime() + 5_000),
+        failure_kind: 'internal',
+        next_attempt: at(5_000),
         picked_at: null
       }
     ])
+    expect(rowOf(task).retry).toBe(1)
   })
 
   it('回收把预算用完: 转人工, 不再调模型', async () => {
-    const task = makeTask({ picked_at: stale, retry: 2 })
-    findTasksMock.mockResolvedValue([task])
+    const task = addTask({ picked_at: stale(), retry: 2 })
 
-    await runModerationBatch()
+    await runModerationBatch(newWorker(mode))
 
     expect(markTaskManualMock).toHaveBeenCalledTimes(1)
-    expect(markTaskManualMock).toHaveBeenCalledWith(
-      task.id,
-      '多次处理未完成, 已转人工复核'
-    )
+    expect(markTaskManualMock).toHaveBeenCalledWith(task.id, {
+      kind: 'crash_loop',
+      reason: '多次处理未完成, 已转人工复核'
+    })
     expect(moderateTextMock).not.toHaveBeenCalled()
   })
 })
 
-describe('并发与分组', () => {
+describe.each(['shadow', 'enforce'] as const)('并发与分组 (%s)', (mode) => {
   // 让每次模型调用停在半路, 由测试逐个放行
   const holdModelCalls = () => {
     const releases: Array<() => void> = []
     let inFlight = 0
     let peak = 0
-    moderateTextMock.mockImplementation(async () => {
+    modelBehaviour = async () => {
       inFlight++
       peak = Math.max(peak, inFlight)
       const { promise, resolve } = Promise.withResolvers<void>()
       releases.push(resolve)
       await promise
       inFlight--
-      return {
-        verdict: { pass: true },
-        model: 'test-model',
-        tokensIn: 1,
-        tokensOut: 1
-      }
-    })
+      return verdict()
+    }
     return {
       releases,
       peak: () => peak,
       // 让已经能走的微任务都走完: 该发起的调用都已发起, 被挡住的确实没动
       settle: async () => {
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 30; i++) {
           await Promise.resolve()
         }
       }
@@ -341,12 +535,11 @@ describe('并发与分组', () => {
 
   it('同时在途的模型调用不超过并发上限', async () => {
     const tasks = Array.from({ length: MODERATION_CONCURRENCY + 2 }, () =>
-      makeTask()
+      addTask()
     )
-    findTasksMock.mockResolvedValue(tasks)
     const model = holdModelCalls()
 
-    const batch = runModerationBatch()
+    const batch = runModerationBatch(newWorker(mode))
     await model.settle()
     expect(model.releases).toHaveLength(MODERATION_CONCURRENCY)
 
@@ -361,45 +554,30 @@ describe('并发与分组', () => {
     expect(applyModerationVerdictMock).toHaveBeenCalledTimes(tasks.length)
   })
 
-  it('同一个 patch 的资源与评价串行, 同一个用户的头像与签名串行', async () => {
-    const plain = (label: string) => ({
+  it('同一个 patch 的资源与评价串行, 不同 patch 之间并行', async () => {
+    const plain = (label: string, id: number) => ({
       v: 2,
-      segments: [{ label, kind: 'plain', value: `${label}内容` }],
-      name: 'n',
-      bio: 'b'
+      segments: [{ label, kind: 'plain', value: textOf(id) }],
+      name: 'n'
     })
-    const resource = makeTask({
-      content_type: 'resource',
-      patch_id: 3,
-      payload: plain('标题')
-    })
-    const rating = makeTask({
-      content_type: 'rating',
-      patch_id: 3,
-      payload: plain('评价')
-    })
-    const otherRating = makeTask({
-      content_type: 'rating',
-      patch_id: 4,
-      payload: plain('评价')
-    })
-    findTasksMock.mockResolvedValue([resource, rating, otherRating])
+    const resource = addTask({ content_type: 'resource', patch_id: 3 })
+    resource.payload = plain('标题', resource.id)
+    const rating = addTask({ content_type: 'rating', patch_id: 3 })
+    rating.payload = plain('评价', rating.id)
+    const otherRating = addTask({ content_type: 'rating', patch_id: 4 })
+    otherRating.payload = plain('评价', otherRating.id)
     const model = holdModelCalls()
 
-    const batch = runModerationBatch()
+    const batch = runModerationBatch(newWorker(mode))
     await model.settle()
 
     // patch 3 的第二条要等第一条结算; patch 4 不受它影响
-    expect(moderateTextMock.mock.calls.map(([type]) => type)).toEqual([
-      'resource',
-      'rating'
-    ])
-    expect(claimsOf(rating.id)).toEqual([])
-    expect(claimsOf(otherRating.id)).toHaveLength(1)
+    expect(modelCalledFor()).toEqual([resource.id, otherRating.id])
+    expect(claimsOf(rating)).toEqual([])
 
     model.releases.shift()?.()
     await model.settle()
-    expect(claimsOf(rating.id)).toHaveLength(1)
+    expect(claimsOf(rating)).toHaveLength(1)
 
     model.releases.forEach((release) => release())
     await batch
@@ -407,36 +585,513 @@ describe('并发与分组', () => {
   })
 
   it('一条任务的记账写库失败不影响别的组, 批次等所有 worker 结束才返回', async () => {
-    const broken = makeTask()
-    const healthy = makeTask()
-    findTasksMock.mockResolvedValue([broken, healthy])
-    moderateTextMock.mockImplementation(async (_type, message: string) => {
-      if (message.includes(textOf(broken.id))) {
-        throw new Error('upstream 503')
-      }
-      return {
-        verdict: { pass: true },
-        model: 'test-model',
-        tokensIn: 1,
-        tokensOut: 1
-      }
-    })
-    updateTaskMock.mockImplementation(async ({ data }: UpdateArgs) => {
-      if (data.picked_at === null) {
+    const broken = addTask()
+    const healthy = addTask()
+    failOnly([broken], () => new Error('render crashed'))
+    const applyUpdate = updateTaskMock.getMockImplementation()!
+    updateTaskMock.mockImplementation(async (args: UpdateArgs) => {
+      if (args.data.picked_at === null) {
         throw new Error('db down')
       }
-      return { count: 1 }
+      return applyUpdate(args)
     })
 
-    await expect(runModerationBatch()).resolves.toBeUndefined()
+    await expect(runModerationBatch(newWorker(mode))).resolves.toBeUndefined()
 
-    expect(applyModerationVerdictMock).toHaveBeenCalledTimes(1)
-    expect(applyModerationVerdictMock).toHaveBeenCalledWith(
-      expect.objectContaining({ task: healthy })
-    )
+    expect(rowOf(healthy).status).toBe('approved')
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       'Moderation worker crashed:',
       expect.objectContaining({ message: 'db down' })
     )
+  })
+})
+
+// 影子模式: 熔断器只观察, 取任务与记账和引入车道之前逐条相同
+describe('影子模式的失败记账', () => {
+  it('缺模型配置: 不重试, 直接转人工', async () => {
+    const task = addTask()
+    failAll(
+      () =>
+        new ModerationConfigError('MODERATION_AI_TEXT_MODEL is not configured')
+    )
+
+    await runModerationBatch(newWorker('shadow'))
+
+    expect(markTaskManualMock).toHaveBeenCalledTimes(1)
+    expect(markTaskManualMock).toHaveBeenCalledWith(task.id, {
+      kind: 'misconfigured',
+      reason: 'MODERATION_AI_TEXT_MODEL is not configured'
+    })
+    expect(accountingOf(task)).toEqual([])
+  })
+
+  it.each([
+    [0, 1, 5_000],
+    [1, 2, 25_000]
+  ])(
+    '供应商 503: 已试 %i 次 → retry 写成 %i, %i 毫秒后再试, 租约清空',
+    async (retry, nextRetry, delayMs) => {
+      const task = addTask({ retry })
+      failAll(() => httpFailure(503))
+
+      await runModerationBatch(newWorker('shadow'))
+
+      expect(accountingOf(task)).toEqual([
+        {
+          where: { id: task.id, status: 'pending' },
+          data: {
+            retry: nextRetry,
+            failure_kind: 'unavailable',
+            next_attempt: at(delayMs),
+            picked_at: null
+          }
+        }
+      ])
+      expect(rowOf(task)).toMatchObject({ status: 'pending', defer_count: 0 })
+    }
+  )
+
+  it('第三次失败转人工, 原因带上错误原文', async () => {
+    const task = addTask({ retry: 2 })
+    failAll(() => new Error('upstream 503'))
+
+    await runModerationBatch(newWorker('shadow'))
+
+    expect(markTaskManualMock).toHaveBeenCalledTimes(1)
+    expect(markTaskManualMock).toHaveBeenCalledWith(task.id, {
+      kind: 'internal',
+      reason: '审核失败: Error: upstream 503'
+    })
+    expect(accountingOf(task)).toEqual([])
+  })
+
+  it('供应商宕机时照旧逐条耗尽: 车道只在日志里打开, 不挡任务', async () => {
+    const worker = newWorker('shadow')
+    const tasks = Array.from({ length: 4 }, () => addTask())
+    failAll(() => httpFailure(503))
+
+    await runAt(worker, 0)
+    await runAt(worker, 15_000)
+    await runAt(worker, 45_000)
+
+    expect(tasks.map((task) => rowOf(task))).toEqual(
+      tasks.map(() =>
+        expect.objectContaining({
+          status: 'manual',
+          failure_kind: 'unavailable',
+          defer_count: 0
+        })
+      )
+    )
+    // 每一批都两条车道全取
+    expect(fetchedLanes()).toEqual([
+      { lane: 'text', take: MODERATION_BATCH_SIZE },
+      { lane: 'avatar', take: MODERATION_BATCH_SIZE }
+    ])
+    expect(breakerLogs()[0]).toMatchObject({
+      mode: 'shadow',
+      lane: 'text',
+      type: 'transition',
+      from: 'closed',
+      to: 'open',
+      reason: 'dependency'
+    })
+  })
+
+  // 强制模式下车道打开期间不会有调用; 影子模式照常处理这些任务, 但它们的结果不能
+  // 喂给熔断器, 否则影子状态与将来的真实状态对不上
+  it('影子状态按强制模式会发生的调用推进: 打开期间的结果不计, 到点后的第一条才是探测', async () => {
+    const worker = newWorker('shadow')
+    const first = addTask()
+    failOnly([first], () => httpFailure(401))
+    await runAt(worker, 0)
+    expect(worker.breakers.text.snapshot().state).toBe('open')
+
+    // 打开期间: 新任务照常处理并成功, 影子车道不因此闭合
+    const duringOpen = addTask({ next_attempt: at(15_000) })
+    await runAt(worker, 15_000)
+    expect(rowOf(duringOpen).status).toBe('approved')
+    expect(worker.breakers.text.snapshot().state).toBe('open')
+
+    // 到点: 这一批的第一条是探测, 成功后闭合
+    addTask({ next_attempt: at(30_000) })
+    await runAt(worker, 30_000)
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+    expect(breakerLogs().map(({ from, to }) => `${from}→${to}`)).toEqual([
+      'closed→open',
+      'open→half_open',
+      'half_open→closed'
+    ])
+  })
+})
+
+describe('强制模式: 供应商整体不可用', () => {
+  it('503 跨任务连续出现: 车道打开, 没有一条被扣重试预算, 也没有一条转人工', async () => {
+    const worker = newWorker('enforce')
+    const tasks = Array.from({ length: 7 }, () => addTask())
+    failAll(() => httpFailure(503))
+
+    await runAt(worker, 0)
+
+    expect(worker.breakers.text.snapshot()).toMatchObject({
+      state: 'open',
+      reason: 'dependency',
+      openUntil: at(30_000).getTime()
+    })
+    expect(markTaskManualMock).not.toHaveBeenCalled()
+    const after = tasks.map((task) => rowOf(task))
+    expect(after.every((row) => row.status === 'pending')).toBe(true)
+    expect(after.every((row) => row.retry === 0)).toBe(true)
+    // 打开之前的三次失败各扣一次推迟预算; 同时在途的另外两条是打开之后才返回的, 不扣;
+    // 还没开始的两条没有被认领, 也没有调模型
+    expect(after.map((row) => row.defer_count)).toEqual([1, 1, 1, 0, 0, 0, 0])
+    expect(after.map((row) => row.failure_kind)).toEqual([
+      'unavailable',
+      'unavailable',
+      'unavailable',
+      'unavailable',
+      'unavailable',
+      '',
+      ''
+    ])
+    expect(modelCalledFor()).toHaveLength(MODERATION_CONCURRENCY)
+    expect(claimsOf(tasks[5])).toEqual([])
+    expect(claimsOf(tasks[6])).toEqual([])
+    // 都要等到车道的下一次探测之后
+    expect(
+      after.slice(0, 5).every((row) => row.next_attempt >= at(30_000))
+    ).toBe(true)
+    expect(after.slice(0, 5).every((row) => row.picked_at === null)).toBe(true)
+  })
+
+  it('打开期间不取这条车道的任务, 另一条车道照常', async () => {
+    const worker = newWorker('enforce')
+    addTask()
+    addTask()
+    addTask()
+    failAll(() => httpFailure(503))
+    await runAt(worker, 0)
+    const avatar = addAvatarTask({ next_attempt: at(15_000) })
+
+    await runAt(worker, 15_000)
+
+    expect(fetchedLanes()).toEqual([
+      { lane: 'avatar', take: MODERATION_BATCH_SIZE }
+    ])
+    expect(moderateTextMock).not.toHaveBeenCalled()
+    expect(rowOf(avatar).status).toBe('approved')
+  })
+
+  it('到点后只取一条去探测; 探测失败重新打开且不扣这条任务, 探测成功后恢复整批处理', async () => {
+    const worker = newWorker('enforce')
+    Array.from({ length: 4 }, () => addTask())
+    failAll(() => httpFailure(503))
+    await runAt(worker, 0)
+    const before = rows.map((row) => ({ ...row }))
+
+    // 第一次探测: 供应商仍不可用
+    await runAt(worker, 30_000)
+    expect(fetchedLanes()).toContainEqual({ lane: 'text', take: 1 })
+    expect(modelCalledFor()).toHaveLength(1)
+    expect(worker.breakers.text.snapshot()).toMatchObject({
+      state: 'open',
+      opens: 2,
+      openUntil: at(90_000).getTime()
+    })
+    const probed = rows.find((row) => row.id === modelCalledFor()[0])!
+    expect(probed).toMatchObject({
+      status: 'pending',
+      retry: 0,
+      defer_count: before.find((row) => row.id === probed.id)!.defer_count,
+      next_attempt: at(90_000)
+    })
+
+    // 第二次探测: 供应商恢复
+    recover()
+    await runAt(worker, 90_000)
+    expect(modelCalledFor()).toHaveLength(1)
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+
+    // 之后整批照常
+    await runAt(worker, 105_000)
+    expect(fetchedLanes()).toContainEqual({
+      lane: 'text',
+      take: MODERATION_BATCH_SIZE
+    })
+    expect(rows.every((row) => row.status === 'approved')).toBe(true)
+    expect(markTaskManualMock).not.toHaveBeenCalled()
+  })
+
+  it('401 第一次就打开车道, 这一次照样扣推迟预算', async () => {
+    const worker = newWorker('enforce')
+    const task = addTask()
+    failAll(() => httpFailure(401))
+
+    await runAt(worker, 0)
+
+    expect(worker.breakers.text.snapshot()).toMatchObject({
+      state: 'open',
+      reason: 'misconfigured'
+    })
+    expect(rowOf(task)).toMatchObject({
+      status: 'pending',
+      retry: 0,
+      defer_count: 1,
+      failure_kind: 'misconfigured',
+      next_attempt: at(60_000)
+    })
+  })
+
+  it('带 Retry-After 的 429 第一次就打开车道, 车道与任务都等到它给的时刻', async () => {
+    const worker = newWorker('enforce')
+    const task = addTask()
+    failAll(() => httpFailure(429, 120_000))
+
+    await runAt(worker, 0)
+
+    expect(worker.breakers.text.snapshot()).toMatchObject({
+      state: 'open',
+      reason: 'rate_limited',
+      openUntil: at(120_000).getTime()
+    })
+    expect(rowOf(task)).toMatchObject({
+      defer_count: 1,
+      failure_kind: 'rate_limited',
+      next_attempt: at(120_000)
+    })
+  })
+})
+
+describe('强制模式: 探测名额', () => {
+  // 让文本车道停在「到点、等探测」
+  const openThenWait = async () => {
+    const worker = newWorker('enforce')
+    const opener = addTask()
+    failOnly([opener], () => httpFailure(401))
+    await runAt(worker, 0)
+    // 这条任务本身推迟得更久, 不参与下面的探测
+    rowOf(opener).next_attempt = at(3_600_000)
+    recover()
+    return worker
+  }
+
+  const probeAgainAt = async (worker: ModerationWorker, offsetMs: number) => {
+    const next = addTask({ next_attempt: at(offsetMs - 1) })
+    await runAt(worker, offsetMs)
+    expect(fetchedLanes()).toContainEqual({ lane: 'text', take: 1 })
+    expect(rowOf(next).status).toBe('approved')
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+  }
+
+  it('没有可认领的任务: 归还, 下一批还能探测', async () => {
+    const worker = await openThenWait()
+
+    await runAt(worker, 30_000)
+    expect(worker.breakers.text.snapshot().state).toBe('half_open')
+
+    await probeAgainAt(worker, 45_000)
+  })
+
+  it('探测的那条在本地就落定了 (命中缓存): 归还, 车道不因此闭合', async () => {
+    const worker = await openThenWait()
+    const cached = addTask({ next_attempt: at(29_000) })
+    getKvMock.mockResolvedValueOnce(JSON.stringify({ pass: true }))
+
+    await runAt(worker, 30_000)
+    expect(rowOf(cached).status).toBe('approved')
+    expect(moderateTextMock).not.toHaveBeenCalled()
+    expect(worker.breakers.text.snapshot().state).toBe('half_open')
+
+    await probeAgainAt(worker, 45_000)
+  })
+
+  it('探测的那条没抢到认领: 归还', async () => {
+    const worker = await openThenWait()
+    const taken = addTask({ next_attempt: at(29_000) })
+    updateTaskMock.mockImplementationOnce(async () => ({ count: 0 }))
+
+    await runAt(worker, 30_000)
+    expect(rowOf(taken).status).toBe('pending')
+    expect(worker.breakers.text.snapshot().state).toBe('half_open')
+
+    rowOf(taken).next_attempt = at(3_600_000)
+    await probeAgainAt(worker, 45_000)
+  })
+
+  it('取任务的查询失败: 归还', async () => {
+    const worker = await openThenWait()
+    findTasksMock.mockRejectedValueOnce(new Error('db down'))
+
+    vi.setSystemTime(at(30_000))
+    await expect(runModerationBatch(worker)).rejects.toThrow('db down')
+
+    await probeAgainAt(worker, 45_000)
+  })
+
+  it('探测的那条还没轮到批次就中断了 (读黑名单失败): 归还', async () => {
+    const worker = await openThenWait()
+    // 黑名单在进程内缓存一分钟 (模块级, 跨用例保留): 挑一个任何用例都没到过的时刻,
+    // 保证这一批要重新读库
+    const later = 36_000_000
+    rowOf(rows[0]).next_attempt = at(later * 2)
+    const waiting = addTask({ next_attempt: at(later) })
+    findBlacklistMock.mockRejectedValueOnce(new Error('db down'))
+
+    vi.setSystemTime(at(later))
+    await expect(runModerationBatch(worker)).rejects.toThrow('db down')
+    expect(rowOf(waiting).status).toBe('pending')
+
+    await runAt(worker, later + 15_000)
+    expect(rowOf(waiting).status).toBe('approved')
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+  })
+})
+
+describe('强制模式: 这条内容自己的失败', () => {
+  it('模型输出不合约定: 扣重试预算, 第三次转人工, 车道不打开', async () => {
+    const worker = newWorker('enforce')
+    const poison = addTask()
+    const healthy = addTask()
+    failOnly([poison], badOutput)
+
+    await runAt(worker, 0)
+    expect(rowOf(poison)).toMatchObject({
+      status: 'pending',
+      retry: 1,
+      defer_count: 0,
+      failure_kind: 'bad_output',
+      next_attempt: at(5_000)
+    })
+    expect(rowOf(healthy).status).toBe('approved')
+
+    await runAt(worker, 15_000)
+    expect(rowOf(poison)).toMatchObject({ retry: 2, next_attempt: at(40_000) })
+
+    await runAt(worker, 45_000)
+    expect(rowOf(poison)).toMatchObject({
+      status: 'manual',
+      failure_kind: 'bad_output',
+      reject_reason: '审核失败: Moderation verdict is not valid JSON: 好的'
+    })
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+  })
+
+  it('没带范围的错误 (渲染、落库) 算内部错误, 同样扣重试预算', async () => {
+    const worker = newWorker('enforce')
+    const task = addTask()
+    failAll(() => new Error('deadlock detected'))
+
+    await runAt(worker, 0)
+
+    expect(rowOf(task)).toMatchObject({
+      retry: 1,
+      defer_count: 0,
+      failure_kind: 'internal'
+    })
+  })
+
+  it('只有它每次都超时: 推迟预算用完后转人工, 期间正常任务照常通过', async () => {
+    const worker = newWorker('enforce')
+    const poison = addTask({ defer_count: 4 })
+    failOnly([poison], () => httpFailure(504))
+
+    await runAt(worker, 0)
+    expect(rowOf(poison)).toMatchObject({
+      status: 'pending',
+      defer_count: 5,
+      retry: 0,
+      next_attempt: at(600_000)
+    })
+
+    const healthy = addTask({ next_attempt: at(600_000) })
+    await runAt(worker, 600_000)
+    expect(rowOf(poison)).toMatchObject({
+      status: 'manual',
+      failure_kind: 'deferral_exhausted',
+      reject_reason:
+        '依赖类失败已推迟 5 次仍未成功: Moderation AI request failed with status 504'
+    })
+    expect(rowOf(healthy).status).toBe('approved')
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+  })
+
+  it('这一类模型没配: 直接转人工, 不进熔断器', async () => {
+    const worker = newWorker('enforce')
+    const tasks = Array.from({ length: 6 }, () => addTask())
+    failAll(
+      () =>
+        new ModerationConfigError('MODERATION_AI_TEXT_MODEL is not configured')
+    )
+
+    await runAt(worker, 0)
+
+    expect(tasks.map((task) => rowOf(task))).toEqual(
+      tasks.map(() =>
+        expect.objectContaining({
+          status: 'manual',
+          failure_kind: 'misconfigured',
+          reject_reason: 'MODERATION_AI_TEXT_MODEL is not configured'
+        })
+      )
+    )
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+    expect(breakerLogs()).toEqual([])
+  })
+})
+
+describe('强制模式: 头像车道', () => {
+  it('取图失败算存储的依赖类失败, 只打开头像车道', async () => {
+    const worker = newWorker('enforce')
+    // 各属不同用户: 同一用户的头像任务是串行的
+    const avatars = Array.from({ length: 3 }, (_, index) =>
+      addAvatarTask({ user_id: 100 + index })
+    )
+    const comment = addTask()
+    getFileFromS3Mock.mockRejectedValue(
+      Object.assign(new Error('Service Unavailable'), {
+        $fault: 'server',
+        $metadata: { httpStatusCode: 503 }
+      })
+    )
+
+    await runAt(worker, 0)
+
+    expect(worker.breakers.avatar.snapshot()).toMatchObject({
+      state: 'open',
+      reason: 'dependency'
+    })
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+    expect(avatars.map((task) => rowOf(task))).toEqual(
+      avatars.map(() =>
+        expect.objectContaining({
+          status: 'pending',
+          retry: 0,
+          defer_count: 1,
+          failure_kind: 'unavailable'
+        })
+      )
+    )
+    expect(rowOf(comment).status).toBe('approved')
+    expect(moderateImageMock).not.toHaveBeenCalled()
+  })
+
+  it('这张图在存储里不存在: 是这一条自己的问题, 扣重试预算, 车道不打开', async () => {
+    const worker = newWorker('enforce')
+    const avatar = addAvatarTask()
+    getFileFromS3Mock.mockRejectedValue(
+      Object.assign(new Error('NoSuchKey'), {
+        $fault: 'client',
+        $metadata: { httpStatusCode: 404 }
+      })
+    )
+
+    await runAt(worker, 0)
+
+    expect(rowOf(avatar)).toMatchObject({
+      retry: 1,
+      defer_count: 0,
+      failure_kind: 'bad_output'
+    })
+    expect(worker.breakers.avatar.snapshot().state).toBe('closed')
   })
 })

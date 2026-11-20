@@ -432,7 +432,10 @@ describe('载荷无法解析时转人工, 不调模型', () => {
 
     await processTextTask(task, [{ pattern: 'broken', content_types: [] }])
 
-    expect(markTaskManualMock).toHaveBeenCalledWith(1, '载荷无法解析')
+    expect(markTaskManualMock).toHaveBeenCalledWith(1, {
+      kind: 'internal',
+      reason: '载荷无法解析'
+    })
     expect(applyModerationVerdictMock).not.toHaveBeenCalled()
     expect(getKvMock).not.toHaveBeenCalled()
     expect(moderateTextMock).not.toHaveBeenCalled()
@@ -441,7 +444,10 @@ describe('载荷无法解析时转人工, 不调模型', () => {
   it('头像任务: 缺对象 key 时不去取图', async () => {
     await processAvatarTask(makeTask('avatar', { pendingLink: 'only-this' }))
 
-    expect(markTaskManualMock).toHaveBeenCalledWith(1, '载荷无法解析')
+    expect(markTaskManualMock).toHaveBeenCalledWith(1, {
+      kind: 'internal',
+      reason: '载荷无法解析'
+    })
     expect(applyModerationVerdictMock).not.toHaveBeenCalled()
   })
 })

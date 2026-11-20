@@ -21,7 +21,10 @@ import {
   MODERATION_REJECT_NOTICE,
   MODERATION_S3_TIMEOUT_MS
 } from '~/constants/moderation'
-import type { ModerationContentType } from '~/constants/moderation'
+import type {
+  ModerationContentType,
+  ModerationFailureKind
+} from '~/constants/moderation'
 import { APPEAL_CONTENT_TYPE, APPEAL_SETTINGS_LINK } from '~/constants/appeal'
 import {
   MODERATION_PAYLOAD_UNREADABLE,
@@ -44,11 +47,19 @@ export interface ApplyVerdictOptions {
 }
 
 // AI failed permanently or is misconfigured: task goes to manual review,
-// content stays pending - never auto-reject on provider failure
-export const markTaskManual = async (taskId: number, reason: string) =>
+// content stays pending - never auto-reject on provider failure.
+// kind 写进 failure_kind, 管理端据此区分转人工的原因 (reject_code 留给 AI 的类别码)
+export const markTaskManual = async (
+  taskId: number,
+  failure: { kind: ModerationFailureKind; reason: string }
+) =>
   prisma.moderation_task.updateMany({
     where: { id: taskId, status: 'pending' },
-    data: { status: 'manual', reject_reason: reason.slice(0, 500) }
+    data: {
+      status: 'manual',
+      failure_kind: failure.kind,
+      reject_reason: failure.reason.slice(0, 500)
+    }
   })
 
 // 人工把转人工的任务重新丢回队列. 认领守卫同时要求 verdict 为空:
@@ -60,7 +71,10 @@ export const requeueModerationTask = async (taskId: number) =>
     where: { id: taskId, status: 'manual', verdict: { equals: Prisma.DbNull } },
     data: {
       status: 'pending',
+      // 两份失败预算与失败类别一起清零: 重排是管理员说「再从头试一遍」
       retry: 0,
+      defer_count: 0,
+      failure_kind: '',
       next_attempt: new Date(),
       // 清掉上次处理遗留的租约, 否则未过期的租约会阻塞重新认领
       picked_at: null,
@@ -165,6 +179,9 @@ export const applyModerationVerdict = async (
       where: { id: task.id, status: fromStatus },
       data: {
         status: taskStatus,
+        // 裁决落定: 之前失败过的类别不再有意义 (否则 AI 拿不准转人工的任务会被
+        // 管理端按失败类别归错类)
+        failure_kind: '',
         reject_code: approved ? '' : (rejectCode ?? ''),
         reject_reason: approved ? '' : reason,
         ...(verdict !== undefined ? { verdict } : {}),

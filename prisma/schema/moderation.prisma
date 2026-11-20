@@ -19,6 +19,12 @@ model moderation_task {
   tokens_in     Int       @default(0)
   tokens_out    Int       @default(0)
   retry         Int       @default(0)
+  // 依赖类失败 (供应商不可用、限流、凭据或地址不对) 的推迟次数, 与 retry 分开记账:
+  // retry 只扣这条内容自己的失败. 记账规则见 server/moderation/accounting.ts
+  defer_count   Int       @default(0)
+  // 最近一次失败的类别 (MODERATION_FAILURE_KIND), 空串 = 没有失败过或已落定.
+  // 不复用 reject_code: 那一列在 AI 拿不准转人工的任务上存的是 AI 的类别码
+  failure_kind  String    @default("") @db.VarChar(32)
   next_attempt  DateTime  @default(now())
   // 认领租约: worker 处理前置为当前时间, 使锁失效/第二个 worker 抢不到同一行, 避免
   // 重复调用 AI; 过期 (崩溃 worker 遗留) 的租约可被回收. null = 未认领
