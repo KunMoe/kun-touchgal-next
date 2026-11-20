@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { expectFlatConditionalUpdate } from '~/prisma/__tests__/support/sqlShape'
+import {
+  dataStatements,
+  expectFlatConditionalUpdate
+} from '~/prisma/__tests__/support/sqlShape'
 
 // 签到依赖的编译器输出 (路由里那段注释的可执行版本): 不连库, 录下真实的 Prisma 为这次
 // 调用发出的 SQL。库拿到这条 SQL 之后在并发下的行为由 route.db.test.ts 在真库上守护
@@ -49,7 +52,7 @@ describe('POST /api/user/status/check-in 发出的 SQL', () => {
     })
 
     const statements = recorder.take()
-    expect(statements).toHaveLength(1)
+    expect(dataStatements(statements)).toHaveLength(1)
     expectFlatConditionalUpdate(statements, {
       table: 'user',
       guards: ['id', 'daily_check_in']

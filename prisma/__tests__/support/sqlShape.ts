@@ -52,14 +52,46 @@ const matchingParen = (sql: string, open: number) => {
   return sql.length
 }
 
+// 剥掉把整个表达式包起来的那一层括号
+const unwrap = (expression: string) =>
+  expression.startsWith('(') &&
+  matchingParen(expression, 0) === expression.length - 1
+    ? expression.slice(1, -1)
+    : expression
+
+const splitTopLevel = (expression: string, separator: string) => {
+  const parts: string[] = []
+  let from = 0
+  for (
+    let at = findTopLevel(expression, separator);
+    at !== -1;
+    at = findTopLevel(expression, separator, from)
+  ) {
+    parts.push(expression.slice(from, at))
+    from = at + separator.length
+  }
+  return [...parts, expression.slice(from)]
+}
+
 const targets = (sql: string, verb: string, table: string) =>
   new RegExp(`^${verb} (?:"[^"]+"\\.)?"${table}"(?: |$)`).test(collapse(sql))
+
+// 事务控制语句之外的语句。「这次调用只发了一条语句」数的是它们: 上游把不把单条写包进
+// BEGIN / COMMIT (7.9 以前包, 7.10 起不包) 不影响下面任何一条前提
+export const dataStatements = (statements: RecordedStatement[]) =>
+  statements.filter(
+    ({ sql }) =>
+      !/^(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT|SET TRANSACTION)\b/.test(
+        sql
+      )
+  )
 
 // 条件更新当 CAS 用的前提: 守卫由这条 UPDATE 自己的 WHERE 在目标行上求值。
 // READ COMMITTED 下后到者在行锁上等待, 拿到锁后库只对「目标表这一行」重新求值 WHERE;
 // 守卫若被编译进子查询 (WHERE id IN (SELECT …) / EXISTS / JOIN), 那是另一个扫描节点,
 // 仍用语句起始时的快照, 并发者会一起通过。所以要求: 恰好一条对该表的 UPDATE, 它的 WHERE
-// 里没有任何子查询或连接, 每个守卫列都以「列 比较符 参数」出现在其中
+// 里没有任何子查询或连接, 每个守卫列都以「列 比较符 参数」的形式作为 WHERE 的一个合取条件
+// (与别的条件 OR 在一起的不算: 那样它拦不住任何一行)
 export const expectFlatConditionalUpdate = (
   statements: RecordedStatement[],
   { table, guards }: { table: string; guards: string[] }
@@ -77,15 +109,24 @@ export const expectFlatConditionalUpdate = (
     `对 ${table} 的 UPDATE 连接了别的关系`
   ).not.toMatch(/\bFROM\b/i)
 
-  const where = sql.slice(whereAt + ' WHERE '.length)
+  const returningAt = findTopLevel(sql, ' RETURNING ', whereAt)
+  const where = sql.slice(
+    whereAt + ' WHERE '.length,
+    returningAt === -1 ? undefined : returningAt
+  )
   expect(
     withoutIdentifiers(where),
     `对 ${table} 的 UPDATE 把条件编译进了子查询或连接, 并发下库不会重新求值它`
   ).not.toMatch(/\b(SELECT|EXISTS|JOIN|WITH|FROM)\b/i)
+  const conjuncts = splitTopLevel(unwrap(where), ' AND ')
   for (const guard of guards) {
-    expect(where, `守卫列 ${guard} 不在 UPDATE 自己的 WHERE 里`).toMatch(
-      new RegExp(`"${table}"\\."${guard}" (?:=|<>|<=|>=|<|>) \\$\\d+`)
+    const comparison = new RegExp(
+      `^(?:"[^"]+"\\.)?"${table}"\\."${guard}" (?:=|<>|<=|>=|<|>) \\$\\d+$`
     )
+    expect(
+      conjuncts.some((conjunct) => comparison.test(conjunct)),
+      `守卫列 ${guard} 不是 UPDATE 自己的 WHERE 里的一个合取条件`
+    ).toBe(true)
   }
 
   return updates[0]
@@ -97,19 +138,22 @@ export const expectSingleDeleteReturning = (
   statements: RecordedStatement[],
   table: string
 ) => {
-  expect(statements, 'delete 应当只发一条语句').toHaveLength(1)
-  expect(targets(statements[0].sql, 'DELETE FROM', table)).toBe(true)
-  expect(collapse(statements[0].sql)).toMatch(/ RETURNING /)
-  return statements[0]
+  const sent = dataStatements(statements)
+  expect(sent, 'delete 应当只发一条语句').toHaveLength(1)
+  expect(targets(sent[0].sql, 'DELETE FROM', table)).toBe(true)
+  expect(collapse(sent[0].sql)).toMatch(/ RETURNING /)
 }
 
 interface AggregateSubquery {
   table: string
-  where: string
+  // 子查询里连接进来的表: 别名 -> 表名
+  joined: Map<string, string>
+  // WHERE 的各个顶层合取条件
+  conjuncts: string[]
 }
 
-// 关系 _count 被编译成 LEFT JOIN (SELECT 外键, COUNT(*) FROM 子表 [WHERE …] GROUP BY 外键)。
-// 取出每个这样的聚合子查询聚合的是哪张表、带着什么条件
+// 关系 _count 被编译成 LEFT JOIN (SELECT 外键, COUNT(*) FROM 子表 [LEFT JOIN 父表 AS 别名 …]
+// [WHERE …] GROUP BY 外键)。取出每个这样的聚合子查询聚合的是哪张表、连了谁、带着什么条件
 const aggregateSubqueries = (statements: RecordedStatement[]) => {
   const found: AggregateSubquery[] = []
   for (const statement of statements) {
@@ -126,28 +170,42 @@ const aggregateSubqueries = (statements: RecordedStatement[]) => {
       ) {
         continue
       }
-      const table = /^(?:"[^"]+"\.)?"([^"]+)"/.exec(
-        body.slice(fromAt + ' FROM '.length)
-      )?.[1]
       const whereAt = findTopLevel(body, ' WHERE ', fromAt)
+      const source = body.slice(
+        fromAt + ' FROM '.length,
+        whereAt === -1 ? groupAt : whereAt
+      )
       found.push({
-        table: table ?? '',
-        where:
-          whereAt === -1 ? '' : body.slice(whereAt + ' WHERE '.length, groupAt)
+        table: /^(?:"[^"]+"\.)?"([^"]+)"/.exec(source)?.[1] ?? '',
+        joined: new Map(
+          [
+            ...source.matchAll(/JOIN (?:"[^"]+"\.)?"([^"]+)" AS "([^"]+)"/g)
+          ].map(([, table, alias]) => [alias, table])
+        ),
+        conjuncts:
+          whereAt === -1
+            ? []
+            : splitTopLevel(
+                unwrap(body.slice(whereAt + ' WHERE '.length, groupAt)),
+                ' AND '
+              )
       })
     }
   }
   return found
 }
 
-// 「对返回行恒真」的关系过滤的作用: 让聚合子查询带上一个绑定参数的条件, 库才能按索引只聚合
-// 相关的行。要求: 对 relationTable 的每个聚合子查询的 WHERE 里都有 predicateColumn = 参数
+// 「对返回行恒真」的关系过滤的作用: 让聚合子查询带上「父表的某一列 = 参数」这个条件,
+// 库才能按索引只聚合相关的行。要求: 对 relationTable 的每个聚合子查询都连接了 parentTable,
+// 并以它的 predicateColumn = 参数 作为 WHERE 的一个合取条件 (落在子表自己的列上的不算:
+// 那是在改变数出来的结果, 不是恒真过滤)
 export const expectAggregatePushdown = (
   statements: RecordedStatement[],
   {
     relationTable,
+    parentTable,
     predicateColumn
-  }: { relationTable: string; predicateColumn: string }
+  }: { relationTable: string; parentTable: string; predicateColumn: string }
 ) => {
   const aggregates = aggregateSubqueries(statements).filter(
     ({ table }) => table === relationTable
@@ -156,19 +214,31 @@ export const expectAggregatePushdown = (
     aggregates.length,
     `没有找到对 ${relationTable} 的聚合子查询`
   ).toBeGreaterThan(0)
-  for (const { where } of aggregates) {
+  for (const { joined, conjuncts } of aggregates) {
+    const pushed = conjuncts.some((conjunct) => {
+      const alias = new RegExp(
+        `^"([^"]+)"\\."${predicateColumn}" = \\$\\d+$`
+      ).exec(conjunct)?.[1]
+      return alias !== undefined && joined.get(alias) === parentTable
+    })
     expect(
-      where,
-      `对 ${relationTable} 的聚合没有带上 ${predicateColumn} 条件, 会整表 GROUP BY`
-    ).toMatch(new RegExp(`"${predicateColumn}" = \\$\\d+`))
+      pushed,
+      `对 ${relationTable} 的聚合没有带上 ${parentTable}.${predicateColumn} 条件, 会整表 GROUP BY`
+    ).toBe(true)
   }
 }
 
-// 条件里没有任何绑定参数的聚合子查询 (Prisma 写成 WHERE 1=1) 所聚合的表: 每次查询都把
-// 这张表整个 GROUP BY 一遍
+// 没有任何「列 = 参数」合取条件的聚合子查询 (Prisma 写成 WHERE 1=1) 所聚合的表。
+// 对列表查询来说, 这就是每次查询都把这张表整个 GROUP BY 一遍。按连接键取单行的查询里
+// 库能把外层的常量推进聚合, 这个只看 SQL 文本的判据看不出来, 所以只拿它看列表查询
 export const wholeTableAggregates = (statements: RecordedStatement[]) =>
   aggregateSubqueries(statements)
-    .filter(({ where }) => !/\$\d+/.test(where))
+    .filter(
+      ({ conjuncts }) =>
+        !conjuncts.some((conjunct) =>
+          /^(?:"[^"]+"\.)+"[^"]+" = \$\d+$/.test(conjunct)
+        )
+    )
     .map(({ table }) => table)
 
 // Prisma 把 { equals, mode: 'insensitive' } 编译成不带 ESCAPE 子句的 ILIKE, 参数里的 _ 和 %
@@ -178,18 +248,16 @@ export const expectEscapedIlike = (
   statements: RecordedStatement[],
   { column, bound }: { column: string; bound: string }
 ) => {
-  const pattern = new RegExp(`"${column}" ILIKE \\$(\\d+)(?! ESCAPE)`)
-  const matched = statements.flatMap((statement) => {
-    const index = pattern.exec(collapse(statement.sql))?.[1]
-    return index
-      ? [{ statement, value: statement.values[Number(index) - 1] }]
-      : []
-  })
-  expect(matched.length, `没有找到对 ${column} 的 ILIKE`).toBeGreaterThan(0)
-  for (const { value } of matched) {
+  const pattern = new RegExp(`"${column}" ILIKE \\$(\\d+)(?!\\d| ESCAPE)`, 'g')
+  const values = statements.flatMap((statement) =>
+    [...collapse(statement.sql).matchAll(pattern)].map(
+      ([, index]) => statement.values[Number(index) - 1]
+    )
+  )
+  expect(values.length, `没有找到对 ${column} 的 ILIKE`).toBeGreaterThan(0)
+  for (const value of values) {
     expect(value).toBe(bound)
   }
-  return matched[0].statement
 }
 
 // 事务级通告锁、行锁与条件更新要互相看得见, 必须与 BEGIN / COMMIT 发在同一条连接上。

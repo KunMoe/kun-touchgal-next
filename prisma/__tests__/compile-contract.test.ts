@@ -1,6 +1,8 @@
+import { isMainThread } from 'worker_threads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSqlRecorder } from '~/prisma/__tests__/support/sqlRecorder'
 import {
+  dataStatements,
   expectAggregatePushdown,
   expectEscapedIlike,
   expectFlatConditionalUpdate,
@@ -46,13 +48,17 @@ describe('录制客户端', () => {
       true,
       true
     ])
+    // 数「发了几条语句」时不算事务控制语句
+    expect(dataStatements(inTx)).toEqual([inTx[1]])
   })
 
   it('一条语句都没录到时 take 抛错, 断言不会在空集合上通过', () => {
     expect(() => recorder.take()).toThrow('没有录到任何语句')
   })
 
-  it('预置的行经真实的 adapter 与反序列化回到调用方', async () => {
+  // 驱动把线上文本解析成值的那一步是录制器模拟的 (见 sqlRecorder.ts 的 encodeValue);
+  // 之后的列类型映射与反序列化是真实的
+  it('预置的行经 adapter 的列类型映射与客户端的反序列化回到调用方', async () => {
     const registered = new Date('2026-01-02T03:04:05.678Z')
     recorder.reply(/FROM "public"\."user"/, {
       rows: [{ id: 7, name: 'kun', register_time: registered }]
@@ -68,15 +74,14 @@ describe('录制客户端', () => {
 })
 
 describe('条件更新 (CAS)', () => {
-  it('标量条件的 updateMany 是自动提交的单条 UPDATE, 守卫平铺在它自己的 WHERE 里', async () => {
+  it('标量条件的 updateMany 只发一条 UPDATE (没有先读后写), 守卫平铺在它自己的 WHERE 里', async () => {
     const result = await prisma.user.updateMany({
       where: { id: 42, daily_check_in: 0 },
       data: { moemoepoint: { increment: 5 }, daily_check_in: { set: 1 } }
     })
 
     const statements = recorder.take()
-    expect(statements).toHaveLength(1)
-    expect(statements[0]).toMatchObject({ clientId: 0, inTransaction: false })
+    expect(dataStatements(statements)).toHaveLength(1)
     expectFlatConditionalUpdate(statements, {
       table: 'user',
       guards: ['id', 'daily_check_in']
@@ -95,7 +100,7 @@ describe('条件更新 (CAS)', () => {
     ).resolves.toEqual({ count: 0 })
   })
 
-  it('比较条件 (gte / lt / not) 同样平铺', async () => {
+  it('比较条件 (gte / not) 同样平铺', async () => {
     await prisma.user.updateMany({
       where: { id: 42, moemoepoint: { gte: 30 }, name: { not: 'kun' } },
       data: { name: 'kun', moemoepoint: { increment: -30 } }
@@ -157,6 +162,20 @@ describe('条件更新 (CAS)', () => {
     ).toThrow('恰好有一条')
   })
 
+  it('守卫与别的条件 OR 在一起时断言不通过', async () => {
+    await prisma.user.updateMany({
+      where: { OR: [{ id: 42 }, { daily_check_in: 0 }] },
+      data: { daily_check_in: { set: 1 } }
+    })
+
+    expect(() =>
+      expectFlatConditionalUpdate(recorder.take(), {
+        table: 'user',
+        guards: ['id', 'daily_check_in']
+      })
+    ).toThrow('合取条件')
+  })
+
   it('守卫列不在 WHERE 里时断言不通过', async () => {
     await prisma.user.updateMany({
       where: { id: 42 },
@@ -197,45 +216,115 @@ describe('大小写不敏感的精确匹配', () => {
     expect(() =>
       expectEscapedIlike(statements, { column: 'name', bound: 'a\\_b\\%c' })
     ).toThrow()
+    // 负对照: 带了 ESCAPE 子句就不再是「反斜杠转义」那套前提
+    const [{ sql, values }] = statements
+    expect(() =>
+      expectEscapedIlike(
+        [
+          {
+            ...statements[0],
+            sql: sql.replace('ILIKE $1', "ILIKE $11 ESCAPE '!'"),
+            values: [...values, ...Array(10).fill('a_b%c')]
+          }
+        ],
+        { column: 'name', bound: 'a_b%c' }
+      )
+    ).toThrow('没有找到')
+  })
+
+  it('同一列上有多处 ILIKE 时逐处核对绑定值', async () => {
+    await prisma.user.findFirst({
+      where: {
+        OR: [
+          { name: { equals: 'first', mode: 'insensitive' } },
+          { name: { equals: 'second', mode: 'insensitive' } }
+        ]
+      },
+      select: { id: true }
+    })
+
+    expect(() =>
+      expectEscapedIlike(recorder.take(), { column: 'name', bound: 'first' })
+    ).toThrow()
   })
 })
 
 describe('关系 _count', () => {
-  const likeCount = (where?: { comment: { patch_id: number } }) =>
+  const likes = {
+    relationTable: 'user_patch_comment_like_relation',
+    parentTable: 'patch_comment',
+    predicateColumn: 'patch_id'
+  }
+  const likeCount = (like_by: true | { where: object }) =>
     prisma.patch_comment.findMany({
       where: { patch_id: 9 },
       take: 2,
-      select: {
-        id: true,
-        _count: { select: { like_by: where ? { where } : true } }
-      }
+      select: { id: true, _count: { select: { like_by } } }
     })
 
   it('带上对返回行恒真的关系过滤时, 条件下推进聚合子查询', async () => {
-    await likeCount({ comment: { patch_id: 9 } })
+    await likeCount({ where: { comment: { patch_id: 9 } } })
 
     const statements = recorder.take()
-    expectAggregatePushdown(statements, {
-      relationTable: 'user_patch_comment_like_relation',
-      predicateColumn: 'patch_id'
-    })
+    expectAggregatePushdown(statements, likes)
     expect(wholeTableAggregates(statements)).toEqual([])
   })
 
   // 负对照: 外层的 patch_id 条件下推不进聚合子查询, 不带过滤就是整表 GROUP BY
   it('不带过滤时聚合子查询没有任何条件, 断言判它为整表聚合', async () => {
-    await likeCount()
+    await likeCount(true)
 
     const statements = recorder.take()
-    expect(wholeTableAggregates(statements)).toEqual([
-      'user_patch_comment_like_relation'
-    ])
+    expect(wholeTableAggregates(statements)).toEqual([likes.relationTable])
+    expect(() => expectAggregatePushdown(statements, likes)).toThrow(
+      '整表 GROUP BY'
+    )
+  })
+
+  // 负对照: 落在点赞表自己的列上的条件改变的是数出来的结果 (只数某个人点的赞), 不是恒真过滤
+  it('过滤落在子表自己的列上时不算下推', async () => {
+    await likeCount({ where: { user_id: 9 } })
+
     expect(() =>
-      expectAggregatePushdown(statements, {
-        relationTable: 'user_patch_comment_like_relation',
-        predicateColumn: 'patch_id'
+      expectAggregatePushdown(recorder.take(), {
+        ...likes,
+        predicateColumn: 'user_id'
       })
     ).toThrow('整表 GROUP BY')
+  })
+
+  // 负对照: 条件在另一张连接进来的表上, 不是所声明的父表
+  it('过滤落在别的连接表上时不算所声明的下推', async () => {
+    await likeCount({ where: { comment: { patch: { user_id: 9 } } } })
+
+    const statements = recorder.take()
+    expect(statements[0].sql).toMatch(/"user_id" = \$\d+/)
+    expect(() =>
+      expectAggregatePushdown(statements, {
+        ...likes,
+        predicateColumn: 'user_id'
+      })
+    ).toThrow('整表 GROUP BY')
+  })
+
+  // 负对照: 与别的条件 OR 在一起的过滤限制不了聚合的范围
+  it('过滤被 OR 进别的条件时不算下推', async () => {
+    await likeCount({
+      where: { OR: [{ comment: { patch_id: 9 } }, { user_id: 1 }] }
+    })
+
+    const statements = recorder.take()
+    expect(() => expectAggregatePushdown(statements, likes)).toThrow(
+      '整表 GROUP BY'
+    )
+    expect(wholeTableAggregates(statements)).toEqual([likes.relationTable])
+  })
+
+  // 负对照: 只有等值条件才把聚合限制在相关的行上
+  it('聚合子查询只带范围条件时仍判为整表聚合', async () => {
+    await likeCount({ where: { id: { gt: 0 } } })
+
+    expect(wholeTableAggregates(recorder.take())).toEqual([likes.relationTable])
   })
 })
 
@@ -301,39 +390,45 @@ describe('事务级通告锁', () => {
 })
 
 describe('参数编码', () => {
-  beforeEach(() => {
-    // 进程时区不是 UTC 时才分得清「UTC 墙钟」与「本地墙钟」; CI 的时区是 UTC
-    vi.stubEnv('TZ', 'Asia/Shanghai')
-    vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(new Date('2026-11-20T01:02:03.004Z'))
-  })
-
-  afterEach(() => {
-    vi.useRealTimers()
-    vi.unstubAllEnvs()
-  })
-
-  // 全库的时间列是无时区的 timestamp, 约定存 UTC 墙钟; 靠的是 adapter 把 Date 格式化成
-  // 不带偏移的 UTC 时间串, 库的会话时区才无关紧要
-  it('Date 参数与 @updatedAt 以不带偏移的 UTC 墙钟字符串绑定, 与进程时区无关', async () => {
-    expect(new Date().getTimezoneOffset()).toBe(-480)
-
-    await prisma.user.updateMany({
-      where: {
-        id: 42,
-        register_time: { lt: new Date('2026-11-19T23:59:59.500Z') }
-      },
-      data: { bio: '' }
+  describe('时间', () => {
+    beforeEach(() => {
+      // 进程时区不是 UTC 时才分得清「UTC 墙钟」与「本地墙钟」; CI 的时区是 UTC
+      vi.stubEnv('TZ', 'Asia/Shanghai')
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-11-20T01:02:03.004Z'))
     })
-    const [update] = recorder.take()
-    // 条件里的 Date 参数, 以及 @updatedAt 取的当前时间
-    expect(update.values).toContain('2026-11-19 23:59:59.500')
-    expect(update.values).toContain('2026-11-20 01:02:03.004')
 
-    const since = new Date('2026-11-19T16:00:00.250Z')
-    await prisma.$executeRaw`DELETE FROM moderation_task WHERE next_attempt < ${since}`
-    const [raw] = recorder.take()
-    expect(raw.values).toEqual(['2026-11-19 16:00:00.250'])
+    afterEach(() => {
+      vi.useRealTimers()
+      vi.unstubAllEnvs()
+    })
+
+    // 全库的时间列是无时区的 timestamp, 约定存 UTC 墙钟; 靠的是 adapter 把 Date 格式化成
+    // 不带偏移的 UTC 时间串, 库的会话时区才无关紧要。
+    // worker 线程里改 TZ 不生效, 所以 --pool=threads 下跳过 (默认的 forks 池在主线程里跑)
+    it.skipIf(!isMainThread)(
+      'Date 参数与 @updatedAt 以不带偏移的 UTC 墙钟字符串绑定, 与进程时区无关',
+      async () => {
+        expect(new Date().getTimezoneOffset()).toBe(-480)
+
+        await prisma.user.updateMany({
+          where: {
+            id: 42,
+            register_time: { lt: new Date('2026-11-19T23:59:59.500Z') }
+          },
+          data: { bio: '' }
+        })
+        const [update] = recorder.take()
+        // 条件里的 Date 参数, 以及 @updatedAt 取的当前时间
+        expect(update.values).toContain('2026-11-19 23:59:59.500')
+        expect(update.values).toContain('2026-11-20 01:02:03.004')
+
+        const since = new Date('2026-11-19T16:00:00.250Z')
+        await prisma.$executeRaw`DELETE FROM moderation_task WHERE next_attempt < ${since}`
+        const [raw] = recorder.take()
+        expect(raw.values).toEqual(['2026-11-19 16:00:00.250'])
+      }
+    )
   })
 
   // 库里的 id 都是 int4。越界的整数不在客户端被拦下, 原样发给库, 由库以 22003 拒绝

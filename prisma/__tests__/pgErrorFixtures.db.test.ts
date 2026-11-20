@@ -183,8 +183,9 @@ describe.skipIf(!dbContractUrl)('pg error fixtures on real PostgreSQL', () => {
       if (rows[0]?.wait_event_type === 'Lock') {
         break
       }
-      if (i > 250) {
-        throw new Error('第一个事务没有进入锁等待')
+      // 上限要低于用例的超时 (默认 5 秒, 其中死锁检测还要占 1 秒)
+      if (i > 100) {
+        throw new Error('等了 2 秒, 第一个事务没有进入锁等待')
       }
       await new Promise((resolve) => setTimeout(resolve, 20))
     }

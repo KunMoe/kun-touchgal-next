@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { expectEscapedIlike } from '~/prisma/__tests__/support/sqlShape'
+import {
+  dataStatements,
+  expectEscapedIlike
+} from '~/prisma/__tests__/support/sqlShape'
 
 // 登录按用户名或邮箱找人依赖的编译器输出, 不连库: 这两个条件走的是 ILIKE, 输入里的
 // _ 和 % 不转义的话, 带下划线的账号会解析到别人那一行
@@ -89,7 +92,7 @@ describe('POST /api/auth/login 发出的 SQL', () => {
     await expect(res.json()).resolves.toBe('用户名或密码错误')
 
     const statements = recorder.take()
-    expect(statements).toHaveLength(1)
+    expect(dataStatements(statements)).toHaveLength(1)
     expectEscapedIlike(statements, {
       column: 'email',
       bound: 'kun\\_chan\\%@qq.com'

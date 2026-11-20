@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { pgErrors } from '~/prisma/__tests__/support/pgErrorFixtures'
 import {
+  dataStatements,
   expectEscapedIlike,
   expectFlatConditionalUpdate
 } from '~/prisma/__tests__/support/sqlShape'
@@ -58,7 +59,7 @@ describe('POST /api/user/setting/username 发出的 SQL', () => {
     await expect(res.json()).resolves.toEqual({})
 
     const statements = recorder.take()
-    expect(statements).toHaveLength(2)
+    expect(dataStatements(statements)).toHaveLength(2)
     expectEscapedIlike(statements, { column: 'name', bound: 'k\\_n\\%' })
     const update = expectFlatConditionalUpdate(statements, {
       table: 'user',

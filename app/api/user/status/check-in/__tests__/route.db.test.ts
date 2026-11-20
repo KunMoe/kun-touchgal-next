@@ -114,9 +114,10 @@ describe.skipIf(!dbContractUrl)('daily check-in on real PostgreSQL', () => {
       if (waiting.length === expected) {
         return
       }
-      if (i > 500) {
+      // 上限要低于用例的超时 (默认 5 秒), 否则先到的是超时, 这条带现场的错误出不来
+      if (i > 150) {
         throw new Error(
-          `等了 10 秒只有 ${waiting.length}/${expected} 个会话排在锁上: ${JSON.stringify(rows)}`
+          `等了 3 秒只有 ${waiting.length}/${expected} 个会话排在锁上: ${JSON.stringify(rows)}`
         )
       }
       await new Promise((resolve) => setTimeout(resolve, 20))

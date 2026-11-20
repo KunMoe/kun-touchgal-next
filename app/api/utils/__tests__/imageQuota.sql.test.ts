@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { expectFlatConditionalUpdate } from '~/prisma/__tests__/support/sqlShape'
+import {
+  dataStatements,
+  expectFlatConditionalUpdate
+} from '~/prisma/__tests__/support/sqlShape'
 
 // 每日图片额度的抢占与退还依赖的编译器输出, 不连库
 
@@ -24,7 +27,7 @@ describe('每日图片额度发出的 SQL', () => {
     await expect(claimDailyImageQuota(7)).resolves.toBe(true)
 
     const statements = recorder.take()
-    expect(statements).toHaveLength(1)
+    expect(dataStatements(statements)).toHaveLength(1)
     const update = expectFlatConditionalUpdate(statements, {
       table: 'user',
       guards: ['id', 'daily_image_count']
@@ -43,7 +46,7 @@ describe('每日图片额度发出的 SQL', () => {
     await refundDailyImageQuota(7)
 
     const statements = recorder.take()
-    expect(statements).toHaveLength(1)
+    expect(dataStatements(statements)).toHaveLength(1)
     const update = expectFlatConditionalUpdate(statements, {
       table: 'user',
       guards: ['id', 'daily_image_count']

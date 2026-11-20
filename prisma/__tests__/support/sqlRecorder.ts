@@ -1,3 +1,4 @@
+import { createRequire } from 'module'
 import pg from 'pg'
 import {
   createKunPrismaClient,
@@ -13,8 +14,9 @@ import { isPrismaTransactionConflict } from '~/server/db/txErrors'
 // 它不连库, 证明不了库拿到这条 SQL 之后怎么执行 (行锁、并发下的重新求值),
 // 那一层由 *.db.test.ts 在真 PostgreSQL 上守护。
 //
-// 必须是 pg.Pool 的子类: adapter 用 instanceof 认外部池, 认出来才走它真实的参数编码与
-// 错误映射。伪造一个 driver adapter 会把这两段一并绕过。
+// 录的位置在驱动这一层, adapter 的参数编码与错误映射都还在里面; 伪造一个 driver adapter
+// 会把这两段一并绕过。池必须是 pg.Pool 的子类: adapter 用 instanceof 认外部池, 认不出来就
+// 把传进去的对象当连接配置, 自己另建一个真的池 (见 createSqlRecorder 开头的检查)。
 //
 // 用法 (vi.mock 的工厂在导入阶段执行, 实例须经 vi.hoisted 提前建好):
 //   const recorder = await vi.hoisted(async () =>
@@ -163,7 +165,21 @@ class RecordingPool extends pg.Pool {
   }
 }
 
+// adapter 自带 pg 依赖。根目录的 pg 与它解析到的不是同一份时 (比如只升了其中一边的主版本),
+// RecordingPool 过不了它的 instanceof, 它会另建一个连默认地址 (localhost:5432) 的池
+const assertAdapterSharesPg = () => {
+  const require = createRequire(import.meta.url)
+  const adapterPg = createRequire(require.resolve('@prisma/adapter-pg'))('pg')
+  if (adapterPg.Pool !== pg.Pool) {
+    throw new Error(
+      'sqlRecorder: @prisma/adapter-pg 用的 pg 与根目录的不是同一份, 录制池不会被它认出'
+    )
+  }
+}
+
 export const createSqlRecorder = () => {
+  assertAdapterSharesPg()
+
   let statements: RecordedStatement[] = []
   const replies: Array<{ pattern: RegExp; results: CannedResult[] }> = []
   const openTransactions = new Set<number>()
@@ -190,7 +206,8 @@ export const createSqlRecorder = () => {
       .find(({ pattern, results }) => results.length && pattern.test(collapsed))
       ?.results.shift()
     if (!canned) {
-      // 没有预置时: 读回空集, 写报告影响 1 行
+      // 没有预置时: 读回空集, 写报告影响 1 行。带 RETURNING 的写同样拿不到行
+      // (create 得到 null, update / delete 抛 P2025), 要走通就得预置那一行
       return toDriverResult([], /^(SELECT|WITH)\b/i.test(collapsed) ? 0 : 1)
     }
     if ('error' in canned) {
