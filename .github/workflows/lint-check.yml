@@ -175,3 +175,5 @@ jobs:
           server/db/__tests__/tx.db.test.ts
           app/api/edit/__tests__/manualTag.db.test.ts
           app/api/edit/__tests__/update.db.test.ts
+          prisma/__tests__/pgErrorFixtures.db.test.ts
+          app/api/user/status/check-in/__tests__/route.db.test.ts
