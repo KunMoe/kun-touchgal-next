@@ -63,6 +63,9 @@ export interface BreakerFailure {
   taskId: number
   message: string
   retryAfterMs?: number | null
+  // 这次失败是不是探测名额的持有者回报的。half_open 下只有探测的结果说明依赖现在的
+  // 状态; 车道打开之前就发出、这时才返回的调用说明不了
+  probe?: boolean
 }
 
 export interface BreakerRecord {
@@ -123,6 +126,44 @@ export const createLaneBreaker = (options: LaneBreakerOptions) => {
     moveTo('open')
   }
 
+  // 回到 closed 并清零全部计数
+  const close = () => {
+    const ended = snapshot()
+    reason = null
+    since = null
+    openUntil = 0
+    opens = 0
+    probeStartedAt = null
+    dependencyStreak = 0
+    dependencyTasks = new Set()
+    systematicTasks = new Set()
+    systematicReported = false
+    lastError = ''
+    state = 'closed'
+    if (ended.state !== 'closed') {
+      const { state: from, ...rest } = ended
+      onEvent?.({ type: 'transition', from, to: 'closed', ...rest })
+    }
+  }
+
+  // 依赖答复了、但这条任务没处理成 (request / internal): 只进系统性故障的计数
+  const countOwnFailure = (taskId: number) => {
+    systematicTasks.add(taskId)
+    if (systematicTasks.size < options.systematicThreshold) {
+      return
+    }
+    if (options.systematic === 'enforce') {
+      open('systematic', null)
+    } else if (!systematicReported) {
+      systematicReported = true
+      onEvent?.({
+        type: 'systematic_suspected',
+        tasks: systematicTasks.size,
+        lastError
+      })
+    }
+  }
+
   return {
     // pass: 照常处理; probe: 只放这一条去探测, 调用方之后必须回报成功 / 失败或归还名额;
     // blocked: 不要调用依赖
@@ -146,68 +187,64 @@ export const createLaneBreaker = (options: LaneBreakerOptions) => {
       return 'probe'
     },
 
-    // 拿到探测名额却没有调到依赖 (没有可认领的任务、命中缓存) 时归还
+    // 拿到探测名额却没有调到依赖 (没有可认领的任务、命中缓存) 时归还。不认持有者:
+    // 名额在持有者回报之前被别的路径清掉又发给下一条时 (只可能发生在车道闭合后又
+    // 重新打开、而前一条还没处理完), 前一条归还的会是后一条的名额, 代价是多放一条探测
     releaseProbe: () => {
       probeStartedAt = null
     },
 
     // 任何一次成功都说明依赖可用、任务处理得成: 回到 closed 并清零全部计数
-    recordSuccess: () => {
-      const ended = snapshot()
-      reason = null
-      since = null
-      openUntil = 0
-      opens = 0
-      probeStartedAt = null
-      dependencyStreak = 0
-      dependencyTasks = new Set()
-      systematicTasks = new Set()
-      systematicReported = false
-      lastError = ''
-      state = 'closed'
-      if (ended.state !== 'closed') {
-        const { state: from, ...rest } = ended
-        onEvent?.({ type: 'transition', from, to: 'closed', ...rest })
-      }
-    },
+    recordSuccess: close,
 
     recordFailure: (failure: BreakerFailure): BreakerRecord => {
       const before = state
       const { scope, taskId, retryAfterMs } = failure
-      lastError = failure.message.slice(0, LAST_ERROR_MAX_LENGTH)
+      const message = failure.message.slice(0, LAST_ERROR_MAX_LENGTH)
+      const isDependency =
+        scope === 'transient' ||
+        scope === 'rate_limited' ||
+        scope === 'misconfigured'
 
-      if (state === 'half_open') {
-        // 探测失败: 重新打开, 时长翻倍
-        open(reason ?? 'dependency', retryAfterMs)
-      } else if (state === 'open') {
-        // 打开之后才返回的在途调用, 不改变状态
+      if (state === 'open' || (state === 'half_open' && !failure.probe)) {
+        // 车道打开之前就发出、这时才返回的在途调用: 不改变状态, 也不占探测的结果
+        lastError = message
+      } else if (state === 'half_open') {
+        if (isDependency || reason === 'systematic') {
+          // 探测失败: 重新打开, 时长翻倍
+          lastError = message
+          open(reason ?? 'dependency', retryAfterMs)
+        } else {
+          // 探测拿到了依赖的应答 (或倒在了与依赖无关的地方), 当初打开车道的依赖故障
+          // 没有再现: 闭合, 这次失败与平时一样只进系统性故障的计数。不闭合的话, 一条
+          // 输出确定性损坏的内容恰好排在队首, 就能让已经恢复的车道一轮轮地开下去
+          close()
+          lastError = message
+          countOwnFailure(taskId)
+        }
       } else if (scope === 'misconfigured') {
-        open('misconfigured', null)
-      } else if (scope === 'rate_limited' && retryAfterMs != null) {
+        lastError = message
+        open('misconfigured', retryAfterMs)
+      } else if (scope === 'rate_limited' && (retryAfterMs ?? 0) > 0) {
+        // 依赖明说了要等多久; Retry-After 为 0 等于没说, 与其余 429 一起计数
+        lastError = message
         open('rate_limited', retryAfterMs)
-      } else if (scope === 'transient' || scope === 'rate_limited') {
+      } else if (isDependency) {
+        lastError = message
         dependencyStreak++
         dependencyTasks.add(taskId)
         if (
           dependencyStreak >= options.dependencyThreshold &&
           dependencyTasks.size >= options.minDistinctTasks
         ) {
-          open(scope === 'rate_limited' ? 'rate_limited' : 'dependency', null)
+          open(
+            scope === 'rate_limited' ? 'rate_limited' : 'dependency',
+            retryAfterMs
+          )
         }
       } else {
-        systematicTasks.add(taskId)
-        if (systematicTasks.size >= options.systematicThreshold) {
-          if (options.systematic === 'enforce') {
-            open('systematic', null)
-          } else if (!systematicReported) {
-            systematicReported = true
-            onEvent?.({
-              type: 'systematic_suspected',
-              tasks: systematicTasks.size,
-              lastError
-            })
-          }
-        }
+        lastError = message
+        countOwnFailure(taskId)
       }
 
       return { before, after: snapshot() }

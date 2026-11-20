@@ -51,11 +51,10 @@ const isDependencyScope = (scope: TaskFailureScope) =>
   scope === 'transient' || scope === 'rate_limited' || scope === 'misconfigured'
 
 // 推迟的退避: 60 秒起逐次翻倍, 最长 10 分钟。依赖给的 Retry-After 同样封顶在这里 ——
-// 它说一天, 也不该让这条内容一天之后才再试 (车道自己会挡住过早的调用)
+// 它说一天, 也不该让这条内容一天之后才再试。到点时依赖若仍在限流, 这次调用会再失败
+// 一次、把车道重新打开, 代价有界
 const DEFERRAL_BASE_MS = 30 * 1000
 const DEFERRAL_MAX_MS = 10 * 60 * 1000
-
-export const failureKindOf = (scope: TaskFailureScope) => KIND_OF_SCOPE[scope]
 
 export const decideFailureAccounting = (input: {
   task: { retry: number; defer_count: number }
@@ -138,7 +137,10 @@ export const decideLegacyAccounting = (input: {
 
   const retry = task.retry + 1
   if (retry >= MODERATION_MAX_RETRY) {
-    return { action: 'manual', kind, reason: `审核失败: ${String(error)}` }
+    // 带范围的失败自己的消息里已有原错误的类名与状态码, 不再套一层类名
+    const detail =
+      error instanceof DependencyFailure ? error.message : String(error)
+    return { action: 'manual', kind, reason: `审核失败: ${detail}` }
   }
   return {
     action: 'retry',

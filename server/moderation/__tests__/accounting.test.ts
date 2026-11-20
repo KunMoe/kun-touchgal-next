@@ -211,8 +211,18 @@ describe('decideLegacyAccounting', () => {
     expect(legacy(2, outage, 'transient')).toEqual({
       action: 'manual',
       kind: 'unavailable',
-      reason: '审核失败: DependencyFailure: status 503'
+      reason: '审核失败: status 503'
     })
+  })
+
+  it('没带范围的错误: 原因里带上它的类名, 与改动前相同', () => {
+    expect(legacy(2, new TypeError('x is not a function'), 'internal')).toEqual(
+      {
+        action: 'manual',
+        kind: 'internal',
+        reason: '审核失败: TypeError: x is not a function'
+      }
+    )
   })
 
   it('模型的地址或密钥没配: 不重试, 直接转人工', () => {
@@ -247,7 +257,9 @@ describe('decideLegacyAccounting', () => {
 })
 
 // 归因规则只有放进队列里跑才看得出好坏: 用真实的熔断器与记账函数模拟 worker 的节拍
-// (每 15 秒一拍、每拍一批), 对照裁决时的探针场景。失败的范围由场景直接给出
+// (每 15 秒一拍、每拍一批), 对照裁决时的探针场景。失败的范围由场景直接给出。
+// 这里验的是「熔断器 × 记账」合起来的走向, 一批内是顺序处理的; worker 自己的并发、
+// 取任务与分组在 server/tasks/__tests__/moderationBatch.test.ts
 describe('场景: 队列在各种故障下的走向', () => {
   const TICK_MS = 15_000
 
@@ -344,7 +356,8 @@ describe('场景: 队列在各种故障下的走向', () => {
           record: breaker.recordFailure({
             scope: outcome,
             taskId: task.id,
-            message: outcome
+            message: outcome,
+            probe: admission === 'probe' && index === 0
           }),
           now: at
         })

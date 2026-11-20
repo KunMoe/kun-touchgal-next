@@ -146,7 +146,9 @@ export const createModerationTask = async (
         ? { content_id: input.contentId }
         : { user_id: input.userId })
     },
-    data: { status: 'superseded' }
+    // 失败类别随之清掉: 它描述的是「还挂着的任务卡在哪」, 已作废的任务不该再被
+    // 管理端按失败类别筛出来
+    data: { status: 'superseded', failure_kind: '' }
   })
 
   return db.moderation_task.create({

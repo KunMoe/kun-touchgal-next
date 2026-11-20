@@ -170,13 +170,15 @@ describe('toDependencyFailure', () => {
       scope: 'transient',
       status: null,
       retryAfterMs: null,
-      message: 'fetch failed (ECONNREFUSED)',
+      message: 'TypeError: fetch failed (ECONNREFUSED)',
       cause
     })
   })
 
-  it('SDK 的服务异常带上状态码', () => {
+  // 消息会进任务的失败原因: 原错误的类名 (S3 的错误码就在类名里) 与状态码不能丢
+  it('SDK 的服务异常带上状态码, 消息里保留错误码', () => {
     const cause = Object.assign(new Error('Access Denied'), {
+      name: 'AccessDenied',
       $fault: 'client',
       $metadata: { httpStatusCode: 403 }
     })
@@ -185,8 +187,28 @@ describe('toDependencyFailure', () => {
       dependency: 's3',
       scope: 'misconfigured',
       status: 403,
-      message: 'Access Denied'
+      message: 'AccessDenied: Access Denied (HTTP 403)'
     })
+  })
+
+  it('超时的消息保留错误的类名; 类名只是 Error 时不加前缀', () => {
+    expect(
+      toDependencyFailure(
+        'moderation_ai',
+        new DOMException(
+          'The operation was aborted due to timeout',
+          'TimeoutError'
+        )
+      )
+    ).toMatchObject({
+      message: 'TimeoutError: The operation was aborted due to timeout'
+    })
+    expect(
+      toDependencyFailure(
+        's3',
+        Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })
+      )
+    ).toMatchObject({ message: 'read ECONNRESET (ECONNRESET)' })
   })
 
   it('认不出的错误原样返回', () => {

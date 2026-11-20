@@ -10,13 +10,19 @@ import type { AuditSegment } from '~/server/moderation/view'
 const {
   getKvMock,
   setKvMock,
+  getFileFromS3Mock,
+  withEncodeSlotMock,
   moderateTextMock,
+  moderateImageMock,
   applyModerationVerdictMock,
   markTaskManualMock
 } = vi.hoisted(() => ({
   getKvMock: vi.fn(),
   setKvMock: vi.fn(),
+  getFileFromS3Mock: vi.fn(),
+  withEncodeSlotMock: vi.fn(),
   moderateTextMock: vi.fn(),
+  moderateImageMock: vi.fn(),
   applyModerationVerdictMock: vi.fn(),
   markTaskManualMock: vi.fn()
 }))
@@ -25,8 +31,10 @@ vi.mock('node-cron', () => ({ default: { createTask: vi.fn() } }))
 vi.mock('sharp', () => ({ default: vi.fn() }))
 vi.mock('~/prisma', () => ({ prisma: {} }))
 vi.mock('~/lib/redis', () => ({ getKv: getKvMock, setKv: setKvMock }))
-vi.mock('~/lib/s3', () => ({ getFileFromS3: vi.fn() }))
-vi.mock('~/server/image/encodeLimit', () => ({ withEncodeSlot: vi.fn() }))
+vi.mock('~/lib/s3', () => ({ getFileFromS3: getFileFromS3Mock }))
+vi.mock('~/server/image/encodeLimit', () => ({
+  withEncodeSlot: withEncodeSlotMock
+}))
 vi.mock('~/server/tasks/withTaskLock', () => ({ withTaskLock: vi.fn() }))
 vi.mock('~/server/moderation/apply', () => ({
   applyModerationVerdict: applyModerationVerdictMock,
@@ -35,9 +43,10 @@ vi.mock('~/server/moderation/apply', () => ({
 vi.mock(import('~/server/moderation/ai'), async (importOriginal) => ({
   ...(await importOriginal()),
   moderateText: moderateTextMock,
-  moderateImage: vi.fn()
+  moderateImage: moderateImageMock
 }))
 
+import { ModerationConfigError } from '~/server/moderation/ai'
 import {
   processAvatarTask,
   processTextTask
@@ -300,9 +309,7 @@ describe('processTextTask: 裁决缓存', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValue(new Error('redis timeout'))
 
-    await expect(
-      runTextTask(makeTask('comment', comment('hello')), [])
-    ).resolves.toBe('provider')
+    await runTextTask(makeTask('comment', comment('hello')), [])
 
     expect(moderateTextMock).toHaveBeenCalledTimes(1)
     expect(applyModerationVerdictMock).toHaveBeenCalledTimes(1)
@@ -448,6 +455,107 @@ describe('processTextTask: 调用模型', () => {
 
     expect(applyModerationVerdictMock).not.toHaveBeenCalled()
     expect(setKvMock).not.toHaveBeenCalled()
+  })
+})
+
+// 处理函数在「这条车道的依赖都答复了」的那一刻报一次; worker 据此闭合车道
+describe('车道健康的信号', () => {
+  it('模型给出裁决即报: 之后落库失败是这条任务自己的事, 信号已经发出', async () => {
+    const laneHealthy = vi.fn()
+    applyModerationVerdictMock.mockRejectedValue(new Error('deadlock detected'))
+
+    await expect(
+      processTextTask(
+        makeTask('comment', comment('hello')),
+        [],
+        policy,
+        laneHealthy
+      )
+    ).rejects.toThrow('deadlock detected')
+
+    expect(laneHealthy).toHaveBeenCalledTimes(1)
+  })
+
+  it('模型调用失败不报', async () => {
+    const laneHealthy = vi.fn()
+    moderateTextMock.mockRejectedValue(new Error('upstream 502'))
+
+    await expect(
+      processTextTask(
+        makeTask('comment', comment('hello')),
+        [],
+        policy,
+        laneHealthy
+      )
+    ).rejects.toThrow('upstream 502')
+
+    expect(laneHealthy).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['命中黑名单', [{ pattern: 'hello', content_types: [] }], null],
+    ['命中缓存', [], JSON.stringify({ pass: true })]
+  ])(
+    '在本地就落定 (%s) 不报: 它说明不了模型的状态',
+    async (_name, list, cached) => {
+      const laneHealthy = vi.fn()
+      getKvMock.mockResolvedValue(cached)
+
+      await processTextTask(
+        makeTask('comment', comment('hello')),
+        list,
+        policy,
+        laneHealthy
+      )
+
+      expect(applyModerationVerdictMock).toHaveBeenCalledTimes(1)
+      expect(laneHealthy).not.toHaveBeenCalled()
+    }
+  )
+
+  const avatarPayload = {
+    pendingKey: 'p',
+    pendingMiniKey: 'pm',
+    avatarKey: 'a',
+    avatarMiniKey: 'am',
+    avatarLink: 'https://img.example/a',
+    pendingLink: 'https://img.example/p'
+  }
+
+  // 头像落地的存储复制在落库那一步里: 它也是头像车道的依赖
+  it('头像任务要等落地做完才报', async () => {
+    const laneHealthy = vi.fn()
+    const withVision = loadModerationPolicy({
+      MODERATION_AI_BASE_URL: 'http://ai.test/v1',
+      MODERATION_AI_API_KEY: 'test-key',
+      MODERATION_AI_VISION_MODEL: 'vision-model'
+    } as unknown as NodeJS.ProcessEnv)
+    getFileFromS3Mock.mockResolvedValue(Buffer.from('avatar'))
+    withEncodeSlotMock.mockResolvedValue(Buffer.from('jpeg'))
+    moderateImageMock.mockResolvedValue(aiResult({ pass: true }))
+    applyModerationVerdictMock.mockImplementation(async () => {
+      expect(laneHealthy).not.toHaveBeenCalled()
+    })
+
+    await processAvatarTask(
+      makeTask('avatar', avatarPayload),
+      withVision,
+      laneHealthy
+    )
+
+    expect(moderateImageMock).toHaveBeenCalledTimes(1)
+    expect(laneHealthy).toHaveBeenCalledTimes(1)
+  })
+
+  // 不配视觉模型是有意的部署方式: 这类任务注定转人工, 取图只会把存储的偶发失败
+  // 记到一条永远等不到成功的车道头上
+  it('没配视觉模型: 取图之前就抛配置错误, 不碰存储', async () => {
+    await expect(
+      processAvatarTask(makeTask('avatar', avatarPayload), policy)
+    ).rejects.toBeInstanceOf(ModerationConfigError)
+
+    expect(getFileFromS3Mock).not.toHaveBeenCalled()
+    expect(moderateImageMock).not.toHaveBeenCalled()
   })
 })
 

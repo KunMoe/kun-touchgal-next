@@ -34,6 +34,13 @@ const failure = (
   retryAfterMs
 })
 
+// 探测名额的持有者回报的失败
+const probeFailure = (
+  scope: BreakerFailure['scope'],
+  taskId: number,
+  retryAfterMs?: number
+): BreakerFailure => ({ ...failure(scope, taskId, retryAfterMs), probe: true })
+
 beforeEach(() => {
   clock = 1_000_000
   events = []
@@ -88,6 +95,34 @@ describe('依赖类失败', () => {
     expect(breaker.snapshot().state).toBe('closed')
   })
 
+  // 「连续」是指中间没有成功: 内容自身的失败不打断它
+  it('中间夹着内容自身的失败不从头数', () => {
+    const breaker = make()
+
+    breaker.recordFailure(failure('transient', 1))
+    breaker.recordFailure(failure('request', 5))
+    breaker.recordFailure(failure('transient', 2))
+    breaker.recordFailure(failure('internal', 6))
+
+    expect(breaker.recordFailure(failure('transient', 3)).after.state).toBe(
+      'open'
+    )
+  })
+
+  it('触发打开的那次失败带着 Retry-After: 打开时长不短于它', () => {
+    const breaker = make()
+
+    breaker.recordFailure(failure('transient', 1))
+    breaker.recordFailure(failure('transient', 2))
+    const third = breaker.recordFailure(failure('transient', 3, 240_000))
+
+    expect(third.after).toMatchObject({
+      state: 'open',
+      reason: 'dependency',
+      openUntil: clock + 240_000
+    })
+  })
+
   it('没带 Retry-After 的 429 与超时、5xx 一起计数', () => {
     const breaker = make()
 
@@ -123,6 +158,14 @@ describe('依赖明说了原因', () => {
       reason: 'rate_limited',
       openUntil: clock + 90_000
     })
+  })
+
+  it('Retry-After 为 0 等于没说: 不单凭这一次打开', () => {
+    const breaker = make()
+
+    expect(
+      breaker.recordFailure(failure('rate_limited', 1, 0)).after.state
+    ).toBe('closed')
   })
 
   it('Retry-After 比退避短时按退避, 超过上限时按上限', () => {
@@ -168,7 +211,7 @@ describe('打开之后', () => {
     breaker.recordFailure(failure('misconfigured', 1))
     clock += 30_000
     breaker.admit()
-    breaker.recordFailure(failure('misconfigured', 1))
+    breaker.recordFailure(probeFailure('misconfigured', 1))
     clock += 60_000
     breaker.admit()
 
@@ -197,8 +240,8 @@ describe('打开之后', () => {
     for (let i = 0; i < 6; i++) {
       clock = breaker.snapshot().openUntil!
       expect(breaker.admit()).toBe('probe')
-      // 探测时撞上的是另一种失败: 这一轮的原因仍是最初打开它的那个
-      const record = breaker.recordFailure(failure('transient', 2))
+      // 探测时撞上的是另一种依赖类失败: 这一轮的原因仍是最初打开它的那个
+      const record = breaker.recordFailure(probeFailure('transient', 2))
       expect(record.before).toBe('half_open')
       expect(record.after).toMatchObject({
         state: 'open',
@@ -219,9 +262,83 @@ describe('打开之后', () => {
     clock += 30_000
     breaker.admit()
 
-    const record = breaker.recordFailure(failure('rate_limited', 2, 200_000))
+    const record = breaker.recordFailure(
+      probeFailure('rate_limited', 2, 200_000)
+    )
 
     expect(record.after.openUntil).toBe(clock + 200_000)
+  })
+
+  // 打开之前就发出的调用可以拖到 half_open 才返回 (同一批里别的任务已经去探测了):
+  // 它说明不了依赖现在的状态, 不能顶替探测的结果
+  it('探测期间在途调用晚到的失败不算探测失败: 状态不变, 名额仍被占着', () => {
+    const breaker = make()
+    breaker.recordFailure(failure('misconfigured', 1))
+    clock += 30_000
+    expect(breaker.admit()).toBe('probe')
+    const probing = breaker.snapshot()
+
+    const late = breaker.recordFailure(failure('transient', 9))
+
+    expect(late.before).toBe('half_open')
+    expect(late.after).toEqual({ ...probing, lastError: 'transient #9' })
+    expect(breaker.admit()).toBe('blocked')
+  })
+
+  // 探测拿到了依赖的应答, 只是这条内容自己处理不成: 依赖故障已经过去
+  it.each(['request', 'internal'] as const)(
+    '探测撞上内容自身的失败 (%s): 车道闭合, 这次失败只进系统性故障的计数',
+    (scope) => {
+      const breaker = make()
+      breaker.recordFailure(failure('transient', 1))
+      breaker.recordFailure(failure('transient', 2))
+      breaker.recordFailure(failure('transient', 3))
+      clock += 30_000
+      breaker.admit()
+
+      const record = breaker.recordFailure(probeFailure(scope, 7))
+
+      expect(record.before).toBe('half_open')
+      expect(record.after).toEqual({
+        state: 'closed',
+        reason: null,
+        since: null,
+        openUntil: null,
+        opens: 0,
+        lastError: `${scope} #7`
+      })
+      expect(breaker.admit()).toBe('pass')
+      // 依赖类的计数已清零: 再来两次不足以打开
+      breaker.recordFailure(failure('transient', 1))
+      breaker.recordFailure(failure('transient', 2))
+      expect(breaker.snapshot().state).toBe('closed')
+      // 这次失败算作系统性故障的第一条: 再来 4 条不同任务才打开
+      for (let i = 10; i < 13; i++) {
+        breaker.recordFailure(failure('request', i))
+      }
+      expect(breaker.snapshot().state).toBe('closed')
+      expect(breaker.recordFailure(failure('request', 13)).after).toMatchObject(
+        { state: 'open', reason: 'systematic' }
+      )
+    }
+  )
+
+  it('车道是因系统性故障打开的: 探测撞上内容自身的失败说明故障还在, 重新打开', () => {
+    const breaker = make()
+    for (let i = 0; i < 5; i++) {
+      breaker.recordFailure(failure('request', i))
+    }
+    clock += 30_000
+    breaker.admit()
+
+    const record = breaker.recordFailure(probeFailure('request', 0))
+
+    expect(record.after).toMatchObject({
+      state: 'open',
+      reason: 'systematic',
+      opens: 2,
+      openUntil: clock + 60_000
+    })
   })
 
   it('打开期间在途调用成功了也算成功', () => {
@@ -352,7 +469,7 @@ describe('状态迁移事件', () => {
     breaker.recordFailure(failure('misconfigured', 1))
     clock += 30_000
     breaker.admit()
-    breaker.recordFailure(failure('misconfigured', 1))
+    breaker.recordFailure(probeFailure('misconfigured', 1))
     clock += 60_000
     breaker.admit()
     breaker.recordSuccess()

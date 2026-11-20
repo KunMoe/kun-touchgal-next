@@ -36,10 +36,14 @@ interface Props {
 // 审核队列有没有在动: worker 上报的车道状态、最早一条待审核任务等了多久、
 // 转人工的任务各是什么原因
 export const ModerationHealth = ({ stats }: Props) => {
-  const { worker, oldestPendingAt, manualKindCounts } = stats
-  const manualKinds = Object.entries(manualKindCounts).filter(
-    ([, count]) => count > 0
-  )
+  const { worker, oldestPendingAt } = stats
+  const manualKinds = [
+    ...Object.entries(stats.manualKindCounts).map(
+      ([kind, count]) => [formatModerationFailureKind(kind), count] as const
+    ),
+    ['AI 拿不准', stats.manualUnsureCount] as const,
+    ['未分类 (旧任务)', stats.manualUnclassifiedCount] as const
+  ].filter(([, count]) => count > 0)
 
   return (
     <div className="space-y-2 border-t border-default-200 pt-3">
@@ -63,11 +67,12 @@ export const ModerationHealth = ({ stats }: Props) => {
                 </Chip>
               )
             })}
-            {worker.mode === 'shadow' && (
-              <span className="text-xs text-default-500">
-                影子模式: 只观察不拦截, 失败仍逐条重试
-              </span>
-            )}
+            <span className="text-xs text-default-500">
+              上报于 <KunTimeAgo date={worker.at} />
+              {worker.mode === 'shadow'
+                ? ' · 影子模式: 只观察不拦截, 失败仍逐条重试'
+                : ''}
+            </span>
           </div>
           {MODERATION_LANE.map((lane) => {
             const { state, since, openUntil, lastError } = worker.lanes[lane]
@@ -83,7 +88,9 @@ export const ModerationHealth = ({ stats }: Props) => {
                     自 <KunTimeAgo date={since} /> 起异常
                   </>
                 )}
-                {state === 'open' && openUntil !== null
+                {worker.mode === 'enforce' &&
+                state === 'open' &&
+                openUntil !== null
                   ? `, ${formatClock(openUntil)} 后放一条任务探测`
                   : ''}
                 {lastError ? `, 最近一次错误: ${lastError}` : ''}
@@ -93,7 +100,8 @@ export const ModerationHealth = ({ stats }: Props) => {
         </>
       ) : (
         <p className="text-sm text-warning-600">
-          审核 worker 超过两分钟没有上报状态, 定时任务进程可能没有在运行
+          审核 worker 最近两分钟没有上报状态: 刚发布完的几分钟内属正常,
+          一直如此则定时任务进程可能没有在运行
         </p>
       )}
 
@@ -106,9 +114,9 @@ export const ModerationHealth = ({ stats }: Props) => {
       {manualKinds.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-default-500">转人工的原因</span>
-          {manualKinds.map(([kind, count]) => (
-            <Chip key={kind || 'verdict'} variant="flat" size="sm">
-              {kind ? formatModerationFailureKind(kind) : 'AI 拿不准'} {count}
+          {manualKinds.map(([label, count]) => (
+            <Chip key={label} variant="flat" size="sm">
+              {label} {count}
             </Chip>
           ))}
         </div>

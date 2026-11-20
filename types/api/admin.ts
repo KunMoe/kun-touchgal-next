@@ -205,6 +205,9 @@ export interface AdminModerationStats {
   worker: ModerationHealth | null
   // 最早一条仍在待审核的任务的创建时间; 队列为空时为 null
   oldestPendingAt: Date | string | null
-  // 转人工的任务按失败类别计数; 键为空串的是 AI 拿不准转人工的
+  // 转人工的任务按失败类别 (MODERATION_FAILURE_KIND) 计数
   manualKindCounts: Record<string, number>
+  // 没有失败类别的转人工任务: AI 拿不准的 (有裁决), 与引入失败类别之前转人工的
+  manualUnsureCount: number
+  manualUnclassifiedCount: number
 }

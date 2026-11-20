@@ -181,6 +181,8 @@ const requestChatCompletion = async (
   let buffer = ''
   let content = ''
   let finishReason: string | null = null
+  // 200 的流里夹带的错误对象 (上游引擎崩溃、网关转发的中途错误): provider 自己说失败了
+  let streamError: { message: string; status: number | null } | null = null
   let modelName = model
   let tokensIn = 0
   let tokensOut = 0
@@ -204,12 +206,28 @@ const requestChatCompletion = async (
       return
     }
     const c = chunk as {
+      error?: unknown
       model?: unknown
       choices?: Array<{
         delta?: { content?: unknown }
         finish_reason?: unknown
       }>
       usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }
+    }
+    if (c.error !== undefined && c.error !== null) {
+      const detail = (
+        typeof c.error === 'object' ? c.error : { message: c.error }
+      ) as { message?: unknown; code?: unknown }
+      const code = Number(detail.code)
+      streamError = {
+        message:
+          typeof detail.message === 'string'
+            ? detail.message
+            : JSON.stringify(c.error),
+        // 有的网关把上游的 HTTP 状态码放在 error.code 里
+        status:
+          Number.isInteger(code) && code >= 400 && code <= 599 ? code : null
+      }
     }
     if (typeof c.model === 'string') {
       modelName = c.model
@@ -250,6 +268,19 @@ const requestChatCompletion = async (
     handleDataLine(buffer)
   }
 
+  // 不认错误对象的话, 这种流最后是「正文为空」, 会被算成这条内容自己的失败: 上游一出
+  // 问题, 每条任务都白扣三次重试。带状态码的按状态码分类, 其余当作此刻不可用
+  if (streamError) {
+    const { message, status } = streamError as {
+      message: string
+      status: number | null
+    }
+    throw providerFailure(
+      status === null ? 'transient' : classifyHttpStatus(status),
+      `Moderation AI stream reported an error: ${message.slice(0, 200)}`,
+      { status: status ?? undefined }
+    )
+  }
   // 流在 [DONE] 之前就结束: 连接被掐断或网关超时, 不是这条内容的问题
   if (!done) {
     throw providerFailure(
@@ -291,16 +322,21 @@ export const moderateText = async (
   ])
 }
 
-export const moderateImage = async (
-  policy: ModerationPolicy,
-  jpegBase64: string
-) => {
+// 头像任务在取图之前先问这一句: 没配视觉模型的任务注定转人工, 不该先去碰存储
+export const requireVisionModel = (policy: ModerationPolicy) => {
   if (!policy.vision) {
     throw new ModerationConfigError(
       'MODERATION_AI_VISION_MODEL is not configured'
     )
   }
-  return requestChatCompletion(policy.provider, policy.vision, [
+  return policy.vision
+}
+
+export const moderateImage = async (
+  policy: ModerationPolicy,
+  jpegBase64: string
+) =>
+  requestChatCompletion(policy.provider, requireVisionModel(policy), [
     { role: 'system', content: MODERATION_AVATAR_SYSTEM_PROMPT },
     {
       role: 'user',
@@ -313,4 +349,3 @@ export const moderateImage = async (
       ]
     }
   ])
-}

@@ -1,5 +1,6 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
+import { Prisma } from '~/prisma/generated/prisma/client'
 import { readModerationHealth } from '~/server/moderation/health'
 import type { AdminModerationStats } from '~/types/api/admin'
 
@@ -18,6 +19,7 @@ export const GET = kunRoute.get({
       tokenAgg,
       oldestPending,
       manualKindGroups,
+      manualUnsure,
       worker
     ] = await Promise.all([
       prisma.moderation_task.count({
@@ -44,6 +46,15 @@ export const GET = kunRoute.get({
         where: { status: 'manual' },
         _count: { _all: true }
       }),
+      // 没有失败类别的转人工任务分两种: 有裁决的是 AI 拿不准 (m=1); 没有裁决的是
+      // 引入失败类别之前转人工的, 原因只在 reject_reason 里
+      prisma.moderation_task.count({
+        where: {
+          status: 'manual',
+          failure_kind: '',
+          verdict: { not: Prisma.DbNull }
+        }
+      }),
       readModerationHealth()
     ])
 
@@ -57,8 +68,14 @@ export const GET = kunRoute.get({
       worker,
       oldestPendingAt: oldestPending._min.created,
       manualKindCounts: Object.fromEntries(
-        manualKindGroups.map((group) => [group.failure_kind, group._count._all])
-      )
+        manualKindGroups
+          .filter((group) => group.failure_kind)
+          .map((group) => [group.failure_kind, group._count._all])
+      ),
+      manualUnsureCount: manualUnsure,
+      manualUnclassifiedCount:
+        (manualKindGroups.find((group) => !group.failure_kind)?._count._all ??
+          0) - manualUnsure
     }
 
     return stats

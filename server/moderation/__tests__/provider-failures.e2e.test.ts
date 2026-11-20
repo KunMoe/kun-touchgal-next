@@ -73,6 +73,26 @@ const scenarios: Record<string, (res: ServerResponse) => void> = {
   },
   // 正常结束连接, 但没有 [DONE]
   'no-done': (res) => stream(res, sse('{"pass":true}', { done: false })),
+  // 200 的流里夹带错误对象 (上游引擎崩溃、网关转发的中途错误), 随后照常 [DONE]
+  'stream-error': (res) =>
+    stream(
+      res,
+      `data: ${JSON.stringify({ error: { message: 'engine overloaded' } })}\n\n` +
+        'data: [DONE]\n\n'
+    ),
+  // 正文吐了一半才报错, 错误对象里带着上游的状态码
+  'stream-error-502': (res) =>
+    stream(
+      res,
+      sse('{"pass":', { done: false }) +
+        `data: ${JSON.stringify({ error: { code: 502, message: 'upstream bad gateway' }, choices: [{ delta: {}, finish_reason: 'error' }] })}\n\n` +
+        'data: [DONE]\n\n'
+    ),
+  'stream-error-400': (res) =>
+    stream(
+      res,
+      `data: ${JSON.stringify({ error: { code: '400', message: 'content rejected by provider' } })}\n\n`
+    ),
   'bad-json': (res) => stream(res, sse('我认为这条内容没有问题')),
   'bad-shape': (res) => stream(res, sse('{"code":"AD"}')),
   empty: (res) => stream(res, sse('')),
@@ -186,7 +206,7 @@ describe('模型调用失败的分类', () => {
     expect(failure).toMatchObject({
       scope: 'transient',
       status: null,
-      message: 'terminated (UND_ERR_SOCKET)'
+      message: 'TypeError: terminated (UND_ERR_SOCKET)'
     })
   })
 
@@ -194,6 +214,27 @@ describe('模型调用失败的分类', () => {
     expect(await failureOf('no-done')).toMatchObject({
       scope: 'transient',
       message: 'Moderation AI stream ended without [DONE]'
+    })
+  })
+
+  // 不认错误对象的话这是「正文为空」→ request: 上游一出问题每条任务都白扣三次重试
+  it('200 的流里夹带错误对象 → transient, 消息带上 provider 的原话', async () => {
+    expect(await failureOf('stream-error')).toMatchObject({
+      scope: 'transient',
+      status: null,
+      message: 'Moderation AI stream reported an error: engine overloaded'
+    })
+  })
+
+  it('流里的错误对象带状态码时按状态码分类', async () => {
+    expect(await failureOf('stream-error-502')).toMatchObject({
+      scope: 'transient',
+      status: 502,
+      message: 'Moderation AI stream reported an error: upstream bad gateway'
+    })
+    expect(await failureOf('stream-error-400')).toMatchObject({
+      scope: 'request',
+      status: 400
     })
   })
 
@@ -213,7 +254,7 @@ describe('模型调用失败的分类', () => {
       expect(await failureOf('ok')).toMatchObject({
         scope: 'transient',
         status: null,
-        message: 'fetch failed (ECONNREFUSED)'
+        message: 'TypeError: fetch failed (ECONNREFUSED)'
       })
     } finally {
       vi.stubEnv('MODERATION_AI_BASE_URL', baseUrl)

@@ -32,7 +32,8 @@ import {
   ModerationConfigError,
   moderateImage,
   moderateText,
-  moderationVerdictSchema
+  moderationVerdictSchema,
+  requireVisionModel
 } from '~/server/moderation/ai'
 import type {
   ModerationAiResult,
@@ -139,23 +140,25 @@ const applyAiResult = async (
   })
 }
 
-// 一条任务处理完 (没有抛错) 时, 它有没有真的用到车道的依赖: 'provider' 是模型给出了
-// 可用的裁决, 说明依赖可用; 'local' 是在本地就落定了 (黑名单、缓存、载荷不可读),
-// 对依赖的状态什么也说明不了
-export type TaskOutcome = 'provider' | 'local'
+// 处理一条任务的函数在「这条车道的依赖都答复了」的那一刻调用 laneHealthy: 文本车道
+// 是模型给出了可用的裁决 (之后落库再失败是这条任务自己的事, 不是模型的), 头像车道
+// 还要等落地时的存储复制做完。在本地就落定的任务 (黑名单、缓存、载荷不可读) 不调用它:
+// 它们对依赖的状态什么也说明不了
+type LaneHealthy = () => void
 
 export const processTextTask = async (
   task: moderation_taskModel,
   blacklistEntries: ModerationBlacklistEntry[],
-  policy: ModerationPolicy
-): Promise<TaskOutcome> => {
+  policy: ModerationPolicy,
+  laneHealthy: LaneHealthy = () => {}
+) => {
   const body = decodeModerationTask(task)
   if (!body || body.contentType === 'avatar') {
     await markTaskManual(task.id, {
       kind: 'internal',
       reason: MODERATION_PAYLOAD_UNREADABLE
     })
-    return 'local'
+    return
   }
   // 落库的是原始段; 读者看到的形态 (渲染投影 + 原文) 在这里现算, 黑名单、缓存键、
   // 模型三者读的是同一份视图
@@ -177,7 +180,7 @@ export const processTextTask = async (
       rejectReason: '命中黑名单',
       model: 'blacklist'
     })
-    return 'local'
+    return
   }
 
   const { contentType } = body
@@ -199,27 +202,31 @@ export const processTextTask = async (
       tokensIn: 0,
       tokensOut: 0
     })
-    return 'local'
+    return
   }
 
   const result = await moderateText(policy, contentType, userMessage)
+  laneHealthy()
   await cacheVerdict(policy, contentType, hash, result.verdict)
   await applyAiResult(task, result)
-  return 'provider'
 }
 
 export const processAvatarTask = async (
   task: moderation_taskModel,
-  policy: ModerationPolicy
-): Promise<TaskOutcome> => {
+  policy: ModerationPolicy,
+  laneHealthy: LaneHealthy = () => {}
+) => {
   const body = decodeModerationTask(task)
   if (body?.contentType !== 'avatar') {
     await markTaskManual(task.id, {
       kind: 'internal',
       reason: MODERATION_PAYLOAD_UNREADABLE
     })
-    return 'local'
+    return
   }
+  // 没配视觉模型 (有意的部署方式) 的任务注定转人工: 先在这里抛出, 不去取图。否则存储的
+  // 偶发失败会记到头像车道头上, 而这条车道永远等不到一次成功来复位
+  requireVisionModel(policy)
   let buffer: Buffer
   try {
     buffer = await getFileFromS3(
@@ -235,7 +242,7 @@ export const processAvatarTask = async (
   )
   const result = await moderateImage(policy, jpeg.toString('base64'))
   await applyAiResult(task, result)
-  return 'provider'
+  laneHealthy()
 }
 
 // fetch 候选与逐行认领共用同一谓词: 待处理、已到重试时刻 (next_attempt)、租约为空或已
@@ -407,12 +414,25 @@ const processTask = async (
       return
     }
 
-    let outcome: TaskOutcome
+    // 依赖都答复了: 车道闭合。探测的结果由此了结; 之后这条任务再失败 (落库出错)
+    // 是它自己的事, 按闭合的车道记账
+    const laneHealthy = () => {
+      if (observed) {
+        breaker.recordSuccess()
+        holdsProbe = false
+      }
+    }
     try {
-      outcome =
-        task.content_type === 'avatar'
-          ? await processAvatarTask(task, batch.policy)
-          : await processTextTask(task, batch.blacklistEntries, batch.policy)
+      if (task.content_type === 'avatar') {
+        await processAvatarTask(task, batch.policy, laneHealthy)
+      } else {
+        await processTextTask(
+          task,
+          batch.blacklistEntries,
+          batch.policy,
+          laneHealthy
+        )
+      }
     } catch (error) {
       // 这一类模型没配 (例如刻意不配视觉模型): 不是故障, 不进熔断器, 直接转人工
       if (error instanceof ModerationConfigError) {
@@ -425,7 +445,11 @@ const processTask = async (
 
       const failure = describeFailure(error)
       const record = observed
-        ? breaker.recordFailure({ ...failure, taskId: task.id })
+        ? breaker.recordFailure({
+            ...failure,
+            taskId: task.id,
+            probe: holdsProbe
+          })
         : null
       // 失败已回报给熔断器, 名额随之了结
       holdsProbe = false
@@ -445,12 +469,6 @@ const processTask = async (
             })
       await applyAccounting(task.id, decision)
       console.error(`Moderation task ${task.id} attempt failed:`, error)
-      return
-    }
-
-    if (outcome === 'provider' && observed) {
-      breaker.recordSuccess()
-      holdsProbe = false
     }
   } finally {
     // 拿了探测名额却没有调到依赖 (没抢到认领、命中黑名单或缓存、转人工): 归还,
@@ -519,8 +537,6 @@ const fetchBatch = async (worker: ModerationWorker, leaseStaleBefore: Date) => {
       }
     }
   }
-  // 车道状态以问过门之后的为准 (到点的 open 此刻已是 half_open)
-  await reportHealth(worker)
 
   // 影子模式照旧全取; 强制模式下被挡住的车道不取, 探测只取一条
   const takeOf = (lane: ModerationLane) => {
@@ -532,6 +548,8 @@ const fetchBatch = async (worker: ModerationWorker, leaseStaleBefore: Date) => {
   const now = new Date()
   let fetched: moderation_taskModel[][]
   try {
+    // 车道状态以问过门之后的为准 (到点的 open 此刻已是 half_open)
+    await reportHealth(worker)
     fetched = await Promise.all(
       MODERATION_LANE.map((lane) =>
         takeOf(lane) === 0
@@ -652,6 +670,8 @@ export const runModerationBatch = async (
         worker.breakers[laneOf(task)].releaseProbe()
       }
     }
+    // 这一批可能刚把车道打开或闭合: 不等下一批, 现在就让管理端看到
+    await reportHealth(worker)
   }
 }
 

@@ -172,7 +172,7 @@ describe('enqueueTextModeration', () => {
 
     expect(taskUpdateManyMock).toHaveBeenCalledWith({
       where: { content_type: 'comment', status: 'pending', content_id: 12 },
-      data: { status: 'superseded' }
+      data: { status: 'superseded', failure_kind: '' }
     })
     expect(taskCreateMock).toHaveBeenCalledWith({
       data: {
@@ -229,7 +229,7 @@ describe('enqueueTextModeration', () => {
 
     expect(taskUpdateManyMock).toHaveBeenCalledWith({
       where: { content_type: 'bio', status: 'pending', user_id: 7 },
-      data: { status: 'superseded' }
+      data: { status: 'superseded', failure_kind: '' }
     })
     expect(taskCreateMock.mock.calls[0][0].data).toMatchObject({
       content_type: 'bio',

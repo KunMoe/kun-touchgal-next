@@ -167,12 +167,19 @@ export const toDependencyFailure = (
   if (scope === null || !(error instanceof Error)) {
     return error
   }
-  const code = networkCodeOf(error)
+  // 原错误的类名与状态码 / 错误码留在消息里: 消息会进任务的失败原因, 管理员靠
+  // 「NoSuchKey」「HTTP 403」「ECONNREFUSED」这些字眼判断出了什么事
+  const status = awsStatusOf(error) ?? null
+  const detail =
+    networkCodeOf(error) ?? (status === null ? null : `HTTP ${status}`)
   return new DependencyFailure({
     dependency,
     scope,
-    message: code === null ? error.message : `${error.message} (${code})`,
-    status: awsStatusOf(error) ?? null,
+    message:
+      (error.name && error.name !== 'Error' ? `${error.name}: ` : '') +
+      error.message +
+      (detail === null ? '' : ` (${detail})`),
+    status,
     cause: error
   })
 }

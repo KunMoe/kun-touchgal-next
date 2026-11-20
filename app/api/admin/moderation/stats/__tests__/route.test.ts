@@ -42,6 +42,7 @@ vi.mock('~/server/moderation/health', () => ({
 }))
 
 import { GET } from '~/app/api/admin/moderation/stats/route'
+import { Prisma } from '~/prisma/generated/prisma/client'
 
 const request = new Request('http://localhost/api/admin/moderation/stats', {
   headers: { cookie: 'kun-galgame-patch-moe-token=token' }
@@ -76,7 +77,11 @@ describe('GET /admin/moderation/stats', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     verifyHeaderCookieMock.mockResolvedValue({ uid: 1, role: 4 })
-    countMock.mockResolvedValue(12)
+    // 今日送审 12 条; 没有失败类别的转人工任务里有 2 条带着 AI 的裁决
+    countMock.mockImplementation(
+      async ({ where }: { where: { status?: string } }) =>
+        where.status === 'manual' ? 2 : 12
+    )
     groupByMock.mockImplementation(async ({ by }: { by: string[] }) =>
       by[0] === 'status'
         ? [
@@ -85,7 +90,7 @@ describe('GET /admin/moderation/stats', () => {
           ]
         : [
             { failure_kind: 'unavailable', _count: { _all: 2 } },
-            { failure_kind: '', _count: { _all: 1 } }
+            { failure_kind: '', _count: { _all: 5 } }
           ]
     )
     aggregateMock.mockImplementation(async ({ _sum }: { _sum?: unknown }) =>
@@ -106,8 +111,10 @@ describe('GET /admin/moderation/stats', () => {
       tokensOut: 20,
       worker: health,
       oldestPendingAt: oldest.toISOString(),
-      // 空串: AI 拿不准转人工的, 没有失败类别
-      manualKindCounts: { unavailable: 2, '': 1 }
+      manualKindCounts: { unavailable: 2 },
+      // 没有失败类别的 5 条: 2 条有裁决 (AI 拿不准), 其余是引入失败类别之前转人工的
+      manualUnsureCount: 2,
+      manualUnclassifiedCount: 3
     })
   })
 
@@ -123,6 +130,13 @@ describe('GET /admin/moderation/stats', () => {
       by: ['failure_kind'],
       where: { status: 'manual' },
       _count: { _all: true }
+    })
+    expect(countMock).toHaveBeenCalledWith({
+      where: {
+        status: 'manual',
+        failure_kind: '',
+        verdict: { not: Prisma.DbNull }
+      }
     })
   })
 
@@ -141,6 +155,19 @@ describe('GET /admin/moderation/stats', () => {
       oldestPendingAt: null,
       tokensIn: 0,
       tokensOut: 0
+    })
+  })
+
+  it('没有任何转人工任务时两个计数都是 0', async () => {
+    groupByMock.mockResolvedValue([])
+    countMock.mockResolvedValue(0)
+
+    const response = await GET(request, { params: Promise.resolve({}) })
+
+    expect(await response.json()).toMatchObject({
+      manualKindCounts: {},
+      manualUnsureCount: 0,
+      manualUnclassifiedCount: 0
     })
   })
 })

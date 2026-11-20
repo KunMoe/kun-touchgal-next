@@ -295,6 +295,10 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(NOW)
   vi.resetAllMocks()
+  vi.stubEnv('MODERATION_AI_BASE_URL', 'http://ai.test/v1')
+  vi.stubEnv('MODERATION_AI_API_KEY', 'test-key')
+  vi.stubEnv('MODERATION_AI_TEXT_MODEL', 'text-model')
+  vi.stubEnv('MODERATION_AI_VISION_MODEL', 'vision-model')
   consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   rows = []
@@ -353,7 +357,28 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
+
+// 让已经能走的微任务都走完: 该发起的调用都已发起, 被挡住的确实没动
+const settle = async () => {
+  for (let i = 0; i < 60; i++) {
+    await Promise.resolve()
+  }
+}
+
+// 每次模型调用都停在半路, 由用例按任务逐个放行或让它失败
+const gateModelCalls = () => {
+  const calls = new Map<
+    number,
+    { succeed: () => void; fail: (error: unknown) => void }
+  >()
+  modelBehaviour = (taskId) =>
+    new Promise((resolve, reject) => {
+      calls.set(taskId, { succeed: () => resolve(verdict()), fail: reject })
+    })
+  return (task: Row) => calls.get(task.id)!
+}
 
 describe('取任务', () => {
   it('按车道各取一次: 待处理、已到重试时刻、租约为空或已过期, 按就绪时刻先后', async () => {
@@ -419,6 +444,42 @@ describe('取任务', () => {
         ttl: 120
       }
     ])
+  })
+
+  // 只在批次开头报的话, 管理端看到的总比实际落后一拍: 探测失败之后还显示「探测中」
+  it('批次结束时再报一次: 这一批把车道打开了, 管理端马上看得到', async () => {
+    addTask()
+    failAll(() => httpFailure(401))
+
+    await runModerationBatch(newWorker('enforce'))
+
+    expect(healthReports().map((report) => report.lanes.text.state)).toEqual([
+      'closed',
+      'open'
+    ])
+  })
+
+  // 一次慢的模型调用可以让批次持续数分钟, 期间状态键 (两分钟过期) 不能断
+  it('批次进行中每 30 秒续报一次, 批次结束后不再报', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    vi.setSystemTime(NOW)
+    const task = addTask()
+    const call = gateModelCalls()
+
+    const batch = runModerationBatch(newWorker('enforce'))
+    await settle()
+    expect(healthReports()).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(healthReports()).toHaveLength(3)
+
+    call(task).succeed()
+    await batch
+    expect(healthReports()).toHaveLength(4)
+
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(healthReports()).toHaveLength(4)
   })
 
   it('状态上报失败不影响审核', async () => {
@@ -558,12 +619,7 @@ describe.each(['shadow', 'enforce'] as const)('并发与分组 (%s)', (mode) => 
     return {
       releases,
       peak: () => peak,
-      // 让已经能走的微任务都走完: 该发起的调用都已发起, 被挡住的确实没动
-      settle: async () => {
-        for (let i = 0; i < 30; i++) {
-          await Promise.resolve()
-        }
-      }
+      settle
     }
   }
 
@@ -744,6 +800,27 @@ describe('影子模式的失败记账', () => {
       to: 'open',
       reason: 'dependency'
     })
+  })
+
+  // 上线时的那一组开关: 影子模式 + 系统性检测只记日志
+  it('模型输出系统性损坏: 车道不打开, 只记一行疑似的日志', async () => {
+    const worker = createModerationWorker({ mode: 'shadow', systematic: 'log' })
+    Array.from({ length: 7 }, () => addTask())
+    failAll(badOutput)
+
+    await runAt(worker, 0)
+
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+    expect(breakerLogs()).toEqual([
+      {
+        mode: 'shadow',
+        lane: 'text',
+        type: 'systematic_suspected',
+        tasks: 5,
+        lastError: 'Moderation verdict is not valid JSON: 好的'
+      }
+    ])
+    expect(rows.every((row) => row.retry === 1)).toBe(true)
   })
 
   // 强制模式下车道打开期间不会有调用; 影子模式照常处理这些任务, 但它们的结果不能
@@ -975,6 +1052,157 @@ describe('强制模式: 探测名额', () => {
     await probeAgainAt(worker, 45_000)
   })
 
+  it.each([
+    [
+      '载荷不可读',
+      (): Partial<Row> => ({ payload: 'broken' as unknown as Row['payload'] })
+    ],
+    [
+      '回收把预算用完',
+      (): Partial<Row> => ({
+        picked_at: at(-(MODERATION_LEASE_SECONDS + 1) * 1000),
+        retry: 2
+      })
+    ]
+  ])('探测的那条没调到模型就转人工了 (%s): 归还', async (_name, overrides) => {
+    const worker = await openThenWait()
+    const settled = addTask({ next_attempt: at(29_000), ...overrides() })
+
+    await runAt(worker, 30_000)
+    expect(rowOf(settled).status).toBe('manual')
+    expect(moderateTextMock).not.toHaveBeenCalled()
+    expect(worker.breakers.text.snapshot().state).toBe('half_open')
+
+    await probeAgainAt(worker, 45_000)
+  })
+
+  it('探测的那条撞上「这一类模型没配」: 归还, 不算探测失败', async () => {
+    const worker = await openThenWait()
+    const unconfigured = addTask({ next_attempt: at(29_000) })
+    failOnly(
+      [unconfigured],
+      () =>
+        new ModerationConfigError('MODERATION_AI_TEXT_MODEL is not configured')
+    )
+
+    await runAt(worker, 30_000)
+    expect(rowOf(unconfigured).status).toBe('manual')
+    expect(worker.breakers.text.snapshot()).toMatchObject({
+      state: 'half_open',
+      opens: 1
+    })
+
+    await probeAgainAt(worker, 45_000)
+  })
+
+  // 另一条车道排在前面的任务占满了批次, 探测的那一条没进这一批
+  it('探测的那条被两条车道的合并截掉: 归还, 下一批照样去探测', async () => {
+    const worker = await openThenWait()
+    Array.from({ length: MODERATION_BATCH_SIZE }, (_, index) =>
+      addAvatarTask({ user_id: 200 + index, next_attempt: at(1_000) })
+    )
+    const cut = addTask({ next_attempt: at(29_000) })
+
+    await runAt(worker, 30_000)
+    expect(fetchedLanes()).toContainEqual({ lane: 'text', take: 1 })
+    expect(claimsOf(cut)).toEqual([])
+    expect(worker.breakers.text.snapshot().state).toBe('half_open')
+
+    await runAt(worker, 45_000)
+    expect(fetchedLanes()).toContainEqual({ lane: 'text', take: 1 })
+    expect(rowOf(cut).status).toBe('approved')
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+  })
+
+  // 模型答复了, 文本车道的依赖就是好的; 之后落库失败是这条任务自己的事
+  it('探测的那条模型已给出裁决、落库时才失败: 车道闭合, 失败按闭合的车道记账', async () => {
+    const worker = await openThenWait()
+    const probe = addTask({ next_attempt: at(29_000) })
+    const applyVerdict = applyModerationVerdictMock.getMockImplementation()!
+    applyModerationVerdictMock.mockRejectedValueOnce(
+      new Error('deadlock detected')
+    )
+
+    await runAt(worker, 30_000)
+
+    expect(moderateTextMock).toHaveBeenCalledTimes(1)
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+    expect(rowOf(probe)).toMatchObject({
+      status: 'pending',
+      retry: 1,
+      defer_count: 0,
+      failure_kind: 'internal',
+      next_attempt: at(35_000)
+    })
+    applyModerationVerdictMock.mockImplementation(applyVerdict)
+  })
+
+  // 探测撞上的是这条内容自己的毛病: 依赖答复了, 车道闭合; 不闭合的话一条输出
+  // 确定性损坏的内容排在队首, 就能让已经恢复的车道一轮轮地开下去
+  it('探测的那条模型输出不合约定: 车道闭合, 这一次不扣它, 下一次照常扣', async () => {
+    const worker = await openThenWait()
+    const poison = addTask({ next_attempt: at(29_000) })
+    failOnly([poison], badOutput)
+
+    await runAt(worker, 30_000)
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+    expect(rowOf(poison)).toMatchObject({
+      status: 'pending',
+      retry: 0,
+      defer_count: 0,
+      failure_kind: 'bad_output',
+      next_attempt: at(30_000)
+    })
+
+    await runAt(worker, 45_000)
+    expect(rowOf(poison)).toMatchObject({ retry: 1, next_attempt: at(50_000) })
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+  })
+
+  // 车道打开之前就发出的调用可以拖到探测期间才返回: 它不是探测的结果
+  it('探测进行中, 更早的在途调用失败了: 不算探测失败, 车道等探测自己的结果', async () => {
+    const worker = newWorker('enforce')
+    const opener = addTask()
+    const slow = addTask()
+    const call = gateModelCalls()
+
+    const first = runModerationBatch(worker)
+    await settle()
+    call(opener).fail(httpFailure(401))
+    await settle()
+    expect(worker.breakers.text.snapshot().state).toBe('open')
+
+    // 第一批还没结束 (slow 仍在途), 到点后另一批放出探测
+    vi.setSystemTime(at(30_000))
+    const probe = addTask({ next_attempt: at(1_000) })
+    const second = runModerationBatch(worker)
+    await settle()
+    expect(worker.breakers.text.snapshot().state).toBe('half_open')
+
+    call(slow).fail(httpFailure(503))
+    await settle()
+    expect(worker.breakers.text.snapshot()).toMatchObject({
+      state: 'half_open',
+      opens: 1
+    })
+    // 它的失败不扣预算, 等车道的探测时刻 (已到) 之后再试
+    expect(rowOf(slow)).toMatchObject({
+      status: 'pending',
+      retry: 0,
+      defer_count: 0,
+      next_attempt: at(30_000)
+    })
+
+    call(probe).succeed()
+    await Promise.all([first, second])
+    expect(worker.breakers.text.snapshot().state).toBe('closed')
+    expect(breakerLogs().map(({ from, to }) => `${from}→${to}`)).toEqual([
+      'closed→open',
+      'open→half_open',
+      'half_open→closed'
+    ])
+  })
+
   it('探测的那条没抢到认领: 归还', async () => {
     const worker = await openThenWait()
     const taken = addTask({ next_attempt: at(29_000) })
@@ -1143,6 +1371,36 @@ describe('强制模式: 头像车道', () => {
     )
     expect(rowOf(comment).status).toBe('approved')
     expect(moderateImageMock).not.toHaveBeenCalled()
+  })
+
+  // 不配视觉模型是有意的部署方式。这类任务注定转人工; 若还去取图, 存储的偶发失败会
+  // 记到头像车道头上, 而它永远等不到一次成功来复位
+  it('没配视觉模型: 直接转人工, 不碰存储, 存储出问题也不会把车道打开', async () => {
+    vi.stubEnv('MODERATION_AI_VISION_MODEL', '')
+    const worker = newWorker('enforce')
+    const avatars = Array.from({ length: 4 }, (_, index) =>
+      addAvatarTask({ user_id: 300 + index })
+    )
+    getFileFromS3Mock.mockRejectedValue(
+      Object.assign(new Error('Service Unavailable'), {
+        $fault: 'server',
+        $metadata: { httpStatusCode: 503 }
+      })
+    )
+
+    await runAt(worker, 0)
+
+    expect(getFileFromS3Mock).not.toHaveBeenCalled()
+    expect(avatars.map((task) => rowOf(task))).toEqual(
+      avatars.map(() =>
+        expect.objectContaining({
+          status: 'manual',
+          failure_kind: 'misconfigured',
+          reject_reason: 'MODERATION_AI_VISION_MODEL is not configured'
+        })
+      )
+    )
+    expect(worker.breakers.avatar.snapshot().state).toBe('closed')
   })
 
   it('这张图在存储里不存在: 是这一条自己的问题, 扣重试预算, 车道不打开', async () => {
