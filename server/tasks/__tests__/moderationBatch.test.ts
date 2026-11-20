@@ -188,6 +188,14 @@ const httpFailure = (status: number, retryAfterMs: number | null = null) =>
     retryAfterMs
   })
 
+// 模型的地址或密钥没配 (ai.ts 在发请求之前就抛出, 没有状态码)
+const missingCredentials = () =>
+  new DependencyFailure({
+    dependency: 'moderation_ai',
+    scope: 'misconfigured',
+    message: 'MODERATION_AI_BASE_URL or MODERATION_AI_API_KEY is not configured'
+  })
+
 const badOutput = () =>
   new DependencyFailure({
     dependency: 'moderation_ai',
@@ -243,7 +251,9 @@ const fetchedLanes = () =>
   }))
 
 const modelCalledFor = () =>
-  moderateTextMock.mock.calls.map(([, message]) => taskIdOf(message as string))
+  moderateTextMock.mock.calls.map(([, , message]) =>
+    taskIdOf(message as string)
+  )
 
 const healthReports = () =>
   setKvMock.mock.calls
@@ -334,7 +344,7 @@ beforeEach(() => {
   getKvMock.mockResolvedValue(null)
   setKvMock.mockResolvedValue(undefined)
   getFileFromS3Mock.mockResolvedValue(Buffer.from('avatar'))
-  moderateTextMock.mockImplementation(async (_type, message: string) =>
+  moderateTextMock.mockImplementation(async (_policy, _type, message: string) =>
     modelBehaviour(taskIdOf(message))
   )
   moderateImageMock.mockImplementation(async () => verdict())
@@ -418,6 +428,30 @@ describe('取任务', () => {
     await runModerationBatch(newWorker('enforce'))
 
     expect(rowOf(task).status).toBe('approved')
+  })
+})
+
+describe('审核策略', () => {
+  it('每批从环境变量读一次, 这一批的调用用同一份', async () => {
+    vi.stubEnv('MODERATION_AI_BASE_URL', 'http://ai.test/v1')
+    vi.stubEnv('MODERATION_AI_API_KEY', 'test-key')
+    vi.stubEnv('MODERATION_AI_TEXT_MODEL', 'text-model-a')
+    vi.stubEnv('MODERATION_AI_TEXT_REASONING_EFFORT', '')
+    addTask()
+    addTask()
+
+    try {
+      await runModerationBatch(newWorker('shadow'))
+    } finally {
+      vi.unstubAllEnvs()
+    }
+
+    const [first, second] = moderateTextMock.mock.calls.map(([used]) => used)
+    expect(first).toMatchObject({
+      provider: { baseUrl: 'http://ai.test/v1', apiKey: 'test-key' },
+      text: { model: 'text-model-a', reasoningEffort: undefined }
+    })
+    expect(second).toBe(first)
   })
 })
 
@@ -621,6 +655,20 @@ describe('影子模式的失败记账', () => {
     expect(markTaskManualMock).toHaveBeenCalledWith(task.id, {
       kind: 'misconfigured',
       reason: 'MODERATION_AI_TEXT_MODEL is not configured'
+    })
+    expect(accountingOf(task)).toEqual([])
+  })
+
+  it('模型的地址或密钥没配: 同样不重试, 直接转人工', async () => {
+    const task = addTask()
+    failAll(missingCredentials)
+
+    await runModerationBatch(newWorker('shadow'))
+
+    expect(markTaskManualMock).toHaveBeenCalledWith(task.id, {
+      kind: 'misconfigured',
+      reason:
+        'MODERATION_AI_BASE_URL or MODERATION_AI_API_KEY is not configured'
     })
     expect(accountingOf(task)).toEqual([])
   })
@@ -840,6 +888,28 @@ describe('强制模式: 供应商整体不可用', () => {
       failure_kind: 'misconfigured',
       next_attempt: at(60_000)
     })
+  })
+
+  // 影子模式 (与改动前) 是逐条立即转人工; 强制模式下它和 provider 回 401 是一回事
+  it('模型的地址或密钥没配: 车道打开, 任务留在队列里等配置改好', async () => {
+    const worker = newWorker('enforce')
+    const tasks = Array.from({ length: 3 }, () => addTask())
+    failAll(missingCredentials)
+
+    await runAt(worker, 0)
+
+    expect(worker.breakers.text.snapshot()).toMatchObject({
+      state: 'open',
+      reason: 'misconfigured',
+      lastError:
+        'MODERATION_AI_BASE_URL or MODERATION_AI_API_KEY is not configured'
+    })
+    expect(markTaskManualMock).not.toHaveBeenCalled()
+    expect(tasks.map((task) => rowOf(task).status)).toEqual([
+      'pending',
+      'pending',
+      'pending'
+    ])
   })
 
   it('带 Retry-After 的 429 第一次就打开车道, 车道与任务都等到它给的时刻', async () => {

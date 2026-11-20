@@ -14,7 +14,15 @@ vi.mock(import('~/constants/moderation'), async (importOriginal) => ({
   MODERATION_AI_TIMEOUT_MS: 200
 }))
 
-import { moderateText } from '~/server/moderation/ai'
+import {
+  ModerationConfigError,
+  moderateText as moderateTextWith
+} from '~/server/moderation/ai'
+import { loadModerationPolicy } from '~/server/moderation/policy'
+
+// 与 worker 一样: 每次调用前从环境变量读出策略
+const moderateText = (contentType: 'comment', userMessage: string) =>
+  moderateTextWith(loadModerationPolicy(), contentType, userMessage)
 
 const sse = (content: string, { done = true } = {}) =>
   `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\n` +
@@ -221,5 +229,31 @@ describe('模型调用失败的分类', () => {
 
     expect(failure).toMatchObject({ scope: 'request', status: null })
     expect(failure.message).toMatch(message)
+  })
+
+  it('地址或密钥没配 → misconfigured: 与 provider 回 401 一样对所有任务成立', async () => {
+    vi.stubEnv('MODERATION_AI_API_KEY', '')
+    try {
+      expect(await failureOf('ok')).toMatchObject({
+        scope: 'misconfigured',
+        status: null,
+        message:
+          'MODERATION_AI_BASE_URL or MODERATION_AI_API_KEY is not configured'
+      })
+    } finally {
+      vi.stubEnv('MODERATION_AI_API_KEY', 'test-key')
+    }
+  })
+
+  // 不配某一类模型是有意的部署方式, 不是依赖故障
+  it('这一类模型没配 → ModerationConfigError, 不是 DependencyFailure', async () => {
+    vi.stubEnv('MODERATION_AI_TEXT_MODEL', '')
+    try {
+      await expect(moderateText('comment', 'ok')).rejects.toBeInstanceOf(
+        ModerationConfigError
+      )
+    } finally {
+      vi.stubEnv('MODERATION_AI_TEXT_MODEL', 'test-model')
+    }
   })
 })

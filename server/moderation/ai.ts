@@ -17,9 +17,10 @@ import {
   MODERATION_AVATAR_SYSTEM_PROMPT,
   MODERATION_TEXT_SYSTEM_PROMPT
 } from './prompt'
+import type { ModerationModelPolicy, ModerationPolicy } from './policy'
 
-// configuration problems (missing env) should send the task to manual
-// review instead of burning retries
+// 这一类模型没配 (MODERATION_AI_TEXT_MODEL / MODERATION_AI_VISION_MODEL): 该类任务
+// 直接转人工, 不重试。它不是故障 —— 不配视觉模型是一种有意的部署方式, 头像由人工审
 export class ModerationConfigError extends Error {}
 
 // 这里是 provider 边界: 调用模型的每一种失败都在这里说清它的范围 (见
@@ -113,17 +114,18 @@ type ChatMessageContent =
     >
 
 const requestChatCompletion = async (
-  model: string,
-  messages: Array<{ role: 'system' | 'user'; content: ChatMessageContent }>,
-  reasoningEffort?: string
+  provider: ModerationPolicy['provider'],
+  { model, reasoningEffort }: ModerationModelPolicy,
+  messages: Array<{ role: 'system' | 'user'; content: ChatMessageContent }>
 ): Promise<ModerationAiResult> => {
-  const baseUrl = process.env.MODERATION_AI_BASE_URL
-  const apiKey = process.env.MODERATION_AI_API_KEY
-  if (!baseUrl || !apiKey) {
-    throw new ModerationConfigError(
+  // 地址或密钥没配: 与 provider 回 401 一样, 对所有任务同时成立, 不改配置不会好
+  if (!provider) {
+    throw providerFailure(
+      'misconfigured',
       'MODERATION_AI_BASE_URL or MODERATION_AI_API_KEY is not configured'
     )
   }
+  const { baseUrl, apiKey } = provider
 
   // try/catch 只包网络调用 (这里与下面的读流循环): 传输层的失败是依赖的, 其余代码
   // 抛的错不该被算到依赖头上
@@ -274,47 +276,41 @@ const requestChatCompletion = async (
 // userMessage 由 buildModerationUserMessage 生成 (server/moderation/prompt.ts),
 // 这里原样作为用户消息发出, 不再做任何包裹或拼接
 export const moderateText = async (
+  policy: ModerationPolicy,
   contentType: Exclude<ModerationContentType, 'avatar'>,
   userMessage: string
 ) => {
-  const model = process.env.MODERATION_AI_TEXT_MODEL
-  if (!model) {
+  if (!policy.text) {
     throw new ModerationConfigError(
       'MODERATION_AI_TEXT_MODEL is not configured'
     )
   }
-  return requestChatCompletion(
-    model,
-    [
-      { role: 'system', content: MODERATION_TEXT_SYSTEM_PROMPT[contentType] },
-      { role: 'user', content: userMessage }
-    ],
-    process.env.MODERATION_AI_TEXT_REASONING_EFFORT
-  )
+  return requestChatCompletion(policy.provider, policy.text, [
+    { role: 'system', content: MODERATION_TEXT_SYSTEM_PROMPT[contentType] },
+    { role: 'user', content: userMessage }
+  ])
 }
 
-export const moderateImage = async (jpegBase64: string) => {
-  const model = process.env.MODERATION_AI_VISION_MODEL
-  if (!model) {
+export const moderateImage = async (
+  policy: ModerationPolicy,
+  jpegBase64: string
+) => {
+  if (!policy.vision) {
     throw new ModerationConfigError(
       'MODERATION_AI_VISION_MODEL is not configured'
     )
   }
-  return requestChatCompletion(
-    model,
-    [
-      { role: 'system', content: MODERATION_AVATAR_SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: '请审核这张用户头像' },
-          {
-            type: 'image_url',
-            image_url: { url: `data:image/jpeg;base64,${jpegBase64}` }
-          }
-        ]
-      }
-    ],
-    process.env.MODERATION_AI_VISION_REASONING_EFFORT
-  )
+  return requestChatCompletion(policy.provider, policy.vision, [
+    { role: 'system', content: MODERATION_AVATAR_SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: '请审核这张用户头像' },
+        {
+          type: 'image_url',
+          image_url: { url: `data:image/jpeg;base64,${jpegBase64}` }
+        }
+      ]
+    }
+  ])
 }

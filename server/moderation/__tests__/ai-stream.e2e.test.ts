@@ -1,7 +1,8 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { moderateText } from '~/server/moderation/ai'
+import { moderateText as moderateTextWith } from '~/server/moderation/ai'
+import { loadModerationPolicy } from '~/server/moderation/policy'
 import {
   MODERATION_TEXT_SYSTEM_PROMPT,
   buildModerationUserMessage
@@ -9,6 +10,12 @@ import {
 
 let server: Server
 let lastRequestBody: Record<string, unknown>
+
+// 与 worker 一样: 每次调用前从环境变量读出策略
+const moderateText = (
+  contentType: Parameters<typeof moderateTextWith>[1],
+  userMessage: string
+) => moderateTextWith(loadModerationPolicy(), contentType, userMessage)
 
 beforeAll(async () => {
   server = createServer((req, res) => {

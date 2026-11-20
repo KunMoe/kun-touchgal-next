@@ -25,10 +25,9 @@ import {
   MODERATION_VERDICT_CACHE_DURATION
 } from '~/constants/moderation'
 import type { ModerationLane, ModerationTextType } from '~/constants/moderation'
-import {
-  MODERATION_PROMPT_VERSION,
-  buildModerationUserMessage
-} from '~/server/moderation/prompt'
+import { buildModerationUserMessage } from '~/server/moderation/prompt'
+import { loadModerationPolicy } from '~/server/moderation/policy'
+import type { ModerationPolicy } from '~/server/moderation/policy'
 import {
   ModerationConfigError,
   moderateImage,
@@ -72,19 +71,25 @@ import { withTaskLock } from './withTaskLock'
 const MODERATION_LOCK_KEY = 'moderation:worker:lock'
 
 // verdicts are cached per content_type: each type has a distinct system prompt,
-// so a verdict from one type must never be replayed onto another. prompt 版本同样
-// 入 key: 审核规则改动后旧裁决即失效, 不会被相同文本命中 (见 MODERATION_PROMPT_VERSION)
-const verdictCacheKey = (contentType: ModerationTextType, hash: string) =>
-  `${KUN_MODERATION_VERDICT_CACHE_KEY}:v${MODERATION_PROMPT_VERSION}:${contentType}:${hash}`
+// so a verdict from one type must never be replayed onto another. 策略身份同样入 key
+// (prompt 版本、文本模型、思考强度, 见 policy.ts): 任何一样变了旧裁决即失效, 不会被
+// 相同文本命中
+const verdictCacheKey = (
+  policy: ModerationPolicy,
+  contentType: ModerationTextType,
+  hash: string
+) =>
+  `${KUN_MODERATION_VERDICT_CACHE_KEY}:p${policy.textId}:${contentType}:${hash}`
 
 const getCachedVerdict = async (
+  policy: ModerationPolicy,
   contentType: ModerationTextType,
   hash: string
 ): Promise<ModerationVerdict | null> => {
   // 缓存只是省一次调用: 读不到 (Redis 抖动) 按未命中处理, 不让这条任务为此失败
   let cached: string | null
   try {
-    cached = await getKv(verdictCacheKey(contentType, hash))
+    cached = await getKv(verdictCacheKey(policy, contentType, hash))
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to read moderation verdict cache:', error)
@@ -102,12 +107,13 @@ const getCachedVerdict = async (
 }
 
 const cacheVerdict = async (
+  policy: ModerationPolicy,
   contentType: ModerationTextType,
   hash: string,
   verdict: ModerationVerdict
 ) => {
   await setKv(
-    verdictCacheKey(contentType, hash),
+    verdictCacheKey(policy, contentType, hash),
     JSON.stringify(verdict),
     MODERATION_VERDICT_CACHE_DURATION
   ).catch((error) =>
@@ -140,7 +146,8 @@ export type TaskOutcome = 'provider' | 'local'
 
 export const processTextTask = async (
   task: moderation_taskModel,
-  blacklistEntries: ModerationBlacklistEntry[]
+  blacklistEntries: ModerationBlacklistEntry[],
+  policy: ModerationPolicy
 ): Promise<TaskOutcome> => {
   const body = decodeModerationTask(task)
   if (!body || body.contentType === 'avatar') {
@@ -183,25 +190,27 @@ export const processTextTask = async (
       segment.source ?? ''
     ])
   )
-  const cached = await getCachedVerdict(contentType, hash)
+  const cached = await getCachedVerdict(policy, contentType, hash)
   if (cached) {
     await applyAiResult(task, {
       verdict: cached,
-      model: 'cache',
+      // 带上策略身份: 管理端看得出这条裁决是哪一套模型与 prompt 给的
+      model: `cache:${policy.textId}`,
       tokensIn: 0,
       tokensOut: 0
     })
     return 'local'
   }
 
-  const result = await moderateText(contentType, userMessage)
-  await cacheVerdict(contentType, hash, result.verdict)
+  const result = await moderateText(policy, contentType, userMessage)
+  await cacheVerdict(policy, contentType, hash, result.verdict)
   await applyAiResult(task, result)
   return 'provider'
 }
 
 export const processAvatarTask = async (
-  task: moderation_taskModel
+  task: moderation_taskModel,
+  policy: ModerationPolicy
 ): Promise<TaskOutcome> => {
   const body = decodeModerationTask(task)
   if (body?.contentType !== 'avatar') {
@@ -224,7 +233,7 @@ export const processAvatarTask = async (
   const jpeg = await withEncodeSlot(() =>
     sharp(buffer).jpeg({ quality: 85 }).toBuffer()
   )
-  const result = await moderateImage(jpeg.toString('base64'))
+  const result = await moderateImage(policy, jpeg.toString('base64'))
   await applyAiResult(task, result)
   return 'provider'
 }
@@ -336,6 +345,8 @@ const applyAccounting = async (taskId: number, decision: FailureAccounting) => {
 }
 
 interface BatchContext {
+  // 这一批用的审核策略: 每批读一次环境变量, 批内的调用与缓存键同源
+  policy: ModerationPolicy
   blacklistEntries: ModerationBlacklistEntry[]
   leaseStaleBefore: Date
   // 取任务时已经替它拿了车道探测名额的任务; 开始处理时移出
@@ -400,8 +411,8 @@ const processTask = async (
     try {
       outcome =
         task.content_type === 'avatar'
-          ? await processAvatarTask(task)
-          : await processTextTask(task, batch.blacklistEntries)
+          ? await processAvatarTask(task, batch.policy)
+          : await processTextTask(task, batch.blacklistEntries, batch.policy)
     } catch (error) {
       // 这一类模型没配 (例如刻意不配视觉模型): 不是故障, 不进熔断器, 直接转人工
       if (error instanceof ModerationConfigError) {
@@ -590,6 +601,7 @@ export const runModerationBatch = async (
     // blacklist 仅文本任务需要: 纯头像批跳过查询, 其余走进程内缓存
     const needsBlacklist = tasks.some((task) => task.content_type !== 'avatar')
     const batch: BatchContext = {
+      policy: loadModerationPolicy(),
       blacklistEntries: needsBlacklist ? await getBlacklistEntries() : [],
       leaseStaleBefore,
       probeTaskIds
