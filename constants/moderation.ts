@@ -169,14 +169,12 @@ export const MODERATION_BREAKER = {
   maxOpenMs: 5 * 60 * 1000
 } as const
 
-// 上线后先以影子模式跑: 熔断器照常观察并记日志 (pm2 logs | grep kun-moderation-breaker),
-// 取任务与失败记账仍是引入车道之前的做法 (每次失败都扣这条任务的 retry)。看过至少一周
-// 的开合日志、确认阈值不会在正常流量下误开之后, 改成 'enforce' 单独发布: 车道打开时不再
-// 取任务, 失败按 accounting.ts 归因
-export const MODERATION_BREAKER_MODE = 'shadow' as 'shadow' | 'enforce'
-
-// 系统性故障检测单独开关: 'log' 只在达到阈值时记一行日志, 不打开车道。一波与内容相关的
-// 坏输出 (例如提示注入攻势) 也会触发它, 所以同样先观察一周再改成 'enforce'
+// 系统性故障检测 (上面的 systematicThreshold) 达到阈值时做什么。'log': 只记一行日志
+// (pm2 logs | grep systematic_suspected), 不打开车道, 这类失败照旧逐条扣 retry。
+// 'enforce': 打开车道。它分不清「模型整体坏了」与「连着来了几条模型答不好的内容」
+// (供应商对违规内容拒答、提示注入), 后者在审核队列里并不少见, 而每误开一次整条车道
+// 至少停 30 秒 —— 改成 'enforce' 之前先看生产日志里它多久出现一次、出现时是不是真的
+// 整体故障
 export const MODERATION_SYSTEMATIC_DETECTION = 'log' as 'log' | 'enforce'
 
 export const MODERATION_BATCH_SIZE = 10

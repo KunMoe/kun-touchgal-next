@@ -4,11 +4,7 @@ import {
   MODERATION_BREAKER,
   MODERATION_MAX_DEFERRALS
 } from '~/constants/moderation'
-import { DependencyFailure } from '~/lib/resilience/failure'
-import {
-  decideFailureAccounting,
-  decideLegacyAccounting
-} from '~/server/moderation/accounting'
+import { decideFailureAccounting } from '~/server/moderation/accounting'
 import { createLaneBreaker } from '~/server/moderation/breaker'
 import type {
   BreakerRecord,
@@ -185,77 +181,6 @@ describe('车道是 closed, 这条内容自己的失败: 扣重试预算', () =>
   })
 })
 
-// 影子模式沿用的旧记账: 与引入车道之前逐条相同
-describe('decideLegacyAccounting', () => {
-  const legacy = (retry: number, error: unknown, scope: TaskFailureScope) =>
-    decideLegacyAccounting({ task: { retry }, error, scope, now: NOW })
-
-  it('每次失败都扣这条任务的 retry, 不看失败的范围', () => {
-    const outage = new DependencyFailure({
-      dependency: 'moderation_ai',
-      scope: 'transient',
-      message: 'status 503',
-      status: 503
-    })
-
-    expect(legacy(0, outage, 'transient')).toEqual({
-      action: 'retry',
-      nextAttempt: new Date(NOW + 5_000),
-      retry: 1,
-      kind: 'unavailable'
-    })
-    expect(legacy(1, outage, 'transient')).toMatchObject({
-      retry: 2,
-      nextAttempt: new Date(NOW + 25_000)
-    })
-    expect(legacy(2, outage, 'transient')).toEqual({
-      action: 'manual',
-      kind: 'unavailable',
-      reason: '审核失败: status 503'
-    })
-  })
-
-  it('没带范围的错误: 原因里带上它的类名, 与改动前相同', () => {
-    expect(legacy(2, new TypeError('x is not a function'), 'internal')).toEqual(
-      {
-        action: 'manual',
-        kind: 'internal',
-        reason: '审核失败: TypeError: x is not a function'
-      }
-    )
-  })
-
-  it('模型的地址或密钥没配: 不重试, 直接转人工', () => {
-    const missing = new DependencyFailure({
-      dependency: 'moderation_ai',
-      scope: 'misconfigured',
-      message:
-        'MODERATION_AI_BASE_URL or MODERATION_AI_API_KEY is not configured'
-    })
-
-    expect(legacy(0, missing, 'misconfigured')).toEqual({
-      action: 'manual',
-      kind: 'misconfigured',
-      reason:
-        'MODERATION_AI_BASE_URL or MODERATION_AI_API_KEY is not configured'
-    })
-  })
-
-  it('依赖回的 401 不是「没配」: 照常重试', () => {
-    const unauthorized = new DependencyFailure({
-      dependency: 'moderation_ai',
-      scope: 'misconfigured',
-      message: 'status 401',
-      status: 401
-    })
-
-    expect(legacy(0, unauthorized, 'misconfigured')).toMatchObject({
-      action: 'retry',
-      retry: 1
-    })
-  })
-})
-
 // 归因规则只有放进队列里跑才看得出好坏: 用真实的熔断器与记账函数模拟 worker 的节拍
 // (每 15 秒一拍、每拍一批), 对照裁决时的探针场景。失败的范围由场景直接给出。
 // 这里验的是「熔断器 × 记账」合起来的走向, 一批内是顺序处理的; worker 自己的并发、
@@ -270,6 +195,8 @@ describe('场景: 队列在各种故障下的走向', () => {
     nextAttempt: number
     retry: number
     defer_count: number
+    // 失败过 (库里是 failure_kind 非空)
+    failed: boolean
     status: 'pending' | 'done' | 'manual'
     doneAt?: number
     kind?: string
@@ -281,7 +208,13 @@ describe('场景: 队列在各种故障下的走向', () => {
       arrivalsPerMin = 4,
       horizonMin = 180,
       poison = false,
-      systematic = 'enforce' as 'log' | 'enforce'
+      // 每隔多少分钟来一波有毛病的内容 (0 = 不来), 每波几条
+      poisonWaveEveryMin = 0,
+      poisonWaveSize = 5,
+      // worker 的做法: 探测取没失败过的任务里最新到的; 'earliest' 是对照 (只按就绪时刻)
+      probe = 'newest-fresh' as 'newest-fresh' | 'earliest',
+      // 上线的配置是 'log'
+      systematic = 'log' as 'log' | 'enforce'
     } = {}
   ) => {
     let at = 0
@@ -307,6 +240,7 @@ describe('场景: 队列在各种故障下的走向', () => {
         nextAttempt: at,
         retry: 0,
         defer_count: 0,
+        failed: false,
         status: 'pending'
       })
     if (poison) {
@@ -319,15 +253,30 @@ describe('场景: 队列在各种故障下的走向', () => {
       for (; arrivalDebt >= 1; arrivalDebt--) {
         add(false)
       }
+      if (
+        poisonWaveEveryMin &&
+        at > 0 &&
+        at % (poisonWaveEveryMin * 60_000) === 0
+      ) {
+        for (let i = 0; i < poisonWaveSize; i++) {
+          add(true)
+        }
+      }
 
       const admission = breaker.admit()
       if (admission === 'blocked') {
         continue
       }
-      const batch = tasks
+      const ready = tasks
         .filter((task) => task.status === 'pending' && task.nextAttempt <= at)
         .sort((a, b) => a.nextAttempt - b.nextAttempt)
-        .slice(0, admission === 'probe' ? 1 : MODERATION_BATCH_SIZE)
+      const newestFresh = ready.filter((task) => !task.failed).at(-1)
+      const batch =
+        admission === 'probe'
+          ? probe === 'newest-fresh' && newestFresh
+            ? [newestFresh]
+            : ready.slice(0, 1)
+          : ready.slice(0, MODERATION_BATCH_SIZE)
       if (admission === 'probe' && !batch.length) {
         breaker.releaseProbe()
         continue
@@ -348,6 +297,7 @@ describe('场景: 队列在各种故障下的走向', () => {
           breaker.recordSuccess()
           continue
         }
+        task.failed = true
         const decision = decideFailureAccounting({
           task,
           scope: outcome,
@@ -392,7 +342,8 @@ describe('场景: 队列在各种故障下的走向', () => {
       opens,
       modelCalls,
       p50Ms: latencies[Math.floor(latencies.length / 2)],
-      p95Ms: latencies[Math.floor(latencies.length * 0.95)]
+      p95Ms: latencies[Math.floor(latencies.length * 0.95)],
+      maxMs: latencies.at(-1)
     }
   }
 
@@ -482,22 +433,25 @@ describe('场景: 队列在各种故障下的走向', () => {
 
     const result = simulate(() => (random() < 0.3 ? 'transient' : 'ok'))
 
-    expect(result.manual).toBe(0)
+    // 一条任务连着失败 6 次的概率是 0.3^6 ≈ 0.07%, 七百多条里期望不到一条 (随种子
+    // 在 0–2 之间); 不设车道时是三十多条
+    expect(result.manual).toBeLessThanOrEqual(2)
     // 末尾几条还在退避里, 其余都处理完了
     expect(result.healthyPending).toBeLessThan(10)
   })
 
-  it('S7 模型输出系统性损坏 60 分钟: 车道打开, 只有最先撞上的几条转人工', () => {
-    const result = simulate((_task, at) => (during(at) ? 'request' : 'ok'))
+  // S7 是系统性故障检测为 'enforce' 时的走向; 上线的配置是下面的对照
+  it("S7 模型输出系统性损坏 60 分钟 ('enforce'): 车道打开, 只有最先撞上的几条转人工", () => {
+    const result = simulate((_task, at) => (during(at) ? 'request' : 'ok'), {
+      systematic: 'enforce'
+    })
 
     expect(result.manual).toBeLessThanOrEqual(3)
     expect(result).toMatchObject({ healthyPending: 0, opens: 1 })
   })
 
-  it('S7 对照: 系统性检测只记日志时, 故障期间到达的每一条都转人工', () => {
-    const result = simulate((_task, at) => (during(at) ? 'request' : 'ok'), {
-      systematic: 'log'
-    })
+  it('S7 对照 (上线的配置): 系统性检测只记日志, 故障期间到达的每一条都转人工', () => {
+    const result = simulate((_task, at) => (during(at) ? 'request' : 'ok'))
 
     expect(result.manual).toBeGreaterThan(200)
     expect(result.opens).toBe(0)
@@ -514,5 +468,55 @@ describe('场景: 队列在各种故障下的走向', () => {
       retry: 2
     })
     expect(result).toMatchObject({ manual: 1, opens: 0, p95Ms: 0 })
+  })
+
+  // 把车道打开的不是依赖整体故障, 而是一波各有毛病的内容。探测若只按就绪时刻取,
+  // 会一条条落在这一波内容上
+  const waves = {
+    // 只有这几条内容被网关 403: 每条一失败就把车道打开
+    blocked: (probe: 'newest-fresh' | 'earliest') =>
+      simulate((task) => (task.poison ? 'misconfigured' : 'ok'), {
+        poisonWaveEveryMin: 60,
+        poisonWaveSize: 7,
+        probe
+      }),
+    // 模型答不好这几条内容; 系统性检测为 'enforce' 时才会打开车道
+    badOutput: (probe: 'newest-fresh' | 'earliest') =>
+      simulate((task) => (task.poison ? 'request' : 'ok'), {
+        poisonWaveEveryMin: 30,
+        poisonWaveSize: 20,
+        probe,
+        systematic: 'enforce'
+      })
+  }
+
+  it('S9 每小时来一波 7 条被网关 403 的内容: 探测取最新到的, 正常内容的等待有界', () => {
+    const result = waves.blocked('newest-fresh')
+
+    // 每条这样的内容每试一次打开一次车道 (各 30 秒), 这是按内容出现的依赖类失败固有
+    // 的代价; 探测不再落在它们身上, 所以每次暂停到下一次探测就结束
+    expect(result.p95Ms).toBeLessThanOrEqual(240_000)
+    expect(result.maxMs).toBeLessThanOrEqual(300_000)
+    expect(result).toMatchObject({
+      healthyPending: 0,
+      manualKinds: ['deferral_exhausted']
+    })
+  })
+
+  it('S9 对照: 探测只按就绪时刻取, 一条条落在这一波内容上, 正常内容要等二十分钟', () => {
+    expect(waves.blocked('earliest').p95Ms).toBeGreaterThan(1_200_000)
+  })
+
+  it("S10 每半小时来一波 20 条模型答不好的内容 ('enforce'): 同样靠探测的取法收住", () => {
+    const result = waves.badOutput('newest-fresh')
+
+    expect(result.p95Ms).toBeLessThanOrEqual(120_000)
+    expect(result).toMatchObject({
+      healthyPending: 0,
+      manual: 100,
+      manualKinds: ['bad_output']
+    })
+    // 对照: 探测一条条落在这一波内容上且不扣预算, 三小时过去大半正常内容还没处理
+    expect(waves.badOutput('earliest').healthyPending).toBeGreaterThan(400)
   })
 })

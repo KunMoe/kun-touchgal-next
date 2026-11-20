@@ -14,7 +14,6 @@ import { KUN_MODERATION_VERDICT_CACHE_KEY } from '~/config/redis'
 import {
   MODERATION_BATCH_SIZE,
   MODERATION_BREAKER,
-  MODERATION_BREAKER_MODE,
   MODERATION_CONCURRENCY,
   MODERATION_LANE,
   MODERATION_LEASE_SECONDS,
@@ -39,10 +38,7 @@ import type {
   ModerationAiResult,
   ModerationVerdict
 } from '~/server/moderation/ai'
-import {
-  decideFailureAccounting,
-  decideLegacyAccounting
-} from '~/server/moderation/accounting'
+import { decideFailureAccounting } from '~/server/moderation/accounting'
 import type { FailureAccounting } from '~/server/moderation/accounting'
 import {
   applyModerationVerdict,
@@ -264,13 +260,10 @@ const laneOf = (task: { content_type: string }): ModerationLane =>
 // (server/moderation/breaker.ts)。只活在这一个 cron 进程里, 进程重启即回到 closed ——
 // 重启后依赖若仍不可用, 头几条任务会重新把它打开
 export interface ModerationWorker {
-  // shadow: 熔断器只观察并记日志, 取任务与记账照旧; enforce: 车道门与归因记账生效
-  mode: 'shadow' | 'enforce'
   breakers: Record<ModerationLane, LaneBreaker>
 }
 
 export const createModerationWorker = (options: {
-  mode: ModerationWorker['mode']
   systematic: 'log' | 'enforce'
 }): ModerationWorker => {
   const createBreaker = (lane: ModerationLane) =>
@@ -280,29 +273,27 @@ export const createModerationWorker = (options: {
       // 探测任务的处理耗时受认领租约约束, 名额的占用期与它取同一个上界
       probeLeaseMs: MODERATION_LEASE_SECONDS * 1000,
       onEvent: (event: BreakerEvent) => {
-        // 一行可 grep 的日志 (pm2 logs | grep kun-moderation-breaker): 影子模式下
-        // 靠它判断阈值会不会在正常流量下误开
+        // 车道每次开合 (以及疑似系统性故障) 留一行可 grep 的日志
+        // (pm2 logs | grep kun-moderation-breaker): 阈值在正常流量下有没有误开、
+        // 每一轮故障持续了多久, 靠它回看
         // eslint-disable-next-line no-console
         console.warn(
-          `[kun-moderation-breaker] ${JSON.stringify({ mode: options.mode, lane, ...event })}`
+          `[kun-moderation-breaker] ${JSON.stringify({ lane, ...event })}`
         )
       }
     })
   return {
-    mode: options.mode,
     breakers: { text: createBreaker('text'), avatar: createBreaker('avatar') }
   }
 }
 
 const defaultWorker = createModerationWorker({
-  mode: MODERATION_BREAKER_MODE,
   systematic: MODERATION_SYSTEMATIC_DETECTION
 })
 
 const reportHealth = (worker: ModerationWorker) =>
   publishModerationHealth({
     at: Date.now(),
-    mode: worker.mode,
     lanes: {
       text: worker.breakers.text.snapshot(),
       avatar: worker.breakers.avatar.snapshot()
@@ -310,7 +301,8 @@ const reportHealth = (worker: ModerationWorker) =>
   })
 
 // 一次处理失败说明了什么范围的问题。范围只在调用依赖的边界上定 (ai.ts、S3 的调用点),
-// 这里不从错误的样子去猜: 没带范围的错误一律是 internal
+// 这里不从错误的样子去猜: 没带范围的错误一律是 internal。消息里留着错误的类名
+// (与 toDependencyFailure 同一格式): 转人工原因靠它分辨是哪一层抛的
 const describeFailure = (
   error: unknown
 ): { scope: TaskFailureScope; message: string; retryAfterMs: number | null } =>
@@ -322,7 +314,10 @@ const describeFailure = (
       }
     : {
         scope: 'internal',
-        message: error instanceof Error ? error.message : String(error),
+        message:
+          error instanceof Error
+            ? `${error.name === 'Error' ? '' : `${error.name}: `}${error.message}`
+            : String(error),
         retryAfterMs: null
       }
 
@@ -374,12 +369,9 @@ const processTask = async (
   const admission = batch.probeTaskIds.delete(task.id)
     ? 'probe'
     : breaker.admit()
-  if (admission === 'blocked' && worker.mode === 'enforce') {
+  if (admission === 'blocked') {
     return
   }
-  // 影子模式不挡任务, 但不放行的任务的结果不喂给熔断器: 强制模式下这次调用不会发生,
-  // 喂进去会让影子状态与将来的真实状态对不上
-  const observed = admission !== 'blocked'
   let holdsProbe = admission === 'probe'
 
   try {
@@ -417,10 +409,8 @@ const processTask = async (
     // 依赖都答复了: 车道闭合。探测的结果由此了结; 之后这条任务再失败 (落库出错)
     // 是它自己的事, 按闭合的车道记账
     const laneHealthy = () => {
-      if (observed) {
-        breaker.recordSuccess()
-        holdsProbe = false
-      }
+      breaker.recordSuccess()
+      holdsProbe = false
     }
     try {
       if (task.content_type === 'avatar') {
@@ -444,30 +434,17 @@ const processTask = async (
       }
 
       const failure = describeFailure(error)
-      const record = observed
-        ? breaker.recordFailure({
-            ...failure,
-            taskId: task.id,
-            probe: holdsProbe
-          })
-        : null
+      const record = breaker.recordFailure({
+        ...failure,
+        taskId: task.id,
+        probe: holdsProbe
+      })
       // 失败已回报给熔断器, 名额随之了结
       holdsProbe = false
-      const decision =
-        worker.mode === 'enforce' && record
-          ? decideFailureAccounting({
-              task,
-              ...failure,
-              record,
-              now: Date.now()
-            })
-          : decideLegacyAccounting({
-              task,
-              error,
-              scope: failure.scope,
-              now: Date.now()
-            })
-      await applyAccounting(task.id, decision)
+      await applyAccounting(
+        task.id,
+        decideFailureAccounting({ task, ...failure, record, now: Date.now() })
+      )
       console.error(`Moderation task ${task.id} attempt failed:`, error)
     }
   } finally {
@@ -538,37 +515,56 @@ const fetchBatch = async (worker: ModerationWorker, leaseStaleBefore: Date) => {
     }
   }
 
-  // 影子模式照旧全取; 强制模式下被挡住的车道不取, 探测只取一条
+  // 被挡住的车道不取, 探测只取一条
   const takeOf = (lane: ModerationLane) => {
-    if (worker.mode === 'shadow' || admissions[lane] === 'pass') {
+    if (admissions[lane] === 'pass') {
       return MODERATION_BATCH_SIZE
     }
     return admissions[lane] === 'probe' ? 1 : 0
   }
   const now = new Date()
+  const fetchLane = async (lane: ModerationLane) => {
+    const take = takeOf(lane)
+    if (take === 0) {
+      return []
+    }
+    const where: Prisma.moderation_taskWhereInput = {
+      ...claimablePredicate(now, leaseStaleBefore),
+      content_type: lane === 'avatar' ? 'avatar' : { not: 'avatar' }
+    }
+    if (admissions[lane] === 'probe') {
+      // 探测要回答的是「依赖现在好了吗」, 所以挑最不可能自己有毛病的那一条: 还没失败过
+      // 的任务里最新到的。按就绪时刻取的话, 探测总落在把车道打开的那一波内容上 ——
+      // 失败过的 5 秒后就到重试时刻, 同一波里还没轮到的入队也更早, 都排在后到的正常
+      // 内容前面; 它们若是各有各的毛病 (只有它们被网关 403), 探测一次次失败、暂停逐次
+      // 翻倍, 正常内容跟着等。队列里只剩失败过的任务时才按就绪时刻取它们 —— 故障
+      // 结束后的积压要靠这一条动起来。没失败过的任务 next_attempt 就是入队时刻, 按它
+      // 倒序即「最新到的」, 且仍走 [status, next_attempt] 索引
+      const fresh = await prisma.moderation_task.findMany({
+        where: { ...where, failure_kind: '' },
+        orderBy: { next_attempt: 'desc' },
+        take: 1
+      })
+      if (fresh.length) {
+        return fresh
+      }
+    }
+    return prisma.moderation_task.findMany({
+      where,
+      // 按 next_attempt 升序取: 与 [status, next_attempt] 索引同序, Postgres
+      // 直接索引取前 N 免去额外 Sort. next_attempt 是范围条件, 其后的列 (如
+      // created) 在索引里不构成有序, 故加复合索引也消不掉排序; 换排序键才是
+      // 零成本解. 未重试任务 next_attempt 默认等于 created, FIFO 不变, 重试
+      // 任务则按就绪时刻公平排队
+      orderBy: { next_attempt: 'asc' },
+      take
+    })
+  }
   let fetched: moderation_taskModel[][]
   try {
     // 车道状态以问过门之后的为准 (到点的 open 此刻已是 half_open)
     await reportHealth(worker)
-    fetched = await Promise.all(
-      MODERATION_LANE.map((lane) =>
-        takeOf(lane) === 0
-          ? []
-          : prisma.moderation_task.findMany({
-              where: {
-                ...claimablePredicate(now, leaseStaleBefore),
-                content_type: lane === 'avatar' ? 'avatar' : { not: 'avatar' }
-              },
-              // 按 next_attempt 升序取: 与 [status, next_attempt] 索引同序, Postgres
-              // 直接索引取前 N 免去额外 Sort. next_attempt 是范围条件, 其后的列 (如
-              // created) 在索引里不构成有序, 故加复合索引也消不掉排序; 换排序键才是
-              // 零成本解. 未重试任务 next_attempt 默认等于 created, FIFO 不变, 重试
-              // 任务则按就绪时刻公平排队
-              orderBy: { next_attempt: 'asc' },
-              take: takeOf(lane)
-            })
-      )
-    )
+    fetched = await Promise.all(MODERATION_LANE.map(fetchLane))
   } catch (error) {
     releaseProbes()
     throw error

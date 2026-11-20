@@ -25,7 +25,6 @@ const closed = {
 
 const health: ModerationHealth = {
   at: 1_763_640_000_000,
-  mode: 'shadow',
   lanes: {
     text: {
       state: 'open',

@@ -21,8 +21,6 @@ const laneSnapshotSchema = z.object({
 const healthSchema = z.object({
   // 上报时刻 (毫秒)
   at: z.number(),
-  // shadow: 熔断器只观察, 车道显示为打开时任务仍在照常处理
-  mode: z.enum(['shadow', 'enforce']),
   lanes: z.object({ text: laneSnapshotSchema, avatar: laneSnapshotSchema })
 })
 

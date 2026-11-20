@@ -14,10 +14,10 @@ type LaneState = NonNullable<
   AdminModerationStats['worker']
 >['lanes']['text']['state']
 
-// 影子模式下车道只观察不拦截: 显示为「打开」时任务仍在照常处理, 文案要分开
-const stateLabel: Record<'shadow' | 'enforce', Record<LaneState, string>> = {
-  enforce: { closed: '正常', open: '已暂停', half_open: '探测中' },
-  shadow: { closed: '正常', open: '疑似故障', half_open: '疑似故障, 探测中' }
+const stateLabel: Record<LaneState, string> = {
+  closed: '正常',
+  open: '已暂停',
+  half_open: '探测中'
 }
 
 const stateColor = {
@@ -60,7 +60,7 @@ export const ModerationHealth = ({ stats }: Props) => {
                   variant="flat"
                   size="sm"
                 >
-                  {MODERATION_LANE_MAP[lane]}: {stateLabel[worker.mode][state]}
+                  {MODERATION_LANE_MAP[lane]}: {stateLabel[state]}
                   {reason
                     ? ` · ${MODERATION_LANE_REASON_MAP[reason] ?? reason}`
                     : ''}
@@ -69,9 +69,6 @@ export const ModerationHealth = ({ stats }: Props) => {
             })}
             <span className="text-xs text-default-500">
               上报于 <KunTimeAgo date={worker.at} />
-              {worker.mode === 'shadow'
-                ? ' · 影子模式: 只观察不拦截, 失败仍逐条重试'
-                : ''}
             </span>
           </div>
           {MODERATION_LANE.map((lane) => {
@@ -88,11 +85,10 @@ export const ModerationHealth = ({ stats }: Props) => {
                     自 <KunTimeAgo date={since} /> 起异常
                   </>
                 )}
-                {worker.mode === 'enforce' &&
-                state === 'open' &&
-                openUntil !== null
+                {state === 'open' && openUntil !== null
                   ? `, ${formatClock(openUntil)} 后放一条任务探测`
                   : ''}
+                {state === 'half_open' ? ', 下一条任务用来探测' : ''}
                 {lastError ? `, 最近一次错误: ${lastError}` : ''}
               </p>
             )

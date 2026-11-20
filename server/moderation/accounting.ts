@@ -3,7 +3,6 @@ import {
   MODERATION_MAX_RETRY
 } from '~/constants/moderation'
 import type { ModerationFailureKind } from '~/constants/moderation'
-import { DependencyFailure } from '~/lib/resilience/failure'
 import type { BreakerRecord, TaskFailureScope } from './breaker'
 
 // 审核任务的失败记账: 一次失败算在谁头上、之后怎么办, 全在这一个纯函数里定。
@@ -109,42 +108,6 @@ export const decideFailureAccounting = (input: {
     action: 'retry',
     // 5 秒、25 秒; 这次失败把车道打开了 (系统性故障) 时不早于它的下一次探测
     nextAttempt: new Date(Math.max(now + 5 ** retry * 1000, openUntil)),
-    retry,
-    kind
-  }
-}
-
-// 影子模式 (MODERATION_BREAKER_MODE = 'shadow') 沿用的旧记账, 与引入车道之前逐条相同:
-// 配置缺失直接转人工, 其余每次失败都扣这条任务的 retry, 第三次转人工。切到 'enforce'
-// 并稳定之后, 这个函数连同 worker 里的调用点一起删
-export const decideLegacyAccounting = (input: {
-  task: { retry: number }
-  error: unknown
-  scope: TaskFailureScope
-  now: number
-}): FailureAccounting => {
-  const { task, error, scope, now } = input
-  const kind = KIND_OF_SCOPE[scope]
-
-  // 没有状态码的 misconfigured 只有一种来源: 模型的地址或密钥没配
-  if (
-    error instanceof DependencyFailure &&
-    error.scope === 'misconfigured' &&
-    error.status === null
-  ) {
-    return { action: 'manual', kind, reason: error.message }
-  }
-
-  const retry = task.retry + 1
-  if (retry >= MODERATION_MAX_RETRY) {
-    // 带范围的失败自己的消息里已有原错误的类名与状态码, 不再套一层类名
-    const detail =
-      error instanceof DependencyFailure ? error.message : String(error)
-    return { action: 'manual', kind, reason: `审核失败: ${detail}` }
-  }
-  return {
-    action: 'retry',
-    nextAttempt: new Date(now + 5 ** retry * 1000),
     retry,
     kind
   }

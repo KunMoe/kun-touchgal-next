@@ -50,7 +50,6 @@ const request = new Request('http://localhost/api/admin/moderation/stats', {
 
 const health = {
   at: 1,
-  mode: 'enforce',
   lanes: {
     text: {
       state: 'open',
