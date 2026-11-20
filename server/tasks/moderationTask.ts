@@ -5,6 +5,7 @@ import type { moderation_taskModel } from '~/prisma/generated/prisma/models'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import { getKv, setKv } from '~/lib/redis'
 import { getFileFromS3 } from '~/lib/s3'
+import { toDependencyFailure } from '~/lib/resilience/failure'
 import { withEncodeSlot } from '~/server/image/encodeLimit'
 import { KUN_MODERATION_VERDICT_CACHE_KEY } from '~/config/redis'
 import {
@@ -61,7 +62,15 @@ const getCachedVerdict = async (
   contentType: ModerationTextType,
   hash: string
 ): Promise<ModerationVerdict | null> => {
-  const cached = await getKv(verdictCacheKey(contentType, hash))
+  // 缓存只是省一次调用: 读不到 (Redis 抖动) 按未命中处理, 不让这条任务为此失败
+  let cached: string | null
+  try {
+    cached = await getKv(verdictCacheKey(contentType, hash))
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to read moderation verdict cache:', error)
+    return null
+  }
   if (!cached) {
     return null
   }
@@ -169,10 +178,15 @@ export const processAvatarTask = async (task: moderation_taskModel) => {
     await markTaskManual(task.id, MODERATION_PAYLOAD_UNREADABLE)
     return
   }
-  const buffer = await getFileFromS3(
-    body.payload.pendingKey,
-    AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
-  )
+  let buffer: Buffer
+  try {
+    buffer = await getFileFromS3(
+      body.payload.pendingKey,
+      AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
+    )
+  } catch (error) {
+    throw toDependencyFailure('s3', error)
+  }
   // vision APIs handle jpeg far more reliably than avif
   const jpeg = await withEncodeSlot(() =>
     sharp(buffer).jpeg({ quality: 85 }).toBuffer()

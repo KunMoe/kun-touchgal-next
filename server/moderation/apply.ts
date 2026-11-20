@@ -6,6 +6,7 @@ import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
 import { copyObject, deleteFileFromS3 } from '~/lib/s3'
+import { toDependencyFailure } from '~/lib/resilience/failure'
 import { kunTx } from '~/server/db/tx'
 import { transitionComments } from '~/server/content/comment/transition'
 import { transitionRatings } from '~/server/content/rating/transition'
@@ -106,16 +107,21 @@ export const applyModerationVerdict = async (
     if (!avatar) {
       throw new Error(MODERATION_PAYLOAD_UNREADABLE)
     }
-    await copyObject(
-      avatar.pendingKey,
-      avatar.avatarKey,
-      AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
-    )
-    await copyObject(
-      avatar.pendingMiniKey,
-      avatar.avatarMiniKey,
-      AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
-    )
+    try {
+      await copyObject(
+        avatar.pendingKey,
+        avatar.avatarKey,
+        AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
+      )
+      await copyObject(
+        avatar.pendingMiniKey,
+        avatar.avatarMiniKey,
+        AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
+      )
+    } catch (error) {
+      // 存储的失败在这里说清范围 (lib/resilience/failure.ts), worker 据此决定算谁的
+      throw toDependencyFailure('s3', error)
+    }
   }
 
   // 待生效的新签名只暂存在载荷里: 读不出来就无从通过。与头像一样在认领之前拒绝执行,

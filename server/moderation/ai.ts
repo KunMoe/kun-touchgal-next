@@ -7,6 +7,13 @@ import {
 } from '~/constants/moderation'
 import type { ModerationContentType } from '~/constants/moderation'
 import {
+  DependencyFailure,
+  classifyHttpStatus,
+  parseRetryAfterMs,
+  toDependencyFailure
+} from '~/lib/resilience/failure'
+import type { FailureScope } from '~/lib/resilience/failure'
+import {
   MODERATION_AVATAR_SYSTEM_PROMPT,
   MODERATION_TEXT_SYSTEM_PROMPT
 } from './prompt'
@@ -14,6 +21,21 @@ import {
 // configuration problems (missing env) should send the task to manual
 // review instead of burning retries
 export class ModerationConfigError extends Error {}
+
+// 这里是 provider 边界: 调用模型的每一种失败都在这里说清它的范围 (见
+// lib/resilience/failure.ts), worker 不再从错误的样子去猜。依赖答复了但输出不合约定
+// (正文为空、不是 JSON、形状不符) 归 request —— 那是这一次调用自己的结果
+const providerFailure = (
+  scope: FailureScope,
+  message: string,
+  detail: { status?: number; retryAfterMs?: number | null } = {}
+) =>
+  new DependencyFailure({
+    dependency: 'moderation_ai',
+    scope,
+    message,
+    ...detail
+  })
 
 // prompt 要求输出 boolean, 但同时容忍 0/1: 模型偶尔的形态波动不该让整条内容
 // 走完三次重试再转人工
@@ -67,14 +89,18 @@ export const parseModerationVerdict = (raw: string): ModerationVerdict => {
   try {
     parsed = JSON.parse(cleaned)
   } catch {
-    throw new Error(
+    throw providerFailure(
+      'request',
       `Moderation verdict is not valid JSON: ${raw.slice(0, 200)}`
     )
   }
 
   const verdict = moderationVerdictSchema.safeParse(parsed)
   if (!verdict.success) {
-    throw new Error(`Invalid moderation verdict shape: ${raw.slice(0, 200)}`)
+    throw providerFailure(
+      'request',
+      `Invalid moderation verdict shape: ${raw.slice(0, 200)}`
+    )
   }
   return verdict.data
 }
@@ -99,6 +125,8 @@ const requestChatCompletion = async (
     )
   }
 
+  // try/catch 只包网络调用 (这里与下面的读流循环): 传输层的失败是依赖的, 其余代码
+  // 抛的错不该被算到依赖头上
   const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
     // 单次调用超时: 约束任务处理耗时在锁 TTL 内 (见 MODERATION_AI_TIMEOUT_MS); 超时会
@@ -121,12 +149,27 @@ const requestChatCompletion = async (
       // provider 决定故不做枚举校验; 未配置则不带该字段, 交给 provider 默认
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {})
     })
+  }).catch((error) => {
+    throw toDependencyFailure('moderation_ai', error)
   })
   if (!res.ok) {
-    throw new Error(`Moderation AI request failed with status ${res.status}`)
+    throw providerFailure(
+      classifyHttpStatus(res.status),
+      `Moderation AI request failed with status ${res.status}`,
+      {
+        status: res.status,
+        retryAfterMs: parseRetryAfterMs(
+          res.headers.get('retry-after'),
+          Date.now()
+        )
+      }
+    )
   }
   if (!res.body) {
-    throw new Error('Moderation AI response has no body stream')
+    throw providerFailure(
+      'transient',
+      'Moderation AI response has no body stream'
+    )
   }
 
   // 累积 OpenAI 兼容的流式增量, 等价于非流式的 choices[0].message.content 拼接;
@@ -183,7 +226,9 @@ const requestChatCompletion = async (
   // 用 reader 而非 for-await: 项目 TS lib 未给 ReadableStream 暴露 asyncIterator
   const reader = res.body.getReader()
   while (true) {
-    const { done: readerDone, value } = await reader.read()
+    const { done: readerDone, value } = await reader.read().catch((error) => {
+      throw toDependencyFailure('moderation_ai', error)
+    })
     if (readerDone) {
       break
     }
@@ -203,11 +248,16 @@ const requestChatCompletion = async (
     handleDataLine(buffer)
   }
 
+  // 流在 [DONE] 之前就结束: 连接被掐断或网关超时, 不是这条内容的问题
   if (!done) {
-    throw new Error('Moderation AI stream ended without [DONE]')
+    throw providerFailure(
+      'transient',
+      'Moderation AI stream ended without [DONE]'
+    )
   }
   if (!content.trim()) {
-    throw new Error(
+    throw providerFailure(
+      'request',
       `AI 返回正文为空 (finish_reason: ${finishReason ?? 'unknown'}), ` +
         `若为 length 通常是推理模型的思考耗尽了 max_tokens (${MODERATION_AI_MAX_TOKENS})`
     )
