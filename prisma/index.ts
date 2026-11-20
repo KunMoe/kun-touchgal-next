@@ -1,8 +1,9 @@
 import 'dotenv/config'
-import { createHash } from 'crypto'
 import pg from 'pg'
-import { PrismaPg } from '@prisma/adapter-pg'
-import { PrismaClient } from './generated/prisma/client'
+import {
+  createKunPrismaClient,
+  statementNameGenerator
+} from '~/prisma/createClient'
 import { isPrismaTransactionConflict } from '~/server/db/txErrors'
 
 const connectionString = `${process.env.KUN_DATABASE_URL}`
@@ -17,13 +18,6 @@ const pool = new pg.Pool({
   maxLifetimeSeconds: 1800
 })
 
-// 名字必须由 SQL 文本确定性派生: pg 按 name 在每条连接上缓存已 Parse 的语句且从不
-// DEALLOCATE, 同名异文会直接抛错, 因此名字既不能复用也不能随淘汰变化。
-// sha1 十六进制 40 字符, 低于 PostgreSQL 语句名 63 字符上限。
-const statementNameGenerator = (query: { sql: string }) =>
-  createHash('sha1').update(query.sql).digest('hex')
-
-const adapter = new PrismaPg(pool, { statementNameGenerator })
-const prisma = new PrismaClient({ adapter })
+const prisma = createKunPrismaClient(pool)
 
 export { isPrismaTransactionConflict, prisma, statementNameGenerator }
