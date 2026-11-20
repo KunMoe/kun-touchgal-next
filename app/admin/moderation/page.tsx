@@ -13,7 +13,8 @@ export default async function Kun() {
   const response = await kunGetModerationTasksActions({
     page: 1,
     limit: 30,
-    status: 'all'
+    status: 'all',
+    failureKind: 'all'
   })
   if (typeof response === 'string') {
     return <ErrorComponent error={response} />

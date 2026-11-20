@@ -4,7 +4,10 @@ import {
   ADMIN_RATING_DELETE_LIMIT,
   ADMIN_RESOURCE_DELETE_LIMIT
 } from '~/constants/admin'
-import { MODERATION_TEXT_CONTENT_TYPE } from '~/constants/moderation'
+import {
+  MODERATION_FAILURE_KIND,
+  MODERATION_TEXT_CONTENT_TYPE
+} from '~/constants/moderation'
 import { kunPasswordRegex } from '~/utils/validate'
 import { KUN_ROLE } from '~/constants/role'
 
@@ -366,7 +369,9 @@ export const adminUpdateModerationSettingSchema = z.object({
 export const adminModerationPaginationSchema = adminPaginationSchema.extend({
   status: z
     .enum(['all', 'pending', 'approved', 'rejected', 'manual', 'superseded'])
-    .default('all')
+    .default('all'),
+  // 按最近一次失败的类别筛选 (转人工的原因、待审核任务卡在哪一类失败上)
+  failureKind: z.enum(['all', ...MODERATION_FAILURE_KIND]).default('all')
 })
 
 export const adminModerationReviewSchema = z.object({

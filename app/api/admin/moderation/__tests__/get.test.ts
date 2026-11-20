@@ -18,7 +18,12 @@ vi.mock('~/prisma/index', () => ({
 
 import { getModerationTasks } from '~/app/api/admin/moderation/get'
 
-const input = { page: 1, limit: 30, status: 'all' as const }
+const input = {
+  page: 1,
+  limit: 30,
+  status: 'all' as const,
+  failureKind: 'all' as const
+}
 
 const baseTask = {
   id: 1,
@@ -34,6 +39,8 @@ const baseTask = {
   tokens_in: 0,
   tokens_out: 0,
   retry: 0,
+  defer_count: 0,
+  failure_kind: '',
   dry_run: false,
   user: { id: 7, name: 'kun', avatar: '' },
   created: new Date('2026-07-18T00:00:00Z'),
@@ -46,6 +53,45 @@ describe('getModerationTasks', () => {
     countMock.mockResolvedValue(1)
     findPatchesMock.mockResolvedValue([])
     findCommentsMock.mockResolvedValue([])
+  })
+
+  it('按状态与失败类别筛选, 列表与总数用同一个条件', async () => {
+    findTasksMock.mockResolvedValue([])
+
+    await getModerationTasks(input)
+    expect(findTasksMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: {} })
+    )
+
+    await getModerationTasks({
+      ...input,
+      status: 'manual',
+      failureKind: 'deferral_exhausted'
+    })
+    const where = { status: 'manual', failure_kind: 'deferral_exhausted' }
+    expect(findTasksMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where })
+    )
+    expect(countMock).toHaveBeenLastCalledWith({ where })
+
+    await getModerationTasks({ ...input, failureKind: 'unavailable' })
+    expect(countMock).toHaveBeenLastCalledWith({
+      where: { failure_kind: 'unavailable' }
+    })
+  })
+
+  it('下发失败类别与推迟次数', async () => {
+    findTasksMock.mockResolvedValue([
+      { ...baseTask, retry: 1, defer_count: 4, failure_kind: 'rate_limited' }
+    ])
+
+    const { tasks } = await getModerationTasks(input)
+
+    expect(tasks[0]).toMatchObject({
+      retry: 1,
+      deferCount: 4,
+      failureKind: 'rate_limited'
+    })
   })
 
   it('resolves patch via patch_id for rating / resource tasks', async () => {

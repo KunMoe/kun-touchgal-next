@@ -31,9 +31,11 @@ import { KunCardSkeleton } from '~/components/kun/CardSkeleton'
 import { KunPagination } from '~/components/kun/Pagination'
 import { useMounted } from '~/hooks/useMounted'
 import { canReviewModerationTask, ModerationTaskCard } from './Card'
+import { ModerationHealth } from './Health'
 import {
   formatModerationContentTypeLabel,
   MODERATION_CONTENT_TYPE_MAP,
+  MODERATION_FAILURE_KIND_MAP,
   MODERATION_TASK_STATUS_MAP,
   MODERATION_TEXT_CONTENT_TYPE
 } from '~/constants/moderation'
@@ -47,6 +49,14 @@ import type {
 const statusFilterOptions = [
   { key: 'all', label: '全部' },
   ...Object.entries(MODERATION_TASK_STATUS_MAP).map(([key, label]) => ({
+    key,
+    label
+  }))
+]
+
+const failureKindFilterOptions = [
+  { key: 'all', label: '全部失败类别' },
+  ...Object.entries(MODERATION_FAILURE_KIND_MAP).map(([key, label]) => ({
     key,
     label
   }))
@@ -70,6 +80,7 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
   const [total, setTotal] = useState(initialTotal)
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState('all')
+  const [failureKind, setFailureKind] = useState('all')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   // 页码钳制帧列表已清空而 refetch 尚未发起, 渲染层以骨架屏遮住误导空态
@@ -116,7 +127,7 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
           tasks: AdminModerationTask[]
           total: number
         }>
-      >('/admin/moderation', { page, limit, status })
+      >('/admin/moderation', { page, limit, status, failureKind })
       if (requestId !== latestFetchRequestIdRef.current) {
         return
       }
@@ -177,19 +188,23 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
       return
     }
     fetchData()
-  }, [page, status])
+  }, [page, status, failureKind])
 
   useEffect(() => {
     fetchStats()
   }, [])
 
-  // 单条改判/重试后只更新对应卡片: 状态不再匹配当前筛选时从列表移除, 否则就地更新
+  // 单条改判/重试后只更新对应卡片: 状态或失败类别不再匹配当前筛选时从列表移除,
+  // 否则就地更新 (改判与重试都会清掉失败类别)
   const handleTaskUpdated = (
     taskId: number,
     patch: Partial<AdminModerationTask>
   ) => {
     const staysVisible =
-      !patch.status || status === 'all' || status === patch.status
+      (!patch.status || status === 'all' || status === patch.status) &&
+      (patch.failureKind === undefined ||
+        failureKind === 'all' ||
+        failureKind === patch.failureKind)
     if (staysVisible) {
       setTasks((prev) =>
         prev.map((task) => (task.id === taskId ? { ...task, ...patch } : task))
@@ -286,6 +301,15 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
       return
     }
     setStatus(key)
+    setPage(1)
+  }
+
+  const handleFailureKindChange = (keys: 'all' | Set<Key>) => {
+    const key = Array.from(keys)[0] as string | undefined
+    if (!key) {
+      return
+    }
+    setFailureKind(key)
     setPage(1)
   }
 
@@ -403,21 +427,34 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
                 <p className="text-xl font-semibold">{stats.tokensOut}</p>
               </div>
             </div>
+            <ModerationHealth stats={stats} />
           </CardBody>
         </Card>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Select
-          aria-label="任务状态筛选"
-          className="w-full sm:max-w-40"
-          selectedKeys={new Set([status])}
-          onSelectionChange={handleStatusChange}
-        >
-          {statusFilterOptions.map((option) => (
-            <SelectItem key={option.key}>{option.label}</SelectItem>
-          ))}
-        </Select>
+        <div className="flex w-full flex-wrap gap-3 sm:w-auto">
+          <Select
+            aria-label="任务状态筛选"
+            className="w-full sm:w-40"
+            selectedKeys={new Set([status])}
+            onSelectionChange={handleStatusChange}
+          >
+            {statusFilterOptions.map((option) => (
+              <SelectItem key={option.key}>{option.label}</SelectItem>
+            ))}
+          </Select>
+          <Select
+            aria-label="失败类别筛选"
+            className="w-full sm:w-44"
+            selectedKeys={new Set([failureKind])}
+            onSelectionChange={handleFailureKindChange}
+          >
+            {failureKindFilterOptions.map((option) => (
+              <SelectItem key={option.key}>{option.label}</SelectItem>
+            ))}
+          </Select>
+        </div>
         <Button variant="flat" onPress={() => handleOpenBlacklist()}>
           黑名单管理
         </Button>

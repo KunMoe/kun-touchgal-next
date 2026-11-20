@@ -25,7 +25,8 @@ import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import {
   MODERATION_CONTENT_TYPE_MAP,
   MODERATION_REJECT_CODE_MAP,
-  MODERATION_TASK_STATUS_MAP
+  MODERATION_TASK_STATUS_MAP,
+  formatModerationFailureKind
 } from '~/constants/moderation'
 import type { AdminModerationTask } from '~/types/api/admin'
 
@@ -117,6 +118,7 @@ export const ModerationTaskCard = ({
       onTaskUpdated(task.id, {
         status: pendingApprove ? 'approved' : 'rejected',
         rejectCode: '',
+        failureKind: '',
         // 与服务端落库一致: 改判拒绝写入固定原因, model 记为 admin, Token 清零
         rejectReason: pendingApprove ? '' : '经人工复核为违规内容',
         model: 'admin',
@@ -140,8 +142,14 @@ export const ModerationTaskCard = ({
         return
       }
       toast.success('已重新加入审核队列')
-      // 与服务端 requeue 一致: 清掉上次拒绝原因并重置重试计数
-      onTaskUpdated(task.id, { status: 'pending', rejectReason: '', retry: 0 })
+      // 与服务端 requeue 一致: 清掉上次拒绝原因与失败类别, 两份失败预算清零
+      onTaskUpdated(task.id, {
+        status: 'pending',
+        rejectReason: '',
+        retry: 0,
+        deferCount: 0,
+        failureKind: ''
+      })
     } finally {
       setRetrying(false)
     }
@@ -196,6 +204,11 @@ export const ModerationTaskCard = ({
             {task.dryRun && (
               <Chip color="secondary" variant="flat" size="sm">
                 灰度
+              </Chip>
+            )}
+            {task.failureKind && (
+              <Chip color="warning" variant="flat" size="sm">
+                {formatModerationFailureKind(task.failureKind)}
               </Chip>
             )}
             {task.rejectCode && (
@@ -277,6 +290,7 @@ export const ModerationTaskCard = ({
               {task.model ? `模型: ${task.model} · ` : ''}
               Token: {task.tokensIn} 入 / {task.tokensOut} 出
               {task.retry > 0 ? ` · 重试 ${task.retry} 次` : ''}
+              {task.deferCount > 0 ? ` · 推迟 ${task.deferCount} 次` : ''}
             </span>
             <div className="flex gap-2">
               {task.contentType !== 'avatar' && task.payload.text && (

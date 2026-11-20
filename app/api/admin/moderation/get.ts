@@ -36,9 +36,12 @@ const toAdminPayload = (task: {
 export const getModerationTasks = async (
   input: z.infer<typeof adminModerationPaginationSchema>
 ) => {
-  const { page, limit, status } = input
+  const { page, limit, status, failureKind } = input
   const offset = (page - 1) * limit
-  const where = status === 'all' ? {} : { status }
+  const where = {
+    ...(status === 'all' ? {} : { status }),
+    ...(failureKind === 'all' ? {} : { failure_kind: failureKind })
+  }
 
   const [data, total] = await Promise.all([
     prisma.moderation_task.findMany({
@@ -120,6 +123,8 @@ export const getModerationTasks = async (
     tokensIn: task.tokens_in,
     tokensOut: task.tokens_out,
     retry: task.retry,
+    deferCount: task.defer_count,
+    failureKind: task.failure_kind,
     dryRun: task.dry_run,
     user: task.user,
     commentResourceId:

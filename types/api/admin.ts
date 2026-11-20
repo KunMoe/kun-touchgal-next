@@ -2,6 +2,7 @@ import type { PatchResource } from '~/types/api/patch'
 import type { PatchComment } from '~/types/api/comment'
 import type { Message } from '~/types/api/message'
 import type { PurgedUserReference } from '~/server/account/userReferences'
+import type { ModerationHealth } from '~/server/moderation/health'
 
 export type AdminStatsName =
   'user' | 'active' | 'patch' | 'patch_resource' | 'patch_comment'
@@ -168,6 +169,10 @@ export interface AdminModerationTask {
   tokensIn: number
   tokensOut: number
   retry: number
+  // 依赖类失败 (供应商不可用、限流、配置错误) 的推迟次数, 与 retry 分开记账
+  deferCount: number
+  // 最近一次失败的类别 (MODERATION_FAILURE_KIND); 空串 = 没有失败过或裁决已落定
+  failureKind: string
   dryRun: boolean
   user: KunUser
   // 资源评论任务的资源 id (深链到资源详情页); 其余任务为 null
@@ -196,4 +201,10 @@ export interface AdminModerationStats {
   statusCounts: Record<string, number>
   tokensIn: number
   tokensOut: number
+  // 审核 worker 上报的车道状态; null = 超过两分钟没有上报 (cron 进程可能没在运行)
+  worker: ModerationHealth | null
+  // 最早一条仍在待审核的任务的创建时间; 队列为空时为 null
+  oldestPendingAt: Date | string | null
+  // 转人工的任务按失败类别计数; 键为空串的是 AI 拿不准转人工的
+  manualKindCounts: Record<string, number>
 }

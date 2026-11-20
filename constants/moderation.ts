@@ -134,6 +134,10 @@ export const MODERATION_FAILURE_KIND_MAP: Record<
   deferral_exhausted: '多次推迟仍失败'
 }
 
+// 表外的值 (将来新增的类别、旧数据) 回落原串展示
+export const formatModerationFailureKind = (kind: string) =>
+  (MODERATION_FAILURE_KIND_MAP as Record<string, string>)[kind] ?? kind
+
 // 车道 = 一类任务共用的依赖: 文本任务共用文本模型, 头像任务共用视觉模型与对象存储。
 // 一条车道的依赖出问题不拖住另一条
 export const MODERATION_LANE = ['text', 'avatar'] as const
@@ -143,6 +147,14 @@ export type ModerationLane = (typeof MODERATION_LANE)[number]
 export const MODERATION_LANE_MAP: Record<ModerationLane, string> = {
   text: '文本',
   avatar: '头像'
+}
+
+// 车道被暂停的原因 (BreakerReason), 管理端展示用
+export const MODERATION_LANE_REASON_MAP: Record<string, string> = {
+  dependency: '供应商不可用',
+  rate_limited: '供应商限流',
+  misconfigured: '配置错误',
+  systematic: '系统性故障'
 }
 
 // 车道熔断的阈值 (server/moderation/breaker.ts)
