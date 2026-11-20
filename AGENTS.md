@@ -108,7 +108,7 @@ pnpm prisma:generate
 - `server/auth/session.ts`（`app/api/utils/jwt.ts` 是迁移期的转出口）、`middleware/_verifyHeaderCookie.ts`：Node/Edge 认证路径。
 - `server/viewer/context.ts`、`server/viewer/patchVisibility.ts`：请求视角与作品可见性的唯一定义。
 - `proxy.ts`、`middleware/_csrf.ts`：路由保护与 CSRF 策略。
-- `prisma/index.ts`、`prisma.config.ts`、`prisma/schema/schema.prisma`：数据库 client、schema 路径和生成配置。
+- `prisma/index.ts`、`prisma/createClient.ts`、`prisma.config.ts`、`prisma/schema/schema.prisma`：数据库 client 单例与连接池、唯一构造 `PrismaClient` 的工厂、schema 路径和生成配置。
 - `lib/redis.ts`、`lib/s3.ts`、`lib/meilisearch.ts`：基础设施适配器。
 - `server/moderation/apply.ts`、`server/search/sync.ts`：审核事务和提交后搜索同步的代表实现。
 - `next.config.ts`：MDX、图片域、standalone 输出和构建检查开关。
@@ -147,6 +147,8 @@ pnpm prisma:generate
 - 测试与实现同域放置，例如 `server/search/__tests__/filter-builder.test.ts`、`app/api/user/follow/__tests__/route.test.ts`、`app/api/patch/rating/__tests__/write-stat-transaction.test.ts`。
 - 现有模式使用 `describe`/`it`/`expect`、`vi.hoisted` + `vi.mock` 隔离 Prisma、Next、认证、缓存、S3 与搜索；fixture 通常内联，`beforeEach` 重置并设置确定性返回值。
 - 事务测试应验证可观察结果以及 lock/commit/rollback/retry 顺序；API 测试覆盖成功路径和业务错误字符串，不测试源码文本或实现细节。`server/content` 的命令测试用 `server/db/__tests__/recordingTransaction.ts`：它记录每次尝试的语句（含取锁 SQL）与提交 / 回滚，读取必须先配置，没配就抛错。入口测试要么同样用它端到端跑，要么在命令层 mock。
+- 应用代码依赖的「Prisma 把这种参数形状编译成什么 SQL」与「adapter 把 PostgreSQL 的错误映射成什么」由不连库的编译契约守护，随默认的 `pnpm test` 运行：`prisma/__tests__/compile-contract.test.ts`（条件更新的守卫平铺在 UPDATE 自己的 WHERE 里、关系 `_count` 的条件下推进聚合子查询、`equals` + `insensitive` 是不转义的 `ILIKE`、通告锁与事务在同一条连接上、时间参数是 UTC 墙钟、语句名）、`prisma/__tests__/error-contract.test.ts`（P2002 / P2003 / P2025 / P2020、事务冲突的 P2034 与原生语句的 P2010，对着 `kunViolationCodeOf` 与 `isPrismaTransactionConflict` 求值），以及各站点的 `__tests__/*.sql.test.ts`。它们用 `prisma/__tests__/support/sqlRecorder.ts` 的录制客户端：真实的 PrismaClient 与 adapter（与应用的单例经 `prisma/createClient.ts` 的同一个工厂构造），底下是不开 socket 的 `pg.Pool` 子类，录下交给驱动的 SQL、参数与语句名；断言用 `support/sqlShape.ts` 的性质断言，不做 SQL 快照。这是对第三方编译器输出的契约测试，是上一条「不测试实现细节」的明示例外，不要当冗余删掉。新写一处靠编译器输出才成立的代码（把条件 `updateMany` 的 `count` 当 CAS、给 `_count` 加对返回行恒真的过滤、大小写不敏感的精确匹配）要配一份 `*.sql.test.ts`；mock 掉 `~/prisma/index` 的单测只锁得住传给 Prisma 的参数。
+- 升级 `prisma`、`@prisma/*` 或 `pg` 之后编译契约必须全绿。变红时先判断新的输出是否仍满足用例标题与 `sqlShape.ts` 注释写明的前提（例如守卫是否仍由 UPDATE 自己的 WHERE 在目标行上求值），满足才改断言，不满足就改用到它的代码；不要机械地把断言改成新输出。编译契约证明不了库拿到 SQL 之后怎么执行：回放给录制客户端的错误字段（`support/pgErrorFixtures.ts`）由 `prisma/__tests__/pgErrorFixtures.db.test.ts` 在真库上逐字段比对；「平铺的条件更新在并发下恰好一个命中、守卫写进子查询就失守」由 `app/api/user/status/check-in/__tests__/route.db.test.ts` 在真库上守护。
 - Lua 脚本（尝试预算等）的语义由真 Redis 契约测试守护：文件名 `*.redis.test.ts`，只在设了 `KUN_REDIS_CONTRACT_URL` 时运行，默认的 `pnpm test` 里整组跳过，CI 的 `redis-contract` job 执行。本地先起一个一次性容器 `docker run --rm -d --name kun-redis-contract -p 127.0.0.1:56379:6379 redis:8.0-alpine`（与生产同主次版本），再 `KUN_REDIS_CONTRACT_URL=redis://127.0.0.1:56379 pnpm exec vitest run redis.test`。入口 `lib/__tests__/redisContract.ts` 只认回环地址；用例不清库，只读写自己造的键（主体 id 取 int4 之外的随机数）。新增或改写 Lua 必须配这类用例：mock 掉 `~/lib/redis` 的测试证明不了脚本语义。
 - 应用层要靠数据库才成立的行为（条件更新在并发下由库重新判定、同一把行锁下的查询、唯一约束与回滚）用真 PostgreSQL 的用例守护：文件名 `*.db.test.ts`，只在设了 `KUN_DB_CONTRACT_URL` 时运行，CI 的 `db-replay` job 在回放完迁移的空库上执行。入口 `server/db/__tests__/dbContract.ts` 只认回环地址，连上之后经应用自己的 prisma 单例核对库名，并要求 `user` 表为空——本机的开发库是生产数据的副本，绝不能指过去。本地用上面那个回放库容器：先 `pnpm db:snapshot --check` 把迁移回放进去，再 `KUN_DB_CONTRACT_URL=postgresql://postgres:kun@127.0.0.1:55433/postgres pnpm exec vitest run server/auth/__tests__/emailChange.db.test.ts`。
 - 修改行为后先运行对应文件：`pnpm test -- <path>`，再运行 `pnpm typecheck`。共享服务、事务或 CI 相关变更运行全量 `pnpm test`；路由、Next 配置、Prisma 或 standalone 变更再运行 `pnpm build`。

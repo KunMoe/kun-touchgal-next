@@ -27,8 +27,9 @@ const updateUsername = async (username: string, uid: number) => {
     // 改名落库后 invalidateUserSession 抛错时它会陈旧, 用户重试同一个新名就会被
     // 重复扣分 (并发双提交同理). 这里重新求值 name <> $2 是资金侧兜底, 代价是这种
     // 竞态下 count=0 会误报余额不足 —— 此时用户确实已被扣过一次, 文案偏差可接受.
-    // 升级 Prisma 后须复验 SQL 形状: 若改发 WHERE id IN (SELECT ...) 子查询形式,
-    // 重新求值不覆盖子查询 (它是另一个 RTE, 仍用语句起始快照), 守卫会静默失效
+    // 这靠的是编译出来的 SQL 形状: 若改发 WHERE id IN (SELECT ...) 子查询形式, 重新求值
+    // 不覆盖子查询 (它是另一个 RTE, 仍用语句起始快照), 守卫会静默失效。形状由
+    // __tests__/route.sql.test.ts 守护 (不连库, 升级 Prisma 时随 pnpm test 复验)
     const { count } = await prisma.user.updateMany({
       where: { id: uid, moemoepoint: { gte: 30 }, name: { not: username } },
       data: { name: username, moemoepoint: { increment: -30 } }

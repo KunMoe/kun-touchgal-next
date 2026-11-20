@@ -11,8 +11,10 @@ const checkIn = async (uid: number) => {
   // 条件更新即 CAS: 签到状态只收敛在 daily_check_in 一列, 故无需通告锁或重试.
   // Prisma 为此发出平铺 WHERE 的单条 UPDATE, READ COMMITTED 下后到者在行锁上等待,
   // 拿锁后重新求值 WHERE, 看到已被翻成 1 便不匹配 -> count=0, 只有一条能加分.
-  // 升级 Prisma 后须复验 SQL 形状: 若改发 WHERE id IN (SELECT ...) 子查询形式,
-  // 重新求值不覆盖子查询 (它是另一个 RTE, 仍用语句起始快照), 守卫会静默失效
+  // 这靠的是编译出来的 SQL 形状: 若改发 WHERE id IN (SELECT ...) 子查询形式, 重新求值
+  // 不覆盖子查询 (它是另一个 RTE, 仍用语句起始快照), 守卫会静默失效。形状由
+  // __tests__/route.sql.test.ts 守护 (不连库, 升级 Prisma 时随 pnpm test 复验),
+  // 库的重新求值由 __tests__/route.db.test.ts 在真库上守护
   const { count } = await prisma.user.updateMany({
     where: { id: uid, daily_check_in: 0 },
     data: {
