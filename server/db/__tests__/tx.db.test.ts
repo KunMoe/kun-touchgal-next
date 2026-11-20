@@ -240,6 +240,10 @@ describe.skipIf(!dbContractUrl)('kunTx on real PostgreSQL', () => {
           while (!(await isBareWaiting())) {
             await new Promise((resolve) => setTimeout(resolve, 20))
           }
+          // 谁的 deadlock_timeout 先到期, 谁就去做死锁检查并把自己回滚。两边开始等锁只差
+          // 一两毫秒的话, 定时器的抖动就能让这个事务先到期; 晚 200 毫秒再去等, 先到期的
+          // 必是那条裸语句
+          await new Promise((resolve) => setTimeout(resolve, 200))
           await lockUser(tx, b.id)
         },
         { timeout: 20000 }
