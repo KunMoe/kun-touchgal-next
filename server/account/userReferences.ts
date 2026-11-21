@@ -25,6 +25,7 @@ export const USER_REFERENCES = {
   'patch_company.user_id': 'set-null',
   'moderation_blacklist.user_id': 'set-null',
   'admin_log.user_id': 'set-null',
+  'mail_campaign.created_by': 'set-null',
   'patch_report.handler_id': 'set-null',
 
   'user_follow_relation.follower_id': 'cascade',

@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  Alert,
   Button,
   Card,
   CardBody,
@@ -14,7 +13,6 @@ import {
   ModalHeader,
   Radio,
   RadioGroup,
-  Spinner,
   Textarea,
   useDisclosure
 } from '@heroui/react'
@@ -29,13 +27,17 @@ import {
 } from '~/constants/email/campaign'
 import { EmailPreview } from './EmailPreview'
 import { kunFetchPost } from '~/utils/kunFetch'
-import { errorReporter } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 import type { CampaignTemplateId } from '~/constants/email/campaign'
 
 const emptyVars = { title: '', content: '' }
 
-export const EmailTemplate = () => {
+interface Props {
+  // 任务建好之后通知父组件, 让进度列表立刻重读
+  onCreated: () => void
+}
+
+export const EmailTemplate = ({ onCreated }: Props) => {
   const [selectedTemplate, setSelectedTemplate] = useState<
     CampaignTemplateId | ''
   >('')
@@ -66,32 +68,24 @@ export const EmailTemplate = () => {
     }
 
     setIsSending(true)
-    try {
-      const response = await kunFetchPost<
-        KunResponse<{ count: number; failed: number }>
-      >('/admin/mail', {
-        templateId: selectedTemplate,
-        variables: templateVars
-      })
-      if (typeof response === 'string') {
-        // 请求失败时保留已选的模板与变量, 弹窗不关
-        toast.error(response)
-        return
-      } else if (response.failed > 0) {
-        toast.error(
-          `向网站的 ${response.count} 位用户发送邮件, 其中 ${response.failed} 封发送失败`
-        )
-      } else {
-        toast.success(`已经向网站的 ${response.count} 位用户发送了邮件`)
-      }
-      setSelectedTemplate('')
-      setTemplateVars(emptyVars)
-      onClose()
-    } catch (error) {
-      errorReporter(error)
-    } finally {
-      setIsSending(false)
+    // 这个请求只建任务, 邮件由定时任务在后台分批发出
+    const response = await kunFetchPost<KunResponse<{ campaignId: number }>>(
+      '/admin/mail',
+      { templateId: selectedTemplate, variables: templateVars }
+    )
+    setIsSending(false)
+    if (typeof response === 'string') {
+      // 请求失败时保留已选的模板与变量, 弹窗不关
+      toast.error(response)
+      return
     }
+    toast.success(
+      `群发任务 #${response.campaignId} 已创建, 邮件会在后台分批发出`
+    )
+    setSelectedTemplate('')
+    setTemplateVars(emptyVars)
+    onClose()
+    onCreated()
   }
 
   return (
@@ -170,16 +164,6 @@ export const EmailTemplate = () => {
           </ModalHeader>
           <ModalBody>
             <EmailPreview content={previewContent} previewOnly={true} />
-            {isSending && (
-              <Alert
-                title="正在发送中"
-                description="正在为网站全体用户发送邮件, 发送时间取决于网站的用户数量,
-            以及邮件服务的网络状况, 请等待"
-                icon={<Spinner />}
-                color="primary"
-                variant="faded"
-              />
-            )}
           </ModalBody>
           <ModalFooter>
             <Button variant="light" onPress={onClose}>

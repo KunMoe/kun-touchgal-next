@@ -1,0 +1,35 @@
+// 群发邮件任务 (server/mail/campaign.ts): 一行是一次群发。收件范围是创建那一刻
+// user.id <= max_user_id 的用户, cron 进程沿主键推进 cursor_user_id, 进度只存在这一行里,
+// 所以进程重启或部署之后从游标处接着发。同一时刻至多一条 sending / paused 的任务:
+// 创建时在通告锁下查后插, 不靠库约束
+model mail_campaign {
+  id           Int    @id @default(autoincrement())
+  template_id  String @db.VarChar(64)
+  // 标题与正文是超级管理员写的受信 HTML, 原样进邮件
+  title        String @db.VarChar(233)
+  content_html String @db.VarChar(100007)
+  // sending | paused | done | cancelled
+  status       String @default("sending") @db.VarChar(32)
+
+  // 收件范围的快照: 创建时 user 表的最大 id
+  max_user_id    Int
+  // 已经处理到的 user.id。推进它的那条条件更新同时承担进度落库、取消检测与重叠防护
+  cursor_user_id Int    @default(0)
+  // 创建时估计的收件人数; 发送期间有人退订, 最终的 sent + failed 可以比它小
+  total          Int
+  sent           Int    @default(0)
+  failed         Int    @default(0)
+  // 自动暂停的原因, 继续发送时清空
+  last_error     String @default("") @db.VarChar(1007)
+
+  // 发起的管理员; 账号删除后置空, 任务本身保留
+  created_by Int?
+  creator    user? @relation(fields: [created_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  created  DateTime  @default(now())
+  updated  DateTime  @updatedAt
+  finished DateTime?
+
+  @@index([status])
+  @@index([created_by])
+}

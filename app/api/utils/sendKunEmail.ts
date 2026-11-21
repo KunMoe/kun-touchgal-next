@@ -1,4 +1,4 @@
-const SEND_EMAIL_TIMEOUT_MS = 15 * 1000
+export const SEND_EMAIL_TIMEOUT_MS = 15 * 1000
 const SEND_EMAIL_ERROR = '邮件发送失败, 请稍后重试'
 
 interface KunEmailPayload {

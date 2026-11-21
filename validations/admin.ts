@@ -260,6 +260,11 @@ export const adminSendEmailSchema = z.object({
   })
 })
 
+export const adminMailCampaignActionSchema = z.object({
+  campaignId: z.coerce.number().int().min(1).max(2147483647),
+  action: z.enum(['cancel', 'resume'])
+})
+
 export const adminHandleFeedbackSchema = z.object({
   messageId: z.coerce.number().min(1).max(9999999),
   content: z

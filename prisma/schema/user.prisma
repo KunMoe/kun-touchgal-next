@@ -33,6 +33,8 @@ model user {
   admin_log admin_log[]
   patch_tag patch_tag[]
 
+  mail_campaign mail_campaign[]
+
   patch_comment_like    user_patch_comment_like_relation[]
   patch_resource_like   user_patch_resource_like_relation[]
   patch_favorite_folder user_patch_favorite_folder[]

@@ -135,6 +135,25 @@ export interface AdminLog {
   created: Date | string
 }
 
+// 一次群发邮件任务的进度 (server/mail/campaign.ts)。total 是创建时估计的收件人数,
+// 发送期间有人退订, 最终的 sent + failed 可以比它小
+export interface AdminMailCampaign {
+  id: number
+  templateId: string
+  title: string
+  // sending | paused | done | cancelled
+  status: string
+  total: number
+  sent: number
+  failed: number
+  // 自动暂停的原因, 没有暂停过或已继续发送时为空串
+  lastError: string
+  // 发起的管理员账号已删除时为 null
+  creator: KunUser | null
+  created: Date | string
+  finished: Date | string | null
+}
+
 // 删号一次请求的结果 (server/account/deleteAccount.ts)。内容多的账号要分几次请求才能清完:
 // done 为 false 时账号已封禁、内容删了一部分, remaining 是各类还剩的行数, 再请求一次即可续上
 export type AdminUserDeletionRemaining = Partial<

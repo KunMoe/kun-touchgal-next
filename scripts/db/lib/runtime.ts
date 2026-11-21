@@ -39,7 +39,8 @@ const PRISMA_DIFF_ALLOWLIST_PATH = path.join(
   'db/prisma-diff-allowlist.sql'
 )
 
-// 应用侧的事务级通告锁占用 (481001~481004, id) 四个域 (补丁类型 / 评分统计 / 收藏 / 点赞),
+// 应用侧的事务级通告锁占用 481001~481005 五个域 (补丁类型 / 评分统计 / 收藏 / 点赞 /
+// 群发邮件任务),
 // 迁移执行器独占 (481010, 0), 同一个库上同时只跑一个执行器
 const MIGRATION_LOCK_NAMESPACE = 481010
 // 拿不到锁 (lock_timeout) 与死锁: 事务已整体回滚, 整个文件重试是安全的
