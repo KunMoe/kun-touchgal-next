@@ -130,7 +130,8 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
 
   // 测试做不了生产写入, 却常要 mock / 断言这些方法 (inv-content-05/06), 输入夹具也常写
   // { ...baseInput, role: 2 } (inv-authz-03), 构造操作者要用 kunTestActor (inv-authz-04),
-  // 拼 Cookie 头要写镜像 cookie 的名字 (inv-viewer-02), 路由与页面读取器要放在一起比 (inv-viewer-01);
+  // 拼 Cookie 头要写镜像 cookie 的名字 (inv-viewer-02), 路由与页面读取器要放在一起比 (inv-viewer-01),
+  // 索引查询的测试要直接调 queryGalgameIds (inv-search-02);
   // 示例路径不在 __tests__ 下, 上面照常执行
   it.each([
     'inv-content-05',
@@ -138,7 +139,8 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
     'inv-authz-03',
     'inv-authz-04',
     'inv-viewer-01',
-    'inv-viewer-02'
+    'inv-viewer-02',
+    'inv-search-02'
   ])('%s 不管 __tests__ 下的文件', async (id) => {
     const inv = KUN_INVARIANTS.find((item) => item.id === id)
     expect(inv?.examples.file).not.toContain('__tests__')
@@ -222,6 +224,52 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
       expect((await reportsAt(file)).length, file).toBeGreaterThan(0)
     }
     expect(await reportsAt('server/viewer/context.ts')).toEqual([])
+  })
+
+  // 读开关的只有引擎选择那一个文件; 测试靠 vi.mock 换掉整个模块, 不导入它, 所以不另外放行
+  it('inv-search-01 全仓执法, 只放过 server/search/failure.ts', async () => {
+    const inv = KUN_INVARIANTS.find((item) => item.id === 'inv-search-01')
+    const [bad] = inv?.examples.bad ?? []
+    const reportsAt = (file: string) =>
+      reportsOf(eslint, bad, file, 'kun/inv-search-01')
+
+    for (const file of [
+      'app/api/galgame/service.ts',
+      'app/api/search/route.ts',
+      'server/galgame/search.ts',
+      'server/search/query.ts',
+      'scripts/kunInvariantExample.ts',
+      'app/api/__tests__/kunInvariantExample.test.ts'
+    ]) {
+      expect((await reportsAt(file)).length, file).toBeGreaterThan(0)
+    }
+    expect(await reportsAt('server/search/failure.ts')).toEqual([])
+  })
+
+  // 新入口 (路由、别的 service、页面读取器、定时任务) 不能直接拿索引查询去用
+  it('inv-search-02 只放过登记的四个调用方', async () => {
+    const inv = KUN_INVARIANTS.find((item) => item.id === 'inv-search-02')
+    const [bad] = inv?.examples.bad ?? []
+    const reportsAt = (file: string) =>
+      reportsOf(eslint, bad, file, 'kun/inv-search-02')
+
+    for (const file of [
+      'app/api/search/route.ts',
+      'app/api/home/service.ts',
+      'app/galgame/actions.ts',
+      'server/galgame/cards.ts',
+      'server/tasks/kunInvariantExample.ts'
+    ]) {
+      expect((await reportsAt(file)).length, file).toBeGreaterThan(0)
+    }
+    for (const file of [
+      'server/galgame/search.ts',
+      'app/api/galgame/service.ts',
+      'app/api/tag/galgame/service.ts',
+      'app/api/company/galgame/service.ts'
+    ]) {
+      expect(await reportsAt(file), file).toEqual([])
+    }
   })
 
   // 这正是不用核心 no-restricted-* 承载不变量的原因: flat config 里后出现的同名规则

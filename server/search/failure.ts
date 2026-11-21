@@ -17,16 +17,29 @@ interface MeiliErrorShape {
   name?: unknown
   message?: unknown
   response?: { status?: unknown } | null
-  cause?: { code?: unknown; name?: unknown } | null
+  cause?: {
+    code?: unknown
+    name?: unknown
+    cause?: { code?: unknown } | null
+  } | null
 }
 
 const shapeOf = (error: unknown): MeiliErrorShape =>
   typeof error === 'object' && error !== null ? error : {}
 
+// 应答不是 Meilisearch 的搜索结果: 2xx 但正文不是 JSON, 或缺 hits / totalHits。典型原因是
+// 地址指到了别的服务, 或中间层改写了应答。由 server/search/query.ts 在 SDK 调用的边界上抛出
+export class MeiliProtocolError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause })
+    this.name = 'MeiliProtocolError'
+  }
+}
+
 // 一次索引查询的失败说明了什么范围的问题 (词表见 lib/resilience/failure.ts):
-// transient / rate_limited  Meilisearch 此刻不可用: 连不上、超时、5xx、429
+// transient / rate_limited  Meilisearch 此刻不可用: 连不上、超时、5xx 与 408 / 425、429
 // misconfigured             索引与代码不一致: 索引不存在, 排序 / 过滤 / 检索字段没注册
-//                           (漏跑 pnpm search:init), 密钥不对
+//                           (漏跑 pnpm search:init), 密钥不对, 应答不是 Meilisearch 的
 // request                   这一次请求的参数被拒, 换一个引擎也不该受理
 // 不是 Meilisearch 抛出的错误返回 null。
 // 按 name 与错误码判别, 不用 instanceof: SDK 被重复加载成两份时 instanceof 恒假。
@@ -35,11 +48,11 @@ export const classifyMeiliFailure = (error: unknown): FailureScope | null => {
   const { name, response, cause } = shapeOf(error)
 
   // fetch 自己失败 (拒连、DNS、超时) 由 SDK 包成 MeilisearchRequestError
-  if (
-    name === 'MeilisearchRequestError' ||
-    name === 'MeilisearchRequestTimeOutError'
-  ) {
+  if (name === 'MeilisearchRequestError') {
     return 'transient'
+  }
+  if (name === 'MeiliProtocolError') {
+    return 'misconfigured'
   }
   if (name !== 'MeilisearchApiError') {
     return null
@@ -65,13 +78,21 @@ export class MeiliBadRequestError extends Error {
   }
 }
 
+// 日志只记摘要, 不整份打印错误对象 (MeilisearchApiError 挂着整个 Response)。
 // 有应答时 cause 是 Meilisearch 的错误体; 没拿到应答时 cause 是 fetch 抛的原始错误
-// (TimeoutError / TypeError)
-const summarize = (error: unknown) => {
+// (TimeoutError / TypeError), 系统错误码 (ECONNREFUSED / ENOTFOUND …) 在它的 cause 上
+export const summarizeMeiliError = (error: unknown) => {
   const { name, message, response, cause } = shapeOf(error)
-  return response
-    ? { name, status: response.status, code: cause?.code, message }
-    : { name, message, cause: cause?.name }
+  if (response) {
+    return { name, status: response.status, code: cause?.code, message }
+  }
+  const systemCode = cause?.cause?.code
+  return {
+    name,
+    message,
+    cause: cause?.name,
+    ...(systemCode === undefined ? {} : { code: systemCode })
+  }
 }
 
 export type MeiliEngineResult<M, B> =
@@ -98,6 +119,12 @@ export const withMeiliEngine = async <M, B>(
       throw error
     }
     if (scope === 'request') {
+      // 调用方只回一句「格式错误」: 哪天某个错误码的归类不对了, 要靠这一行才看得出来
+      // eslint-disable-next-line no-console
+      console.info(
+        '[kun-search] Meilisearch 拒绝了这次请求的参数, 不换引擎:',
+        summarizeMeiliError(error)
+      )
       throw new MeiliBadRequestError(error)
     }
 
@@ -105,14 +132,14 @@ export const withMeiliEngine = async <M, B>(
       // 降级让页面照常可用, 也让配置问题一直没人发现, 所以按 error 级别记
       // eslint-disable-next-line no-console
       console.error(
-        '[kun-search] Meilisearch 索引与代码不一致 (检查 pnpm search:init 与密钥), 本次改用 basic 引擎:',
-        summarize(error)
+        '[kun-search] Meilisearch 与代码不一致 (检查 pnpm search:init、密钥与地址), 本次改用 basic 引擎:',
+        summarizeMeiliError(error)
       )
     } else {
       // eslint-disable-next-line no-console
       console.warn(
         '[kun-search] Meilisearch 不可用, 本次改用 basic 引擎:',
-        summarize(error)
+        summarizeMeiliError(error)
       )
     }
     return { engine: 'basic', value: await basic() }

@@ -1061,14 +1061,18 @@ export const KUN_INVARIANTS = [
     id: 'inv-search-01',
     aliases: ['T42'],
     statement:
-      'isMeiliEnabled 只许 server/search/failure.ts 导入 (具名或整模块命名空间都算): 用哪个搜索引擎由 withMeiliEngine 一处决定',
+      'isMeiliEnabled 只许 server/search/failure.ts 导入 (具名或整模块命名空间都算), 要不要走索引由那里的 withMeiliEngine 决定',
     reason:
-      '作品列表、标签页、会社页与关键词搜索曾各写一份 `if (isMeiliEnabled()) try { … } catch { 降级 }`, catch 不分错误类别: 请求参数被 Meilisearch 拒绝 (小数页码、带孤立代理的筛选值都是 400) 和写在 try 里的 PG 错误一律当成索引宕机, 匿名请求可以按需把搜索切到最重的 Prisma 路径, 部署漂移 (漏跑 search:init) 也被同一个 catch 悄悄盖住。withMeiliEngine 只对 Meilisearch 自身的故障换引擎, 并让调用方拿到用了哪一个',
+      '作品列表、标签页、会社页与关键词搜索曾各写一份 `if (isMeiliEnabled()) try { … } catch { 降级 }`, catch 不分错误类别: 请求参数被 Meilisearch 拒绝 (小数页码、带孤立代理的筛选值都是 400) 和写在 try 里的 PG 错误一律当成索引宕机, 匿名请求可以按需把搜索切到最重的 Prisma 路径, 部署漂移 (漏跑 search:init) 也被同一个 catch 悄悄盖住。withMeiliEngine 只对 Meilisearch 自身的故障换引擎, 并让调用方拿到用了哪一个。本条只认静态导入, 拦的是「读开关」这一步: 不读开关、直接调索引查询再自己包 try/catch 的写法由 inv-search-02 管',
     removeWhen: 'Meilisearch 不再是可选后端 (改为必需, 或整体移除)',
     ignores: ['server/search/failure.ts'],
     enforce: {
       kind: 'import',
-      sources: [/(^|\/)lib\/meilisearch(\.[cm]?[jt]sx?)?$/],
+      // 第二条认相对路径 (lib 目录里的 ./meilisearch); npm 包 meilisearch 是裸说明符, 两条都匹配不到
+      sources: [
+        /(^|\/)lib\/meilisearch(\.[cm]?[jt]sx?)?$/,
+        /^\.{1,2}\/(.*\/)?meilisearch(\.[cm]?[jt]sx?)?$/
+      ],
       importNames: ['isMeiliEnabled', '*']
     },
     examples: {
@@ -1076,11 +1080,52 @@ export const KUN_INVARIANTS = [
       bad: [
         "import { isMeiliEnabled } from '~/lib/meilisearch'",
         "import { getMeiliClient, isMeiliEnabled as enabled } from '../../lib/meilisearch.ts'",
-        "import * as meili from '~/lib/meilisearch'"
+        "import * as meili from '~/lib/meilisearch'",
+        "import { isMeiliEnabled } from './meilisearch'"
       ],
       good: [
         "import { withMeiliEngine } from '~/server/search/failure'",
-        "import { getMeiliClient } from '~/lib/meilisearch'"
+        "import { getMeiliClient } from '~/lib/meilisearch'",
+        "import { Meilisearch } from 'meilisearch'",
+        "import * as sdk from 'meilisearch'"
+      ]
+    }
+  },
+  {
+    id: 'inv-search-02',
+    aliases: ['T42'],
+    statement:
+      'queryGalgameIds 只许登记的调用方导入 (关键词搜索的编排与三个浏览 service), 调用写在 withMeiliEngine 的 meili 回调里',
+    reason:
+      '索引查询自己不看 KUN_MEILISEARCH_ENABLED (配了引擎就能查), 失败也不分类。新入口直接调它再包一层 try/catch, 就又多出一份不分错误类别的降级, 而且在关掉查询开关的部署上照样去查索引; inv-search-01 只拦得住读开关, 拦不住这种写法。本条按静态导入认, 回调里怎么用它看不到: 新增调用方时把文件加进 ignores, 照现有四处那样经 withMeiliEngine 调用, 卡片经 fetchGalgameCardsByIds 回 PG 取',
+    removeWhen:
+      'queryGalgameIds 改成只能经 withMeiliEngine 调到 (例如由它把查询函数传进回调)',
+    // 测试要直接调它, 也要 mock 它所在的模块
+    ignores: [
+      'server/galgame/search.ts',
+      'app/api/galgame/service.ts',
+      'app/api/tag/galgame/service.ts',
+      'app/api/company/galgame/service.ts',
+      '**/__tests__/**'
+    ],
+    enforce: {
+      kind: 'import',
+      // 同目录的相对导入 (server/search 里写 ./query) 不认: 按文件名匹配会撞上别处的 query 模块
+      sources: [/(^|\/)server\/search\/query(\.[cm]?[jt]sx?)?$/],
+      importNames: ['queryGalgameIds', '*'],
+      allowTypeImports: true
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import { queryGalgameIds } from '~/server/search/query'",
+        "import { SEARCH_QUERY_TIMEOUT_MS, queryGalgameIds as query } from '../../server/search/query.ts'",
+        "import * as query from '~/server/search/query'"
+      ],
+      good: [
+        "import { searchGalgames } from '~/server/galgame/search'",
+        "import { SEARCH_QUERY_TIMEOUT_MS } from '~/server/search/query'",
+        "import type { GalgameIndexQuery } from '~/server/search/query'"
       ]
     }
   }

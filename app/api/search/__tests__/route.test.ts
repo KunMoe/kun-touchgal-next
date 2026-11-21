@@ -225,6 +225,37 @@ describe('/api/search POST Prisma 降级路径: 关键词', () => {
       searchOption: BASE_BODY.searchOption,
       condition: keywordExclude('kun')
     },
+    // 逐项开启: 三个开关各管各的那一段, 写反了会在这里露出来
+    {
+      name: '只开简介',
+      searchOption: { searchInIntroduction: true },
+      condition: {
+        AND: [
+          ...keywordExclude('kun').AND,
+          { NOT: { introduction: ci('kun') } }
+        ]
+      }
+    },
+    {
+      name: '只开别名',
+      searchOption: { searchInAlias: true },
+      condition: {
+        AND: [
+          ...keywordExclude('kun').AND,
+          { alias: { none: { name: ci('kun') } } }
+        ]
+      }
+    },
+    {
+      name: '只开标签',
+      searchOption: { searchInTag: true },
+      condition: {
+        AND: [
+          ...keywordExclude('kun').AND,
+          { tag: { none: { tag: { name: ci('kun') } } } }
+        ]
+      }
+    },
     {
       name: '检索选项全开',
       searchOption: {

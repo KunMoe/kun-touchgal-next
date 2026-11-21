@@ -204,6 +204,113 @@ describe('searchGalgames', () => {
     expect(response.engine).toBe('meili')
   })
 
+  // 上一例全是默认值。这一例每个字段都取非默认值, 整体断言交给索引的查询:
+  // 页码、每页条数、排序方向、三项筛选、年月、评分门槛、检索选项、排除项, 任何一项映射错了都会红
+  it('非默认的搜索条件逐项映射成索引查询', async () => {
+    resolveCompanyIdsMock.mockResolvedValue(
+      new Map([
+        ['Key', [9]],
+        ['Leaf', [11, 12]]
+      ])
+    )
+    const customSpec = toKeywordSearchSpec(
+      {
+        ...INPUT,
+        page: 3,
+        limit: 24,
+        searchOption: {
+          searchInIntroduction: true,
+          searchInAlias: false,
+          searchInTag: true
+        },
+        selectedType: 'pc',
+        selectedLanguage: 'zh-Hans',
+        selectedPlatform: 'windows',
+        selectedYears: ['2024', 'future'],
+        selectedMonths: ['01', '02'],
+        sortField: 'rating',
+        sortOrder: 'asc',
+        minRatingCount: 5
+      },
+      [
+        keyword('kun'),
+        keyword('moe', 'exclude'),
+        { type: 'tag', mode: 'exclude', id: 6, name: '猎奇' },
+        { type: 'company', mode: 'include', name: 'Key' },
+        { type: 'company', mode: 'exclude', name: 'Leaf' },
+        { type: 'company', mode: 'exclude', id: 13, name: '带 id 的不解析' }
+      ]
+    )
+
+    await searchGalgames(customSpec, SFW_BLOCK)
+
+    expect(resolveTagIdsMock).toHaveBeenCalledWith([])
+    expect(resolveCompanyIdsMock).toHaveBeenCalledWith(['Key', 'Leaf'])
+    expect(queryGalgameIdsMock).toHaveBeenCalledTimes(1)
+    expect(queryGalgameIdsMock).toHaveBeenCalledWith({
+      q: 'kun -"moe"',
+      filter:
+        'type = "pc" AND language = "zh-Hans" AND platform = "windows" AND ' +
+        '(releasedYear IN ["future"] OR (releasedYear IN ["2024"] AND releasedMonth IN ["01", "02"])) AND ' +
+        'ratingCount >= 5 AND contentLimit = "sfw" AND NOT tagIds IN [7, 8] AND ' +
+        'companyIds = 9 AND NOT tagIds IN [6] AND NOT companyIds IN [11, 12, 13]',
+      sort: ['avgRating:asc', 'id:desc'],
+      page: 3,
+      hitsPerPage: 24,
+      attributesToSearchOn: [
+        'name',
+        'vndbId',
+        'vndbRelationId',
+        'dlsiteCode',
+        'company',
+        'tag',
+        'introduction'
+      ]
+    })
+  })
+
+  it.each([
+    [
+      '只开别名',
+      { searchInIntroduction: false, searchInAlias: true, searchInTag: false },
+      'alias'
+    ],
+    [
+      '只开标签',
+      { searchInIntroduction: false, searchInAlias: false, searchInTag: true },
+      'tag'
+    ],
+    [
+      '只开简介',
+      { searchInIntroduction: true, searchInAlias: false, searchInTag: false },
+      'introduction'
+    ]
+  ])(
+    '检索选项%s: 只多检索对应的那个字段',
+    async (_name, searchOption, attribute) => {
+      await searchGalgames(
+        toKeywordSearchSpec({ ...INPUT, searchOption }, [keyword('kun')]),
+        SFW
+      )
+
+      expect(queryGalgameIdsMock.mock.calls[0][0].attributesToSearchOn).toEqual(
+        ['name', 'vndbId', 'vndbRelationId', 'dlsiteCode', 'company', attribute]
+      )
+    }
+  )
+
+  it('外部 ID 关键词带着排除词时不走精确直查', async () => {
+    await searchGalgames(
+      spec([keyword('V1965'), keyword('foo', 'exclude')]),
+      SFW
+    )
+
+    expect(queryGalgameIdsMock.mock.calls[0][0]).toMatchObject({
+      q: 'V1965 -"foo"',
+      filter: 'contentLimit = "sfw"'
+    })
+  })
+
   it('索引里陈旧的命中 (库里已删或此视角不可见) 不出现在结果里, 总数仍是索引的', async () => {
     queryGalgameIdsMock.mockResolvedValue({ ids: [1, 2, 3], total: 3 })
     patchFindManyMock.mockResolvedValue([cardRow(3), cardRow(1)])

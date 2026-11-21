@@ -61,6 +61,7 @@ vi.mock('~/server/search/filter-builder', () => ({
 import { getPatchByTag } from '~/app/api/tag/galgame/service'
 import { toPublicListView } from '~/server/viewer/patchVisibility'
 import { GalgameCardSelectField } from '~/constants/api/select'
+import { buildGalgameSearchSort } from '~/server/search/filter-builder'
 import { meiliApiError, meiliDown } from '~/server/search/__tests__/meiliErrors'
 import { cardRow } from '~/server/galgame/__tests__/cardRow'
 
@@ -162,6 +163,27 @@ describe('getPatchByTag', () => {
     expect(getRequestedCacheKey(1)).toMatch(/^galgame:list:tag:18:/)
     expect(getRequestedCacheKey(1)).not.toBe(getRequestedCacheKey(0))
     expect(getRequestedCacheKey(2)).toBe(getRequestedCacheKey(0))
+  })
+
+  it('passes page, page size and sort through to the index query', async () => {
+    getKvMock.mockResolvedValue(null)
+    acquireKvLockMock.mockResolvedValue('token-1')
+    isMeiliEnabledMock.mockReturnValue(true)
+    vi.mocked(buildGalgameSearchSort).mockReturnValueOnce(['sort-expr'])
+
+    await getPatchByTag(
+      { ...INPUT, page: 3, limit: 12, sortField: 'view', sortOrder: 'asc' },
+      VIEW
+    )
+
+    expect(buildGalgameSearchSort).toHaveBeenCalledWith('view', 'asc')
+    expect(queryGalgameIdsMock).toHaveBeenCalledWith({
+      q: '',
+      filter: 'filter-expr',
+      sort: ['sort-expr'],
+      page: 3,
+      hitsPerPage: 12
+    })
   })
 
   it('hydrates index hits from PG under the viewer visibility and caches the hydrated cards', async () => {

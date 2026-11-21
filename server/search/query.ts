@@ -3,6 +3,7 @@ import { getMeiliClient } from '~/lib/meilisearch'
 import { getKv, setKv } from '~/lib/redis'
 import { SEARCH_TOTAL_HITS_CACHE_DURATION } from '~/config/cache'
 import { GALGAME_INDEX, GALGAME_MAX_TOTAL_HITS } from './settings'
+import { MeiliProtocolError, summarizeMeiliError } from './failure'
 
 // 超时即中止请求, 由 withMeiliEngine 归为 Meilisearch 不可用并换到 basic 引擎
 export const SEARCH_QUERY_TIMEOUT_MS = 800
@@ -57,6 +58,19 @@ const writeTotalHitsCache = async (cacheKey: string, totalHits: number) => {
   }
 }
 
+interface IdSearchResult {
+  hits: { id: number }[]
+  totalHits: number
+}
+
+const isSearchResult = (value: unknown): value is IdSearchResult =>
+  typeof value === 'object' &&
+  value !== null &&
+  'hits' in value &&
+  Array.isArray(value.hits) &&
+  'totalHits' in value &&
+  typeof value.totalHits === 'number'
+
 // 索引是召回层: 只回答「哪些 id、按什么顺序、一共多少」。卡片内容与可见性由调用方拿着
 // id 回 PG 裁决 (server/galgame/cards.ts), 这个模块不读文档的其他字段, 也不碰 prisma。
 // filter 里的分级 / 屏蔽标签只是召回预筛: 索引陈旧时 total 会把 PG 已不认的条目也算进去。
@@ -88,18 +102,41 @@ export const queryGalgameIds = async (
     rankingScoreThreshold
   }
 
+  // 一次带超时的索引查询。SDK 只把非 2xx 的应答说成 MeilisearchApiError: 2xx 但正文不是
+  // JSON 时它原样抛出 SyntaxError, 正文为空或缺字段时照常 resolve。这两种应答都不是
+  // Meilisearch 给的 (地址指到了别的服务), 在这里说成 MeiliProtocolError, 归「没配好」,
+  // 不让它们看上去像代码自己的错
+  const search = async (page: {
+    page: number
+    hitsPerPage: number
+    attributesToRetrieve: string[]
+  }) => {
+    let res: unknown
+    try {
+      res = await index.search(
+        query.q ?? '',
+        { ...baseOptions, ...page },
+        { signal: AbortSignal.timeout(SEARCH_QUERY_TIMEOUT_MS) }
+      )
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new MeiliProtocolError('Meilisearch 的应答不是 JSON', error)
+      }
+      throw error
+    }
+    if (!isSearchResult(res)) {
+      throw new MeiliProtocolError('Meilisearch 的应答缺少 hits / totalHits')
+    }
+    return res
+  }
+
   // 主查询：取当前页的 id
   const mainSearch = async () => {
-    const res = await index.search(
-      query.q ?? '',
-      {
-        ...baseOptions,
-        page: query.page,
-        hitsPerPage: query.hitsPerPage,
-        attributesToRetrieve: ['id']
-      },
-      { signal: AbortSignal.timeout(SEARCH_QUERY_TIMEOUT_MS) }
-    )
+    const res = await search({
+      page: query.page,
+      hitsPerPage: query.hitsPerPage,
+      attributesToRetrieve: ['id']
+    })
     return { ids: res.hits.map((hit) => hit.id), totalHits: res.totalHits }
   }
 
@@ -125,33 +162,35 @@ export const queryGalgameIds = async (
   // 绝不因此拒绝整次搜索、把成功的主查询结果连带丢弃并换到 basic 引擎
   //（那会在 Meili 高负载期把最重的多 OR/join 查询倾泻到有限连接池上，酿成级联）。
   const mainPromise = mainSearch()
-  const countPromise = index
-    .search(
-      query.q ?? '',
-      {
-        ...baseOptions,
-        page: 1,
-        hitsPerPage: GALGAME_MAX_TOTAL_HITS,
-        // 只需要 totalHits：空数组让每个 hit 回传为 {}，常见词命中数千候选时
-        // 比 ['id'] 省约 75% 传输（实测 の：71KB→17.5KB）
-        attributesToRetrieve: []
-      },
-      { signal: AbortSignal.timeout(SEARCH_QUERY_TIMEOUT_MS) }
-    )
-    .catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error('计数查询失败，回退到主查询 totalHits（近似）:', error)
-      return null
-    })
+  const countPromise = search({
+    page: 1,
+    hitsPerPage: GALGAME_MAX_TOTAL_HITS,
+    // 只需要 totalHits：空数组让每个 hit 回传为 {}，常见词命中数千候选时
+    // 比 ['id'] 省约 75% 传输（实测 の：71KB→17.5KB）
+    attributesToRetrieve: []
+  }).then(
+    (counted) => ({ totalHits: counted.totalHits }),
+    (error: unknown) => ({ error })
+  )
 
+  // 主查询失败时这里直接抛出, 由 withMeiliEngine 归类并记日志: 计数查询多半是同一个原因
+  // 失败的, 不再为它另记一条
   const [res, count] = await Promise.all([mainPromise, countPromise])
 
-  // 仅精确总数才入缓存；近似回退值不写，避免把降级期的偏大估算固化 60s。
-  // 写入 fire-and-forget：数据已算完，不为一次 Redis 写（最坏 2s commandTimeout）拖尾延迟；
-  // writeTotalHitsCache 内部已吞异常，void 不产生 unhandled rejection
-  if (count) {
-    void writeTotalHitsCache(cacheKey, count.totalHits)
+  if ('error' in count) {
+    // 主查询成功而计数查询单独失败 (它要对全部候选打分, 更容易撞超时)
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[kun-search] 计数查询失败, 总数用主查询的近似值:',
+      summarizeMeiliError(count.error)
+    )
+    // 近似值不入缓存, 避免把偏大的估算固化 60s
+    return { ids: res.ids, total: res.totalHits }
   }
 
-  return { ids: res.ids, total: count ? count.totalHits : res.totalHits }
+  // 写入 fire-and-forget：数据已算完，不为一次 Redis 写（最坏 2s commandTimeout）拖尾延迟；
+  // writeTotalHitsCache 内部已吞异常，void 不产生 unhandled rejection
+  void writeTotalHitsCache(cacheKey, count.totalHits)
+
+  return { ids: res.ids, total: count.totalHits }
 }

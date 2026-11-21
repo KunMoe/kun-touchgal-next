@@ -206,7 +206,105 @@ describe('queryGalgameIds 分页总数', () => {
     )
   })
 
+  it('主查询失败时原样抛出, 计数查询跟着失败也不另记日志', async () => {
+    // 两条查询多半是同一个原因失败的: 归类与日志交给 withMeiliEngine, 这里再记一条
+    // 只会把故障期的每次搜索变成两条日志 (匿名的非法请求也能刷出一条)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const mainFailure = Object.assign(new Error('stub malformed_payload'), {
+      name: 'MeilisearchApiError',
+      response: { status: 400 },
+      cause: { code: 'malformed_payload' }
+    })
+    searchMock.mockImplementation(
+      (_q: string, options: { hitsPerPage: number }) =>
+        Promise.reject(
+          options.hitsPerPage === GALGAME_MAX_TOTAL_HITS
+            ? new Error('count failed too')
+            : mainFailure
+        )
+    )
+
+    await expect(
+      queryGalgameIds({ q: 'atri', page: 1, hitsPerPage: 12 })
+    ).rejects.toBe(mainFailure)
+    // 让计数查询的拒绝也落定
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(warnSpy).not.toHaveBeenCalled()
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(setKvMock).not.toHaveBeenCalled()
+  })
+
+  it('主查询成功而计数查询单独失败: 只记一条摘要 (warn)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    searchMock.mockImplementation(
+      (_q: string, options: { hitsPerPage: number }) =>
+        options.hitsPerPage === GALGAME_MAX_TOTAL_HITS
+          ? Promise.reject(
+              Object.assign(new Error('Request to http://meili has failed'), {
+                name: 'MeilisearchRequestError',
+                cause: new DOMException('timed out', 'TimeoutError')
+              })
+            )
+          : Promise.resolve({ hits: [sampleHit], totalHits: 148 })
+    )
+
+    const result = await queryGalgameIds({
+      q: 'atri',
+      page: 1,
+      hitsPerPage: 12
+    })
+
+    expect(result).toEqual({ ids: [1], total: 148 })
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalledWith(expect.any(String), {
+      name: 'MeilisearchRequestError',
+      message: 'Request to http://meili has failed',
+      cause: 'TimeoutError'
+    })
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  // SDK 对 2xx 但正文不是 JSON 的应答原样抛 SyntaxError, 正文为空或缺字段时照常 resolve
+  // (failure.test.ts 用真实 SDK 钉住)。这些都不是 Meilisearch 的搜索结果
+  it.each([
+    [
+      'SDK 抛 SyntaxError',
+      () => Promise.reject(new SyntaxError('Unexpected token <'))
+    ],
+    ['应答是 undefined', () => Promise.resolve(undefined)],
+    ['应答是 {}', () => Promise.resolve({})],
+    ['hits 不是数组', () => Promise.resolve({ hits: 'x', totalHits: 1 })],
+    ['缺 totalHits', () => Promise.resolve({ hits: [] })]
+  ])(
+    '应答不是 Meilisearch 的搜索结果 (%s): 抛 MeiliProtocolError',
+    async (_name, respond) => {
+      searchMock.mockImplementation(respond)
+
+      const thrown = await queryGalgameIds({
+        q: '',
+        page: 1,
+        hitsPerPage: 12
+      }).catch((error: unknown) => error)
+
+      expect((thrown as Error).name).toBe('MeiliProtocolError')
+    }
+  )
+
+  it('SDK 抛出的其他错误原样抛出, 不改名', async () => {
+    const failure = Object.assign(new Error('stub'), {
+      name: 'MeilisearchApiError'
+    })
+    searchMock.mockRejectedValue(failure)
+
+    await expect(
+      queryGalgameIds({ q: '', page: 1, hitsPerPage: 12 })
+    ).rejects.toBe(failure)
+  })
+
   it('计数查询失败时回退到主查询 totalHits，不拒绝整次搜索、不写缓存', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     // 主查询成功返回浅页高估 148；计数查询超时/失败（reject）。
     // 期望：不抛错、total 退化为主查询近似值 148，且近似值不入缓存（不污染后续 60s）。
     searchMock.mockImplementation(

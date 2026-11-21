@@ -5,16 +5,22 @@ const { isMeiliEnabledMock } = vi.hoisted(() => ({
   isMeiliEnabledMock: vi.fn()
 }))
 
+// getMeiliClient 现造一个真实客户端: 文末的用例让 queryGalgameIds 经真实 SDK 走到桩掉的 fetch
 vi.mock('~/lib/meilisearch', () => ({
-  isMeiliEnabled: isMeiliEnabledMock
+  isMeiliEnabled: isMeiliEnabledMock,
+  getMeiliClient: () =>
+    new Meilisearch({ host: 'http://meili.invalid', apiKey: 'k' })
 }))
+vi.mock('~/lib/redis', () => ({ getKv: vi.fn(), setKv: vi.fn() }))
 
 import {
   MeiliBadRequestError,
+  MeiliProtocolError,
   classifyMeiliFailure,
   withMeiliEngine
 } from '~/server/search/failure'
-import { meiliApiError, meiliDown } from './meiliErrors'
+import { queryGalgameIds } from '~/server/search/query'
+import { meiliApiError, meiliDown, meiliRefused } from './meiliErrors'
 
 // 真实的 SDK + 桩掉的 fetch: 钉住的是「SDK 把各种失败抛成什么样, 我们又怎么归类」。
 // 应答体取自对本机 Meilisearch v1.15 的实测 (meilisearch-js 0.63), 升级 SDK 或引擎后
@@ -117,6 +123,41 @@ describe('classifyMeiliFailure: 索引与代码不一致', () => {
 
     expect(classifyMeiliFailure(error)).toBe('misconfigured')
   })
+
+  it('应答不是 Meilisearch 的搜索结果 (MeiliProtocolError)', () => {
+    expect(classifyMeiliFailure(new MeiliProtocolError('应答不是 JSON'))).toBe(
+      'misconfigured'
+    )
+  })
+})
+
+// SDK 只把非 2xx 的应答说成 MeilisearchApiError。2xx 的异常应答它要么原样抛 SyntaxError,
+// 要么照常 resolve: 这两种由 queryGalgameIds 在调用边界上说成 MeiliProtocolError。
+// 这一组钉住的是 SDK 的这个行为 —— 它变了, query.ts 里那层包装就要跟着看
+describe('SDK 对 2xx 异常应答的行为 (queryGalgameIds 的包装所依据的)', () => {
+  it('200 且正文不是 JSON: 原样抛 SyntaxError, 本身认不出是 Meilisearch 的错', async () => {
+    const error = await failWith(respond(200, '<html>ok</html>'))
+
+    expect((error as Error).name).toBe('SyntaxError')
+    expect(classifyMeiliFailure(error)).toBeNull()
+  })
+
+  it.each([
+    ['正文为空', ''],
+    ['正文是 {}', '{}']
+  ])('200 且%s: 不抛错', async (_name, body) => {
+    vi.stubGlobal('fetch', respond(200, body))
+    const client = new Meilisearch({
+      host: 'http://meili.invalid',
+      apiKey: 'k'
+    })
+
+    const result: unknown = await client
+      .index('galgame')
+      .search('kun', { page: 1, hitsPerPage: 12 })
+
+    expect((result as { hits?: unknown } | undefined)?.hits).toBeUndefined()
+  })
 })
 
 describe('classifyMeiliFailure: 判别方式', () => {
@@ -156,12 +197,57 @@ describe('classifyMeiliFailure: 判别方式', () => {
 describe('withMeiliEngine', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>
   let errorSpy: ReturnType<typeof vi.spyOn>
+  let infoSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
     vi.resetAllMocks()
     isMeiliEnabledMock.mockReturnValue(true)
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+  })
+
+  // 地址指到了别的服务 (回 200 的站点、SPA 兜底页、代理的拦截页): 真实 SDK + 桩掉的 fetch,
+  // 经 queryGalgameIds 走到 withMeiliEngine。这类应答要当成「没配好」降级, 不能是 500
+  it.each([
+    ['正文是 HTML', '<html>ok</html>'],
+    ['正文为空', ''],
+    ['正文是 {}', '{}'],
+    ['hits 不是数组', '{"hits":"x","totalHits":1}'],
+    ['缺 totalHits', '{"hits":[]}']
+  ])('索引地址回 200 但%s: 换到 basic, 记 error', async (_name, body) => {
+    vi.stubGlobal('fetch', respond(200, body))
+    const basic = vi.fn().mockResolvedValue('from-basic')
+
+    const result = await withMeiliEngine(
+      () => queryGalgameIds({ q: '', page: 1, hitsPerPage: 12 }),
+      basic
+    )
+
+    expect(result).toEqual({ engine: 'basic', value: 'from-basic' })
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(errorSpy.mock.calls[0][1]).toMatchObject({
+      name: 'MeiliProtocolError'
+    })
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('索引地址回的是正常的搜索结果: 走 meili', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond(200, '{"hits":[{"id":7},{"id":3}],"totalHits":2}')
+    )
+
+    const result = await withMeiliEngine(
+      () => queryGalgameIds({ q: '', page: 1, hitsPerPage: 12 }),
+      vi.fn()
+    )
+
+    expect(result).toEqual({
+      engine: 'meili',
+      value: { ids: [7, 3], total: 2 }
+    })
+    expect(errorSpy).not.toHaveBeenCalled()
   })
 
   it('未启用时只跑 basic', async () => {
@@ -187,6 +273,20 @@ describe('withMeiliEngine', () => {
     expect(basic).not.toHaveBeenCalled()
     expect(warnSpy).not.toHaveBeenCalled()
     expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('日志摘要带上系统错误码, 拒连与超时分得开', async () => {
+    const meili = vi.fn().mockRejectedValue(meiliRefused())
+    const basic = vi.fn().mockResolvedValue('from-basic')
+
+    await withMeiliEngine(meili, basic)
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.any(String), {
+      name: 'MeilisearchRequestError',
+      message: 'Request to http://meili has failed',
+      cause: 'TypeError',
+      code: 'ECONNREFUSED'
+    })
   })
 
   it('Meilisearch 不可用时换到 basic, 记 warn', async () => {
@@ -240,6 +340,14 @@ describe('withMeiliEngine', () => {
     expect(basic).not.toHaveBeenCalled()
     expect(warnSpy).not.toHaveBeenCalled()
     expect(errorSpy).not.toHaveBeenCalled()
+    // 调用方只回一句「格式错误」: 这条 info 是唯一能看出哪个错误码被归成了请求错误的地方
+    expect(infoSpy).toHaveBeenCalledTimes(1)
+    expect(infoSpy).toHaveBeenCalledWith(expect.any(String), {
+      name: 'MeilisearchApiError',
+      status: 400,
+      code: 'invalid_search_page',
+      message: 'stub invalid_search_page'
+    })
   })
 
   it('不是 Meilisearch 的异常原样抛出, 不换引擎', async () => {

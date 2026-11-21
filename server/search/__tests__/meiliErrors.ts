@@ -8,6 +8,13 @@ export const meiliDown = () =>
     cause: new DOMException('timed out', 'TimeoutError')
   })
 
+// 没拿到应答: 拒连 (undici 把系统错误码挂在 TypeError 的 cause 上)
+export const meiliRefused = () =>
+  Object.assign(new Error('Request to http://meili has failed'), {
+    name: 'MeilisearchRequestError',
+    cause: new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } })
+  })
+
 // Meilisearch 以非 2xx 应答
 export const meiliApiError = (status: number, code: string) =>
   Object.assign(new Error(`stub ${code}`), {
