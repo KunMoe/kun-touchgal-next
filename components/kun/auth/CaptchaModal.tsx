@@ -1,14 +1,8 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
-import {
-  Button,
-  CircularProgress,
-  Modal,
-  ModalBody,
-  ModalContent
-} from '@heroui/react'
-import { Check, CircleAlert } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Button, Modal, ModalBody, ModalContent } from '@heroui/react'
+import { CircleAlert } from 'lucide-react'
 import { cn } from '~/utils/cn'
 import { preloadKunCap, useKunCap } from '~/components/kun/auth/useKunCap'
 import type { KunCapState } from '~/components/kun/auth/useKunCap'
@@ -37,21 +31,75 @@ const describeKunCap = (state: KunCapState) => {
   }
 }
 
+// 进度环与对勾照 cap-widget 原来可见时的样子画 (它的 src/cap.css、内嵌的对勾 SVG 与刷新进度的节拍),
+// 换成本站自己的界面之后用户看到的动画不变
+const KUN_CAP_RING_LENGTH = 2 * Math.PI * 14
+const KUN_CAP_RING_TICK_MS = 150
+
+// 环放大到 1.1 倍、半径 14、线宽 3, 进度变化用 0.3s ease 过渡。
+// 原来的 widget 每 150ms 才把进度刷到环上一次, 环是一段一段缓动过去的; 现在进度事件逐题到达,
+// 所以这里按同样的节拍取样, 不是每来一个事件就动一下
+const KunCapRing = ({ progress }: { progress: number }) => {
+  const latest = useRef(progress)
+  const [shown, setShown] = useState(0)
+
+  useEffect(() => {
+    latest.current = progress
+  }, [progress])
+
+  useEffect(() => {
+    const timer = setInterval(
+      () => setShown(latest.current),
+      KUN_CAP_RING_TICK_MS
+    )
+    return () => clearInterval(timer)
+  }, [])
+
+  return (
+    <svg viewBox="0 0 32 32" className="size-full scale-110 -rotate-90">
+      <circle
+        cx="16"
+        cy="16"
+        r="14"
+        fill="none"
+        strokeWidth="3"
+        className="stroke-default-200"
+      />
+      <circle
+        cx="16"
+        cy="16"
+        r="14"
+        fill="none"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeDasharray="87.96"
+        className="stroke-primary transition-[stroke-dashoffset] duration-300 ease-[ease] motion-reduce:transition-none"
+        style={{ strokeDashoffset: KUN_CAP_RING_LENGTH * (1 - shown / 100) }}
+      />
+    </svg>
+  )
+}
+
 // 按钮左侧 25px 的指示位: 空勾选框 → 进度环 → 对勾 / 出错
 const KunCapIndicator = ({ state }: { state: KunCapState }) => {
   switch (state.status) {
     case 'solving':
-      return (
-        <CircularProgress
-          aria-label="验证进度"
-          value={state.progress}
-          classNames={{ svg: 'size-[25px]', track: 'stroke-default-200' }}
-        />
-      )
+      return <KunCapRing progress={state.progress} />
     case 'solved':
+      // 勾选框去掉边线, 对勾用 0.5s ease 一笔描出
       return (
-        <span className="flex size-full items-center justify-center rounded-full bg-success text-success-foreground">
-          <Check className="size-4" strokeWidth={3} />
+        <span className="size-full rounded-md border-small border-transparent bg-default-100">
+          <svg viewBox="0 0 24 24" className="block size-full">
+            <path
+              d="m5 12 5 5L20 7"
+              fill="none"
+              stroke="#00a67d"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="animate-cap-check [--cap-check-length:23.21320343017578px] [stroke-dasharray:var(--cap-check-length)]"
+            />
+          </svg>
         </span>
       )
     case 'error':
@@ -100,6 +148,9 @@ export const KunCaptchaModal = ({
             disableRipple
             className={cn(
               'h-[58px] w-[260px] justify-start gap-[15px] border-small border-default-200 px-3.5 text-[15px] font-medium',
+              // 悬停时不要 HeroUI 默认的 80% 不透明度 (点完之后鼠标还停在按钮上, 进度环与对勾会被一起冲淡),
+              // 改用 cap-widget 原来的 brightness(98%); 它作用在按钮自己画的东西上, 所以按钮要有自己的底色
+              'bg-content1 data-[hover=true]:!opacity-100 data-[hover=true]:brightness-[.98]',
               !canSolve && 'cursor-default'
             )}
             aria-disabled={!canSolve}

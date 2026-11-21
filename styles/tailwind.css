@@ -21,6 +21,9 @@
 
   --animate-bell-shake: bell-shake 2.5s ease-in-out infinite;
   --animate-dot-in: dot-in 0.2s ease-out;
+  /* 人机验证通过时对勾的描线: 时长与缓动取自 cap-widget 原来那张内嵌 SVG;
+     线长由用它的路径经 --cap-check-length 给出 (components/kun/auth/CaptchaModal.tsx) */
+  --animate-cap-check: cap-check 0.5s ease;
 
   @keyframes bell-shake {
     0%,
@@ -50,6 +53,15 @@
     to {
       transform: scale(1);
       opacity: 1;
+    }
+  }
+
+  @keyframes cap-check {
+    from {
+      stroke-dashoffset: var(--cap-check-length);
+    }
+    to {
+      stroke-dashoffset: 0;
     }
   }
 }
