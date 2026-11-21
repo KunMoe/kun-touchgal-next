@@ -8,6 +8,7 @@
     "postinstall": "pnpm prisma generate",
     "dev:webpack": "next dev --webpack --hostname=127.0.0.1 --port=3000",
     "dev": "next dev --hostname=127.0.0.1 --port=3000",
+    "prebuild": "esno scripts/prebuild.ts",
     "build": "NODE_ENV=production next build",
     "build:sitemap": "esno scripts/generateKunSitemap.ts",
     "backfill:comment-html": "esno scripts/backfillCommentHtml.ts",
