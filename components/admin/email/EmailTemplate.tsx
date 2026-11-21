@@ -20,39 +20,48 @@ import {
 } from '@heroui/react'
 import { useState } from 'react'
 import { Mail } from 'lucide-react'
-import { emailTemplates } from '~/constants/email/group-templates'
+import {
+  CAMPAIGN_TEMPLATE_IDS,
+  CAMPAIGN_TEMPLATES,
+  isCampaignTemplateId,
+  kunUnsubscribePageUrl,
+  renderCampaignEmail
+} from '~/constants/email/campaign'
 import { EmailPreview } from './EmailPreview'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { errorReporter } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
+import type { CampaignTemplateId } from '~/constants/email/campaign'
+
+const emptyVars = { title: '', content: '' }
 
 export const EmailTemplate = () => {
-  const [selectedTemplate, setSelectedTemplate] = useState('')
-  const [templateVars, setTemplateVars] = useState<Record<string, string>>({})
+  const [selectedTemplate, setSelectedTemplate] = useState<
+    CampaignTemplateId | ''
+  >('')
+  const [templateVars, setTemplateVars] = useState(emptyVars)
   const [isSending, setIsSending] = useState(false)
   const { isOpen, onOpen, onClose } = useDisclosure()
 
-  const currentTemplate = emailTemplates.find((t) => t.id === selectedTemplate)
-
   const handleTemplateChange = (value: string) => {
-    setSelectedTemplate(value)
-    setTemplateVars({})
-  }
-
-  const getPreviewContent = () => {
-    if (!currentTemplate) {
-      return ''
+    if (!isCampaignTemplateId(value)) {
+      return
     }
-
-    let content = currentTemplate.template
-    Object.entries(templateVars).forEach(([key, value]) => {
-      content = content.replace(new RegExp(`{{${key}}}`, 'g'), value)
-    })
-    return content
+    setSelectedTemplate(value)
+    setTemplateVars(emptyVars)
   }
+
+  // 与实际发出的邮件是同一个函数的输出; 预览里没有收件人, 退订链接用落地页占位
+  const previewContent = selectedTemplate
+    ? renderCampaignEmail(
+        selectedTemplate,
+        { titleHtml: templateVars.title, contentHtml: templateVars.content },
+        kunUnsubscribePageUrl()
+      ).html
+    : ''
 
   const handleSendEmails = async () => {
-    if (!currentTemplate) {
+    if (!selectedTemplate) {
       return
     }
 
@@ -76,7 +85,7 @@ export const EmailTemplate = () => {
         toast.success(`已经向网站的 ${response.count} 位用户发送了邮件`)
       }
       setSelectedTemplate('')
-      setTemplateVars({})
+      setTemplateVars(emptyVars)
       onClose()
     } catch (error) {
       errorReporter(error)
@@ -99,9 +108,9 @@ export const EmailTemplate = () => {
             value={selectedTemplate}
             onValueChange={handleTemplateChange}
           >
-            {emailTemplates.map((template) => (
-              <Radio key={template.id} value={template.id}>
-                {template.name}
+            {CAMPAIGN_TEMPLATE_IDS.map((id) => (
+              <Radio key={id} value={id}>
+                {CAMPAIGN_TEMPLATES[id].name}
               </Radio>
             ))}
           </RadioGroup>
@@ -110,7 +119,7 @@ export const EmailTemplate = () => {
             <Input
               label="标题"
               placeholder="请输入您的标题"
-              value={templateVars.title || ''}
+              value={templateVars.title}
               onChange={(e) =>
                 setTemplateVars({ ...templateVars, title: e.target.value })
               }
@@ -118,7 +127,7 @@ export const EmailTemplate = () => {
             <Textarea
               label="内容"
               placeholder="请输入您的内容"
-              value={templateVars.content || ''}
+              value={templateVars.content}
               onChange={(e) =>
                 setTemplateVars({ ...templateVars, content: e.target.value })
               }
@@ -142,7 +151,11 @@ export const EmailTemplate = () => {
               color="secondary"
               endContent={<Mail className="w-4 h-4" />}
               onPress={onOpen}
-              isDisabled={!currentTemplate}
+              isDisabled={
+                !selectedTemplate ||
+                !templateVars.title.trim() ||
+                !templateVars.content.trim()
+              }
             >
               向全体用户发送
             </Button>
@@ -156,10 +169,7 @@ export const EmailTemplate = () => {
             您确定要向全体用户发送下面的邮件吗?
           </ModalHeader>
           <ModalBody>
-            <EmailPreview
-              content={currentTemplate ? getPreviewContent() : ''}
-              previewOnly={true}
-            />
+            <EmailPreview content={previewContent} previewOnly={true} />
             {isSending && (
               <Alert
                 title="正在发送中"
@@ -187,7 +197,7 @@ export const EmailTemplate = () => {
         </ModalContent>
       </Modal>
 
-      <EmailPreview content={currentTemplate ? getPreviewContent() : ''} />
+      <EmailPreview content={previewContent} />
     </div>
   )
 }

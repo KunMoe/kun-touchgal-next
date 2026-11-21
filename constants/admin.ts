@@ -8,6 +8,10 @@ export const ADMIN_RESOURCE_DELETE_LIMIT = 100
 // admin_log.content 列宽 (VarChar), 超限写入触发 22001 回滚整个事务
 export const ADMIN_LOG_CONTENT_LIMIT = 10007
 
+// 群发邮件标题与正文的长度上限
+export const MAIL_CAMPAIGN_TITLE_LIMIT = 233
+export const MAIL_CAMPAIGN_CONTENT_LIMIT = 100007
+
 export const APPLICANT_STATUS_MAP: Record<number, string> = {
   0: '待处理',
   1: '已读',

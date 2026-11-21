@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { kunMoyuMoe } from '~/config/moyu-moe'
+import { escapeHtml } from '~/utils/escapeHtml'
 
 export type EmailChangeRevertPayload = {
   uid: number
@@ -19,14 +20,6 @@ const getSiteAddress = () => {
 
   return envAddress || kunMoyuMoe.domain.main
 }
-
-const escapeHtml = (value: string) =>
-  value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
 
 const createEmailChangeRevertLink = (token: string) => {
   return `${getSiteAddress()}/api/user/setting/email/revert?token=${encodeURIComponent(token)}`

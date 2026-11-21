@@ -15,6 +15,7 @@ const sendBulkEmail = async (
   }
 
   const { templateId, variables } = input
+  const slots = { titleHtml: variables.title, contentHtml: variables.content }
 
   const users = await prisma.user.findMany({
     where: { enable_email_notice: true },
@@ -29,7 +30,7 @@ const sendBulkEmail = async (
     const batch = emailList.slice(i, i + batchSize)
 
     const results = await Promise.all(
-      batch.map((email) => sendEmailHTML(templateId, variables, email))
+      batch.map((email) => sendEmailHTML(templateId, slots, email))
     )
     failed += results.filter((result) => typeof result === 'string').length
   }

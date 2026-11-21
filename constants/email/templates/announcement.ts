@@ -1,4 +1,5 @@
 import { kunMoyuMoe } from '~/config/moyu-moe'
+import type { CampaignTemplateSlots } from '../campaign'
 
 const domain =
   process.env.NODE_ENV === 'development'
@@ -7,18 +8,17 @@ const domain =
 
 const iconImage = `${domain}/logo.webp`
 
-export const announcementTemplate = (
-  title: string,
-  content: string,
-  email: string,
-  validateEmailCode: string
-) => `
+export const announcementTemplate = ({
+  titleHtml,
+  contentHtml,
+  unsubscribeHref
+}: CampaignTemplateSlots) => `
 <!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${title}</title>
+    <title>${titleHtml}</title>
     <style>
       body { margin: 0; padding: 0; background-color: #fef2f2; }
       .container { max-width: 600px; margin: 0 auto; padding: 20px; }
@@ -69,16 +69,16 @@ export const announcementTemplate = (
           <h1 style="color: white; margin: 0; font-size: 24px;">重要公告</h1>
         </div>
         <div class="content">
-          <h2 style="color: #dc2626; margin: 0 0 16px 0; font-size: 20px;">${title}</h2>
+          <h2 style="color: #dc2626; margin: 0 0 16px 0; font-size: 20px;">${titleHtml}</h2>
           <div class="message">
             <p style="color: #374151; font-size: 16px; line-height: 24px; margin: 0;">
-              ${content}
+              ${contentHtml}
             </p>
           </div>
         </div>
         <div class="footer">
           <p style="margin: 0;">此消息为系统自动发布, 请勿回复此消息, 如果有任何问题, 请联系 <a href="${kunMoyuMoe.domain.main}" target="_blank">${kunMoyuMoe.titleShort}</a> </p>
-          <p style="margin: 0;">要取消邮件通知, 请点击 <a href="${domain}/auth/email-notice?email=${email}&code=${validateEmailCode}" target="_blank">退订邮件</a> </p>
+          <p style="margin: 0;">要取消邮件通知, 请点击 <a href="${unsubscribeHref}" target="_blank">退订邮件</a> </p>
         </div>
       </div>
     </div>

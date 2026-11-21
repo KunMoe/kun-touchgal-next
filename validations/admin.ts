@@ -2,8 +2,11 @@ import * as z from 'zod'
 import {
   ADMIN_COMMENT_DELETE_LIMIT,
   ADMIN_RATING_DELETE_LIMIT,
-  ADMIN_RESOURCE_DELETE_LIMIT
+  ADMIN_RESOURCE_DELETE_LIMIT,
+  MAIL_CAMPAIGN_CONTENT_LIMIT,
+  MAIL_CAMPAIGN_TITLE_LIMIT
 } from '~/constants/admin'
+import { CAMPAIGN_TEMPLATE_IDS } from '~/constants/email/campaign'
 import {
   MODERATION_FAILURE_KIND,
   MODERATION_TEXT_CONTENT_TYPE
@@ -235,9 +238,26 @@ export const declineCreatorSchema = z.object({
     .max(1007, { message: '拒绝原因不能超过 1007 个字符' })
 })
 
+// 标题与正文是超级管理员写的受信 HTML (constants/email/campaign.ts), 这里只管模板存在、
+// 两者非空且不超长
 export const adminSendEmailSchema = z.object({
-  templateId: z.string(),
-  variables: z.record(z.string(), z.string())
+  templateId: z.enum(CAMPAIGN_TEMPLATE_IDS, { message: '未知的邮件模板' }),
+  variables: z.object({
+    title: z
+      .string()
+      .trim()
+      .min(1, { message: '邮件标题不能为空' })
+      .max(MAIL_CAMPAIGN_TITLE_LIMIT, {
+        message: `邮件标题不能超过 ${MAIL_CAMPAIGN_TITLE_LIMIT} 个字符`
+      }),
+    content: z
+      .string()
+      .trim()
+      .min(1, { message: '邮件内容不能为空' })
+      .max(MAIL_CAMPAIGN_CONTENT_LIMIT, {
+        message: `邮件内容不能超过 ${MAIL_CAMPAIGN_CONTENT_LIMIT} 个字符`
+      })
+  })
 })
 
 export const adminHandleFeedbackSchema = z.object({
