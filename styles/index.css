@@ -8,6 +8,15 @@
   width: 100%;
 }
 
+/* HeroUI 的键盘焦点环: 基类用 outline-hidden 清掉默认 outline, 再靠
+   data-[focus-visible=true]:outline-2 在键盘聚焦时画出来。Tailwind 4.3 的 outline-hidden
+   同时把 --tw-outline-style 置为 none, 而 outline-2 的线型取自这个变量, 两者落在同一个元素上,
+   焦点环的宽度与颜色都在, 线型却是 none。这条规则不放进任何 @layer (那样才压得过 utilities 层的赋值),
+   只在键盘聚焦时把变量还原; 前提由 styles/__tests__/heroui-focus-ring.test.ts 守着 */
+[data-focus-visible='true'] {
+  --tw-outline-style: solid;
+}
+
 img {
   -webkit-user-drag: none;
   user-drag: none;

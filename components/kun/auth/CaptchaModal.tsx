@@ -90,9 +90,6 @@ export const KunCaptchaModal = ({
             disableRipple
             className={cn(
               'h-[58px] w-[260px] justify-start gap-[15px] border-small border-default-200 px-3.5 text-[15px] font-medium',
-              // HeroUI 基类的 outline-hidden 在 Tailwind 4.3 下把 --tw-outline-style 置成 none,
-              // 它自己的 data-[focus-visible=true]:outline-2 于是画不出焦点环; 这里显式给回 solid
-              'data-[focus-visible=true]:outline-solid',
               !canSolve && 'cursor-default'
             )}
             aria-disabled={!canSolve}
