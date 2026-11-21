@@ -1,10 +1,6 @@
 import { MessageNav } from '~/components/message/MessageNav'
 import { KunHeader } from '~/components/kun/Header'
-import { kunMetadata } from './metadata'
 import { Suspense } from 'react'
-import type { Metadata } from 'next'
-
-export const metadata: Metadata = kunMetadata
 
 export default function MessageLayout({
   children

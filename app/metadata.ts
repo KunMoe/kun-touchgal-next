@@ -1,5 +1,6 @@
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { generateNullMetadata } from '~/utils/noIndex'
+import { KUN_BASE_OPEN_GRAPH, KUN_BASE_TWITTER } from '~/utils/pageMetadata'
 import type { Metadata, Viewport } from 'next'
 
 export const kunViewport: Viewport = {
@@ -40,20 +41,14 @@ export const generateKunMetadata = (): Metadata => {
       telephone: false
     },
     openGraph: {
-      type: 'website',
-      locale: 'zh_CN',
-      url: kunMoyuMoe.domain.main,
+      ...KUN_BASE_OPEN_GRAPH,
       title: kunMoyuMoe.title,
-      description: kunMoyuMoe.description,
-      siteName: kunMoyuMoe.title,
-      images: kunMoyuMoe.images
+      description: kunMoyuMoe.description
     },
     twitter: {
-      card: 'summary_large_image',
+      ...KUN_BASE_TWITTER,
       title: kunMoyuMoe.title,
-      description: kunMoyuMoe.description,
-      creator: kunMoyuMoe.creator.mention,
-      images: kunMoyuMoe.og.image
+      description: kunMoyuMoe.description
     },
     robots: {
       index: true,
@@ -66,10 +61,12 @@ export const generateKunMetadata = (): Metadata => {
         'max-snippet': -1
       }
     },
+    // './' 由 Next 按当前请求的 pathname 解析: 没有自己声明 alternates 的页面继承到的规范地址
+    // 是它自己, 而不是首页 (openGraph.url 同理, 见 KUN_BASE_OPEN_GRAPH)
     alternates: {
-      canonical: kunMoyuMoe.canonical,
+      canonical: './',
       languages: {
-        'zh-Hans': kunMoyuMoe.domain.main
+        'zh-Hans': './'
       }
     }
   }

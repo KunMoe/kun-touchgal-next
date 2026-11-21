@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { generateNullMetadata } from '~/utils/noIndex'
 import type { Metadata } from 'next'
 
-// 不沿用根布局的 index / follow 与指向首页的 canonical
+// 不沿用根布局的 index / follow 与规范地址
 export const metadata: Metadata = generateNullMetadata('页面不存在')
 
 // 全站未匹配的地址与页面读取器的 notFound() 都渲染这里。Next 会把本文件连同它引用的客户端组件

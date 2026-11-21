@@ -1,11 +1,7 @@
 import { Sidebar } from '~/components/admin/Sidebar'
-import { kunMetadata } from './metadata'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import { redirect } from 'next/navigation'
 import { can } from '~/constants/permission'
-import type { Metadata } from 'next'
-
-export const metadata: Metadata = kunMetadata
 
 interface Props {
   children: React.ReactNode

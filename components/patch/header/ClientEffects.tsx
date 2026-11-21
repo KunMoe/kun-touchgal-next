@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect } from 'react'
-import { kunMoyuMoe } from '~/config/moyu-moe'
 import { getPatchPageTitle } from '~/utils/patch/getPatchPageTitle'
+import { kunDocumentTitle } from '~/utils/pageMetadata'
 import type { Patch } from '~/types/api/patch'
 
 interface Props {
@@ -21,7 +21,7 @@ export const PatchHeaderClientEffects = ({ patch, isNsfwBlocked }: Props) => {
       return
     }
 
-    document.title = `${getPatchPageTitle(patch)} - ${kunMoyuMoe.titleShort}`
+    document.title = kunDocumentTitle(getPatchPageTitle(patch))
   }, [isNsfwBlocked, patch])
 
   return null

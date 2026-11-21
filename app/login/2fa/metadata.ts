@@ -1,5 +1,3 @@
-import type { Metadata } from 'next'
+import { kunPageMetadata } from '~/utils/pageMetadata'
 
-export const kunMetadata: Metadata = {
-  title: '两步验证'
-}
+export const kunMetadata = kunPageMetadata({ title: '两步验证', noindex: true })

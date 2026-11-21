@@ -12,6 +12,7 @@ import { DeleteConversationButton } from './DeleteConversationButton'
 import { dropLoadedMessages } from './dropLoadedMessages'
 import { KunAvatar } from '~/components/kun/floating-card/KunAvatar'
 import { kunFetchGet, kunFetchPut } from '~/utils/kunFetch'
+import { kunDocumentTitle } from '~/utils/pageMetadata'
 import { useUserStore } from '~/store/userStore'
 import { useMessageStore } from '~/store/messageStore'
 import toast from 'react-hot-toast'
@@ -160,7 +161,7 @@ export const ChatContainer = ({
   )
 
   useEffect(() => {
-    document.title = `与${otherUser.name}的私聊 - TouchGal`
+    document.title = kunDocumentTitle(`与${otherUser.name}的私聊`)
   }, [otherUser.name])
 
   useEffect(() => {

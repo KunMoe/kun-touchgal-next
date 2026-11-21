@@ -41,7 +41,6 @@ export interface KunSiteConfig {
   template: string
   description: string
   keywords: string[]
-  canonical: string
   author: KunSiteAuthor[]
   creator: KunSiteCreator
   publisher: KunSiteCreator

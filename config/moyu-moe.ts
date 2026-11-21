@@ -51,7 +51,6 @@ export const kunMoyuMoe: KunSiteConfig = {
   template: `%s - ${KUN_SITE_NAME}`,
   description: KUN_SITE_DESCRIPTION,
   keywords: KUN_SITE_KEYWORDS,
-  canonical: KUN_SITE_URL,
   author: [
     { name: KUN_SITE_TITLE, url: KUN_SITE_URL },
     { name: KUN_SITE_NAME, url: KUN_SITE_NAV },

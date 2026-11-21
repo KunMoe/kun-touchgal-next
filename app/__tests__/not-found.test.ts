@@ -29,7 +29,7 @@ describe('app/not-found', () => {
     ).toEqual(['/'])
   })
 
-  it('给 404 页面单独的标题, 不沿用根布局的可索引设置与指向首页的 canonical', () => {
+  it('给 404 页面单独的标题, 不沿用根布局的可索引设置与规范地址', () => {
     expect(metadata.title).toBe('页面不存在')
     expect(metadata.robots).toMatchObject({ index: false, follow: false })
     expect(metadata.alternates).toBeNull()

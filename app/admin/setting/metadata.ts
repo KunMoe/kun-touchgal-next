@@ -1,6 +1,3 @@
-import { kunMoyuMoe } from '~/config/moyu-moe'
-import type { Metadata } from 'next'
+import { kunPageMetadata } from '~/utils/pageMetadata'
 
-export const kunMetadata: Metadata = {
-  title: `系统设置 - ${kunMoyuMoe.titleShort}`
-}
+export const kunMetadata = kunPageMetadata({ title: '系统设置' })

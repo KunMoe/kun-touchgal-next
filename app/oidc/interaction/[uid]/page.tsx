@@ -6,9 +6,13 @@ import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import { OIDC_MOUNT_PATH } from '~/config/oidc'
 import { ConsentCard } from './ConsentCard'
 import { ConfirmRedirect } from './ConfirmRedirect'
+import { kunMetadata } from './metadata'
+import type { Metadata } from 'next'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+export const metadata: Metadata = kunMetadata
 
 interface Props {
   params: Promise<{ uid: string }>
