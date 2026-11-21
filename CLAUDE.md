@@ -24,7 +24,6 @@ pnpm db:migrate       # 执行 db/migrations 下未执行的迁移
 pnpm db:verify --prisma  # 只读校验库与迁移 / 快照 / schema 是否一致
 pnpm prisma:push      # prisma db push + generate (只用于本地原型)
 pnpm prisma:generate  # 仅重新生成 client
-pnpm build:sitemap    # 生成 public/sitemap.xml
 pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 ```
 
@@ -48,6 +47,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - 客户端访问内部 API 一律走 `utils/kunFetch.ts`（自带 `credentials: 'include'` 与 `x-requested-with: kun-fetch`），不要手写重复 fetch。`kunFetch` 不为请求失败抛异常：断网、非 2xx 与业务失败都是 `string` 返回值（返回类型 `T | string`），调用点只写一条失败分支（`kunErrorHandler(res, callback)` 或 `typeof res === 'string'`），只有成功才该做的事放在成功分支里；返回值不得以语句形式丢弃（lint 的 `kun/inv-fetch-01` 执法，确实不看结果写 `void`）。只有必须分清「请求没有得到 2xx 应答」的站点（登出、2FA 临时令牌检查、输入中静默的自动搜索）才用 `isKunTransportFailure`。
 - 响应约定：handler 返回中文错误消息字符串即业务错误（`kunRoute` 以 200 回出），成功返回 typed 对象；要状态码或 cookie 时返回 `NextResponse`，原样透传。
 - 实体页的「不存在」：共享 service 返回 `null`，页面读取器（`actions.ts`）调 `notFound()`，由 `app/not-found.tsx` 渲染；service 与 Route Handler 里不调 `notFound()`，文案只在路由边界产生。`/[id]`、`/[id]/resource/[resourceId]`、`/company/[id]` 上方不加 `loading.tsx` / Suspense（否则 404 退化成 200）。
+- 页面 metadata 与抓取契约：不带 `generateMetadata` 的页面在 `metadata.ts`（一般在同目录）写 `kunPageMetadata({ title, ... })`（`utils/pageMetadata.ts`），页面原样转出为 `metadata`。`title` 只写页面名（站点后缀只由根布局的 `title.template` 补，客户端改标题用 `kunDocumentTitle`），不手写 canonical / `og:url` / `openGraph`（根布局与工厂给的 `'./'` 由 Next 按当前 pathname 解析），中间的 layout 不声明 `title`。新增 `page.tsx` 要在 `config/routePolicy.ts` 的 `KUN_ROUTE_POLICY` 登记 `listed` / `unlisted` / `noindex` / `blocked`：`app/robots.ts` 与运行期的 `app/sitemap.ts`（`server/sitemap/`，构建期不查库）都从它派生，`public/` 下不放 `robots.txt` / `sitemap.xml`（会顶替路由，`prebuild` 会拒绝构建）。护栏 `app/__tests__/page-metadata.test.ts` 重放 Next 的解析结果（带 `generateMetadata` 的 page / layout 要在它的 `DYNAMIC_LAYERS` 里登记夹具），`config/__tests__/routePolicy.test.ts` 核对登记。
 - 评论 / 评价 / 资源的物理删除与 `status` 写入只走 `server/content/**` 的命令，在 `kunTx`（`server/db/tx.ts`）里调用；事务里的业务失败用 `ctx.fail`，不要 `return` 字符串（等于提交）。lint 的 `kun/inv-content-05/06` 执法。
 - 事务一律经 `kunTx` 开启，不直接调 `prisma.$transaction`（lint 的 `kun/inv-tx-01` 执法）：失败但已做的写入要提交时 `return ctx.commitWith(消息)`；可丢失的提交后副作用用 `ctx.afterCommit`；没提交时的清理用 `onRollback`（选项里的管事务前已存在的产物，`ctx.onRollback` 管回调里才产生的），不要挂 `.catch`；违例文案用 `violations` 选项；回调的输出只走返回值，不写外层变量。
 - 靠 Prisma 编译出的 SQL 形状才成立的写法（条件 `updateMany` 的 `count` 当 CAS、`_count` 里对返回行恒真的过滤、`insensitiveEquals`）与 adapter 的错误映射由不连库的编译契约守护，随 `pnpm test` 运行：`prisma/__tests__/compile-contract.test.ts`、`error-contract.test.ts` 与各站点的 `__tests__/*.sql.test.ts`（录制客户端 `prisma/__tests__/support/sqlRecorder.ts`）。新增这类写法要配 `*.sql.test.ts`；升级 prisma / adapter / pg 后变红，先判断新形状是否仍满足前提，不要机械改断言。`PrismaClient` 只在 `prisma/createClient.ts` 构造。

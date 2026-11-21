@@ -31,9 +31,9 @@ TouchGal (`kun-touchgal-next`) 是一个基于 Next.js 16 App Router 的 Galgame
 - `middleware/`：JWT、cookie 与 CSRF 实现。
 - `utils/`：fetch、错误处理、cookie、Markdown、URL/文件名安全处理及页面读取器 helper（`utils/actions/`）。
 - `constants/`、`types/`、`config/`：领域常量/Prisma select、API DTO 和运行时配置。
-- `scripts/`：构建后复制、sitemap、搜索、部署、OIDC 和数据回填脚本。
+- `scripts/`：构建后复制、搜索、部署、OIDC 和数据回填脚本。
 - `migration/`：人工执行的一次性数据脚本与同步作业，不得当作常规工作流运行；库的结构变更不放这里，走 `db/migrations/`。`migration/backup/` 只放这些脚本的运行产物（缓存、报告、数据备份），整个目录被 git 忽略，也被排除在 standalone 构建之外。
-- `posts/`、`public/`：运行时 MDX 内容和静态资源；两者参与 standalone 构建复制或 sitemap 生成。
+- `posts/`、`public/`：运行时 MDX 内容和静态资源；两者由 postbuild 复制进 standalone。`public/` 下不放 `robots.txt` 与 `sitemap.xml`：它们由 `app/robots.ts`、`app/sitemap.ts` 输出，`public/` 里的同名文件会先于路由被返回。
 
 ## Development Commands
 
@@ -57,7 +57,6 @@ pnpm lint:fix
 pnpm lint:prune              # 修掉存量违规、删除或改名文件后收紧基线
 pnpm format                  # Prettier 写入全仓库，仅在明确需要时运行
 pnpm build                   # Next standalone；随后自动执行 postbuild
-pnpm build:sitemap
 pnpm prisma:generate
 ```
 
@@ -72,6 +71,7 @@ pnpm prisma:generate
 - 业务错误通常由 handler 返回中文错误消息字符串（`kunRoute` 以 200 回给客户端），部分认证/CSRF 路径设置 401/403，不要假设所有业务错误都有非 2xx 状态。
 - `utils/kunFetch.ts` 不为请求失败抛异常（漏传 `formData` 这类编程错误除外），失败只有一条通道：断网、非 2xx、应答不是 JSON 都与业务失败一样以字符串返回（非 2xx 的文案一律以 `(HTTP 状态码)` 结尾，响应体是 JSON 字符串时前面带上服务端给的原因），五个导出的返回类型都是 `T | string`，裸泛型的调用点不收窄就访问字段会编译失败。调用点只写一条失败分支：`kunErrorHandler(res, callback)` 或 `typeof res === 'string'`；新代码不必为请求失败包 `try/catch`（存量的 `catch` 只兜回调里的编程错误；例外是 `utils/vndb.ts` 的 `fetchVNDBDetails`，它仍把字符串转成异常，由两个 VNDB 输入组件的 `catch` 处理）。请求之后「只有成功才该做」的事（关弹窗、清表单、清选中、改本地状态）要放在成功分支里，不要放在判断之外。返回值不得以语句形式丢弃（`kun/inv-fetch-01` 执法），确实不看结果的请求写成 `void kunFetchXxx(...)` 并注明原因。极少数必须分清「请求没有得到 2xx 应答」（断网、非 2xx、应答不是 JSON，即处理器没有给出结果）与「处理器以 200 拒绝了」的站点（登出、2FA 临时令牌检查、输入过程中静默的自动搜索）用 `isKunTransportFailure(res)`，其余调用点不要拿它分支；它不是类型谓词，判断之后仍要按字符串收窄。
 - 实体页的「不存在」用类型表达：共享 service（`getPatchPageData`、`getPatchResourceDetail`、`getCompanyById`）返回 `null`，不返回中文串，也不在 service 里调 `notFound()`（它在 Route Handler 里会变成 HTTP 404，改变 API 的线上行为）；文案只在路由边界产生（`GET /api/company` 把 `null` 翻成 `'未找到公司'`）。页面读取器在 service 返回 `null` 或路由段参数不合法时调 `notFound()`，由 `app/not-found.tsx` 渲染，返回类型里不再含「不存在」；其余失败仍以字符串返回，页面渲染 `ErrorComponent`。这些路由段（`/[id]`、`/[id]/resource/[resourceId]`、`/company/[id]`）上方不要加 `loading.tsx` 或 Suspense：开始流式输出后状态码已定，404 会退化成 200 + noindex。「存在但不展示」（NSFW 屏蔽）不是不存在，仍走页面自己的分支。
+- 一个 URL 对搜索引擎的公开契约（能否抓取、能否索引、规范地址、标题、是否提交进站点地图）各有唯一出处。**标题与地址**：不带 `generateMetadata` 的页面把 metadata 写在 `metadata.ts` 里（一般在同目录）：`export const kunMetadata = kunPageMetadata({ title, description?, keywords?, noindex?, canonicalPath? })`（`utils/pageMetadata.ts`；整页清空的 `/tag` 用 `generateNullMetadata`），页面原样转出 `export const metadata: Metadata = kunMetadata`。`title` 只写页面名：站点后缀只由根布局的 `title.template` 补，客户端改 `document.title` 用 `kunDocumentTitle`；中间的 layout 不声明 `title`（字符串标题会把模板清掉，它下面的页面就没有后缀）。页面不手写 canonical 与 `og:url`：根布局与工厂给的都是 `'./'`，Next 按当前请求的 pathname 解析，所以没写 metadata 的新页面规范地址也是它自己；`canonicalPath` 只留给已裁定的归一例外（`/apply/success`、`/apply/pending` 归到 `/apply`）。Next 对 `openGraph` / `twitter` 是整块替换，页面自己写其中一块就会丢掉站点名、语言与地址，所以一律经工厂从 `KUN_BASE_OPEN_GRAPH` / `KUN_BASE_TWITTER` 展开；可索引的页面不输出 `robots` 字段（测试站点靠根布局的 noindex 被页面继承）。**抓取与索引**：每个 `page.tsx` 在 `config/routePolicy.ts` 的 `KUN_ROUTE_POLICY` 登记 `listed`（进站点地图）/ `unlisted`（可索引、不提交）/ `noindex`（页面要同时写 `noindex: true`）/ `blocked`（robots.txt 禁抓）之一；`app/robots.ts` 的 Disallow 与站点地图的静态部分都从它派生，带参数的 `listed` 路由在 `server/sitemap/entries.ts` 各有一个展开函数（缺了或多了都过不了类型检查）。登录闸门不归这张表，仍是 `proxy.ts` 的 matcher。**站点地图**是运行期路由 `app/sitemap.ts`（`force-dynamic`，构建不查库；`server/sitemap/load.ts` 每个进程记一小时，加载失败或 30 秒没返回都不记、回 500），作品按游客视角（`toPatchWhere(PUBLIC_VISIBILITY)`）过滤，origin 只取 `kunMoyuMoe.domain.main`。**护栏**：`app/__tests__/page-metadata.test.ts` 把每个页面真实的段链交给 Next 自己的 `accumulateMetadata` 重放（正式站点与测试站点各一遍），断言站点后缀恰好一次、规范地址与 `og:url` 指向自己、索引声明与登记一致、进不进站点地图与登记一致、测试站点上全部 noindex；`config/__tests__/routePolicy.test.ts` 核对登记表与 `page.tsx` 一一对应。带 `generateMetadata` 的 page / layout 要在这份测试的 `DYNAMIC_LAYERS` 里登记一份夹具，由它真实的模板函数算出 metadata 再重放（读数据那一步不在护栏里）；其中作品、资源、会社、文档四个模板的 `openGraph` 仍是手写的，没有 `og:url` 与站点名，记在 `HANDWRITTEN_OPEN_GRAPH`，只减不增。段链是测试照着 Next 的 `collectMetadata` 自己拼的，升级 Next 后要人工对一遍，并核对 `'./'` 是否仍按 pathname 解析。
 - 独立查询用 `Promise.all`；有顺序约束的事务、锁、缓存失效和外部副作用必须保持顺序。显式后台工作使用现有 `void ...catch(...)`、Next `after(...)` 或 Redis task lock 模式。
 - 无 DI 容器：服务直接导入 `prisma`、Redis/S3 client。只有事务范围需要传播时才传 transaction client，不新增单实现接口或工厂。`kunRoute` 是包住 handler 的高阶函数，不是注入点。
 - 跨组件/持久化数据使用现有 Zustand store；页面局部状态继续使用 React state。服务端初始数据通过 `initial*` props 水合，避免首屏重复请求。
@@ -101,7 +101,7 @@ pnpm prisma:generate
 - 审核任务的失败归因只在 `server/moderation` 里定，分三层。**范围在边界上定**：调用依赖的地方（`ai.ts`，取待审头像与头像落地的 S3 调用点）用 `lib/resilience/failure.ts` 把失败说成带范围的 `DependencyFailure`——`transient` / `rate_limited` / `misconfigured` 对整条车道成立，`request` 是这一次调用自己的（含模型输出不合约定）；worker 不从错误的样子去猜，没带范围的一律 `internal`。新增一种依赖调用就在它的边界上分类。**车道**（`breaker.ts`，文本 / 头像各一个，只活在 cron 进程里）观察多条任务之间失败的相关性：依赖类失败连续 3 次且跨 2 条不同任务才打开，401/403/404 与带 `Retry-After` 的 429 第一次就打开；打开后到点只放一条探测，任何一次成功回到 closed。探测取「还没失败过（`failure_kind` 为空）的任务里最新到的那一条」，队列里只剩失败过的任务时才按就绪时刻取：把车道打开的可能只是一波各有毛病的内容（只有它们被网关 403），按就绪时刻取的话探测会一条条落在它们身上、一次次失败、让暂停逐次翻倍，后到的正常内容跟着等。每次开合记一行 `[kun-moderation-breaker]` 日志。拿了探测名额的路径必须以回报成功 / 失败或 `releaseProbe()` 结束，失败回报时带上 `probe`（half_open 下只有探测的结果算数）。**记账**只有 `accounting.ts` 的 `decideFailureAccounting` 一个纯函数，按「记录这次失败之前」的车道状态归因：车道已打开或在探测 → 推迟到下一次探测、什么都不扣；车道闭合、依赖类失败（含把车道打开的那一次）→ 扣 `defer_count`（上限 `MODERATION_MAX_DEFERRALS`）；车道闭合、内容自身的失败 → 扣 `retry`（上限 `MODERATION_MAX_RETRY`）。不要改成按「记录之后」的状态归因，也不要让依赖类失败不计数：只对某一条内容失败的依赖错误（只有它被网关 403、只有它超时）会永不消耗预算、反复把整条车道打开。转人工经 `markTaskManual(id, { kind, reason })`，类别写 `failure_kind`（`MODERATION_FAILURE_KIND`），不复用 `reject_code`；裁决落定、重排、作废都清它。处理函数在「车道的依赖都答复了」的那一刻调 `laneHealthy`（文本是模型给出裁决，头像要等落地的存储复制做完），在本地落定的任务（黑名单、缓存）不调。
 - 审核车道打开期间，这条车道的任务留在待审核、不认领也不转人工，恢复后自动消化。模型的地址或密钥缺失同样是车道级的配置错误：不要靠删配置来「关审核」，那样队列会一直停着。系统性故障检测（没有任何成功的前提下 5 条不同任务以内容自身的失败收场）由 `MODERATION_SYSTEMATIC_DETECTION` 决定做什么，现值 `log`：只记一行 `systematic_suspected` 日志、不打开车道。它分不清「模型整体坏了」与「连着来了几条模型答不好的内容」，后者在审核队列里并不少见；改成 `enforce` 之前先看生产日志里它多久出现一次。裁决缓存键里是策略身份（`policy.ts` 的 `textId`：prompt 版本、文本模型、思考强度），以后有新的维度会改变「同一段文本的裁决」就并进去；worker 每批经 `loadModerationPolicy()` 读一次环境变量，`ai.ts` 不在调用点现读。车道状态每批上报到 Redis 键 `moderation:health`（`server/moderation/health.ts` 是这个键唯一的读写点），管理端只读它。
 - 跨文件承重规则（如「zod 只许命名空间导入」）在 `lint/kunInvariants.mjs` 逐条登记为 `kun/inv-*`，每条带能报错的 bad 样例，由 `lint/__tests__/kunInvariants.test.ts` 执行。不要在 `eslint.config.mjs` 新增核心 `no-restricted-imports` / `no-restricted-syntax` 块：flat config 里同名规则带选项即整体替换，会静默关掉别处的禁令。新规则的存量违规要么清零，要么记入基线；`eslint-suppressions.json` 只减不增：修掉存量违规后不跑 `pnpm lint:prune`，lint 会以退出码 2 失败；基线按路径记账，删除文件后同样要跑 `pnpm lint:prune` 清掉残留条目（有测试守护），改名后旧额度不会转移到新路径，新路径上的存量要么修掉，要么用 `eslint <新路径> --suppress-rule <规则>` 重新登记。
-- 不要手改 `prisma/generated/prisma/`、`public/sitemap.xml` 或 `.next/standalone/`；修改源 schema、路由、MDX 或构建脚本后重新生成。
+- 不要手改 `prisma/generated/prisma/` 或 `.next/standalone/`；修改源 schema、路由、MDX 或构建脚本后重新生成。
 
 ## Important Files
 
@@ -112,6 +112,7 @@ pnpm prisma:generate
 - `app/api/utils/parseQuery.ts`：Zod 请求解析入口。
 - `server/auth/session.ts`（`app/api/utils/jwt.ts` 是迁移期的转出口）、`middleware/_verifyHeaderCookie.ts`：Node/Edge 认证路径。
 - `server/viewer/context.ts`、`server/viewer/patchVisibility.ts`：请求视角与作品可见性的唯一定义。
+- `config/routePolicy.ts`、`utils/pageMetadata.ts`、`app/robots.ts`、`app/sitemap.ts`、`server/sitemap/`：抓取契约——路由策略表、页面 metadata 工厂、从策略表派生的 robots.txt 与运行期站点地图。
 - `proxy.ts`、`middleware/_csrf.ts`：路由保护与 CSRF 策略。
 - `prisma/index.ts`、`prisma/createClient.ts`、`prisma.config.ts`、`prisma/schema/schema.prisma`：数据库 client 单例与连接池、唯一构造 `PrismaClient` 的工厂、schema 路径和生成配置。
 - `lib/redis.ts`、`lib/s3.ts`、`lib/meilisearch.ts`：基础设施适配器。
@@ -122,7 +123,7 @@ pnpm prisma:generate
 - `validations/dotenv-check.ts`、`.env.example`：启动时环境契约。
 - `vitest.config.ts`：测试别名（含把 `server-only` 指到空模块）与发现规则。
 - `instrumentation.ts`、`server/cron.ts`、`ecosystem.config.cjs`：cron 启动链路和 PM2 拓扑。
-- `scripts/postbuild.ts`：sitemap 生成及 standalone 运行时资源复制。
+- `scripts/prebuild.ts`、`scripts/postbuild.ts`：构建前的检查（`public/` 下留有 `robots.txt` 或 `sitemap.xml` 时不开始构建）与构建后的 standalone 运行时资源复制。
 - `.github/workflows/lint-check.yml`：CI 的 Node 版本与必跑检查。
 
 ## Runtime/Tooling Preferences
@@ -144,7 +145,7 @@ pnpm prisma:generate
 - 已有库首次接入（由 `db push` 建起来，或恢复的备份没带 `kun_meta`）：`db:migrate` 拒绝在「已有表而基线迁移不在台账里」的库上执行。先 `pnpm db:inspect --counts`；prisma diff 扣除白名单后剩余 0 条才可以用 `pnpm db:migrate --mark-applied 0001 --reason <依据>` 登记基线，盘点里对象一致且对账为 0 的其他版本可一并登记，其余交给 `pnpm db:migrate` 执行，最后 `pnpm db:verify --prisma --counts`。登记只记账、不改数据；`released_sort` 的回填（0003）若是实际执行而不是登记，之后要跑 `pnpm search:init && pnpm search:sync-all`。
 - 本地用过 `prisma:push` 做原型的改动，落成迁移后用 `pnpm db:migrate --mark-applied <版本> --reason <依据>` 登记，或先撤掉原型改动再 `pnpm db:migrate`。
 - `.env` 文件是启动/构建硬性前置，`validations/dotenv-check.ts` 会 fail fast。新增环境变量时同步 schema 与 `.env.example`。
-- `pnpm build` 输出 Next standalone；postbuild 还会生成 sitemap，并复制 `public/`、`.next/static/`、`server/image/`、`posts/`、`config/redirect.json`。不要绕过该生命周期部署裸 `.next/standalone`。
+- `pnpm build` 输出 Next standalone；postbuild 复制 `public/`、`.next/static/`、`posts/`、`config/redirect.json`。不要绕过该生命周期部署裸 `.next/standalone`。prebuild 在 `public/` 下留有 `robots.txt` 或 `sitemap.xml` 时拒绝构建：回退到站点地图还由构建生成的版本再升回来时，旧版本的构建会重新写出不受 git 跟踪的 `public/sitemap.xml`，要手动删掉。
 - Meilisearch 由 `compose.yaml` 可选启动；运行时必须保留 basic 引擎（Prisma 实现），它也是未启用 Meilisearch 时的唯一实现。S3、邮件、Cloudflare 等外部服务由环境变量配置，验证时避免真实生产资源。
 - 对象存储的桶与边缘配置是资源直传边界的一部分，由站长维护，换存储或换域名时要重做：存储公开域名对全部路径加响应头 `Content-Disposition: attachment` 与 `X-Content-Type-Options: nosniff`（存量对象的元数据代码改不动，靠它兜底）；对 `GET` / `HEAD /patch/tmp/*` 返回 403（暂存对象只经带凭据的 S3 API 访问；规则加在公开域名上，不是预签名 PUT 所在的 S3 端点）；给 `patch/tmp/` 前缀配过期规则，不少于 48 小时（上传令牌 24 小时内都可以绑定），前缀不得匹配 `patch/<id>/resource/` 与 `user/avatar/*/moderation/`。存储是否核验签名里的 Content-Type、是否遵从 `MetadataDirective: REPLACE`，用 `pnpm exec esno scripts/probeStagedUploadBoundary.ts --write` 核查（写入并删除至多五个探针对象，不碰数据库；第 5 项顺带报告 key 末段的字节上限）；转正后对正式对象的元数据核对目前只记日志（`转正后的对象…` 开头的两条），确认生产上没有这两条之后再改成拒绝。
 
