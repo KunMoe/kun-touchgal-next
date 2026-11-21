@@ -4,7 +4,7 @@
 
 TouchGal (`kun-touchgal-next`) 是一个基于 Next.js 16 App Router 的 Galgame 文化社区站点，提供作品/补丁资料、资源下载、评分评论、用户主页、私信、后台管理、OIDC 和 MDX 内容页。
 
-主栈为 React 19、TypeScript strict、HeroUI、Tailwind CSS v4、PostgreSQL + Prisma 7、Redis 和 S3 兼容对象存储；Meilisearch 为可选搜索后端，未启用或异常时回退到 Prisma。
+主栈为 React 19、TypeScript strict、HeroUI、Tailwind CSS v4、PostgreSQL + Prisma 7、Redis 和 S3 兼容对象存储；Meilisearch 为可选的搜索召回后端：列表与卡片以 PostgreSQL 为准，未启用或它自身故障时回退到 basic 引擎（Prisma）。
 
 ## Architecture & Data Flow
 
@@ -27,7 +27,7 @@ TouchGal (`kun-touchgal-next`) 是一个基于 Next.js 16 App Router 的 Galgame
 - `prisma/schema/`：拆分的 PostgreSQL schema；生成 client 位于 `prisma/generated/prisma/`。
 - `db/`：数据库结构与数据变更的唯一通道。`db/migrations/` 是线性、只追加的 SQL 迁移；`db/objects.snapshot.sql` 是回放生成的库级对象快照（函数、触发器、部分索引）；工具在 `scripts/db/`。
 - `lib/`：Redis、S3、Meilisearch、OIDC、MDX 和第三方集成；`lib/resilience/failure.ts` 是外部依赖调用失败的协议层词表（范围、状态码与传输错误的分类），不 import 任何客户端。
-- `server/`：cron 编排、定时任务、审核流水线和搜索索引同步；`server/viewer/` 是请求视角（会话、作品可见性、列表缓存准入）的唯一来源；`server/content/` 是评论 / 评价 / 资源的删除、状态迁移与编辑命令，`server/db/tx.ts` 是应用代码唯一的事务执行器 `kunTx`（`server/db/violations.ts` 是它与 `kunRoute` 共用的违例判据；迁移脚本与 `scripts/` 各自管理事务）；`server/auth/` 是凭据校验层（尝试预算、第二因子、二次验证的策略表、2FA 状态迁移、邮箱变更台账）；`server/account/` 是账号删除（指向 user 的外键语义表、按类调用现成删除服务的清除器、user 行锁下的收尾）。
+- `server/`：cron 编排、定时任务、审核流水线和搜索索引同步；`server/search/failure.ts` 是搜索引擎选择与 Meilisearch 失败分类的唯一位置，`server/galgame/` 是作品卡片的 PG 水合（`cards.ts`）、关键词搜索的编排（`search.ts`）与它的 basic 引擎（`basicSearch.ts`）；`server/viewer/` 是请求视角（会话、作品可见性、列表缓存准入）的唯一来源；`server/content/` 是评论 / 评价 / 资源的删除、状态迁移与编辑命令，`server/db/tx.ts` 是应用代码唯一的事务执行器 `kunTx`（`server/db/violations.ts` 是它与 `kunRoute` 共用的违例判据；迁移脚本与 `scripts/` 各自管理事务）；`server/auth/` 是凭据校验层（尝试预算、第二因子、二次验证的策略表、2FA 状态迁移、邮箱变更台账）；`server/account/` 是账号删除（指向 user 的外键语义表、按类调用现成删除服务的清除器、user 行锁下的收尾）。
 - `middleware/`：JWT、cookie 与 CSRF 实现。
 - `utils/`：fetch、错误处理、cookie、Markdown、URL/文件名安全处理及页面读取器 helper（`utils/actions/`）。
 - `constants/`、`types/`、`config/`：领域常量/Prisma select、API DTO 和运行时配置。
@@ -80,6 +80,9 @@ pnpm prisma:generate
 - 重写提交带 `baseFingerprint`（读基线时名称、介绍、分级、发售日期、五个外部 ID 与别名的指纹）。`updateGalgame` 在一个事务里先锁 patch 行再读当前值：这里用 `FOR UPDATE`，不用内容命令那种 `FOR NO KEY UPDATE`——外部 ID 是唯一索引列，改到它们的 UPDATE 本来就要 `FOR UPDATE` 级的行锁，先拿较弱的锁再升级会与夹在中间取到 `FOR KEY SHARE` 的子表插入（回复评论、发资源、收藏）互等（`update.db.test.ts` 实测）。当前指纹既不等于 `baseFingerprint`、也不等于本次提交的规范化结果时 `ctx.fail`（期间别人改过）；等于本次提交的是重试，放行。别名替换与 patch 字段在这同一个事务里，锁序是「patch 行 → patch_alias」。提交值怎样变成库里的值、以及指纹怎么算，重写一侧只有 `app/api/edit/_editFields.ts` 一份实现，读基线与提交共用；建档共用其中外部 ID 的入库规范化（名称与介绍的去空白在 Zod、别名去重在路由）。表单的抓取与查重、`/api/edit` 的预检与入库对外部 ID 的写法规范化（去空白、VNDB 小写、DLsite 大写）共用 `utils/normalizeExternalId.ts`；`/api/edit/duplicate` 与 VNDB 抓取路由仍各自转大小写。标签差量可交换，不进指纹。
 - 建档与重写的表单 store 改字段只有一个接口 `update(patch | (prev) => patch)`（`KunFormUpdate`，`components/edit/types.ts`），没有整对象写入和读快照的方法（建档 store 另有清草稿用的 `resetData`）：`await` 之后要写表单一律用函数式 `update((prev) => …)`，不要展开点击时刻的 `data`。外部数据源的抓取结果经 `components/edit/form/merge.ts` 的纯函数并入：`mergeXxxFetch(prev, requestedId, result)` 以响应到达时的状态为准，表单当前的 ID 已不是发起请求的那个就返回 `null`；组件用 `applyFetchMerge` 写入并据返回值决定是否提示成功，用 `tokenRef` 丢弃晚到的旧应答，预览与「重复条目」存成 `{ forId, data }` 并在渲染时用 `fetchedForCurrentId` 比对，不写「ID 一变就清空」的 effect。抓取前的阻断式查重只带这一路的外部 ID（`buildDuplicateCheckQuery`），标题不参与。
 - 搜索写入在数据库提交后调用现有 queue sync/remove helper；不要让 Meilisearch 可用性决定数据库写入是否成功。
+- 作品列表与搜索卡片以 PostgreSQL 为准，Meilisearch 只是召回层：`server/search/query.ts` 的 `queryGalgameIds` 只返回这一页的 id 与总数，卡片一律由 `server/galgame/cards.ts` 的 `fetchGalgameCardsByIds(ids, visibility)` 回 PG 取，并在同一条查询里按视角重新裁决可见性。索引是异步写入的派生副本，写入失败时陈旧没有上界，所以索引 filter 里的分级 / 屏蔽标签只算召回预筛：已删除、已改分级、带着被屏蔽标签的作品不会经陈旧文档出现在列表里。回 PG 重判的只有可见性，「属于哪个标签 / 会社、符合哪些筛选、按什么排序」仍以索引为准：索引陈旧时这一页可能少于 `limit`（`total` 仍是索引的数），标签页 / 会社页可能多列或漏列，按浏览量 / 下载量 / 收藏 / 评分排序时顺序用的是索引里最多滞后 30 分钟的计数、卡片上显示的是 PG 的实时值。不要把文档字段加回 `attributesToRetrieve`，不要从索引文档映射卡片，`query.ts` 不 import prisma。
+- 用哪个搜索引擎只由 `server/search/failure.ts` 的 `withMeiliEngine(meili, basic)` 决定：`isMeiliEnabled` 只许它导入（`kun/inv-search-01`），`queryGalgameIds` 只许登记的四个调用方导入（`kun/inv-search-02`；新增调用方要写成 `withMeiliEngine` 的 `meili` 回调），不要再写 `if (isMeiliEnabled()) try { … } catch { 降级 }`。失败在 `classifyMeiliFailure` 里按 `lib/resilience/failure.ts` 的词表归类，判别看错误的 `name` 与 Meilisearch 错误码，不用 `instanceof`、也不能只看 HTTP 状态（「页码非法」与「排序字段没注册」都是 400）：Meilisearch 自身不可用（连不上、超时、5xx 与 408 / 425、429）换到 basic 引擎并记 warn；索引与代码不一致（索引不存在、排序 / 过滤 / 检索字段没注册即漏跑 `pnpm search:init`、密钥不对，以及应答根本不是 Meilisearch 的搜索结果——地址指到了别的服务，`query.ts` 把它说成 `MeiliProtocolError`）同样换到 basic，但记 error；请求参数被拒（`invalid_search_page` 这类错误码，以及关键词或筛选值带孤立代理时的 `malformed_payload`）抛 `MeiliBadRequestError` 并记一条 info，由路由 / service 翻成业务错误，不换引擎；其余异常（回调里读 PG 的失败、代码自己的错）原样抛出。日志都带 `[kun-search]` 前缀，只记摘要。卡片水合放在 `withMeiliEngine` 返回之后。Meilisearch 新增一种会由请求内容触发的错误码时，加进 `REQUEST_ERROR_CODES` 并在 `failure.test.ts` 补一例。
+- 关键词搜索的 basic 引擎是 `server/galgame/basicSearch.ts`（ILIKE 子串匹配、严格按所选排序、不搜会社名，文件头列了它与 Meilisearch 的差异），两个引擎不等价，也不打算做成等价。`/api/search` 的响应带 `engine`（`'meili' | 'basic'`）；搜索页翻页途中引擎变了就回到第 1 页（`utils/galgameFilter.ts` 的 `kunShouldResetEnginePage`）。路由只做「解析建议项 → 取视角 → `toKeywordSearchSpec` → `searchGalgames`」（`server/galgame/search.ts`），再把 `MeiliBadRequestError` 翻成业务错误；不带 id 的标签 / 会社名称只在走索引时才解析成 id。三个浏览端点（作品列表、标签页、会社页）的 basic 引擎仍是各自 service 里的 Prisma 查询。
 - 评论、评价、资源三张内容表的物理删除与 `status` 写入只出现在 `server/content/**` 内（`kun/inv-content-05`、`kun/inv-content-06` 执法）。入口只做三件事：算出数据形状的守卫（`statusIn`、`ownerUid`），在 `kunTx` 里调用 `plan*Removal` / `execute*Removal`、`transition*`、`edit*`，把命令返回的 `skipped` 映射成自己的文案。命令在行锁下复检守卫，锁序固定为「内容行 → 审核任务」，并按实际发生的前后状态登记提交后的缓存失效与通知（`server/content/changes.ts`），入口不要再手写这些失效。
 - `server/content` 的命令按同一个方向加锁：内容行（按 id 升序，`FOR UPDATE`）→ patch 行（按 id 升序）→ 审核任务 / 申诉 / 举报行；patch 通告锁总在 patch 行之后。新写的事务不要反着拿，几处容易写反的地方：要认领申诉 / 举报行并删除或迁移内容的入口，认领之前先锁内容行；计数触发器是行级的，一批内容跨多个补丁时在第一条写语句之前调 `lockPatchRows`（`server/content/patchLock.ts`）；`recalcPatchType` 自己先锁 patch 行再取通告锁；删评论要把整棵回复子树锁住；往内容行下面挂东西的插入（回复、资源评论）在事务里按「资源 → 补丁 → 父评论」取 `FOR KEY SHARE`，与级联删除同向。锁 patch 行用 `FOR NO KEY UPDATE`，`FOR UPDATE` 会与并发 INSERT 经外键取的 `FOR KEY SHARE` 冲突。这个方向还没有覆盖到作者的 user 行：前台删资源与审核裁决是先锁 user 行再锁内容行，点赞、申诉处理、资源初审则是先碰内容行、后写作者的 user 行（通知、萌萌点），与之相反。删号的收尾（`server/account/deleteAccount.ts`）先锁被删用户的 user 行，但走到那一步时该用户已没有任何内容，不与这两类互等；清除器调用的删除服务都不碰 user 行。
 - 账号删除只走 `server/account/deleteAccount.ts` 的 `deleteAccount`（全仓唯一的 `user.delete`）：封禁先行（`status=2` 并删光会话）→ 按 `ACCOUNT_PURGE_ORDER` 分批调用现成的删除服务（`deletePatchById`、后台的 `deleteResource` / `deleteComment` / `deleteRating`）→ 收尾在 user 行 `FOR UPDATE` 下复核每类 purge 都为 0 才删 user 行。一次请求超出时间预算返回 `done: false`（已封禁、删了一部分），再请求一次续上；不要为删号另抄这些服务的清理序列，对服务的修复会自动覆盖删号。指向 user 的外键都在 `server/account/userReferences.ts` 归类，`prisma/__tests__/user-fk-actions.test.ts` 双向执法，新增外键先归类：子行的效果只留在库内的归 `cascade`（被共享缓存内嵌的，在 `deleteAccount.ts` 的 `CASCADE_PROJECTIONS` 登记收尾时的失效）；表达「谁建的 / 谁操作的」归 `set-null`（列可空，读点显示 `DELETED_USER_NAME`）；有库外效果（S3、搜索、审核队列、站内信死链、派生计数）的归 `purge`，并在 `server/account/purgers.ts` 写清除器（不写 typecheck 报错）。
@@ -113,6 +116,7 @@ pnpm prisma:generate
 - `prisma/index.ts`、`prisma/createClient.ts`、`prisma.config.ts`、`prisma/schema/schema.prisma`：数据库 client 单例与连接池、唯一构造 `PrismaClient` 的工厂、schema 路径和生成配置。
 - `lib/redis.ts`、`lib/s3.ts`、`lib/meilisearch.ts`：基础设施适配器。
 - `server/moderation/apply.ts`、`server/search/sync.ts`：审核事务和提交后搜索同步的代表实现。
+- `server/search/failure.ts`、`server/search/query.ts`、`server/galgame/cards.ts`：搜索引擎选择、只返回 id 的索引查询与卡片的 PG 水合。
 - `server/tasks/moderationTask.ts`、`server/moderation/breaker.ts`、`server/moderation/accounting.ts`：审核 worker 的批次、车道熔断与失败记账。
 - `next.config.ts`：MDX、图片域、standalone 输出和构建检查开关。
 - `validations/dotenv-check.ts`、`.env.example`：启动时环境契约。
@@ -141,7 +145,7 @@ pnpm prisma:generate
 - 本地用过 `prisma:push` 做原型的改动，落成迁移后用 `pnpm db:migrate --mark-applied <版本> --reason <依据>` 登记，或先撤掉原型改动再 `pnpm db:migrate`。
 - `.env` 文件是启动/构建硬性前置，`validations/dotenv-check.ts` 会 fail fast。新增环境变量时同步 schema 与 `.env.example`。
 - `pnpm build` 输出 Next standalone；postbuild 还会生成 sitemap，并复制 `public/`、`.next/static/`、`server/image/`、`posts/`、`config/redirect.json`。不要绕过该生命周期部署裸 `.next/standalone`。
-- Meilisearch 由 `compose.yaml` 可选启动；运行时必须保留 Prisma fallback。S3、邮件、Cloudflare 等外部服务由环境变量配置，验证时避免真实生产资源。
+- Meilisearch 由 `compose.yaml` 可选启动；运行时必须保留 basic 引擎（Prisma 实现），它也是未启用 Meilisearch 时的唯一实现。S3、邮件、Cloudflare 等外部服务由环境变量配置，验证时避免真实生产资源。
 - 对象存储的桶与边缘配置是资源直传边界的一部分，由站长维护，换存储或换域名时要重做：存储公开域名对全部路径加响应头 `Content-Disposition: attachment` 与 `X-Content-Type-Options: nosniff`（存量对象的元数据代码改不动，靠它兜底）；对 `GET` / `HEAD /patch/tmp/*` 返回 403（暂存对象只经带凭据的 S3 API 访问；规则加在公开域名上，不是预签名 PUT 所在的 S3 端点）；给 `patch/tmp/` 前缀配过期规则，不少于 48 小时（上传令牌 24 小时内都可以绑定），前缀不得匹配 `patch/<id>/resource/` 与 `user/avatar/*/moderation/`。存储是否核验签名里的 Content-Type、是否遵从 `MetadataDirective: REPLACE`，用 `pnpm exec esno scripts/probeStagedUploadBoundary.ts --write` 核查（写入并删除至多五个探针对象，不碰数据库；第 5 项顺带报告 key 末段的字节上限）；转正后对正式对象的元数据核对目前只记日志（`转正后的对象…` 开头的两条），确认生产上没有这两条之后再改成拒绝。
 
 ## Testing & QA
