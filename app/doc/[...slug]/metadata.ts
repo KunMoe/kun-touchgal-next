@@ -1,19 +1,15 @@
-import { kunMoyuMoe } from '~/config/moyu-moe'
+import { kunPageMetadata } from '~/utils/pageMetadata'
 import type { Metadata } from 'next'
 import type { KunBlog } from '~/lib/mdx/types'
 
 export const generateKunMetadataTemplate = (blog: KunBlog): Metadata => {
-  const { slug, content, frontmatter } = blog
+  const { slug, frontmatter } = blog
 
-  return {
-    title: `${frontmatter.title}`,
+  return kunPageMetadata({
+    title: frontmatter.title,
     description: frontmatter.description,
-    openGraph: {
-      title: frontmatter.title,
-      description: frontmatter.description,
-      type: 'article',
-      publishedTime: frontmatter.date,
-      modifiedTime: frontmatter.date,
+    canonicalPath: `/doc/${slug}`,
+    social: {
       images: [
         {
           url: frontmatter.banner,
@@ -21,16 +17,11 @@ export const generateKunMetadataTemplate = (blog: KunBlog): Metadata => {
           height: 1080,
           alt: frontmatter.title
         }
-      ]
-    },
-    twitter: {
-      card: 'summary_large_image',
-      title: frontmatter.title,
-      description: frontmatter.description,
-      images: [frontmatter.banner]
-    },
-    alternates: {
-      canonical: `${kunMoyuMoe.domain.main}/doc/${slug}`
+      ],
+      article: {
+        publishedTime: frontmatter.date,
+        modifiedTime: frontmatter.date
+      }
     }
-  }
+  })
 }

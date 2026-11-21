@@ -213,14 +213,10 @@ const CANONICAL_OVERRIDES: Record<string, string> = {
   '/apply/success': '/apply',
   '/apply/pending': '/apply'
 }
-// 这几个模板的 openGraph 还是手写的: 没有 og:url、站点名与语言, 社交标题也与页面标题不同。
-// 只减不增: 哪个迁到 KUN_BASE_OPEN_GRAPH 之后这里会红, 那时把它从清单里删掉
-const HANDWRITTEN_OPEN_GRAPH = [
-  '/[id]',
-  '/[id]/resource/[resourceId]',
-  '/company/[id]',
-  '/doc/[...slug]'
-]
+// 社交卡片的标题与页面标题刻意不同的页面: 作品页的卡片只写名字与第一个别名, 不带平台
+const SOCIAL_TITLES: Record<string, string> = {
+  '/[id]': '某作品 | 某别名'
+}
 const HIDDEN: KunCrawlPolicy[] = ['noindex', 'blocked']
 
 const policyOf = (route: string) =>
@@ -256,6 +252,55 @@ describe('重放的范围', () => {
     expect([...replayedDynamicLayers].sort()).toEqual(
       Object.keys(DYNAMIC_LAYERS).sort()
     )
+  })
+})
+
+// 详情页的规范地址按实体自己的标识给出, 不跟着请求的地址走: /company/8.5 渲染的是 8 号会社,
+// 规范地址要回到 /company/8, 交给根布局的 './' 就成了 /company/8.5
+describe.each([
+  '/[id]',
+  '/[id]/resource/[resourceId]',
+  '/company/[id]',
+  '/doc/[...slug]'
+])('%s 换一个地址请求', (route) => {
+  it('规范地址与 og:url 仍是实体自己的地址', async () => {
+    const chain = chains.find((item) => item.route === route)!
+    const metadata = await accumulateMetadata(
+      route,
+      [generateKunMetadata(), ...chain.layers].map((layer) => [layer, null]),
+      `${chain.pathname}.5`,
+      { trailingSlash: false, isStaticMetadataRouteFile: false }
+    )
+
+    expect(metadata.alternates?.canonical?.url).toBe(ORIGIN + chain.pathname)
+    expect(metadata.openGraph?.url).toBe(ORIGIN + chain.pathname)
+  })
+})
+
+// 本机库里四分之三的会社没有简介。它们的页面不输出描述, 而不是都带上同一句站点描述
+describe('简介为空的会社页', () => {
+  it('不回落到站点描述', async () => {
+    const chain = chains.find((item) => item.route === '/company/[id]')!
+    const metadata = await accumulateMetadata(
+      chain.route,
+      [
+        generateKunMetadata(),
+        ...chain.layers.slice(0, -1),
+        companyMetadata({
+          id: Number(SAMPLE_PARAMS.id),
+          name: '某会社',
+          introduction: '',
+          alias: ['某会社别名'],
+          created: '2026-01-01T00:00:00.000Z'
+        } as CompanyDetail)
+      ].map((layer) => [layer, null]),
+      chain.pathname,
+      { trailingSlash: false, isStaticMetadataRouteFile: false }
+    )
+
+    expect(metadata.description).toBeFalsy()
+    expect(metadata.openGraph?.description).toBeFalsy()
+    expect(metadata.twitter?.description).toBeFalsy()
   })
 })
 
@@ -299,15 +344,15 @@ describe.each(chains)('$route', ({ route, pathname, layers }) => {
       expect(HIDDEN).toContain(policy)
       return
     }
-    if (HANDWRITTEN_OPEN_GRAPH.includes(route)) {
-      expect(metadata.openGraph.url).toBeNull()
-      return
-    }
+    const socialTitle = SOCIAL_TITLES[route]
+      ? kunDocumentTitle(SOCIAL_TITLES[route])
+      : title
+
     expect(metadata.openGraph.url).toBe(expectedUrl)
     expect(metadata.openGraph.siteName).toBe(kunMoyuMoe.title)
     expect(metadata.openGraph.locale).toBe('zh_CN')
-    expect(metadata.openGraph.title?.absolute).toBe(title)
-    expect(metadata.twitter?.title?.absolute).toBe(title)
+    expect(metadata.openGraph.title?.absolute).toBe(socialTitle)
+    expect(metadata.twitter?.title?.absolute).toBe(socialTitle)
   })
 
   it('索引声明与 KUN_ROUTE_POLICY 的登记一致', () => {

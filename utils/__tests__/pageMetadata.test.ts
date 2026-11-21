@@ -38,6 +38,15 @@ describe('kunPageMetadata', () => {
     expect('description' in metadata.twitter!).toBe(false)
   })
 
+  // 简介为空的详情页: 键要在, 值是空串, Next 才不会拿站点描述去填
+  it('明确给出的空描述原样保留', () => {
+    const metadata = kunPageMetadata({ title: '某会社', description: '' })
+
+    expect(metadata.description).toBe('')
+    expect(metadata.openGraph).toMatchObject({ description: '' })
+    expect(metadata.twitter).toMatchObject({ description: '' })
+  })
+
   // 测试站点靠根布局的 noindex 被继承
   it('可索引的页面不输出 robots 与 alternates', () => {
     const metadata = kunPageMetadata({ title: '登录', description: '说明' })
@@ -87,5 +96,82 @@ describe('kunPageMetadata', () => {
 
     expect(metadata.alternates).toEqual({ canonical: '/apply' })
     expect(metadata.openGraph).toMatchObject({ url: '/apply' })
+  })
+
+  describe('social', () => {
+    it('社交卡片可以有自己的标题、描述与图片, 标题照样带站点后缀', () => {
+      const images = [
+        { url: '/banner.avif', width: 1920, height: 1080, alt: '某作品' }
+      ]
+      const metadata = kunPageMetadata({
+        title: '某作品 | 某别名 | PC 游戏',
+        description: '页面描述',
+        social: { title: '某作品 | 某别名', description: '卡片描述', images }
+      })
+
+      expect(metadata.title).toBe('某作品 | 某别名 | PC 游戏')
+      expect(metadata.description).toBe('页面描述')
+      expect(metadata.openGraph).toMatchObject({
+        title: '某作品 | 某别名 - TouchGal',
+        description: '卡片描述',
+        images,
+        url: './',
+        siteName: kunMoyuMoe.title
+      })
+      expect(metadata.twitter).toMatchObject({
+        title: '某作品 | 某别名 - TouchGal',
+        description: '卡片描述',
+        images
+      })
+    })
+
+    it('不写图片时用站点的分享图', () => {
+      const metadata = kunPageMetadata({
+        title: '某资源',
+        social: { article: {} }
+      })
+
+      expect(metadata.openGraph).toMatchObject({ images: kunMoyuMoe.images })
+      expect(metadata.twitter).toMatchObject({ images: kunMoyuMoe.images })
+    })
+
+    it('article 让 og:type 变成 article, 并带上时间与标签', () => {
+      const metadata = kunPageMetadata({
+        title: '某会社',
+        social: {
+          article: {
+            publishedTime: '2026-01-01T00:00:00.000Z',
+            modifiedTime: '2026-01-02T00:00:00.000Z',
+            tags: ['别名']
+          }
+        }
+      })
+
+      expect(metadata.openGraph).toMatchObject({
+        type: 'article',
+        publishedTime: '2026-01-01T00:00:00.000Z',
+        modifiedTime: '2026-01-02T00:00:00.000Z',
+        tags: ['别名'],
+        url: './',
+        locale: 'zh_CN'
+      })
+    })
+
+    it('不写 article 时仍是 website', () => {
+      expect(
+        kunPageMetadata({ title: '登录', social: { title: '登录页' } })
+          .openGraph
+      ).toMatchObject({ type: 'website' })
+    })
+
+    it('card 只改 twitter 卡片的版式', () => {
+      expect(
+        kunPageMetadata({ title: '某作品', social: { card: 'summary' } })
+          .twitter
+      ).toMatchObject({ card: 'summary', creator: kunMoyuMoe.creator.mention })
+      expect(kunPageMetadata({ title: '某文档' }).twitter).toMatchObject({
+        card: 'summary_large_image'
+      })
+    })
   })
 })

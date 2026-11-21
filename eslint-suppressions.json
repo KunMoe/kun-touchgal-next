@@ -129,11 +129,6 @@
       "count": 3
     }
   },
-  "app/doc/[...slug]/metadata.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "components/edit/components/ReleaseDateInput.tsx": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
