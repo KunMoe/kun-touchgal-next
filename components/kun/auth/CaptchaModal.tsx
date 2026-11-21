@@ -37,11 +37,14 @@ const describeKunCap = (state: KunCapState) => {
 }
 
 // 以下几个部件照 cap-widget 原来可见时的样子画 (它的 src/cap.css、内嵌的两张 SVG 与刷新进度的节拍),
-// 换成本站自己的界面之后用户看到的画面与动画不变
+// 换成本站自己的界面之后用户看到的画面与动画不变。
+// 分层也照原来的: 指示位与文字区各占一个合成层 (will-change-transform, 原来是站点样式里
+// cap-widget::part(checkbox) / ::part(label) 那条规则)。进度环逐帧重画时不连带重画按钮的 1px 边线;
+// 这两层在放大 / 缩小时是按位图缩放的, 不重新栅格化, 环与按住时的文字才和原来逐像素一致
 const KUN_CAP_RING_LENGTH = 2 * Math.PI * 14
 const KUN_CAP_RING_TICK_MS = 150
 
-// 环放大到 1.1 倍、半径 14、线宽 3, 进度变化用 0.3s ease 过渡。
+// 环半径 14、线宽 3, 进度变化用 0.3s ease 过渡 (1.1 倍的放大加在外面的指示位上)。
 // 原来的 widget 每 150ms 才把进度刷到环上一次, 环是一段一段缓动过去的; 现在进度事件逐题到达,
 // 所以这里按同样的节拍取样, 不是每来一个事件就动一下
 const KunCapRing = ({ progress }: { progress: number }) => {
@@ -61,7 +64,7 @@ const KunCapRing = ({ progress }: { progress: number }) => {
   }, [])
 
   return (
-    <svg viewBox="0 0 32 32" className="size-full scale-110 -rotate-90">
+    <svg viewBox="0 0 32 32" className="size-full -rotate-90">
       <circle
         cx="16"
         cy="16"
@@ -164,7 +167,7 @@ const KunCapLabel = ({ text, instant }: { text: string; instant: boolean }) => {
   return (
     <span
       ref={wrapperRef}
-      className="relative flex h-[2em] min-w-0 flex-1 items-center overflow-hidden before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-1 before:h-[0.6em] before:bg-linear-to-b before:from-content1 before:to-transparent after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:z-1 after:h-[0.6em] after:bg-linear-to-t after:from-content1 after:to-transparent"
+      className="relative flex h-[2em] min-w-0 flex-1 items-center overflow-hidden will-change-transform before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-1 before:h-[0.6em] before:bg-linear-to-b before:from-content1 before:to-transparent after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:z-1 after:h-[0.6em] after:bg-linear-to-t after:from-content1 after:to-transparent"
     >
       {lines.map((line) => (
         <span
@@ -236,7 +239,13 @@ export const KunCaptchaModal = ({
             aria-disabled={!canSolve}
             aria-busy={state.status === 'loading' || state.status === 'solving'}
             startContent={
-              <span className="flex size-[25px] shrink-0 items-center justify-center">
+              <span
+                className={cn(
+                  'flex size-[25px] shrink-0 items-center justify-center will-change-transform',
+                  // 放大加在这一层上, 不加在环上: 这一层在空闲态就已经建好, 放大时按位图缩放
+                  state.status === 'solving' && 'scale-110'
+                )}
+              >
                 <KunCapIndicator state={state} />
               </span>
             }
