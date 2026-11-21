@@ -16,7 +16,10 @@ import {
 } from '@heroui/react'
 import toast from 'react-hot-toast'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
-import { MAIL_CAMPAIGN_STATUS_MAP } from '~/constants/admin'
+import {
+  MAIL_CAMPAIGN_BATCH_SIZE,
+  MAIL_CAMPAIGN_STATUS_MAP
+} from '~/constants/admin'
 import {
   CAMPAIGN_TEMPLATES,
   isCampaignTemplateId
@@ -38,8 +41,14 @@ const statusColor: Record<
   cancelled: 'default'
 }
 
+type CampaignAction = 'cancel' | 'resume'
+
+// 还没有结束的任务: 可以取消; 暂停的还可以继续
+const isActive = (campaign: AdminMailCampaign) =>
+  campaign.status === 'sending' || campaign.status === 'paused'
+
 interface Props {
-  // 新建任务之后由父组件加一, 让这里立刻重读一次
+  // 提交过一次建任务的请求之后由父组件加一, 让这里立刻重读一次
   refreshKey: number
 }
 
@@ -48,20 +57,25 @@ interface Props {
 export const CampaignProgress = ({ refreshKey }: Props) => {
   const [campaigns, setCampaigns] = useState<AdminMailCampaign[] | null>(null)
   const [loadError, setLoadError] = useState('')
-  const [pendingId, setPendingId] = useState<number | null>(null)
-  const [cancelTarget, setCancelTarget] = useState<AdminMailCampaign | null>(
-    null
-  )
+  const [pending, setPending] = useState<{
+    id: number
+    action: CampaignAction
+  } | null>(null)
+  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null)
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const latestRequestIdRef = useRef(0)
+  const requestSeqRef = useRef(0)
+  const appliedSeqRef = useRef(0)
 
   const load = useCallback(async () => {
-    const requestId = ++latestRequestIdRef.current
+    const seq = ++requestSeqRef.current
     const res = await kunFetchGet<AdminMailCampaign[]>('/admin/mail')
-    // 只认最后发出的那一次: 轮询与操作之后的重读可能交错返回
-    if (requestId !== latestRequestIdRef.current) {
+    // 轮询与操作之后的重读可能交错返回: 比已经采用的那一次更早发出的丢掉。不能只认
+    // 「最后发出的那一次」: 应答比轮询间隔还慢时, 每一次都会在返回之前被下一次顶掉,
+    // 列表就再也不更新了
+    if (seq < appliedSeqRef.current) {
       return
     }
+    appliedSeqRef.current = seq
     if (typeof res === 'string') {
       setLoadError(res)
       return
@@ -74,8 +88,11 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
     void load()
   }, [load, refreshKey])
 
+  // 只有本站会推进的任务才值得轮询; 随数据库副本带过来的任务在这里不会动
   const hasSending =
-    campaigns?.some((campaign) => campaign.status === 'sending') ?? false
+    campaigns?.some(
+      (campaign) => campaign.status === 'sending' && campaign.runsHere
+    ) ?? false
   useEffect(() => {
     if (!hasSending) {
       return
@@ -89,18 +106,22 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
     return () => clearInterval(timer)
   }, [hasSending, load])
 
-  const transition = async (
-    campaignId: number,
-    action: 'cancel' | 'resume'
-  ) => {
-    setPendingId(campaignId)
+  // 确认框问的那个任务已经结束 (发完了, 或被别处取消了) 就不再开着
+  const cancelTargetActive =
+    campaigns?.some(
+      (campaign) => campaign.id === cancelTargetId && isActive(campaign)
+    ) ?? false
+
+  const transition = async (campaignId: number, action: CampaignAction) => {
+    setPending({ id: campaignId, action })
     const res = await kunFetchPut<KunResponse<{}>>('/admin/mail', {
       campaignId,
       action
     })
-    setPendingId(null)
-    // 成功与否都重读: 被拒绝多半是任务的状态已经变了
-    void load()
+    // 成功与否都重读, 读完才放开按钮: 被拒绝多半是任务的状态已经变了, 按钮不该在旧状态上
+    // 重新可点
+    await load()
+    setPending(null)
     if (typeof res === 'string') {
       toast.error(res)
       return
@@ -119,14 +140,17 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
         <div>
           <h3 className="text-lg font-semibold">群发任务</h3>
           <p className="text-small text-default-500">
-            邮件由后台的定时任务分批发出,
-            关闭本页面不影响发送。同一时间只能有一个 进行中的任务
+            {
+              '邮件由后台的定时任务分批发出, 关闭本页面不影响发送。上一个任务发完或取消之前不能发起新的'
+            }
           </p>
         </div>
 
         {loadError && (
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm text-danger">读取任务失败: {loadError}</p>
+            <p role="alert" className="text-sm text-danger">
+              读取任务失败: {loadError}
+            </p>
             <Button size="sm" variant="flat" onPress={() => void load()}>
               重试
             </Button>
@@ -145,8 +169,12 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
           <ul className="divide-y divide-default-200">
             {campaigns.map((campaign) => {
               const processed = campaign.sent + campaign.failed
-              const isActive =
-                campaign.status === 'sending' || campaign.status === 'paused'
+              // 预计人数是创建时估的, 发送期间有人退订, 发完时可以比它少: 发完的一律画满
+              const barMax = Math.max(
+                campaign.status === 'done' ? processed : campaign.total,
+                processed,
+                1
+              )
               return (
                 <li
                   key={campaign.id}
@@ -158,6 +186,7 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
 
                   {/* 状态变了才需要读出来; 每次轮询都在变的数字放在这个区域之外 */}
                   <div role="status" className="space-y-1">
+                    <span className="sr-only">群发任务 #{campaign.id}</span>
                     <Chip
                       color={statusColor[campaign.status] ?? 'default'}
                       variant="flat"
@@ -166,9 +195,23 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
                       {MAIL_CAMPAIGN_STATUS_MAP[campaign.status] ??
                         campaign.status}
                     </Chip>
-                    {campaign.status === 'paused' && campaign.lastError && (
+                    {campaign.status === 'paused' && (
+                      <>
+                        {campaign.lastError && (
+                          <p className="text-sm break-all text-warning-600">
+                            {campaign.lastError}
+                          </p>
+                        )}
+                        <p className="text-sm text-default-500">
+                          {
+                            '确认邮件服务恢复之后再继续发送。继续时刚才这一批会整批重发, 其中已经收到的人会再收到一封'
+                          }
+                        </p>
+                      </>
+                    )}
+                    {isActive(campaign) && !campaign.runsHere && (
                       <p className="text-sm break-all text-warning-600">
-                        {campaign.lastError}
+                        {`这个任务是在 ${campaign.siteOrigin} 上发起的, 随数据库的副本来到这里, 本站不会推进它。不需要的话直接取消`}
                       </p>
                     )}
                   </div>
@@ -176,14 +219,9 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
                   <Progress
                     aria-label={`群发任务 #${campaign.id} 的发送进度`}
                     size="sm"
-                    color={campaign.status === 'done' ? 'success' : 'primary'}
-                    value={processed}
-                    // 预计人数是创建时估的, 期间有人退订, 发完时可以比它少
-                    maxValue={
-                      campaign.status === 'done'
-                        ? Math.max(processed, 1)
-                        : Math.max(campaign.total, processed, 1)
-                    }
+                    color={statusColor[campaign.status] ?? 'default'}
+                    value={campaign.status === 'done' ? barMax : processed}
+                    maxValue={barMax}
                   />
 
                   <p className="text-sm text-default-600">
@@ -205,15 +243,18 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
                     )}
                   </p>
 
-                  {isActive && (
+                  {isActive(campaign) && (
                     <div className="flex gap-2">
                       {campaign.status === 'paused' && (
                         <Button
                           size="sm"
                           color="primary"
                           variant="flat"
-                          isDisabled={pendingId !== null}
-                          isLoading={pendingId === campaign.id && !isOpen}
+                          isDisabled={pending !== null}
+                          isLoading={
+                            pending?.id === campaign.id &&
+                            pending.action === 'resume'
+                          }
                           onPress={() => transition(campaign.id, 'resume')}
                         >
                           继续发送
@@ -223,9 +264,9 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
                         size="sm"
                         color="danger"
                         variant="flat"
-                        isDisabled={pendingId !== null}
+                        isDisabled={pending !== null}
                         onPress={() => {
-                          setCancelTarget(campaign)
+                          setCancelTargetId(campaign.id)
                           onOpen()
                         }}
                       >
@@ -240,13 +281,12 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
         )}
       </CardBody>
 
-      <Modal isOpen={isOpen} onClose={onClose}>
+      <Modal isOpen={isOpen && cancelTargetActive} onClose={onClose}>
         <ModalContent>
-          <ModalHeader>确定要取消群发任务 #{cancelTarget?.id} 吗?</ModalHeader>
+          <ModalHeader>确定要取消群发任务 #{cancelTargetId} 吗?</ModalHeader>
           <ModalBody>
             <p>
-              已经发出的邮件无法撤回。取消之后这个任务不能再继续,
-              还没有收到的用户不会再收到这封邮件; 重新发起则会从头发给全体用户。
+              {`已经发出的邮件无法撤回, 正在发出的这一批 (至多 ${MAIL_CAMPAIGN_BATCH_SIZE} 封) 仍会送达。取消之后这个任务不能再继续, 其余还没有收到的用户不会再收到这封邮件; 重新发起则会从头发给全体用户。`}
             </p>
           </ModalBody>
           <ModalFooter>
@@ -255,11 +295,11 @@ export const CampaignProgress = ({ refreshKey }: Props) => {
             </Button>
             <Button
               color="danger"
-              isDisabled={pendingId !== null}
-              isLoading={pendingId !== null}
+              isDisabled={pending !== null}
+              isLoading={pending?.action === 'cancel'}
               onPress={() => {
-                if (cancelTarget) {
-                  void transition(cancelTarget.id, 'cancel')
+                if (cancelTargetId !== null) {
+                  void transition(cancelTargetId, 'cancel')
                 }
               }}
             >

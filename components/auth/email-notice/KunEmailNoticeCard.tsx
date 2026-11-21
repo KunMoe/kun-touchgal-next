@@ -21,7 +21,12 @@ export const KunEmailNoticeCard = () => {
   // 现行的链接带用户 id 与对它的签名; 改用签名之前发出的邮件带的是邮箱与七天内有效的验证码
   const uid = searchParams.get('u')
   const token = searchParams.get('t')
-  const signedLink = uid && token ? { uid, token } : null
+  // 两个参数只要带了一个就按现行链接处理: 被截断的链接交给服务端回「链接无效」,
+  // 而不是落到旧分支去显示一个不存在的邮箱
+  const signedLink =
+    uid !== null || token !== null
+      ? { uid: uid ?? '', token: token ?? '' }
+      : null
   const email = searchParams.get('email') || kunMoyuMoe.domain.main
   const code = searchParams.get('code') || kunMoyuMoe.domain.main
 

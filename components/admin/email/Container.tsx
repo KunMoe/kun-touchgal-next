@@ -15,7 +15,7 @@ export const EmailSetting = () => {
 
       <CampaignProgress refreshKey={refreshKey} />
 
-      <EmailTemplate onCreated={() => setRefreshKey((key) => key + 1)} />
+      <EmailTemplate onSubmitted={() => setRefreshKey((key) => key + 1)} />
     </div>
   )
 }

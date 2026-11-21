@@ -27,17 +27,22 @@ import {
 } from '~/constants/email/campaign'
 import { EmailPreview } from './EmailPreview'
 import { kunFetchPost } from '~/utils/kunFetch'
+import {
+  MAIL_CAMPAIGN_CONTENT_LIMIT,
+  MAIL_CAMPAIGN_TITLE_LIMIT
+} from '~/constants/admin'
 import toast from 'react-hot-toast'
 import type { CampaignTemplateId } from '~/constants/email/campaign'
 
 const emptyVars = { title: '', content: '' }
 
 interface Props {
-  // 任务建好之后通知父组件, 让进度列表立刻重读
-  onCreated: () => void
+  // 建任务的请求有了结果 (无论成败) 就通知父组件, 让进度列表重读: 被拒绝往往是因为
+  // 已有任务在进行, 而这个页面打开时它还不存在
+  onSubmitted: () => void
 }
 
-export const EmailTemplate = ({ onCreated }: Props) => {
+export const EmailTemplate = ({ onSubmitted }: Props) => {
   const [selectedTemplate, setSelectedTemplate] = useState<
     CampaignTemplateId | ''
   >('')
@@ -53,11 +58,15 @@ export const EmailTemplate = ({ onCreated }: Props) => {
     setTemplateVars(emptyVars)
   }
 
-  // 与实际发出的邮件是同一个函数的输出; 预览里没有收件人, 退订链接用落地页占位
+  // 与实际发出的邮件是同一个函数的输出 (服务端会去掉标题与正文首尾的空白, 这里照做);
+  // 预览里没有收件人, 退订链接用落地页占位
   const previewContent = selectedTemplate
     ? renderCampaignEmail(
         selectedTemplate,
-        { titleHtml: templateVars.title, contentHtml: templateVars.content },
+        {
+          titleHtml: templateVars.title.trim(),
+          contentHtml: templateVars.content.trim()
+        },
         kunUnsubscribePageUrl()
       ).html
     : ''
@@ -74,6 +83,7 @@ export const EmailTemplate = ({ onCreated }: Props) => {
       { templateId: selectedTemplate, variables: templateVars }
     )
     setIsSending(false)
+    onSubmitted()
     if (typeof response === 'string') {
       // 请求失败时保留已选的模板与变量, 弹窗不关
       toast.error(response)
@@ -85,7 +95,6 @@ export const EmailTemplate = ({ onCreated }: Props) => {
     setSelectedTemplate('')
     setTemplateVars(emptyVars)
     onClose()
-    onCreated()
   }
 
   return (
@@ -114,6 +123,7 @@ export const EmailTemplate = ({ onCreated }: Props) => {
               label="标题"
               placeholder="请输入您的标题"
               value={templateVars.title}
+              maxLength={MAIL_CAMPAIGN_TITLE_LIMIT}
               onChange={(e) =>
                 setTemplateVars({ ...templateVars, title: e.target.value })
               }
@@ -122,6 +132,7 @@ export const EmailTemplate = ({ onCreated }: Props) => {
               label="内容"
               placeholder="请输入您的内容"
               value={templateVars.content}
+              maxLength={MAIL_CAMPAIGN_CONTENT_LIMIT}
               onChange={(e) =>
                 setTemplateVars({ ...templateVars, content: e.target.value })
               }
