@@ -9,12 +9,13 @@ import {
 } from '~/app/api/utils/galgameQuery'
 import { withGalgameListCache } from '~/app/api/utils/galgameListCache'
 import { parseGalgameFilterArray } from '~/utils/galgameFilter'
-import { isMeiliEnabled } from '~/lib/meilisearch'
 import {
   buildGalgameSearchFilter,
   buildGalgameSearchSort
 } from '~/server/search/filter-builder'
-import { queryGalgameIndex } from '~/server/search/query'
+import { queryGalgameIds } from '~/server/search/query'
+import { MeiliBadRequestError, withMeiliEngine } from '~/server/search/failure'
+import { fetchGalgameCardsByIds } from '~/server/galgame/cards'
 import {
   toPatchWhere,
   toSearchVisibility,
@@ -23,7 +24,8 @@ import {
 } from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 
-const getPatchByCompanyFromSearch = async (
+// 索引只给这一页的 id 与总数, 卡片由 queryPatchByCompany 回 PG 取
+const getPatchIdsByCompanyFromSearch = async (
   input: z.infer<typeof getPatchByCompanySchema>,
   years: string[],
   months: string[],
@@ -40,24 +42,19 @@ const getPatchByCompanyFromSearch = async (
     companyId: input.companyId
   })
   if (filter === null) {
-    return { galgames: [] as GalgameCard[], total: 0 }
+    return { ids: [], total: 0 }
   }
 
-  const { galgames, total } = await queryGalgameIndex({
+  return queryGalgameIds({
     q: '',
     filter,
     sort: buildGalgameSearchSort(input.sortField, input.sortOrder),
     page: input.page,
     hitsPerPage: input.limit
   })
-
-  return {
-    galgames,
-    total
-  }
 }
 
-// 旧 Prisma 实现：Meilisearch 不可用时的运行时降级路径，勿删
+// basic 引擎 (PG): Meilisearch 未启用时的唯一实现, 启用时是它出故障后的降级, 勿删
 const legacyGetPatchByCompany = async (
   input: z.infer<typeof getPatchByCompanySchema>,
   years: string[],
@@ -117,16 +114,19 @@ const queryPatchByCompany = async (
   months: string[],
   visibility: PatchVisibility
 ) => {
-  if (isMeiliEnabled()) {
-    try {
-      return await getPatchByCompanyFromSearch(input, years, months, visibility)
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Meilisearch 会社列表查询失败，降级为 Prisma 实现:', error)
-    }
+  const result = await withMeiliEngine(
+    () => getPatchIdsByCompanyFromSearch(input, years, months, visibility),
+    () =>
+      legacyGetPatchByCompany(input, years, months, toPatchWhere(visibility))
+  )
+  if (result.engine === 'basic') {
+    return result.value
   }
 
-  return legacyGetPatchByCompany(input, years, months, toPatchWhere(visibility))
+  return {
+    galgames: await fetchGalgameCardsByIds(result.value.ids, visibility),
+    total: result.value.total
+  }
 }
 
 export const getPatchByCompany = async (
@@ -136,16 +136,24 @@ export const getPatchByCompany = async (
   const years = parseGalgameFilterArray(input.yearString)
   const months = parseGalgameFilterArray(input.monthString)
 
-  return withGalgameListCache({
-    cacheKeyPrefix: `galgame:list:company:${input.companyId}`,
-    input: {
-      ...input,
-      // minRatingCount 仅在 rating 排序时生效, 归一化避免同一结果分裂多个 key
-      minRatingCount: input.sortField === 'rating' ? input.minRatingCount : 0
-    },
-    years,
-    months,
-    view,
-    query: () => queryPatchByCompany(input, years, months, view.visibility)
-  })
+  try {
+    return await withGalgameListCache({
+      cacheKeyPrefix: `galgame:list:company:${input.companyId}`,
+      input: {
+        ...input,
+        // minRatingCount 仅在 rating 排序时生效, 归一化避免同一结果分裂多个 key
+        minRatingCount: input.sortField === 'rating' ? input.minRatingCount : 0
+      },
+      years,
+      months,
+      view,
+      query: () => queryPatchByCompany(input, years, months, view.visibility)
+    })
+  } catch (error) {
+    // 筛选值被 Meilisearch 判为非法 (如年份里带孤立代理): 不换引擎, 当业务错误回出
+    if (error instanceof MeiliBadRequestError) {
+      return '筛选条件格式错误'
+    }
+    throw error
+  }
 }

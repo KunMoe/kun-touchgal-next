@@ -9,12 +9,13 @@ import {
 } from '../utils/galgameQuery'
 import { withGalgameListCache } from '~/app/api/utils/galgameListCache'
 import { parseGalgameFilterArray } from '~/utils/galgameFilter'
-import { isMeiliEnabled } from '~/lib/meilisearch'
 import {
   buildGalgameSearchFilter,
   buildGalgameSearchSort
 } from '~/server/search/filter-builder'
-import { queryGalgameIndex } from '~/server/search/query'
+import { queryGalgameIds } from '~/server/search/query'
+import { MeiliBadRequestError, withMeiliEngine } from '~/server/search/failure'
+import { fetchGalgameCardsByIds } from '~/server/galgame/cards'
 import type { GalgameListResponse } from '~/app/api/utils/galgameListCache'
 import {
   toPatchWhere,
@@ -26,41 +27,37 @@ import type { Prisma } from '~/prisma/generated/prisma/client'
 
 const GALGAME_LIST_CACHE_KEY_PREFIX = 'galgame:list'
 
-const getGalgameFromSearch = async (
+// 索引只给这一页的 id 与总数, 卡片由 queryGalgameList 回 PG 取
+const getGalgameIdsFromSearch = async (
   input: z.infer<typeof galgameSchema>,
   years: string[],
   months: string[],
   visibility: PatchVisibility
-): Promise<GalgameListResponse> => {
+) => {
   const filter = buildGalgameSearchFilter({
     selectedType: input.selectedType,
     selectedLanguage: input.selectedLanguage,
     selectedPlatform: input.selectedPlatform,
     years,
     months,
-    // 列表端点的 minRatingCount 恒生效，与旧实现一致
+    // 列表端点的 minRatingCount 恒生效，与 basic 引擎一致
     minRatingCount: input.minRatingCount,
     ...toSearchVisibility(visibility)
   })
   if (filter === null) {
-    return { galgames: [], total: 0 }
+    return { ids: [], total: 0 }
   }
 
-  const { galgames, total } = await queryGalgameIndex({
+  return queryGalgameIds({
     q: '',
     filter,
     sort: buildGalgameSearchSort(input.sortField, input.sortOrder),
     page: input.page,
     hitsPerPage: input.limit
   })
-
-  return {
-    galgames,
-    total
-  }
 }
 
-// 旧 Prisma 实现：Meilisearch 不可用时的运行时降级路径，勿删
+// basic 引擎 (PG): Meilisearch 未启用时的唯一实现, 启用时是它出故障后的降级, 勿删
 const getGalgameFromPrisma = async (
   input: z.infer<typeof galgameSchema>,
   years: string[],
@@ -119,30 +116,41 @@ const queryGalgameList = async (
   months: string[],
   visibility: PatchVisibility
 ): Promise<GalgameListResponse> => {
-  if (isMeiliEnabled()) {
-    try {
-      return await getGalgameFromSearch(input, years, months, visibility)
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Meilisearch 列表查询失败，降级为 Prisma 实现:', error)
-    }
+  const result = await withMeiliEngine(
+    () => getGalgameIdsFromSearch(input, years, months, visibility),
+    () => getGalgameFromPrisma(input, years, months, toPatchWhere(visibility))
+  )
+  if (result.engine === 'basic') {
+    return result.value
   }
-  return getGalgameFromPrisma(input, years, months, toPatchWhere(visibility))
+
+  return {
+    galgames: await fetchGalgameCardsByIds(result.value.ids, visibility),
+    total: result.value.total
+  }
 }
 
 export const getGalgame = async (
   input: z.infer<typeof galgameSchema>,
   view: PublicListView
-): Promise<GalgameListResponse> => {
+): Promise<GalgameListResponse | string> => {
   const years = parseGalgameFilterArray(input.yearString)
   const months = parseGalgameFilterArray(input.monthString)
 
-  return withGalgameListCache({
-    cacheKeyPrefix: GALGAME_LIST_CACHE_KEY_PREFIX,
-    input,
-    years,
-    months,
-    view,
-    query: () => queryGalgameList(input, years, months, view.visibility)
-  })
+  try {
+    return await withGalgameListCache({
+      cacheKeyPrefix: GALGAME_LIST_CACHE_KEY_PREFIX,
+      input,
+      years,
+      months,
+      view,
+      query: () => queryGalgameList(input, years, months, view.visibility)
+    })
+  } catch (error) {
+    // 筛选值被 Meilisearch 判为非法 (如年份里带孤立代理): 不换引擎, 当业务错误回出
+    if (error instanceof MeiliBadRequestError) {
+      return '筛选条件格式错误'
+    }
+    throw error
+  }
 }

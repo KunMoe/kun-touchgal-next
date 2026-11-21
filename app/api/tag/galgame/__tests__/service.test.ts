@@ -9,8 +9,9 @@ const {
   releaseKvLockMock,
   relationFindManyMock,
   relationCountMock,
+  patchFindManyMock,
   isMeiliEnabledMock,
-  queryGalgameIndexMock
+  queryGalgameIdsMock
 } = vi.hoisted(() => ({
   getKvMock: vi.fn(),
   setKvMock: vi.fn(),
@@ -20,8 +21,9 @@ const {
   releaseKvLockMock: vi.fn(),
   relationFindManyMock: vi.fn(),
   relationCountMock: vi.fn(),
+  patchFindManyMock: vi.fn(),
   isMeiliEnabledMock: vi.fn(),
-  queryGalgameIndexMock: vi.fn()
+  queryGalgameIdsMock: vi.fn()
 }))
 
 vi.mock('~/lib/redis', () => ({
@@ -38,7 +40,8 @@ vi.mock('~/prisma/index', () => ({
     patch_tag_relation: {
       findMany: relationFindManyMock,
       count: relationCountMock
-    }
+    },
+    patch: { findMany: patchFindManyMock }
   }
 }))
 
@@ -47,7 +50,7 @@ vi.mock('~/lib/meilisearch', () => ({
 }))
 
 vi.mock('~/server/search/query', () => ({
-  queryGalgameIndex: queryGalgameIndexMock
+  queryGalgameIds: queryGalgameIdsMock
 }))
 
 vi.mock('~/server/search/filter-builder', () => ({
@@ -57,6 +60,9 @@ vi.mock('~/server/search/filter-builder', () => ({
 
 import { getPatchByTag } from '~/app/api/tag/galgame/service'
 import { toPublicListView } from '~/server/viewer/patchVisibility'
+import { GalgameCardSelectField } from '~/constants/api/select'
+import { meiliApiError, meiliDown } from '~/server/search/__tests__/meiliErrors'
+import { cardRow } from '~/server/galgame/__tests__/cardRow'
 
 const INPUT = {
   tagId: 17,
@@ -74,6 +80,7 @@ const INPUT = {
 
 // 分级不限、无屏蔽标签的共享视角
 const VIEW = toPublicListView({ contentLimit: null, blockedTagIds: [] })
+const SFW_VIEW = toPublicListView({ contentLimit: 'sfw', blockedTagIds: [] })
 
 const EMPTY_RESPONSE = { galgames: [], total: 0 }
 const CACHED_RESPONSE = { galgames: [], total: 3 }
@@ -90,7 +97,7 @@ describe('getPatchByTag', () => {
     setKvIfAbsentMock.mockResolvedValue(true)
     releaseKvLockMock.mockResolvedValue(undefined)
     isMeiliEnabledMock.mockReturnValue(false)
-    queryGalgameIndexMock.mockResolvedValue(EMPTY_RESPONSE)
+    queryGalgameIdsMock.mockResolvedValue({ ids: [], total: 0 })
   })
 
   it('returns cached response without querying or locking', async () => {
@@ -102,7 +109,7 @@ describe('getPatchByTag', () => {
     expect(getRequestedCacheKey()).toMatch(/^galgame:list:tag:17:/)
     expect(acquireKvLockMock).not.toHaveBeenCalled()
     expect(relationFindManyMock).not.toHaveBeenCalled()
-    expect(queryGalgameIndexMock).not.toHaveBeenCalled()
+    expect(queryGalgameIdsMock).not.toHaveBeenCalled()
   })
 
   it('queries meilisearch once and writes cache when the lock is acquired on miss', async () => {
@@ -115,7 +122,7 @@ describe('getPatchByTag', () => {
     const cacheKey = getRequestedCacheKey()
     expect(response).toEqual(EMPTY_RESPONSE)
     expect(acquireKvLockMock).toHaveBeenCalledWith(`${cacheKey}:lock`, 10)
-    expect(queryGalgameIndexMock).toHaveBeenCalledTimes(1)
+    expect(queryGalgameIdsMock).toHaveBeenCalledTimes(1)
     expect(relationFindManyMock).not.toHaveBeenCalled()
     expect(setKvMock).toHaveBeenCalledWith(
       cacheKey,
@@ -124,16 +131,18 @@ describe('getPatchByTag', () => {
     )
   })
 
-  it('falls back to prisma and still writes cache when meilisearch fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('falls back to prisma and still writes cache when meilisearch is unavailable', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue('token-1')
     isMeiliEnabledMock.mockReturnValue(true)
-    queryGalgameIndexMock.mockRejectedValue(new Error('meili down'))
+    queryGalgameIdsMock.mockRejectedValue(meiliDown())
+    relationFindManyMock.mockResolvedValue([{ patch: cardRow(3) }])
+    relationCountMock.mockResolvedValue(1)
 
     const response = await getPatchByTag(INPUT, VIEW)
 
-    expect(response).toEqual(EMPTY_RESPONSE)
+    expect(response).toMatchObject({ galgames: [{ id: 3 }], total: 1 })
     expect(relationFindManyMock).toHaveBeenCalledTimes(1)
     expect(relationCountMock).toHaveBeenCalledTimes(1)
     expect(setKvMock).toHaveBeenCalledWith(
@@ -153,5 +162,77 @@ describe('getPatchByTag', () => {
     expect(getRequestedCacheKey(1)).toMatch(/^galgame:list:tag:18:/)
     expect(getRequestedCacheKey(1)).not.toBe(getRequestedCacheKey(0))
     expect(getRequestedCacheKey(2)).toBe(getRequestedCacheKey(0))
+  })
+
+  it('hydrates index hits from PG under the viewer visibility and caches the hydrated cards', async () => {
+    getKvMock.mockResolvedValue(null)
+    acquireKvLockMock.mockResolvedValue('token-1')
+    isMeiliEnabledMock.mockReturnValue(true)
+    queryGalgameIdsMock.mockResolvedValue({ ids: [2, 1], total: 30 })
+    patchFindManyMock.mockResolvedValue([cardRow(1), cardRow(2)])
+
+    const response = await getPatchByTag(INPUT, SFW_VIEW)
+
+    expect(patchFindManyMock).toHaveBeenCalledTimes(1)
+    expect(patchFindManyMock).toHaveBeenCalledWith({
+      where: { AND: [{ id: { in: [2, 1] } }, { content_limit: 'sfw' }] },
+      select: GalgameCardSelectField
+    })
+    expect(relationFindManyMock).not.toHaveBeenCalled()
+    expect(relationCountMock).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      galgames: [{ id: 2 }, { id: 1 }],
+      total: 30
+    })
+    expect(setKvMock).toHaveBeenCalledWith(
+      getRequestedCacheKey(),
+      JSON.stringify(response),
+      60
+    )
+  })
+
+  it('does not fall back to prisma when the failure is not a meilisearch error', async () => {
+    getKvMock.mockResolvedValue(null)
+    acquireKvLockMock.mockResolvedValue('token-1')
+    isMeiliEnabledMock.mockReturnValue(true)
+    const bug = new TypeError('boom')
+    queryGalgameIdsMock.mockRejectedValue(bug)
+
+    await expect(getPatchByTag(INPUT, VIEW)).rejects.toBe(bug)
+    expect(relationFindManyMock).not.toHaveBeenCalled()
+    expect(relationCountMock).not.toHaveBeenCalled()
+    expect(setKvMock).not.toHaveBeenCalled()
+  })
+
+  it('does not fall back to prisma when hydrating from PG fails', async () => {
+    getKvMock.mockResolvedValue(null)
+    acquireKvLockMock.mockResolvedValue('token-1')
+    isMeiliEnabledMock.mockReturnValue(true)
+    const pgDown = new Error('pg down')
+    queryGalgameIdsMock.mockResolvedValue({ ids: [1], total: 1 })
+    patchFindManyMock.mockRejectedValue(pgDown)
+
+    await expect(getPatchByTag(INPUT, VIEW)).rejects.toBe(pgDown)
+    expect(relationFindManyMock).not.toHaveBeenCalled()
+    expect(relationCountMock).not.toHaveBeenCalled()
+    expect(setKvMock).not.toHaveBeenCalled()
+  })
+
+  it('answers a business error and caches nothing when meilisearch rejects the request parameters', async () => {
+    getKvMock.mockResolvedValue(null)
+    acquireKvLockMock.mockResolvedValue('token-1')
+    isMeiliEnabledMock.mockReturnValue(true)
+    queryGalgameIdsMock.mockRejectedValue(
+      meiliApiError(400, 'malformed_payload')
+    )
+
+    const response = await getPatchByTag(INPUT, VIEW)
+
+    expect(response).toBe('筛选条件格式错误')
+    expect(patchFindManyMock).not.toHaveBeenCalled()
+    expect(relationFindManyMock).not.toHaveBeenCalled()
+    expect(relationCountMock).not.toHaveBeenCalled()
+    expect(setKvMock).not.toHaveBeenCalled()
+    expect(releaseKvLockMock).toHaveBeenCalledTimes(1)
   })
 })

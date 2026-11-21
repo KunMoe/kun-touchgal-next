@@ -17,10 +17,16 @@ import { FilterBar } from '~/components/galgame/FilterBar'
 import { GalgameCardSkeleton } from '~/components/galgame/CardSkeleton'
 import { useSettingStore } from '~/store/settingStore'
 import { cn } from '~/utils/cn'
-import { kunShouldResetOverflowPage } from '~/utils/galgameFilter'
+import {
+  kunShouldResetEnginePage,
+  kunShouldResetOverflowPage
+} from '~/utils/galgameFilter'
 import type { FocusEvent } from 'react'
 import type { SearchSuggestionNav } from './Suggestion'
-import type { SearchSuggestionType } from '~/types/api/search'
+import type {
+  GalgameSearchEngine,
+  SearchSuggestionType
+} from '~/types/api/search'
 import type { SortField, SortOrder } from '~/components/galgame/_sort'
 
 const MAX_HISTORY_ITEMS = 10
@@ -32,6 +38,7 @@ interface Props {
 export const SearchPage = ({ filterEndYear }: Props) => {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const latestSearchRequestIdRef = useRef(0)
+  const firstPageEngineRef = useRef<GalgameSearchEngine | null>(null)
   const [query, setQuery] = useState('')
   const [debouncedQuery] = useDebounce(query, 500)
   const [hasSearched, setHasSearched] = useState(false)
@@ -134,6 +141,7 @@ export const SearchPage = ({ filterEndYear }: Props) => {
         | {
             galgames: GalgameCard[]
             total: number
+            engine: GalgameSearchEngine
           }
         | string
       >('/search', {
@@ -171,9 +179,19 @@ export const SearchPage = ({ filterEndYear }: Props) => {
       const galgames = Array.isArray(response.galgames) ? response.galgames : []
       const nextTotal = typeof response.total === 'number' ? response.total : 0
 
-      if (kunShouldResetOverflowPage(nextTotal, galgames.length, currentPage)) {
+      if (
+        kunShouldResetOverflowPage(nextTotal, galgames.length, currentPage) ||
+        kunShouldResetEnginePage(
+          firstPageEngineRef.current,
+          response.engine,
+          currentPage
+        )
+      ) {
         setPage(1)
         return
+      }
+      if (currentPage === 1) {
+        firstPageEngineRef.current = response.engine
       }
 
       setPatches(galgames)

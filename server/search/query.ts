@@ -3,9 +3,8 @@ import { getMeiliClient } from '~/lib/meilisearch'
 import { getKv, setKv } from '~/lib/redis'
 import { SEARCH_TOTAL_HITS_CACHE_DURATION } from '~/config/cache'
 import { GALGAME_INDEX, GALGAME_MAX_TOTAL_HITS } from './settings'
-import type { GalgameSearchDoc } from './document'
 
-// 超时即中止请求，由调用方捕获错误后降级到 Prisma 实现
+// 超时即中止请求, 由 withMeiliEngine 归为 Meilisearch 不可用并换到 basic 引擎
 export const SEARCH_QUERY_TIMEOUT_MS = 800
 
 // 相关性下限（_rankingScore 0..1）：仅在有查询词时生效，剔除勉强命中的长尾。
@@ -20,48 +19,6 @@ export interface GalgameIndexQuery {
   hitsPerPage: number
   attributesToSearchOn?: string[]
 }
-
-// 卡片渲染所需的文档字段白名单：只回取这些，避免把 introduction 等大字段传回。
-const GALGAME_CARD_DOC_FIELDS = [
-  'id',
-  'uniqueId',
-  'name',
-  'banner',
-  'view',
-  'download',
-  'type',
-  'language',
-  'platform',
-  'created',
-  'favoriteCount',
-  'resourceCount',
-  'commentCount',
-  'avgRating'
-]
-
-// 索引文档直接映射为卡片：可见性过滤（content_limit / 屏蔽标签）已在 Meilisearch
-// filter 内完成，不再回查 PostgreSQL，因此 total 与实际卡片数恒一致。
-// created 以 Unix 秒存储，转回 ISO 字符串与旧 Prisma 实现（Date 经 JSON 序列化）一致。
-// banner / resourceCount / commentCount 是新增文档字段，重建索引前的旧文档可能缺失，
-// 做兜底避免渲染异常；重建索引（pnpm search:sync-all）后取到真实值。
-export const searchDocToGalgameCard = (doc: GalgameSearchDoc): GalgameCard => ({
-  id: doc.id,
-  uniqueId: doc.uniqueId,
-  name: doc.name,
-  banner: doc.banner ?? '',
-  view: doc.view,
-  download: doc.download,
-  type: doc.type,
-  language: doc.language,
-  platform: doc.platform,
-  created: new Date(doc.created * 1000).toISOString(),
-  _count: {
-    favorite_folder: doc.favoriteCount,
-    resource: doc.resourceCount ?? 0,
-    comment: doc.commentCount ?? 0
-  },
-  averageRating: doc.avgRating ? Math.round(doc.avgRating * 10) / 10 : 0
-})
 
 // 精确总数只取决于检索条件、与页码无关：翻页与热词重复查询共享同一份计数，
 // 命中缓存即可跳过 hitsPerPage=maxTotalHits 的全候选打分计数查询。
@@ -100,17 +57,19 @@ const writeTotalHitsCache = async (cacheKey: string, totalHits: number) => {
   }
 }
 
-// 索引负责"找到哪些文档、按什么顺序"，并直接携带卡片渲染所需字段。
-// 主查询取当前页卡片；有相关性阈值时另需精确总数（见下），优先读缓存、未命中才发计数查询。
-export const queryGalgameIndex = async (
+// 索引是召回层: 只回答「哪些 id、按什么顺序、一共多少」。卡片内容与可见性由调用方拿着
+// id 回 PG 裁决 (server/galgame/cards.ts), 这个模块不读文档的其他字段, 也不碰 prisma。
+// filter 里的分级 / 屏蔽标签只是召回预筛: 索引陈旧时 total 会把 PG 已不认的条目也算进去。
+// 主查询取当前页的 id；有相关性阈值时另需精确总数（见下），优先读缓存、未命中才发计数查询。
+export const queryGalgameIds = async (
   query: GalgameIndexQuery
-): Promise<{ galgames: GalgameCard[]; total: number }> => {
+): Promise<{ ids: number[]; total: number }> => {
   const client = getMeiliClient()
   if (!client) {
     throw new Error('Meilisearch client 未配置')
   }
 
-  const index = client.index<GalgameSearchDoc>(GALGAME_INDEX)
+  const index = client.index<{ id: number }>(GALGAME_INDEX)
   // 纯筛选/浏览端点 q 为空、所有文档得分 1.0，阈值不生效；仅约束有文字搜索的场景
   const rankingScoreThreshold = query.q
     ? SEARCH_RANKING_SCORE_THRESHOLD
@@ -124,31 +83,30 @@ export const queryGalgameIndex = async (
     filter: query.filter || undefined,
     sort: query.sort && query.sort.length > 0 ? query.sort : undefined,
     attributesToSearchOn: query.attributesToSearchOn,
-    // 与旧实现的多关键词 AND 语义对齐
+    // 与 basic 引擎的多关键词 AND 语义对齐
     matchingStrategy: 'all' as const,
     rankingScoreThreshold
   }
 
-  // 主查询：取当前页卡片
-  const mainSearch = () =>
-    index.search(
+  // 主查询：取当前页的 id
+  const mainSearch = async () => {
+    const res = await index.search(
       query.q ?? '',
       {
         ...baseOptions,
         page: query.page,
         hitsPerPage: query.hitsPerPage,
-        attributesToRetrieve: GALGAME_CARD_DOC_FIELDS
+        attributesToRetrieve: ['id']
       },
       { signal: AbortSignal.timeout(SEARCH_QUERY_TIMEOUT_MS) }
     )
+    return { ids: res.hits.map((hit) => hit.id), totalHits: res.totalHits }
+  }
 
   // 浏览态（无阈值）：Meili 的 totalHits 本就精确，无需计数查询
   if (rankingScoreThreshold === undefined) {
     const res = await mainSearch()
-    return {
-      galgames: res.hits.map(searchDocToGalgameCard),
-      total: res.totalHits
-    }
+    return { ids: res.ids, total: res.totalHits }
   }
 
   // 设了 rankingScoreThreshold 后，Meili 有限分页的 totalHits 只穷举到当前页窗为止：
@@ -159,15 +117,12 @@ export const queryGalgameIndex = async (
   const cachedTotal = await readTotalHitsCache(cacheKey)
   if (cachedTotal !== null) {
     const res = await mainSearch()
-    return {
-      galgames: res.hits.map(searchDocToGalgameCard),
-      total: cachedTotal
-    }
+    return { ids: res.ids, total: cachedTotal }
   }
 
   // 缓存未命中：主查询与计数查询并行。主查询先发起，保持"主先计数后"的调用顺序。
   // 计数查询单独兜底 —— 它超时/失败时回退到主查询的 totalHits（浅页偏大的近似值），
-  // 绝不因此拒绝整次搜索、把成功的主查询结果连带丢弃并降级到重 Prisma 实现
+  // 绝不因此拒绝整次搜索、把成功的主查询结果连带丢弃并换到 basic 引擎
   //（那会在 Meili 高负载期把最重的多 OR/join 查询倾泻到有限连接池上，酿成级联）。
   const mainPromise = mainSearch()
   const countPromise = index
@@ -198,8 +153,5 @@ export const queryGalgameIndex = async (
     void writeTotalHitsCache(cacheKey, count.totalHits)
   }
 
-  return {
-    galgames: res.hits.map(searchDocToGalgameCard),
-    total: count ? count.totalHits : res.totalHits
-  }
+  return { ids: res.ids, total: count ? count.totalHits : res.totalHits }
 }

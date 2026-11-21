@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { GalgameSearchDoc } from '~/server/search/document'
 
-// 隔离 Meilisearch 客户端与 Redis：queryGalgameIndex 依赖 getMeiliClient 和 totalHits 缓存
+// 隔离 Meilisearch 客户端与 Redis：queryGalgameIds 依赖 getMeiliClient 和 totalHits 缓存
 const { searchMock, getKvMock, setKvMock } = vi.hoisted(() => ({
   searchMock: vi.fn(),
   getKvMock: vi.fn(),
@@ -17,52 +16,75 @@ vi.mock('~/lib/redis', () => ({
 }))
 
 import {
-  queryGalgameIndex,
+  queryGalgameIds,
   SEARCH_RANKING_SCORE_THRESHOLD
 } from '~/server/search/query'
 import { GALGAME_MAX_TOTAL_HITS } from '~/server/search/settings'
 
-const sampleDoc: GalgameSearchDoc = {
-  id: 1,
-  uniqueId: 'atri0001',
-  name: 'ATRI',
-  banner: 'atri.avif',
-  alias: [],
-  tag: ['科幻'],
-  company: [],
-  introduction: '',
-  vndbId: null,
-  vndbRelationId: null,
-  dlsiteCode: null,
-  tagIds: [1],
-  companyIds: [],
-  type: ['pc'],
-  language: ['zh-Hans'],
-  platform: ['windows'],
-  contentLimit: 'sfw',
-  releasedYear: '2020',
-  releasedMonth: '06',
-  releasedSort: 20200619,
-  created: Math.floor(new Date('2020-06-19T00:00:00Z').getTime() / 1000),
-  updated: Math.floor(new Date('2020-06-19T00:00:00Z').getTime() / 1000),
-  resourceUpdateTime: Math.floor(
-    new Date('2020-06-19T00:00:00Z').getTime() / 1000
-  ),
-  view: 1,
-  download: 1,
-  favoriteCount: 1,
-  resourceCount: 1,
-  commentCount: 1,
-  ratingCount: 1,
-  avgRating: 8
-}
+// 主查询只回取 id: Meilisearch 按 attributesToRetrieve 裁剪后的命中
+const sampleHit = { id: 1 }
 
-describe('queryGalgameIndex 分页总数', () => {
+describe('queryGalgameIds 分页总数', () => {
   beforeEach(() => {
     searchMock.mockReset()
     // 默认缓存未命中，现有用例照常发主查询 + 计数查询
     getKvMock.mockReset().mockResolvedValue(null)
     setKvMock.mockReset().mockResolvedValue(undefined)
+  })
+
+  // 索引只是召回层: 卡片与可见性由调用方回 PG 裁决, 这里不取文档的其他字段。
+  // 把别的字段加回 attributesToRetrieve 就又多出一个不经 toGalgameCard 的卡片来源
+  it('主查询只回取 id, 结果按命中顺序给出 { ids, total }', async () => {
+    searchMock.mockResolvedValue({
+      hits: [{ id: 7 }, { id: 3 }, { id: 9 }],
+      totalHits: 50
+    })
+
+    const result = await queryGalgameIds({
+      q: '',
+      filter: "type = 'pc'",
+      sort: ['created:desc', 'id:desc'],
+      page: 2,
+      hitsPerPage: 12
+    })
+
+    expect(result).toEqual({ ids: [7, 3, 9], total: 50 })
+    expect(searchMock).toHaveBeenCalledTimes(1)
+    expect(searchMock.mock.calls[0][1]).toEqual({
+      filter: "type = 'pc'",
+      sort: ['created:desc', 'id:desc'],
+      attributesToSearchOn: undefined,
+      matchingStrategy: 'all',
+      rankingScoreThreshold: undefined,
+      page: 2,
+      hitsPerPage: 12,
+      attributesToRetrieve: ['id']
+    })
+  })
+
+  it('有查询词且计数缓存命中或未命中时, 主查询同样只回取 id', async () => {
+    searchMock.mockImplementation(
+      (_q: string, options: { hitsPerPage: number }) =>
+        Promise.resolve(
+          options.hitsPerPage === GALGAME_MAX_TOTAL_HITS
+            ? { hits: [], totalHits: 2 }
+            : { hits: [{ id: 5 }, { id: 4 }], totalHits: 9 }
+        )
+    )
+
+    const miss = await queryGalgameIds({ q: 'atri', page: 1, hitsPerPage: 12 })
+    getKvMock.mockResolvedValue('2')
+    const hit = await queryGalgameIds({ q: 'atri', page: 1, hitsPerPage: 12 })
+
+    expect(miss).toEqual({ ids: [5, 4], total: 2 })
+    expect(hit).toEqual({ ids: [5, 4], total: 2 })
+    const mainCalls = searchMock.mock.calls.filter(
+      ([, options]) => options.hitsPerPage === 12
+    )
+    expect(mainCalls).toHaveLength(2)
+    for (const [, options] of mainCalls) {
+      expect(options.attributesToRetrieve).toEqual(['id'])
+    }
   })
 
   it('有查询词时用计数查询的精确 totalHits，而非主查询浅页高估值', async () => {
@@ -73,11 +95,11 @@ describe('queryGalgameIndex 分页总数', () => {
         Promise.resolve(
           options.hitsPerPage === GALGAME_MAX_TOTAL_HITS
             ? { hits: [], totalHits: 36 }
-            : { hits: [sampleDoc], totalHits: 148 }
+            : { hits: [sampleHit], totalHits: 148 }
         )
     )
 
-    const result = await queryGalgameIndex({
+    const result = await queryGalgameIds({
       q: 'atri',
       filter: "contentLimit = 'sfw'",
       sort: ['created:desc'],
@@ -86,7 +108,7 @@ describe('queryGalgameIndex 分页总数', () => {
     })
 
     expect(result.total).toBe(36)
-    expect(result.galgames).toHaveLength(1)
+    expect(result.ids).toEqual([1])
     expect(searchMock).toHaveBeenCalledTimes(2)
     // 第二次为计数查询：整库上限的 hitsPerPage、只取 id、复用同一阈值
     expect(searchMock).toHaveBeenNthCalledWith(
@@ -114,13 +136,13 @@ describe('queryGalgameIndex 分页总数', () => {
         )
     )
 
-    const page1 = await queryGalgameIndex({
+    const page1 = await queryGalgameIds({
       q: 'atri',
       filter: '',
       page: 1,
       hitsPerPage: 12
     })
-    const page4 = await queryGalgameIndex({
+    const page4 = await queryGalgameIds({
       q: 'atri',
       filter: '',
       page: 4,
@@ -140,11 +162,11 @@ describe('queryGalgameIndex 分页总数', () => {
         Promise.resolve(
           options.hitsPerPage === GALGAME_MAX_TOTAL_HITS
             ? { hits: [], totalHits: 47 }
-            : { hits: [sampleDoc], totalHits: 148 }
+            : { hits: [sampleHit], totalHits: 148 }
         )
     )
 
-    await queryGalgameIndex({
+    await queryGalgameIds({
       q: 'atri',
       filter: "contentLimit = 'sfw'",
       sort: ['resourceUpdateTime:desc', 'id:desc'],
@@ -166,9 +188,9 @@ describe('queryGalgameIndex 分页总数', () => {
   })
 
   it('浏览态（q 为空）不触发计数查询，直接用主查询 totalHits 且不带阈值', async () => {
-    searchMock.mockResolvedValue({ hits: [sampleDoc], totalHits: 50 })
+    searchMock.mockResolvedValue({ hits: [sampleHit], totalHits: 50 })
 
-    const result = await queryGalgameIndex({
+    const result = await queryGalgameIds({
       q: '',
       filter: "type = 'pc'",
       page: 1,
@@ -191,10 +213,10 @@ describe('queryGalgameIndex 分页总数', () => {
       (_q: string, options: { hitsPerPage: number }) =>
         options.hitsPerPage === GALGAME_MAX_TOTAL_HITS
           ? Promise.reject(new Error('count timeout'))
-          : Promise.resolve({ hits: [sampleDoc], totalHits: 148 })
+          : Promise.resolve({ hits: [sampleHit], totalHits: 148 })
     )
 
-    const result = await queryGalgameIndex({
+    const result = await queryGalgameIds({
       q: 'atri',
       filter: '',
       page: 1,
@@ -202,7 +224,7 @@ describe('queryGalgameIndex 分页总数', () => {
     })
 
     expect(result.total).toBe(148)
-    expect(result.galgames).toHaveLength(1)
+    expect(result.ids).toEqual([1])
     expect(setKvMock).not.toHaveBeenCalled()
   })
 
@@ -212,12 +234,12 @@ describe('queryGalgameIndex 分页总数', () => {
         Promise.resolve(
           options.hitsPerPage === GALGAME_MAX_TOTAL_HITS
             ? { hits: [], totalHits: 36 }
-            : { hits: [sampleDoc], totalHits: 148 }
+            : { hits: [sampleHit], totalHits: 148 }
         )
     )
 
     // 首次：缓存未命中 → 主查询 + 计数查询，精确 total=36 写入缓存
-    const first = await queryGalgameIndex({
+    const first = await queryGalgameIds({
       q: 'atri',
       filter: '',
       page: 1,
@@ -232,7 +254,7 @@ describe('queryGalgameIndex 分页总数', () => {
     // 再次：翻到不同页、命中缓存 → 只发主查询，跳过 20000 候选计数查询
     searchMock.mockClear()
     getKvMock.mockResolvedValueOnce(cachedValue)
-    const second = await queryGalgameIndex({
+    const second = await queryGalgameIds({
       q: 'atri',
       filter: '',
       page: 3,
@@ -251,24 +273,24 @@ describe('queryGalgameIndex 分页总数', () => {
         Promise.resolve(
           options.hitsPerPage === GALGAME_MAX_TOTAL_HITS
             ? { hits: [], totalHits: 36 }
-            : { hits: [sampleDoc], totalHits: 148 }
+            : { hits: [sampleHit], totalHits: 148 }
         )
     )
 
-    await queryGalgameIndex({
+    await queryGalgameIds({
       q: 'atri',
       filter: "contentLimit = 'sfw'",
       page: 1,
       hitsPerPage: 12
     })
-    await queryGalgameIndex({ q: 'atri', filter: '', page: 1, hitsPerPage: 12 })
+    await queryGalgameIds({ q: 'atri', filter: '', page: 1, hitsPerPage: 12 })
     expect(getKvMock.mock.calls[0][0]).not.toBe(getKvMock.mock.calls[1][0])
 
     // 相同检索条件、不同页 → 同键（totalHits 页无关，翻页复用）。
     // 若日后把 page/hitsPerPage 混进键造成碎片化，两键不等，本例即红。
     getKvMock.mockClear()
-    await queryGalgameIndex({ q: 'atri', filter: '', page: 1, hitsPerPage: 12 })
-    await queryGalgameIndex({ q: 'atri', filter: '', page: 5, hitsPerPage: 12 })
+    await queryGalgameIds({ q: 'atri', filter: '', page: 1, hitsPerPage: 12 })
+    await queryGalgameIds({ q: 'atri', filter: '', page: 5, hitsPerPage: 12 })
     expect(getKvMock.mock.calls[0][0]).toBe(getKvMock.mock.calls[1][0])
   })
 })

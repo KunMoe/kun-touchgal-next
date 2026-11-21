@@ -7,6 +7,7 @@ import {
   SFW_BLOCK_7_8,
   V,
   getRequest,
+  hydrationQueries,
   interactions,
   matrixState,
   readJson,
@@ -91,6 +92,7 @@ const LOADER_PARAMS: Parameters<typeof kunGetActions>[0] = {
 }
 
 const EMPTY_LIST = { galgames: [], total: 0 }
+const INDEX_HITS = [3, 1]
 
 // Prisma 降级路径: 年月为 all 不加日期条件; 列表端点的 minRatingCount 恒生效
 const prismaQueries = (patch: object) => {
@@ -273,5 +275,28 @@ describe('/api/galgame ↔ app/galgame/actions.ts kunGetActions (Meilisearch 开
 
     expect(interactions(loader)).toEqual(interactions(route))
     expect(loader.result).toEqual(route.result)
+  })
+
+  // 索引只给 id: 卡片回 PG 取, 套的是同一个视角的可见性
+  it.each(rows)('route, 索引有命中: $viewer.name', async (row) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    matrixState.meiliIds = INDEX_HITS
+
+    const recording = await viaRoute(row.viewer)
+
+    expect(recording.prisma).toEqual(hydrationQueries(INDEX_HITS, row.patch))
+    expect(recording.meili).toEqual([{ filter: row.filter }])
+    expect(recording.redis).toEqual(expectedRedis(row))
+  })
+
+  it.each(rows)('loader, 索引有命中: $viewer.name', async (row) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    matrixState.meiliIds = INDEX_HITS
+
+    const recording = await viaLoader(row.viewer)
+
+    expect(recording.prisma).toEqual(hydrationQueries(INDEX_HITS, row.patch))
+    expect(recording.meili).toEqual([{ filter: row.filter }])
+    expect(recording.redis).toEqual(expectedRedis(row))
   })
 })

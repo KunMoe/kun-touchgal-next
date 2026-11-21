@@ -189,8 +189,8 @@ interface GalgameSearchOption {
   searchInTag: boolean
 }
 
-// 对应旧实现的"按选项搜索"：name 与外部 ID 恒被搜索；
-// company 为有意的召回增强（旧实现关键词不搜会社名）
+// 对应 basic 引擎的"按选项搜索"：name 与外部 ID 恒被搜索；
+// company 为有意的召回增强（basic 引擎的关键词不搜会社名）
 export const buildAttributesToSearchOn = (
   searchOption: GalgameSearchOption
 ): string[] => [

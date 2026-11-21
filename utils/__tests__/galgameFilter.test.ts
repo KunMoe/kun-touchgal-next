@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_GALGAME_FILTER_SELECTION,
   MAX_GALGAME_FILTER_VALUES,
+  kunShouldResetEnginePage,
   kunShouldResetOverflowPage,
   parseGalgameFilterArray,
   toNumberParam
@@ -83,5 +84,25 @@ describe('kunShouldResetOverflowPage', () => {
   it('total 为 0 时不重置, 交给空态渲染', () => {
     expect(kunShouldResetOverflowPage(0, 0, 5)).toBe(false)
     expect(kunShouldResetOverflowPage(0, 0, 1)).toBe(false)
+  })
+})
+
+describe('kunShouldResetEnginePage', () => {
+  it('翻页途中引擎换了就回到第 1 页, 两个方向都算', () => {
+    expect(kunShouldResetEnginePage('meili', 'basic', 2)).toBe(true)
+    expect(kunShouldResetEnginePage('basic', 'meili', 5)).toBe(true)
+  })
+
+  it('引擎没变时不重置', () => {
+    expect(kunShouldResetEnginePage('meili', 'meili', 3)).toBe(false)
+    expect(kunShouldResetEnginePage('basic', 'basic', 3)).toBe(false)
+  })
+
+  it('第 1 页不重置: 它的应答只负责记下引擎, 否则会循环', () => {
+    expect(kunShouldResetEnginePage('meili', 'basic', 1)).toBe(false)
+  })
+
+  it('还没有第 1 页的记录时不重置', () => {
+    expect(kunShouldResetEnginePage(null, 'basic', 3)).toBe(false)
   })
 })

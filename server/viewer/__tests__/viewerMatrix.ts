@@ -176,6 +176,11 @@ export const ownStatus = (uid: number) => ({
   OR: [{ status: 0 }, { status: { in: [2, 3] }, user_id: uid }]
 })
 
+// 索引命中的 id 回 PG 取卡片 (fetchGalgameCardsByIds): 同一个视角的可见性与 id 条件 AND 在一起
+export const hydrationQueries = (ids: number[], patch: object) => [
+  { call: 'patch.findMany', where: { AND: [{ id: { in: ids } }, patch] } }
+]
+
 // ---- 记录器 ----
 
 export type RedisCall = [op: string, ...args: unknown[]]
@@ -199,6 +204,8 @@ export interface Recording<T = unknown> {
 interface MatrixState {
   cookieHeader: string
   meiliEnabled: boolean
+  // 索引查询返回的 id (默认没有命中)
+  meiliIds: number[]
   // 每次 record() 开始时写入 Redis 内存表的初值 (版本键等)
   redisSeed: Record<string, string>
   // 'model.method' → 返回值; 未配置的按方法名给空结果
@@ -213,6 +220,7 @@ interface MatrixState {
 export const matrixState: MatrixState = {
   cookieHeader: '',
   meiliEnabled: false,
+  meiliIds: [],
   redisSeed: {},
   prismaResults: {},
   redisStore: new Map(),
@@ -226,6 +234,7 @@ export const matrixState: MatrixState = {
 export const resetMatrix = () => {
   matrixState.cookieHeader = ''
   matrixState.meiliEnabled = false
+  matrixState.meiliIds = []
   matrixState.redisSeed = {}
   matrixState.prismaResults = {}
   matrixState.redisStore = new Map()
@@ -472,9 +481,12 @@ export const meiliModule = {
 }
 
 export const searchQueryModule = {
-  queryGalgameIndex: async (params: { filter?: unknown }) => {
+  queryGalgameIds: async (params: { filter?: unknown }) => {
     matrixState.meili.push({ filter: params.filter })
-    return { galgames: [], total: 0 }
+    return {
+      ids: [...matrixState.meiliIds],
+      total: matrixState.meiliIds.length
+    }
   }
 }
 

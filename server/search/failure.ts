@@ -77,7 +77,7 @@ const summarize = (error: unknown) => {
 export type MeiliEngineResult<M, B> =
   { engine: 'meili'; value: M } | { engine: 'basic'; value: B }
 
-// 引擎选择只在这里做, isMeiliEnabled() 也只在这里读。
+// 引擎选择只在这里做, isMeiliEnabled() 也只在这里读 (kun/inv-search-01)。
 // 只有 Meilisearch 自身的故障才换到 basic; 请求参数被拒抛 MeiliBadRequestError;
 // 不是 Meilisearch 的异常 (回调里读 PG 的步骤失败、代码自己的错) 原样抛出, 不换引擎。
 // 卡片水合放在调用之后: 两个引擎的返回值形状不同, 调用方按 engine 分支

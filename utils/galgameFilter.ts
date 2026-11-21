@@ -1,4 +1,5 @@
 import type { SortField, SortOrder } from '~/components/galgame/_sort'
+import type { GalgameSearchEngine } from '~/types/api/search'
 
 export const DEFAULT_GALGAME_SORT_FIELD: SortField = 'resource_update_time'
 export const DEFAULT_GALGAME_SORT_ORDER: SortOrder = 'desc'
@@ -77,4 +78,15 @@ export const kunShouldResetOverflowPage = (
   page: number
 ) => {
   return total > 0 && listLength === 0 && page > 1
+}
+
+// 关键词搜索的两个引擎结果集与顺序不等价。翻页途中引擎换了 (索引故障或恢复),
+// 第 n 页与此前看过的各页对不上, 会重复或漏条: 回到第 1 页重新开始。
+// firstPageEngine 是第 1 页应答用的引擎; page > 1 保证至多触发一次
+export const kunShouldResetEnginePage = (
+  firstPageEngine: GalgameSearchEngine | null,
+  engine: GalgameSearchEngine,
+  page: number
+) => {
+  return page > 1 && firstPageEngine !== null && engine !== firstPageEngine
 }

@@ -6,6 +6,7 @@ import {
   SFW_BLOCK_10_20,
   SFW_BLOCK_7_8,
   V,
+  hydrationQueries,
   interactions,
   matrixState,
   postRequest,
@@ -88,6 +89,7 @@ const BODY = {
 }
 
 const EMPTY_LIST = { galgames: [], total: 0 }
+const INDEX_HITS = [3, 1]
 
 // 三个检索选项都关闭时 buildKeywordCondition('kun') 的输出
 const KEYWORD_KUN = {
@@ -172,7 +174,7 @@ describe('/api/search POST 视角矩阵 (Meilisearch 关闭)', () => {
       redis: [],
       meili: []
     })
-    expect(recording.result).toEqual(EMPTY_LIST)
+    expect(recording.result).toEqual({ ...EMPTY_LIST, engine: 'basic' })
   })
 })
 
@@ -189,6 +191,20 @@ describe('/api/search POST 视角矩阵 (Meilisearch 开启)', () => {
       redis: [],
       meili: [{ filter: row.filter }]
     })
-    expect(recording.result).toEqual(EMPTY_LIST)
+    expect(recording.result).toEqual({ ...EMPTY_LIST, engine: 'meili' })
+  })
+
+  // 索引只给 id: 卡片回 PG 取, 套的是同一个视角的可见性
+  it.each(rows)('route, 索引有命中: $viewer.name', async (row) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    matrixState.meiliIds = INDEX_HITS
+
+    const recording = await viaRoute(row.viewer)
+
+    expect(interactions(recording)).toEqual({
+      prisma: hydrationQueries(INDEX_HITS, row.patch),
+      redis: [],
+      meili: [{ filter: row.filter }]
+    })
   })
 })

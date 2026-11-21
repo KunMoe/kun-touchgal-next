@@ -1,7 +1,7 @@
 import { prisma } from '~/prisma/index'
 
-// 无 id 的 tag/company 建议项按名称批量解析为 id 集合,匹配语义与旧实现的
-// Prisma OR 条件一致(见 app/api/search/route.ts)。每类型合并为单条查询,
+// 无 id 的 tag/company 建议项按名称批量解析为 id 集合,匹配语义与 basic 引擎的
+// Prisma OR 条件一致(见 server/galgame/basicSearch.ts)。每类型合并为单条查询,
 // 避免按建议数扇出 PG 往返;返回 名称 -> id 集合 的映射供调用方按项回填。
 
 type NameIdMap = Map<string, number[]>

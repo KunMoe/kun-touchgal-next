@@ -7,6 +7,7 @@ import {
   SFW_BLOCK_7_8,
   V,
   getRequest,
+  hydrationQueries,
   interactions,
   matrixState,
   readJson,
@@ -101,6 +102,7 @@ const LOADER_PARAMS: Parameters<typeof kunGetCompanyPageDataActions>[0] = {
 }
 
 const EMPTY_LIST = { galgames: [], total: 0 }
+const INDEX_HITS = [3, 1]
 
 // Prisma 降级路径: 年月为 all、minRatingCount 0, 除会社关联外只剩可见性
 const prismaQueries = (patch: object) => {
@@ -275,5 +277,21 @@ describe.each(backends)(
         response: route.result
       })
     })
+
+    // 索引只给 id: 卡片回 PG 取, 套的是同一个视角的可见性
+    if (meili) {
+      it.each(rows)('route, 索引有命中: $viewer.name', async (row) => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        matrixState.meiliIds = INDEX_HITS
+
+        const recording = await viaRoute(row.viewer)
+
+        expect(interactions(recording)).toEqual({
+          prisma: hydrationQueries(INDEX_HITS, row.patch),
+          meili: [{ filter: row.filter }],
+          redis: expectedRedis(row)
+        })
+      })
+    }
   }
 )

@@ -1056,6 +1056,33 @@ export const KUN_INVARIANTS = [
         "export const run = async () => { kunErrorHandler(await kunFetchGet('/tag/all'), () => {}) }"
       ]
     }
+  },
+  {
+    id: 'inv-search-01',
+    aliases: ['T42'],
+    statement:
+      'isMeiliEnabled 只许 server/search/failure.ts 导入 (具名或整模块命名空间都算): 用哪个搜索引擎由 withMeiliEngine 一处决定',
+    reason:
+      '作品列表、标签页、会社页与关键词搜索曾各写一份 `if (isMeiliEnabled()) try { … } catch { 降级 }`, catch 不分错误类别: 请求参数被 Meilisearch 拒绝 (小数页码、带孤立代理的筛选值都是 400) 和写在 try 里的 PG 错误一律当成索引宕机, 匿名请求可以按需把搜索切到最重的 Prisma 路径, 部署漂移 (漏跑 search:init) 也被同一个 catch 悄悄盖住。withMeiliEngine 只对 Meilisearch 自身的故障换引擎, 并让调用方拿到用了哪一个',
+    removeWhen: 'Meilisearch 不再是可选后端 (改为必需, 或整体移除)',
+    ignores: ['server/search/failure.ts'],
+    enforce: {
+      kind: 'import',
+      sources: [/(^|\/)lib\/meilisearch(\.[cm]?[jt]sx?)?$/],
+      importNames: ['isMeiliEnabled', '*']
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import { isMeiliEnabled } from '~/lib/meilisearch'",
+        "import { getMeiliClient, isMeiliEnabled as enabled } from '../../lib/meilisearch.ts'",
+        "import * as meili from '~/lib/meilisearch'"
+      ],
+      good: [
+        "import { withMeiliEngine } from '~/server/search/failure'",
+        "import { getMeiliClient } from '~/lib/meilisearch'"
+      ]
+    }
   }
 ]
 
