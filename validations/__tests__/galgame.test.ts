@@ -95,6 +95,24 @@ describe('galgameSchema 数字参数硬拒', () => {
     )
   })
 
+  // 小数 limit 会让 Meilisearch 以 invalid_search_hits_per_page 拒绝 (400)
+  it('小数 limit 硬拒, tag / company 的 schema 一并继承', () => {
+    expect(galgameSchema.safeParse({ ...baseInput, limit: 1.5 }).success).toBe(
+      false
+    )
+    expect(
+      getPatchByTagSchema.safeParse({ ...baseInput, tagId: 1, limit: 1.5 })
+        .success
+    ).toBe(false)
+    expect(
+      getPatchByCompanySchema.safeParse({
+        ...baseInput,
+        companyId: 1,
+        limit: 1.5
+      }).success
+    ).toBe(false)
+  })
+
   it('小数 minRatingCount 硬拒', () => {
     expect(
       galgameSchema.safeParse({ ...baseInput, minRatingCount: 5.5 }).success

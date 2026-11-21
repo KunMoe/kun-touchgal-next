@@ -7,14 +7,14 @@ export const searchSchema = z.object({
     .string()
     .min(1)
     .max(1007, { message: '您的搜素字符串最大为 1007 个字符' }),
-  limit: z.coerce.number().min(1).max(24),
+  limit: z.coerce.number().int().min(1).max(24),
   searchOption: z.object({
     searchInIntroduction: z.boolean().default(false),
     searchInAlias: z.boolean().default(false),
     searchInTag: z.boolean().default(false)
   }),
 
-  page: z.coerce.number().min(1).max(9999999),
+  page: z.coerce.number().int().min(1).max(9999999),
   selectedType: z.string().min(1).max(107),
   selectedLanguage: z.string().min(1).max(107),
   selectedPlatform: z.string().min(1).max(107),

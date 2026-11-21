@@ -68,6 +68,36 @@ describe('searchSchema 年份 / 月份多选上限', () => {
   })
 })
 
+// P03-02: 小数页码 / 每页条数会让 Meilisearch 回 400 (invalid_search_page /
+// invalid_search_hits_per_page), 必须在 schema 硬拒, 不能留给引擎去判
+describe('searchSchema 分页参数硬拒小数', () => {
+  it('小数 page 被拒', () => {
+    expect(searchSchema.safeParse({ ...baseInput, page: 1.5 }).success).toBe(
+      false
+    )
+    expect(searchSchema.safeParse({ ...baseInput, page: '1.5' }).success).toBe(
+      false
+    )
+  })
+
+  it('小数 limit 被拒', () => {
+    expect(searchSchema.safeParse({ ...baseInput, limit: 1.5 }).success).toBe(
+      false
+    )
+  })
+
+  it('整数的字符串形式照常通过', () => {
+    const result = searchSchema.safeParse({
+      ...baseInput,
+      page: '2',
+      limit: '12'
+    })
+    expect(result.success && [result.data.page, result.data.limit]).toEqual([
+      2, 12
+    ])
+  })
+})
+
 describe('searchSchema sortField', () => {
   it('接受发售时间排序 released', () => {
     expect(
