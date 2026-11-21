@@ -10,12 +10,15 @@ model mail_campaign {
   content_html String @db.VarChar(100007)
   // sending | paused | done | cancelled
   status       String @default("sending") @db.VarChar(32)
+  // 发起这个任务的站点地址 (origin)。发信的进程只推进在自己这个地址上发起的任务:
+  // 任务行会随数据库的副本去到开发 / 测试环境, 在那里不能接着给真实用户发信
+  site_origin  String @db.VarChar(233)
 
   // 收件范围的快照: 创建时 user 表的最大 id
   max_user_id    Int
   // 已经处理到的 user.id。推进它的那条条件更新同时承担进度落库、取消检测与重叠防护
   cursor_user_id Int    @default(0)
-  // 创建时估计的收件人数; 发送期间有人退订, 最终的 sent + failed 可以比它小
+  // 创建时估计的收件人数; 发送期间有人退订或重新开启通知, 最终的 sent + failed 可以与它不等
   total          Int
   sent           Int    @default(0)
   failed         Int    @default(0)

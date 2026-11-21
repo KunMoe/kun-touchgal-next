@@ -160,6 +160,16 @@ describe('adminSendEmailSchema', () => {
     ).toBe(false)
   })
 
+  it.each([
+    ['标题带 NUL', { title: '标\u0000题', content: '正文' }],
+    ['正文带 NUL', { title: '标题', content: '<p>正\u0000文</p>' }],
+    ['正文带孤立代理', { title: '标题', content: '<p>\ud83d</p>' }]
+  ])('拒绝%s (写不进库的字符不该变成 500)', (_, variables) => {
+    expect(
+      adminSendEmailSchema.safeParse({ ...valid, variables }).success
+    ).toBe(false)
+  })
+
   it('长度恰好到上限的标题与正文放行', () => {
     expect(
       adminSendEmailSchema.safeParse({

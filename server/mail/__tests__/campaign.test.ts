@@ -2,12 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import { KUN_ROLE } from '~/constants/role'
 
-const { rec, sendKunEmailMock } = await vi.hoisted(async () => ({
-  rec: (
-    await import('~/server/db/__tests__/recordingTransaction')
-  ).recordingTransaction(),
-  sendKunEmailMock: vi.fn()
-}))
+const { rec, sendKunEmailMock, BATCH_INTERVAL_MS } = await vi.hoisted(
+  async () => ({
+    rec: (
+      await import('~/server/db/__tests__/recordingTransaction')
+    ).recordingTransaction(),
+    sendKunEmailMock: vi.fn(),
+    // 一个别处不会用到的时长: 用它认出「两批之间的等待」那一次 setTimeout
+    BATCH_INTERVAL_MS: 3
+  })
+)
 
 vi.mock('~/prisma/index', () => rec.module)
 
@@ -15,11 +19,11 @@ vi.mock('~/app/api/utils/sendKunEmail', () => ({
   sendKunEmail: sendKunEmailMock
 }))
 
-// 一批 3 封、批间不等待: 几个用户就能走出多批
+// 一批 3 封、批间只等几毫秒: 几个用户就能走出多批
 vi.mock('~/constants/admin', async (importOriginal) => ({
   ...(await importOriginal<typeof import('~/constants/admin')>()),
   MAIL_CAMPAIGN_BATCH_SIZE: 3,
-  MAIL_CAMPAIGN_MIN_BATCH_INTERVAL_MS: 0
+  MAIL_CAMPAIGN_MIN_BATCH_INTERVAL_MS: BATCH_INTERVAL_MS
 }))
 
 import {
@@ -30,12 +34,15 @@ import {
 } from '~/server/mail/campaign'
 import { verifyUnsubscribeToken } from '~/server/mail/unsubscribeToken'
 
+const SITE_ORIGIN = 'https://www.example.com'
+
 interface CampaignRow {
   id: number
   template_id: string
   title: string
   content_html: string
   status: string
+  site_origin: string
   max_user_id: number
   cursor_user_id: number
   total: number
@@ -74,6 +81,7 @@ const campaignRow = (overrides: Partial<CampaignRow> = {}): CampaignRow => ({
   title: '停机维护通知',
   content_html: '<p>今晚维护</p>',
   status: 'sending',
+  site_origin: SITE_ORIGIN,
   max_user_id: 100,
   cursor_user_id: 0,
   total: 0,
@@ -93,12 +101,55 @@ const userRows = (ids: number[]): UserRow[] =>
     enable_email_notice: true
   }))
 
+const selectRecipients = ({ where, take }: any) =>
+  users
+    .filter(
+      (user) =>
+        user.id > where.id.gt &&
+        user.id <= where.id.lte &&
+        user.enable_email_notice === where.enable_email_notice
+    )
+    .sort((a, b) => a.id - b.id)
+    .slice(0, take)
+    .map(({ id, email }) => ({ id, email }))
+
+const applyCampaignUpdate = ({ where, data }: any) => {
+  const row = campaigns.find(
+    (item) =>
+      item.id === where.id &&
+      statusMatches(item, where.status) &&
+      (where.cursor_user_id === undefined ||
+        item.cursor_user_id === where.cursor_user_id)
+  )
+  if (!row) {
+    return { count: 0 }
+  }
+  const target = row as unknown as Record<string, unknown>
+  for (const [key, value] of Object.entries<any>(data)) {
+    target[key] =
+      value &&
+      typeof value === 'object' &&
+      !(value instanceof Date) &&
+      'increment' in value
+        ? (target[key] as number) + value.increment
+        : value
+  }
+  return { count: 1 }
+}
+
 const installFakeDatabase = () => {
-  rec.on('mail_campaign.findFirst', ({ where }: any) => {
-    const [row] = campaigns
-      .filter((item) => statusMatches(item, where?.status))
-      .sort((a, b) => a.id - b.id)
-    return row ? { ...row } : null
+  rec.on('mail_campaign.findFirst', ({ where, orderBy }: any) => {
+    const matched = campaigns.filter(
+      (item) =>
+        statusMatches(item, where?.status) &&
+        (where?.site_origin === undefined ||
+          item.site_origin === where.site_origin)
+    )
+    // 没给 orderBy 就按表里的先后, 给了才排序: 「取最早的那个」靠的是调用方写的 orderBy
+    if (orderBy?.id) {
+      matched.sort((a, b) => (orderBy.id === 'asc' ? a.id - b.id : b.id - a.id))
+    }
+    return matched[0] ? { ...matched[0] } : null
   })
   rec.on('mail_campaign.findUniqueOrThrow', ({ where }: any) => ({
     ...campaigns.find((item) => item.id === where.id)
@@ -114,26 +165,7 @@ const installFakeDatabase = () => {
           : null
       }))
   )
-  rec.on('mail_campaign.updateMany', ({ where, data }: any) => {
-    const row = campaigns.find(
-      (item) =>
-        item.id === where.id &&
-        statusMatches(item, where.status) &&
-        (where.cursor_user_id === undefined ||
-          item.cursor_user_id === where.cursor_user_id)
-    )
-    if (!row) {
-      return { count: 0 }
-    }
-    const target = row as unknown as Record<string, unknown>
-    for (const [key, value] of Object.entries<any>(data)) {
-      target[key] =
-        value && typeof value === 'object' && 'increment' in value
-          ? (target[key] as number) + value.increment
-          : value
-    }
-    return { count: 1 }
-  })
+  rec.on('mail_campaign.updateMany', applyCampaignUpdate)
   rec.on('mail_campaign.create', ({ data }: any) => {
     const row = campaignRow({
       id: Math.max(0, ...campaigns.map((item) => item.id)) + 1,
@@ -142,18 +174,7 @@ const installFakeDatabase = () => {
     campaigns.push(row)
     return { id: row.id }
   })
-  rec.on('user.findMany', ({ where, take }: any) =>
-    users
-      .filter(
-        (user) =>
-          user.id > where.id.gt &&
-          user.id <= where.id.lte &&
-          user.enable_email_notice === where.enable_email_notice
-      )
-      .sort((a, b) => a.id - b.id)
-      .slice(0, take)
-      .map(({ id, email }) => ({ id, email }))
-  )
+  rec.on('user.findMany', selectRecipients)
   rec.on('user.findFirst', () => {
     const [newest] = [...users].sort((a, b) => b.id - a.id)
     return newest ? { id: newest.id } : null
@@ -174,6 +195,8 @@ const neverAborted = () => new AbortController().signal
 const mailedAddresses = () =>
   sendKunEmailMock.mock.calls.map(([payload]) => payload.to[0] as string)
 
+const addressesOf = (ids: number[]) => ids.map((id) => `user${id}@example.com`)
+
 const statementsNamed = (label: string) =>
   [...rec.outside, ...rec.attempts.flatMap((attempt) => attempt.statements)]
     .filter((statement) => statement.label === label)
@@ -186,12 +209,17 @@ const committedLogs = () =>
     .filter((statement) => statement.label === 'admin_log.create')
     .map((statement) => (statement.args as any).data)
 
+const failingFor =
+  (...ids: number[]) =>
+  async ({ to }: { to: string[] }) =>
+    addressesOf(ids).includes(to[0]) ? '邮件发送失败, 请稍后重试' : undefined
+
 beforeEach(() => {
   rec.reset()
   sendKunEmailMock.mockReset()
   sendKunEmailMock.mockResolvedValue(undefined)
   vi.stubEnv('KUN_EMAIL_UNSUBSCRIBE_SECRET', 'k'.repeat(32))
-  vi.stubEnv('NEXT_PUBLIC_KUN_PATCH_ADDRESS_PROD', 'https://www.example.com')
+  vi.stubEnv('NEXT_PUBLIC_KUN_PATCH_ADDRESS_PROD', SITE_ORIGIN)
   campaigns = []
   users = []
   installFakeDatabase()
@@ -201,7 +229,7 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-describe('runCampaignStep', () => {
+describe('runCampaignStep 推进', () => {
   it('没有发送中的任务时什么都不做', async () => {
     campaigns = [
       campaignRow({ status: 'paused' }),
@@ -230,9 +258,7 @@ describe('runCampaignStep', () => {
     })
 
     // 4 号关了通知, 9、10 号是任务创建之后才注册的
-    expect(mailedAddresses()).toEqual(
-      [1, 2, 3, 5, 6, 7, 8].map((id) => `user${id}@example.com`)
-    )
+    expect(mailedAddresses()).toEqual(addressesOf([1, 2, 3, 5, 6, 7, 8]))
     expect(campaigns[0]).toMatchObject({
       status: 'done',
       cursor_user_id: 8,
@@ -279,10 +305,7 @@ describe('runCampaignStep', () => {
       failed: 0
     })
 
-    expect(mailedAddresses()).toEqual([
-      'user5@example.com',
-      'user6@example.com'
-    ])
+    expect(mailedAddresses()).toEqual(addressesOf([5, 6]))
     expect(campaigns[0]).toMatchObject({ cursor_user_id: 6, sent: 6 })
   })
 
@@ -324,9 +347,7 @@ describe('runCampaignStep', () => {
   it('个别失败只记数, 任务继续', async () => {
     campaigns = [campaignRow()]
     users = userRows([1, 2, 3, 4, 5, 6])
-    sendKunEmailMock.mockImplementation(async ({ to }) =>
-      to[0] === 'user2@example.com' ? '邮件发送失败, 请稍后重试' : undefined
-    )
+    sendKunEmailMock.mockImplementation(failingFor(2))
 
     await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
       kind: 'done',
@@ -338,134 +359,32 @@ describe('runCampaignStep', () => {
     expect(campaigns[0]).toMatchObject({ status: 'done', sent: 5, failed: 1 })
   })
 
-  it('一批里失败过半就自动暂停: 记下这一批、写明原因, 不再取下一批', async () => {
+  it('两批之间按批间隔等待', async () => {
     campaigns = [campaignRow()]
-    users = userRows([1, 2, 3, 4, 5, 6, 7, 8, 9])
-    sendKunEmailMock.mockImplementation(async ({ to }) =>
-      ['user4@example.com', 'user6@example.com'].includes(to[0])
-        ? '邮件发送失败, 请稍后重试'
-        : undefined
-    )
+    users = userRows([1, 2, 3, 4, 5, 6, 7])
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      await runCampaignStep({ signal: neverAborted() })
 
-    const result = await runCampaignStep({ signal: neverAborted() })
-
-    expect(result).toMatchObject({
-      kind: 'paused',
-      campaignId: 7,
-      sent: 4,
-      failed: 2
-    })
-    expect(mailedAddresses()).toHaveLength(6)
-    expect(campaigns[0]).toMatchObject({
-      status: 'paused',
-      cursor_user_id: 6,
-      sent: 4,
-      failed: 2,
-      finished: null
-    })
-    expect(campaigns[0].last_error).toContain('一批 3 封里有 2 封发送失败')
-    expect(campaigns[0].last_error).toContain('邮件发送失败, 请稍后重试')
-    expect(committedLogs()).toEqual([])
+      // 三批 (3 + 3 + 1), 每推进完一批等一次
+      expect(
+        setTimeoutSpy.mock.calls.filter(([, ms]) => ms === BATCH_INTERVAL_MS)
+      ).toHaveLength(3)
+    } finally {
+      setTimeoutSpy.mockRestore()
+    }
   })
 
-  it('发信函数抛出的异常同样算这一封失败, 不会让这一拍崩掉', async () => {
-    campaigns = [campaignRow()]
+  it('别的站点地址上发起的任务不推进 (随数据库副本带过来的)', async () => {
+    campaigns = [campaignRow({ site_origin: 'https://www.production.example' })]
     users = userRows([1, 2, 3])
-    sendKunEmailMock.mockRejectedValue(new Error('socket hang up'))
 
-    await expect(
-      runCampaignStep({ signal: neverAborted() })
-    ).resolves.toMatchObject({ kind: 'paused', sent: 0, failed: 3 })
-
-    expect(campaigns[0].last_error).toContain('socket hang up')
-  })
-
-  it('任务行里的模板已不存在: 一封都不发, 任务暂停并说明原因', async () => {
-    campaigns = [campaignRow({ template_id: 'retired-template' })]
-    users = userRows([1, 2, 3, 4])
-
-    await expect(
-      runCampaignStep({ signal: neverAborted() })
-    ).resolves.toMatchObject({ kind: 'paused', sent: 0, failed: 3 })
+    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
+      kind: 'idle'
+    })
 
     expect(sendKunEmailMock).not.toHaveBeenCalled()
-    expect(campaigns[0].last_error).toContain(
-      '邮件模板 retired-template 不存在'
-    )
-  })
-
-  it('暂停原因按列宽截断, 不会因为一条超长的错误写不进库', async () => {
-    campaigns = [campaignRow()]
-    users = userRows([1])
-    sendKunEmailMock.mockRejectedValue(new Error('😀'.repeat(2000)))
-
-    await runCampaignStep({ signal: neverAborted() })
-
-    expect([...campaigns[0].last_error]).toHaveLength(1007)
-    expect(campaigns[0].last_error.isWellFormed()).toBe(true)
-  })
-
-  it('发送途中任务被取消: 推进命中 0 行就停, 不取下一批, 也不改任务行', async () => {
-    campaigns = [campaignRow()]
-    users = userRows([1, 2, 3, 4, 5, 6])
-    sendKunEmailMock.mockImplementationOnce(async () => {
-      campaigns[0].status = 'cancelled'
-    })
-
-    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
-      kind: 'stopped',
-      campaignId: 7,
-      sent: 0,
-      failed: 0
-    })
-
-    expect(mailedAddresses()).toHaveLength(3)
-    expect(statementsNamed('user.findMany')).toHaveLength(1)
-    expect(campaigns[0]).toMatchObject({
-      status: 'cancelled',
-      cursor_user_id: 0,
-      sent: 0
-    })
-  })
-
-  it('游标被另一个进程推进过: 落后的一方命中 0 行就停, 最多多发这一批', async () => {
-    campaigns = [campaignRow()]
-    users = userRows([1, 2, 3, 4, 5, 6, 7, 8, 9])
-    sendKunEmailMock.mockImplementationOnce(async () => {
-      campaigns[0].cursor_user_id = 3
-      campaigns[0].sent = 3
-    })
-
-    await expect(
-      runCampaignStep({ signal: neverAborted() })
-    ).resolves.toMatchObject({ kind: 'stopped', sent: 0 })
-
-    expect(mailedAddresses()).toHaveLength(3)
-    expect(campaigns[0]).toMatchObject({
-      status: 'sending',
-      cursor_user_id: 3,
-      sent: 3
-    })
-  })
-
-  it('收件范围已经发完、收尾时任务却被取消了: 不标完成, 也不记日志', async () => {
-    campaigns = [campaignRow({ cursor_user_id: 3, sent: 3 })]
-    users = userRows([1, 2, 3])
-    rec.on('user.findMany', () => {
-      campaigns[0].status = 'cancelled'
-      return []
-    })
-
-    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
-      kind: 'stopped',
-      campaignId: 7,
-      sent: 0,
-      failed: 0
-    })
-
-    expect(campaigns[0]).toMatchObject({ status: 'cancelled', finished: null })
-    expect(rec.attempts.at(-1)).toMatchObject({ rolledBack: true })
-    expect(committedLogs()).toEqual([])
+    expect(campaigns[0]).toMatchObject({ status: 'sending', cursor_user_id: 0 })
   })
 
   it('范围内没有可发的人时直接完成', async () => {
@@ -491,6 +410,325 @@ describe('runCampaignStep', () => {
     expect(committedLogs()).toEqual([
       expect.objectContaining({ user_id: null })
     ])
+  })
+
+  it('有多个发送中的任务时先推进最早的那个', async () => {
+    campaigns = [campaignRow({ id: 9 }), campaignRow({ id: 8 })]
+    users = userRows([1])
+
+    await expect(
+      runCampaignStep({ signal: neverAborted() })
+    ).resolves.toMatchObject({ kind: 'done', campaignId: 8 })
+  })
+})
+
+describe('runCampaignStep 自动暂停', () => {
+  it('一批里失败过半就暂停在这一批之前: 游标与计数不动, 写明原因, 不再取下一批', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    sendKunEmailMock.mockImplementation(failingFor(4, 6))
+
+    const result = await runCampaignStep({ signal: neverAborted() })
+
+    expect(result).toMatchObject({
+      kind: 'paused',
+      campaignId: 7,
+      sent: 3,
+      failed: 0
+    })
+    expect(mailedAddresses()).toHaveLength(6)
+    expect(campaigns[0]).toMatchObject({
+      status: 'paused',
+      cursor_user_id: 3,
+      sent: 3,
+      failed: 0,
+      finished: null
+    })
+    expect(campaigns[0].last_error).toContain('一批 3 封里有 2 封发送失败')
+    expect(campaigns[0].last_error).toContain('邮件发送失败, 请稍后重试')
+    expect(committedLogs()).toEqual([])
+  })
+
+  it('继续发送之后, 触发暂停的那一批整批重发, 失败过的人不被跳过', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4, 5, 6, 7])
+    sendKunEmailMock.mockImplementation(failingFor(4, 5, 6))
+    await runCampaignStep({ signal: neverAborted() })
+    expect(campaigns[0]).toMatchObject({ status: 'paused', cursor_user_id: 3 })
+
+    sendKunEmailMock.mockReset()
+    sendKunEmailMock.mockResolvedValue(undefined)
+    await expect(transitionCampaign(7, 'resume', ADMIN)).resolves.toEqual({})
+    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
+      kind: 'done',
+      campaignId: 7,
+      sent: 4,
+      failed: 0
+    })
+
+    expect(mailedAddresses()).toEqual(addressesOf([4, 5, 6, 7]))
+    expect(campaigns[0]).toMatchObject({
+      status: 'done',
+      cursor_user_id: 7,
+      sent: 7,
+      failed: 0
+    })
+  })
+
+  it('恰好一半失败也暂停 (判据是「达到」而不是「超过」)', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4, 5])
+    sendKunEmailMock.mockImplementation(failingFor(5))
+
+    await expect(
+      runCampaignStep({ signal: neverAborted() })
+    ).resolves.toMatchObject({ kind: 'paused', sent: 3, failed: 0 })
+
+    expect(campaigns[0]).toMatchObject({
+      status: 'paused',
+      cursor_user_id: 3,
+      sent: 3,
+      failed: 0
+    })
+  })
+
+  it('最后不足半批的一小批不判暂停: 失败只记数, 任务照常发完', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4])
+    sendKunEmailMock.mockImplementation(failingFor(4))
+
+    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
+      kind: 'done',
+      campaignId: 7,
+      sent: 3,
+      failed: 1
+    })
+
+    expect(campaigns[0]).toMatchObject({
+      status: 'done',
+      cursor_user_id: 4,
+      sent: 3,
+      failed: 1,
+      last_error: ''
+    })
+  })
+
+  it('发信函数抛出的异常同样算这一封失败, 不会让这一拍崩掉', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3])
+    sendKunEmailMock.mockRejectedValue(new Error('socket hang up'))
+
+    await expect(
+      runCampaignStep({ signal: neverAborted() })
+    ).resolves.toMatchObject({ kind: 'paused', sent: 0, failed: 0 })
+
+    expect(campaigns[0]).toMatchObject({ status: 'paused', cursor_user_id: 0 })
+    expect(campaigns[0].last_error).toContain('socket hang up')
+  })
+
+  it('任务行里的模板已不存在: 一封都不发, 任务暂停并说明原因', async () => {
+    campaigns = [campaignRow({ template_id: 'retired-template' })]
+    users = userRows([1, 2, 3, 4])
+
+    await expect(
+      runCampaignStep({ signal: neverAborted() })
+    ).resolves.toMatchObject({ kind: 'paused', sent: 0, failed: 0 })
+
+    expect(sendKunEmailMock).not.toHaveBeenCalled()
+    expect(campaigns[0].last_error).toContain(
+      '邮件模板 retired-template 不存在'
+    )
+  })
+
+  it('暂停原因按列宽截断, 不会因为一条超长的错误写不进库', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2])
+    sendKunEmailMock.mockRejectedValue(new Error('😀'.repeat(2000)))
+
+    await runCampaignStep({ signal: neverAborted() })
+
+    expect([...campaigns[0].last_error]).toHaveLength(1007)
+    expect(campaigns[0].last_error.isWellFormed()).toBe(true)
+  })
+})
+
+describe('runCampaignStep 取消、重叠与中断', () => {
+  it('两批之间任务被取消: 发信之前的认领命中 0 行, 下一批一封都不发', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4, 5, 6])
+    let fetches = 0
+    rec.on('user.findMany', (args: any) => {
+      if (++fetches === 2) {
+        campaigns[0].status = 'cancelled'
+      }
+      return selectRecipients(args)
+    })
+
+    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
+      kind: 'stopped',
+      campaignId: 7,
+      sent: 3,
+      failed: 0
+    })
+
+    expect(mailedAddresses()).toEqual(addressesOf([1, 2, 3]))
+    expect(campaigns[0]).toMatchObject({
+      status: 'cancelled',
+      cursor_user_id: 3,
+      sent: 3
+    })
+  })
+
+  it('一批发出途中任务被取消: 这一批记到已取消的任务行上, 不再取下一批', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4, 5, 6])
+    sendKunEmailMock.mockImplementation(async ({ to }) => {
+      campaigns[0].status = 'cancelled'
+      return to[0] === 'user2@example.com'
+        ? '邮件发送失败, 请稍后重试'
+        : undefined
+    })
+
+    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
+      kind: 'stopped',
+      campaignId: 7,
+      sent: 2,
+      failed: 1
+    })
+
+    expect(mailedAddresses()).toHaveLength(3)
+    expect(statementsNamed('user.findMany')).toHaveLength(1)
+    expect(campaigns[0]).toMatchObject({
+      status: 'cancelled',
+      cursor_user_id: 3,
+      sent: 2,
+      failed: 1
+    })
+  })
+
+  it('本该暂停的一批发出途中任务被取消: 不改回暂停, 这一批同样记到已取消的任务行上', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4])
+    sendKunEmailMock.mockImplementation(async () => {
+      campaigns[0].status = 'cancelled'
+      return '邮件发送失败, 请稍后重试'
+    })
+
+    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
+      kind: 'stopped',
+      campaignId: 7,
+      sent: 0,
+      failed: 3
+    })
+
+    expect(campaigns[0]).toMatchObject({
+      status: 'cancelled',
+      cursor_user_id: 3,
+      failed: 3,
+      last_error: ''
+    })
+  })
+
+  it('游标被另一个进程推进过: 落后的一方命中 0 行就停, 最多多发这一批, 也不重复计数', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    sendKunEmailMock.mockImplementationOnce(async () => {
+      campaigns[0].cursor_user_id = 3
+      campaigns[0].sent = 3
+    })
+
+    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
+      kind: 'stopped',
+      campaignId: 7,
+      sent: 0,
+      failed: 0
+    })
+
+    expect(mailedAddresses()).toHaveLength(3)
+    expect(campaigns[0]).toMatchObject({
+      status: 'sending',
+      cursor_user_id: 3,
+      sent: 3
+    })
+  })
+
+  it('另一个进程推进过游标之后任务又被取消: 落后的一方不往已取消的任务行上补记', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4, 5, 6])
+    sendKunEmailMock.mockImplementationOnce(async () => {
+      campaigns[0].cursor_user_id = 3
+      campaigns[0].sent = 3
+      campaigns[0].status = 'cancelled'
+    })
+
+    await expect(
+      runCampaignStep({ signal: neverAborted() })
+    ).resolves.toMatchObject({ kind: 'stopped', sent: 0 })
+
+    expect(campaigns[0]).toMatchObject({ cursor_user_id: 3, sent: 3 })
+  })
+
+  it('收件范围已经发完、收尾时任务却被取消了: 不标完成, 也不记日志', async () => {
+    campaigns = [campaignRow({ cursor_user_id: 3, sent: 3 })]
+    users = userRows([1, 2, 3])
+    rec.on('user.findMany', () => {
+      campaigns[0].status = 'cancelled'
+      return []
+    })
+
+    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
+      kind: 'stopped',
+      campaignId: 7,
+      sent: 0,
+      failed: 0
+    })
+
+    expect(campaigns[0]).toMatchObject({ status: 'cancelled', finished: null })
+    expect(rec.attempts.at(-1)).toMatchObject({ rolledBack: true })
+    expect(committedLogs()).toEqual([])
+  })
+
+  it('库此刻写不进去: 认领抛错, 这一批一封都不发', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3])
+    rec.on('mail_campaign.updateMany', () => {
+      throw new Error('cannot execute UPDATE in a read-only transaction')
+    })
+
+    await expect(runCampaignStep({ signal: neverAborted() })).rejects.toThrow(
+      'read-only'
+    )
+
+    expect(sendKunEmailMock).not.toHaveBeenCalled()
+  })
+
+  it('一批发出之后推进失败 (进程死在两者之间也是这样): 下一拍把这一批重发一次, 计数不翻倍', async () => {
+    campaigns = [campaignRow()]
+    users = userRows([1, 2, 3, 4, 5])
+    let updates = 0
+    rec.on('mail_campaign.updateMany', (args: any) => {
+      // 第一条是认领, 第二条是推进
+      if (++updates === 2) {
+        throw new Error('connection terminated')
+      }
+      return applyCampaignUpdate(args)
+    })
+
+    await expect(runCampaignStep({ signal: neverAborted() })).rejects.toThrow(
+      'connection terminated'
+    )
+    expect(mailedAddresses()).toEqual(addressesOf([1, 2, 3]))
+    expect(campaigns[0]).toMatchObject({ cursor_user_id: 0, sent: 0 })
+
+    await expect(runCampaignStep({ signal: neverAborted() })).resolves.toEqual({
+      kind: 'done',
+      campaignId: 7,
+      sent: 5,
+      failed: 0
+    })
+
+    expect(mailedAddresses()).toEqual(addressesOf([1, 2, 3, 1, 2, 3, 4, 5]))
+    expect(campaigns[0]).toMatchObject({ status: 'done', sent: 5, failed: 0 })
   })
 
   it('signal 已经中止时不发任何一批', async () => {
@@ -526,15 +764,6 @@ describe('runCampaignStep', () => {
       sent: 3
     })
   })
-
-  it('有多个发送中的任务时先推进最早的那个', async () => {
-    campaigns = [campaignRow({ id: 9 }), campaignRow({ id: 8 })]
-    users = userRows([1])
-
-    await expect(
-      runCampaignStep({ signal: neverAborted() })
-    ).resolves.toMatchObject({ kind: 'done', campaignId: 8 })
-  })
 })
 
 describe('createCampaign', () => {
@@ -544,7 +773,7 @@ describe('createCampaign', () => {
     contentHtml: '<p>今晚维护, 详情见 <a href="/doc">文档</a></p>'
   }
 
-  it('先拿通告锁, 再查有没有进行中的任务', async () => {
+  it('事务里先拿通告锁, 再查有没有进行中的任务', async () => {
     users = userRows([1, 2, 3])
 
     await createCampaign(input, ADMIN)
@@ -558,7 +787,24 @@ describe('createCampaign', () => {
     })
   })
 
-  it('把此刻的最大用户 id 定为收件范围, 估出人数, 建任务并记日志', async () => {
+  it('数人数这种慢查询不压在通告锁里: 事务里只有锁、查、插、记日志', async () => {
+    users = userRows([1, 2, 3])
+
+    await createCampaign(input, ADMIN)
+
+    expect(rec.labels()).toEqual([
+      '$executeRaw: SELECT pg_advisory_xact_lock(?::int, 0)',
+      'mail_campaign.findFirst',
+      'mail_campaign.create',
+      'admin_log.create'
+    ])
+    expect(rec.outside.map((statement) => statement.label)).toEqual([
+      'user.findFirst',
+      'user.count'
+    ])
+  })
+
+  it('把此刻的最大用户 id 定为收件范围, 估出人数, 记下发起的站点, 建任务并记日志', async () => {
     users = userRows([1, 2, 3, 40])
     users[1].enable_email_notice = false
 
@@ -573,6 +819,7 @@ describe('createCampaign', () => {
         template_id: 'touchgal',
         title: '停机维护通知',
         content_html: input.contentHtml,
+        site_origin: SITE_ORIGIN,
         max_user_id: 40,
         cursor_user_id: 0,
         total: 3,
@@ -611,6 +858,17 @@ describe('createCampaign', () => {
       expect(statementsNamed('mail_campaign.create')).toHaveLength(0)
     }
   )
+
+  it('别的站点上发起、随副本带过来的进行中任务同样挡着新任务 (要先取消它)', async () => {
+    campaigns = [
+      campaignRow({ id: 5, site_origin: 'https://www.production.example' })
+    ]
+    users = userRows([1])
+
+    await expect(createCampaign(input, ADMIN)).resolves.toContain(
+      '群发任务 #5 还没有结束'
+    )
+  })
 
   it.each(['done', 'cancelled'])(
     '上一个任务已经%s时可以再发起',
@@ -716,7 +974,7 @@ describe('transitionCampaign', () => {
 })
 
 describe('listCampaigns', () => {
-  it('按新旧倒序给出最近几条的进度, 不带正文', async () => {
+  it('按新旧倒序给出最近几条的进度, 标出不是本站发起的, 不带正文', async () => {
     campaigns = [
       campaignRow({ id: 1, status: 'done', sent: 9, total: 10 }),
       campaignRow({
@@ -725,18 +983,29 @@ describe('listCampaigns', () => {
         created_by: null,
         last_error: '中继不可用'
       }),
-      campaignRow({ id: 3, status: 'cancelled' })
+      campaignRow({
+        id: 3,
+        status: 'sending',
+        site_origin: 'https://www.production.example'
+      })
     ]
 
     const listed = await listCampaigns(2)
 
     expect(listed).toEqual([
-      expect.objectContaining({ id: 3, status: 'cancelled' }),
+      expect.objectContaining({
+        id: 3,
+        status: 'sending',
+        siteOrigin: 'https://www.production.example',
+        runsHere: false
+      }),
       {
         id: 2,
         templateId: 'touchgal',
         title: '停机维护通知',
         status: 'paused',
+        siteOrigin: SITE_ORIGIN,
+        runsHere: true,
         total: 0,
         sent: 0,
         failed: 0,

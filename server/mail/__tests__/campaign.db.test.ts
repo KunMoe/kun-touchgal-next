@@ -40,6 +40,9 @@ vi.mock('~/constants/admin', async (importOriginal) => ({
 // 每个并发的创建都要占一条池里的连接等锁, 连接池上限是 10
 const CONCURRENCY = 5
 
+// 这个文件写的管理日志都带这几个字; 清理与计数只看它们
+const CAMPAIGN_LOGS = { content: { contains: '群发邮件任务' } }
+
 const input = {
   templateId: 'touchgal' as const,
   title: '停机维护通知',
@@ -69,7 +72,7 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
     // 先收连接: 失败的用例可能还握着锁, 不收的话下面的删除会一直等
     await Promise.all(clients.splice(0).map((client) => client.end()))
     await prisma.mail_campaign.deleteMany({})
-    await prisma.admin_log.deleteMany({})
+    await prisma.admin_log.deleteMany({ where: CAMPAIGN_LOGS })
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } })
     createdUserIds = []
   })
@@ -112,6 +115,9 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
     prisma.mail_campaign.findFirstOrThrow({ orderBy: { id: 'desc' } })
 
   const neverAborted = () => new AbortController().signal
+
+  const campaignLogs = () =>
+    prisma.admin_log.findMany({ where: CAMPAIGN_LOGS, orderBy: { id: 'asc' } })
 
   const mailedAddresses = () =>
     sendKunEmailMock.mock.calls.map(([payload]) => payload.to[0] as string)
@@ -170,7 +176,7 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
     }
     await expect(prisma.mail_campaign.count()).resolves.toBe(1)
     // 被拒绝的创建整个回滚了, 日志只有建成的那一条
-    await expect(prisma.admin_log.count()).resolves.toBe(1)
+    await expect(campaignLogs()).resolves.toHaveLength(1)
   })
 
   it('从创建到发完: 只发给范围内开着通知的用户, 计数、游标、时间与日志落在任务行上', async () => {
@@ -185,6 +191,7 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
     expect(created).toEqual({ campaignId: expect.any(Number) })
     await expect(theCampaign()).resolves.toMatchObject({
       status: 'sending',
+      site_origin: 'https://www.example.com',
       max_user_id: users[6].id,
       cursor_user_id: 0,
       total: 6,
@@ -224,7 +231,7 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
       expect(Math.abs((time as Date).getTime() - before)).toBeLessThan(60_000)
     }
 
-    const logs = await prisma.admin_log.findMany({ orderBy: { id: 'asc' } })
+    const logs = await campaignLogs()
     expect(logs.map((log) => [log.type, log.user_id])).toEqual([
       ['create', admin.id],
       ['update', admin.id]
@@ -235,6 +242,7 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
       expect.objectContaining({
         id: done.id,
         status: 'done',
+        runsHere: true,
         creator: { id: admin.id, name: admin.name, avatar: '' }
       })
     ])
@@ -248,7 +256,6 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
   it('发起的管理员账号被删除后任务行留下, 只断开归属', async () => {
     const [admin] = await newUsers(1)
     await campaign.createCampaign(input, actorOf(admin))
-    await prisma.admin_log.deleteMany({})
 
     await prisma.user.delete({ where: { id: admin.id } })
 
@@ -261,13 +268,13 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
     ])
   })
 
-  it('一批发出之后、推进之前任务被取消: 推进排在取消的行锁后面, 取消提交后它命中 0 行', async () => {
+  it('取消已经拿到行锁、还没提交时这一拍开始: 发信之前的认领排在行锁后面, 取消提交后它命中 0 行, 一封都不发', async () => {
     const users = await newUsers(4)
     const created = await campaign.createCampaign(input, actorOf(users[0]))
     const { campaignId } = created as { campaignId: number }
     const [holder, observer] = [await connect(), await connect()]
 
-    // 另一条连接上的取消先拿到行锁、还没提交: 这一拍开头读到的仍是发送中
+    // 这一拍开头读到的仍是发送中: 取消还没提交
     await holder.query('BEGIN')
     await holder.query(
       `UPDATE mail_campaign SET status = 'cancelled' WHERE id = $1`,
@@ -289,8 +296,7 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
       sent: 0,
       failed: 0
     })
-    // 这一批已经发出去了 (至少一次), 但没有再取下一批, 任务行也没有被改回去
-    expect(mailedAddresses()).toHaveLength(3)
+    expect(sendKunEmailMock).not.toHaveBeenCalled()
     await expect(theCampaign()).resolves.toMatchObject({
       status: 'cancelled',
       cursor_user_id: 0,
@@ -298,7 +304,75 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
     })
   })
 
-  it('两个进程同时推进同一个任务: 都排在行锁后面, 恰好一个推进成功, 重复不超过一批', async () => {
+  it('一批发出途中任务被取消: 这一批补记到已取消的任务行上, 不再取下一批', async () => {
+    const users = await newUsers(5)
+    const admin = actorOf(users[0])
+    const created = await campaign.createCampaign(input, admin)
+    const { campaignId } = created as { campaignId: number }
+    sendKunEmailMock.mockImplementationOnce(async () => {
+      await campaign.transitionCampaign(campaignId, 'cancel', admin)
+    })
+
+    await expect(
+      campaign.runCampaignStep({ signal: neverAborted() })
+    ).resolves.toEqual({ kind: 'stopped', campaignId, sent: 3, failed: 0 })
+
+    // 这一批已经发出去了 (至少一次), 数字与实际发出的对得上
+    expect(mailedAddresses()).toEqual(
+      users.slice(0, 3).map((user) => user.email)
+    )
+    await expect(theCampaign()).resolves.toMatchObject({
+      status: 'cancelled',
+      cursor_user_id: users[2].id,
+      sent: 3,
+      failed: 0
+    })
+    // 取消之后没有任何进程再碰它
+    await expect(
+      campaign.runCampaignStep({ signal: neverAborted() })
+    ).resolves.toEqual({ kind: 'idle' })
+  })
+
+  it('收件范围已经发完、收尾排在取消的行锁后面: 取消提交后收尾命中 0 行, 不标完成也不记完成日志', async () => {
+    const users = await newUsers(2)
+    const created = await campaign.createCampaign(input, actorOf(users[0]))
+    const { campaignId } = created as { campaignId: number }
+    await prisma.mail_campaign.update({
+      where: { id: campaignId },
+      data: { cursor_user_id: users[1].id, sent: 2 }
+    })
+    const [holder, observer] = [await connect(), await connect()]
+
+    await holder.query('BEGIN')
+    await holder.query(
+      `UPDATE mail_campaign SET status = 'cancelled' WHERE id = $1`,
+      [campaignId]
+    )
+
+    const pending = campaign.runCampaignStep({ signal: neverAborted() })
+    const settled = Promise.allSettled([pending])
+    try {
+      await waitForLockWaiters(observer, 1)
+    } finally {
+      await holder.query('COMMIT')
+      await settled
+    }
+
+    await expect(pending).resolves.toEqual({
+      kind: 'stopped',
+      campaignId,
+      sent: 0,
+      failed: 0
+    })
+    await expect(theCampaign()).resolves.toMatchObject({
+      status: 'cancelled',
+      finished: null
+    })
+    const logs = await campaignLogs()
+    expect(logs.map((log) => log.type)).toEqual(['create'])
+  })
+
+  it('两个进程同时推进同一个任务: 恰好一个推进成功, 计数只记一次, 重复不超过一批', async () => {
     const users = await newUsers(3)
     const created = await campaign.createCampaign(input, actorOf(users[0]))
     const { campaignId } = created as { campaignId: number }
@@ -309,7 +383,7 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
       campaignId
     ])
 
-    // 两边读到同一个游标、各发了同一批, 然后一起排在行锁后面
+    // 两边读到同一个游标, 发信之前的认领一起排在行锁后面; 放行后各发了同一批, 再各自推进
     const pending = [
       campaign.runCampaignStep({ signal: neverAborted() }),
       campaign.runCampaignStep({ signal: neverAborted() })
@@ -335,12 +409,11 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
       sent: 3,
       failed: 0
     })
-    await expect(
-      prisma.admin_log.count({ where: { type: 'update' } })
-    ).resolves.toBe(1)
+    const logs = await campaignLogs()
+    expect(logs.filter((log) => log.type === 'update')).toHaveLength(1)
   })
 
-  it('失败过半自动暂停后, 继续发送从游标处接着发完', async () => {
+  it('失败过半自动暂停在这一批之前; 继续发送把这一批整批重发, 没有人被跳过', async () => {
     const users = await newUsers(5)
     const admin = actorOf(users[0])
     const created = await campaign.createCampaign(input, admin)
@@ -349,12 +422,13 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
 
     await expect(
       campaign.runCampaignStep({ signal: neverAborted() })
-    ).resolves.toMatchObject({ kind: 'paused', sent: 0, failed: 3 })
+    ).resolves.toMatchObject({ kind: 'paused', sent: 0, failed: 0 })
     const paused = await theCampaign()
     expect(paused).toMatchObject({
       status: 'paused',
-      cursor_user_id: users[2].id,
-      failed: 3,
+      cursor_user_id: 0,
+      sent: 0,
+      failed: 0,
       finished: null
     })
     expect(paused.last_error).toContain('一批 3 封里有 3 封发送失败')
@@ -374,13 +448,13 @@ describe.skipIf(!dbContractUrl)('mail campaign on real PostgreSQL', () => {
     ).resolves.toEqual({})
     await expect(
       campaign.runCampaignStep({ signal: neverAborted() })
-    ).resolves.toMatchObject({ kind: 'done', sent: 2, failed: 0 })
+    ).resolves.toMatchObject({ kind: 'done', sent: 5, failed: 0 })
 
-    expect(mailedAddresses()).toEqual([users[3].email, users[4].email])
+    expect(mailedAddresses()).toEqual(users.map((user) => user.email))
     await expect(theCampaign()).resolves.toMatchObject({
       status: 'done',
-      sent: 2,
-      failed: 3,
+      sent: 5,
+      failed: 0,
       last_error: ''
     })
   })

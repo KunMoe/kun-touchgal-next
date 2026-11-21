@@ -3,6 +3,7 @@ import { kunTx } from '~/server/db/tx'
 import { sendKunEmail } from '~/app/api/utils/sendKunEmail'
 import {
   isCampaignTemplateId,
+  kunUnsubscribePageUrl,
   renderCampaignEmail
 } from '~/constants/email/campaign'
 import {
@@ -27,7 +28,10 @@ import type { AdminMailCampaign } from '~/types/api/admin'
 // 推进游标的那条条件更新 (WHERE id、status = 'sending'、cursor_user_id = 发这一批之前的
 // 游标) 同时是三件事: 进度落库、取消检测 (任务被取消后它命中 0 行)、重叠防护 (万一有两个
 // 进程在推进同一个任务, 落后的那个命中 0 行, 最多多发一批)。命中 0 行就停, 不再取下一批。
-// 它的守卫必须平铺在 UPDATE 自己的 WHERE 里, 由 __tests__/campaign.sql.test.ts 守着
+// 每一批发出之前还有一次同样守卫的认领 (只刷新 updated): 两批之间到来的取消在这里就被
+// 看到, 不必等多发一批之后; 库此刻写不进去 (只读、磁盘满) 时它会抛错, 这一批就不发 ——
+// 否则发得出去、记不下来, 每一拍都会把同一批人再发一遍。
+// 这些守卫必须平铺在 UPDATE 自己的 WHERE 里, 由 __tests__/campaign.sql.test.ts 守着
 
 // 通告锁命名空间 (pg_advisory_xact_lock 首参), 接续 481001~481004 (补丁类型 / 评分统计 /
 // 收藏 / 点赞); 第二个参数固定为 0: 全站同一时刻至多一个进行中的群发
@@ -39,11 +43,27 @@ const ACTIVE_STATUSES = ['sending', 'paused']
 // last_error 的列宽
 const LAST_ERROR_LIMIT = 1007
 
+// 任务行会随数据库的副本去到别的环境 (开发库就是生产库的副本)。每个任务记下发起它的站点
+// 地址, 发信的进程只推进在自己这个地址上发起的: 否则带着一条 sending 任务的副本一旦被
+// 开着定时任务的进程连上, 就会接着给真实用户发信
+const currentSiteOrigin = () => new URL(kunUnsubscribePageUrl()).origin
+
 export const createCampaign = async (
   input: { templateId: CampaignTemplateId; title: string; contentHtml: string },
   actor: KunActor
-): Promise<{ campaignId: number } | string> =>
-  kunTx('mail.campaign.create', async ({ tx, fail }) => {
+): Promise<{ campaignId: number } | string> => {
+  // 收件范围在这里定格: 之后注册的用户不在这一次群发里。它与估计人数都在事务之外取:
+  // 两者本来就是快照与估计, 而数人数要过滤整张 user 表, 不该压在通告锁与事务超时里
+  const newest = await prisma.user.findFirst({
+    orderBy: { id: 'desc' },
+    select: { id: true }
+  })
+  const maxUserId = newest?.id ?? 0
+  const total = await prisma.user.count({
+    where: { id: { lte: maxUserId }, enable_email_notice: true }
+  })
+
+  return kunTx('mail.campaign.create', async ({ tx, fail }) => {
     // 「没有进行中的任务才能新建」是查后插: 两个并发的创建各自都看不到对方还没提交的行,
     // 先在通告锁上排队, 后到的那个拿到锁时前一个已经提交
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${MAIL_CAMPAIGN_LOCK_NAMESPACE}::int, 0)`
@@ -56,21 +76,12 @@ export const createCampaign = async (
       fail(`群发任务 #${active.id} 还没有结束, 等它发完或取消之后才能再发起`)
     }
 
-    // 收件范围在这里定格: 之后注册的用户不在这一次群发里
-    const newest = await tx.user.findFirst({
-      orderBy: { id: 'desc' },
-      select: { id: true }
-    })
-    const maxUserId = newest?.id ?? 0
-    const total = await tx.user.count({
-      where: { id: { lte: maxUserId }, enable_email_notice: true }
-    })
-
     const campaign = await tx.mail_campaign.create({
       data: {
         template_id: input.templateId,
         title: input.title,
         content_html: input.contentHtml,
+        site_origin: currentSiteOrigin(),
         max_user_id: maxUserId,
         total,
         created_by: actor.uid
@@ -87,6 +98,7 @@ export const createCampaign = async (
 
     return { campaignId: campaign.id }
   })
+}
 
 export const transitionCampaign = async (
   campaignId: number,
@@ -137,6 +149,7 @@ export const listCampaigns = async (
       template_id: true,
       title: true,
       status: true,
+      site_origin: true,
       total: true,
       sent: true,
       failed: true,
@@ -147,11 +160,14 @@ export const listCampaigns = async (
     }
   })
 
+  const here = currentSiteOrigin()
   return campaigns.map((campaign) => ({
     id: campaign.id,
     templateId: campaign.template_id,
     title: campaign.title,
     status: campaign.status,
+    siteOrigin: campaign.site_origin,
+    runsHere: campaign.site_origin === here,
     total: campaign.total,
     sent: campaign.sent,
     failed: campaign.failed,
@@ -240,7 +256,7 @@ export type CampaignStepResult =
       failed: number
       reason: string
     }
-  // 任务已不在这个进程手里: 被取消了, 或游标被别的进程推进过。刚发出的那一批没有记进任务行
+  // 任务已不在这个进程手里: 被取消了, 或游标被别的进程推进过
   | { kind: 'stopped'; campaignId: number; sent: number; failed: number }
 
 // 推进最早的一个发送中的任务, 直到发完、自动暂停、被取消, 或 signal 中止 (调用方用它给
@@ -251,7 +267,7 @@ export const runCampaignStep = async ({
   signal: AbortSignal
 }): Promise<CampaignStepResult> => {
   const campaign = await prisma.mail_campaign.findFirst({
-    where: { status: 'sending' },
+    where: { status: 'sending', site_origin: currentSiteOrigin() },
     orderBy: { id: 'asc' }
   })
   if (!campaign) {
@@ -264,6 +280,9 @@ export const runCampaignStep = async ({
   let failed = 0
 
   while (!signal.aborted) {
+    // 三条条件更新共用的守卫: 任务仍在发送中, 游标还是这个进程上次看到的那个
+    const held = { id: campaignId, status: 'sending', cursor_user_id: cursor }
+
     // 走 user 主键, 不需要新索引。enable_email_notice 每批现查: 群发期间退订的人即时生效
     const recipients = await prisma.user.findMany({
       where: {
@@ -280,6 +299,15 @@ export const runCampaignStep = async ({
         : { kind: 'stopped', campaignId, sent, failed }
     }
 
+    // 发信之前先认领 (见文件头): 命中 0 行就停, 这一批不发
+    const claimed = await prisma.mail_campaign.updateMany({
+      where: held,
+      data: { updated: new Date() }
+    })
+    if (claimed.count === 0) {
+      return { kind: 'stopped', campaignId, sent, failed }
+    }
+
     const results = await Promise.allSettled(
       recipients.map((recipient) => sendToRecipient(campaign, recipient))
     )
@@ -288,35 +316,65 @@ export const runCampaignStep = async ({
     const ok = recipients.length - bad
     const nextCursor = recipients[recipients.length - 1].id
 
-    // 失败率过高多半是中继出了问题: 记下这一批、停在这里, 等管理员确认之后继续。这一批里
-    // 失败的收件人不会重发 (只有计数, 没有逐人的台账)
-    const pauseReason =
-      bad > 0 && bad / recipients.length >= MAIL_CAMPAIGN_PAUSE_FAILURE_RATIO
-        ? sliceCodePoints(
-            `一批 ${recipients.length} 封里有 ${bad} 封发送失败, 已自动暂停。其中一封的错误: ${messageOf(rejected[0].reason)}`,
-            LAST_ERROR_LIMIT
-          )
-        : null
+    // 这一批已经发出、却发现任务被取消了: 邮件已经送达, 记到已取消的任务行上, 数字才与
+    // 实际发出的对得上。同样带游标守卫, 所以只记一次; 游标被别的进程推进过 (重叠) 则不记,
+    // 那一批由对方记
+    const stopAfterSend = async (): Promise<CampaignStepResult> => {
+      const recorded = await prisma.mail_campaign.updateMany({
+        where: { id: campaignId, status: 'cancelled', cursor_user_id: cursor },
+        data: {
+          cursor_user_id: nextCursor,
+          sent: { increment: ok },
+          failed: { increment: bad }
+        }
+      })
+      return recorded.count === 0
+        ? { kind: 'stopped', campaignId, sent, failed }
+        : {
+            kind: 'stopped',
+            campaignId,
+            sent: sent + ok,
+            failed: failed + bad
+          }
+    }
 
-    const { count } = await prisma.mail_campaign.updateMany({
-      where: { id: campaignId, status: 'sending', cursor_user_id: cursor },
+    // 失败的比例过高多半是中继出了问题: 停在这一批之前, 等管理员确认之后继续。不推进游标、
+    // 不计数, 继续发送时这一批整批重发 —— 其中已经收到的人会再收到一封 (上界一批), 换来的
+    // 是失败的人不被跳过。不足半批的 (只可能是最后一批) 不判: 那里一两个固定失败的地址就能
+    // 占到一半, 判了的话任务永远发不完
+    if (
+      bad > 0 &&
+      recipients.length * 2 >= MAIL_CAMPAIGN_BATCH_SIZE &&
+      bad / recipients.length >= MAIL_CAMPAIGN_PAUSE_FAILURE_RATIO
+    ) {
+      const reason = sliceCodePoints(
+        `一批 ${recipients.length} 封里有 ${bad} 封发送失败, 已自动暂停。其中一封的错误: ${messageOf(rejected[0].reason)}`,
+        LAST_ERROR_LIMIT
+      )
+      const paused = await prisma.mail_campaign.updateMany({
+        where: held,
+        data: { status: 'paused', last_error: reason }
+      })
+      return paused.count === 0
+        ? stopAfterSend()
+        : { kind: 'paused', campaignId, sent, failed, reason }
+    }
+
+    const advanced = await prisma.mail_campaign.updateMany({
+      where: held,
       data: {
         cursor_user_id: nextCursor,
         sent: { increment: ok },
-        failed: { increment: bad },
-        ...(pauseReason ? { status: 'paused', last_error: pauseReason } : {})
+        failed: { increment: bad }
       }
     })
-    if (count === 0) {
-      return { kind: 'stopped', campaignId, sent, failed }
+    if (advanced.count === 0) {
+      return stopAfterSend()
     }
 
     cursor = nextCursor
     sent += ok
     failed += bad
-    if (pauseReason) {
-      return { kind: 'paused', campaignId, sent, failed, reason: pauseReason }
-    }
 
     await sleep(MAIL_CAMPAIGN_MIN_BATCH_INTERVAL_MS)
   }

@@ -7,6 +7,7 @@ import {
   MAIL_CAMPAIGN_TITLE_LIMIT
 } from '~/constants/admin'
 import { CAMPAIGN_TEMPLATE_IDS } from '~/constants/email/campaign'
+import { isWellFormedText } from '~/utils/text/unicode'
 import {
   MODERATION_FAILURE_KIND,
   MODERATION_TEXT_CONTENT_TYPE
@@ -249,7 +250,9 @@ export const adminSendEmailSchema = z.object({
       .min(1, { message: '邮件标题不能为空' })
       .max(MAIL_CAMPAIGN_TITLE_LIMIT, {
         message: `邮件标题不能超过 ${MAIL_CAMPAIGN_TITLE_LIMIT} 个字符`
-      }),
+      })
+      // NUL 写不进库 (PG 报 22021), 在这里拒绝而不是让它变成 500
+      .refine(isWellFormedText, { message: '邮件标题含有无法保存的字符' }),
     content: z
       .string()
       .trim()
@@ -257,6 +260,7 @@ export const adminSendEmailSchema = z.object({
       .max(MAIL_CAMPAIGN_CONTENT_LIMIT, {
         message: `邮件内容不能超过 ${MAIL_CAMPAIGN_CONTENT_LIMIT} 个字符`
       })
+      .refine(isWellFormedText, { message: '邮件内容含有无法保存的字符' })
   })
 })
 

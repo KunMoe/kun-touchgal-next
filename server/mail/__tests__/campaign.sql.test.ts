@@ -7,10 +7,10 @@ import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import { KUN_ROLE } from '~/constants/role'
 import type { RecordedStatement } from '~/prisma/__tests__/support/sqlRecorder'
 
-// 群发任务依赖的编译器输出, 不连库。推进游标、收尾、取消与继续都把条件 updateMany 的
-// count 当 CAS 用: 守卫必须平铺在 UPDATE 自己的 WHERE 里, 并发的另一方提交之后库才会在
-// 这一行上重新求值它们 (取消检测、重叠防护都靠这一点)。库拿到这些 SQL 之后在并发下的
-// 行为由 campaign.db.test.ts 在真库上守护
+// 群发任务依赖的编译器输出, 不连库。认领、推进、暂停、取消后的补记、收尾、取消与继续都把
+// 条件 updateMany 的 count 当 CAS 用: 守卫必须平铺在 UPDATE 自己的 WHERE 里, 并发的另一方
+// 提交之后库才会在这一行上重新求值它们 (取消检测、重叠防护都靠这一点)。库拿到这些 SQL 之后
+// 在并发下的行为由 campaign.db.test.ts 在真库上守护
 
 const { recorder, sendKunEmailMock } = await vi.hoisted(async () => ({
   recorder: (
@@ -44,7 +44,8 @@ const campaignRow = {
   title: '标题',
   content_html: '<p>正文</p>',
   status: 'sending',
-  max_user_id: 100,
+  site_origin: 'https://www.example.com',
+  max_user_id: 100000,
   cursor_user_id: 40,
   total: 60,
   sent: 40,
@@ -64,9 +65,30 @@ const RECIPIENTS = /"public"\."user"\."email" FROM "public"\."user"/
 const UPDATE_CAMPAIGN = /^UPDATE "public"\."mail_campaign"/
 const INSERT_LOG = /^INSERT INTO "public"\."admin_log"/
 
-const recipients = (...ids: number[]) => ({
-  rows: ids.map((id) => ({ id, email: `user${id}@example.com` }))
+// 从 from 起连续 count 个收件人: 一整批是 100 个
+const recipients = (from: number, count: number) => ({
+  rows: Array.from({ length: count }, (_, index) => ({
+    id: from + index,
+    email: `user${from + index}@example.com`
+  }))
 })
+
+const campaignUpdates = (statements: RecordedStatement[]) =>
+  statements.filter(({ sql }) => UPDATE_CAMPAIGN.test(sql))
+
+// 这条 UPDATE 是平铺 WHERE 的条件更新, 三个守卫 (任务、状态、游标) 都在
+const expectHeld = (
+  update: RecordedStatement,
+  expected: { status: string; cursor: number }
+) => {
+  expectFlatConditionalUpdate([update], {
+    table: 'mail_campaign',
+    guards: ['id', 'status', 'cursor_user_id']
+  })
+  expect(guardValue(update, 'id')).toBe(7)
+  expect(guardValue(update, 'status')).toBe(expected.status)
+  expect(guardValue(update, 'cursor_user_id')).toBe(expected.cursor)
+}
 
 // 守卫列在 WHERE 里绑定的参数值
 const guardValue = ({ sql, values }: RecordedStatement, column: string) => {
@@ -76,6 +98,12 @@ const guardValue = ({ sql, values }: RecordedStatement, column: string) => {
   )
   return match ? values[Number(match[1]) - 1] : undefined
 }
+
+// SET 子句里被赋值的列
+const assignedColumns = ({ sql }: RecordedStatement) =>
+  [...sql.slice(0, sql.indexOf(' WHERE ')).matchAll(/"(\w+)" = /g)].map(
+    ([, column]) => column
+  )
 
 const verbs = (statements: RecordedStatement[]) =>
   statements.map(({ sql }) => sql.split(' ')[0])
@@ -93,9 +121,24 @@ afterEach(() => {
 })
 
 describe('runCampaignStep 发出的 SQL', () => {
-  it('推进游标是一条条件更新: 任务 id、发送中、发这一批之前的游标都平铺在它自己的 WHERE 里', async () => {
+  it('只找本站发起的发送中任务', async () => {
+    await expect(
+      runCampaignStep({ signal: new AbortController().signal })
+    ).resolves.toEqual({ kind: 'idle' })
+
+    const [find] = recorder.take()
+    expect(find.sql).toMatch(
+      /WHERE \("public"\."mail_campaign"\."status" = \$1 AND "public"\."mail_campaign"\."site_origin" = \$2\)/
+    )
+    expect(find.values.slice(0, 2)).toEqual([
+      'sending',
+      'https://www.example.com'
+    ])
+  })
+
+  it('发信之前的认领与发完之后的推进都是条件更新: 任务 id、发送中、发这一批之前的游标平铺在各自的 WHERE 里', async () => {
     recorder.reply(SENDING_CAMPAIGN, { rows: [campaignRow] })
-    recorder.reply(RECIPIENTS, recipients(41, 45))
+    recorder.reply(RECIPIENTS, recipients(41, 100))
     const controller = new AbortController()
     sendKunEmailMock.mockImplementationOnce(async () => {
       controller.abort()
@@ -103,38 +146,67 @@ describe('runCampaignStep 发出的 SQL', () => {
 
     await expect(
       runCampaignStep({ signal: controller.signal })
-    ).resolves.toEqual({ kind: 'progress', campaignId: 7, sent: 2, failed: 0 })
-
-    const advance = expectFlatConditionalUpdate(recorder.take(), {
-      table: 'mail_campaign',
-      guards: ['id', 'status', 'cursor_user_id']
+    ).resolves.toEqual({
+      kind: 'progress',
+      campaignId: 7,
+      sent: 100,
+      failed: 0
     })
-    expect(guardValue(advance, 'id')).toBe(7)
-    expect(guardValue(advance, 'status')).toBe('sending')
-    expect(guardValue(advance, 'cursor_user_id')).toBe(40)
+
+    const [claim, advance, ...rest] = campaignUpdates(recorder.take())
+    expect(rest).toHaveLength(0)
+    expectHeld(claim, { status: 'sending', cursor: 40 })
+    // 认领只刷新 updated, 不动游标与计数
+    expect(assignedColumns(claim)).toEqual(['updated'])
+    expectHeld(advance, { status: 'sending', cursor: 40 })
+    expect(assignedColumns(advance)).toEqual(
+      expect.arrayContaining(['cursor_user_id', 'sent', 'failed'])
+    )
   })
 
-  it('自动暂停写在同一条条件更新里, 不另发一条', async () => {
+  it('库报告认领影响 0 行时到此为止: 这一批不发', async () => {
     recorder.reply(SENDING_CAMPAIGN, { rows: [campaignRow] })
-    recorder.reply(RECIPIENTS, recipients(41, 45))
+    recorder.reply(RECIPIENTS, recipients(41, 100))
+    recorder.reply(UPDATE_CAMPAIGN, { rowCount: 0 })
+
+    await expect(
+      runCampaignStep({ signal: new AbortController().signal })
+    ).resolves.toEqual({ kind: 'stopped', campaignId: 7, sent: 0, failed: 0 })
+
+    expect(sendKunEmailMock).not.toHaveBeenCalled()
+    expect(campaignUpdates(recorder.take())).toHaveLength(1)
+  })
+
+  it('自动暂停是一条同样守卫的条件更新, 只写状态与原因, 不动游标与计数', async () => {
+    recorder.reply(SENDING_CAMPAIGN, { rows: [campaignRow] })
+    recorder.reply(RECIPIENTS, recipients(41, 100))
     sendKunEmailMock.mockResolvedValue('邮件发送失败, 请稍后重试')
 
     await expect(
       runCampaignStep({ signal: new AbortController().signal })
-    ).resolves.toMatchObject({ kind: 'paused', failed: 2 })
+    ).resolves.toMatchObject({ kind: 'paused', sent: 0, failed: 0 })
 
-    const pause = expectFlatConditionalUpdate(recorder.take(), {
-      table: 'mail_campaign',
-      guards: ['id', 'status', 'cursor_user_id']
-    })
+    const [, pause, ...rest] = campaignUpdates(recorder.take())
+    expect(rest).toHaveLength(0)
+    expectHeld(pause, { status: 'sending', cursor: 40 })
+    expect(assignedColumns(pause).sort()).toEqual([
+      'last_error',
+      'status',
+      'updated'
+    ])
     expect(pause.values).toContain('paused')
-    expect(guardValue(pause, 'status')).toBe('sending')
   })
 
-  it('库报告推进影响 0 行时到此为止, 不再取下一批', async () => {
+  it('库报告推进影响 0 行: 不再取下一批, 只在任务已取消且游标没被动过时把这一批补记上去', async () => {
     recorder.reply(SENDING_CAMPAIGN, { rows: [campaignRow] })
-    recorder.reply(RECIPIENTS, recipients(41, 45), recipients(46, 47))
-    recorder.reply(UPDATE_CAMPAIGN, { rowCount: 0 })
+    recorder.reply(RECIPIENTS, recipients(41, 100), recipients(141, 100))
+    // 认领命中, 推进落空, 补记也落空 (游标被别的进程推进过)
+    recorder.reply(
+      UPDATE_CAMPAIGN,
+      { rowCount: 1 },
+      { rowCount: 0 },
+      { rowCount: 0 }
+    )
 
     await expect(
       runCampaignStep({ signal: new AbortController().signal })
@@ -142,12 +214,35 @@ describe('runCampaignStep 发出的 SQL', () => {
 
     const statements = recorder.take()
     expect(statements.filter(({ sql }) => RECIPIENTS.test(sql))).toHaveLength(1)
+    const [, , record, ...rest] = campaignUpdates(statements)
+    expect(rest).toHaveLength(0)
+    expectHeld(record, { status: 'cancelled', cursor: 40 })
     expect(verbs(statements).at(-1)).toBe('UPDATE')
+  })
+
+  it('补记命中时, 这一批算进这一拍的结果', async () => {
+    recorder.reply(SENDING_CAMPAIGN, { rows: [campaignRow] })
+    recorder.reply(RECIPIENTS, recipients(41, 100))
+    recorder.reply(
+      UPDATE_CAMPAIGN,
+      { rowCount: 1 },
+      { rowCount: 0 },
+      { rowCount: 1 }
+    )
+
+    await expect(
+      runCampaignStep({ signal: new AbortController().signal })
+    ).resolves.toEqual({
+      kind: 'stopped',
+      campaignId: 7,
+      sent: 100,
+      failed: 0
+    })
   })
 
   it('收尾的条件更新与完成日志在同一个事务里, 守卫同样平铺', async () => {
     recorder.reply(SENDING_CAMPAIGN, {
-      rows: [{ ...campaignRow, cursor_user_id: 100 }]
+      rows: [{ ...campaignRow, cursor_user_id: 100000 }]
     })
     recorder.reply(FINISHED_COUNTS, {
       rows: [{ sent: 60, failed: 0, created_by: 1 }]
@@ -159,18 +254,15 @@ describe('runCampaignStep 发出的 SQL', () => {
 
     const statements = recorder.take()
     expectSameClientTransaction(statements, [UPDATE_CAMPAIGN, INSERT_LOG])
-    const finish = expectFlatConditionalUpdate(statements, {
-      table: 'mail_campaign',
-      guards: ['id', 'status', 'cursor_user_id']
-    })
-    expect(guardValue(finish, 'status')).toBe('sending')
-    expect(guardValue(finish, 'cursor_user_id')).toBe(100)
+    const [finish, ...rest] = campaignUpdates(statements)
+    expect(rest).toHaveLength(0)
+    expectHeld(finish, { status: 'sending', cursor: 100000 })
     expect(finish.values).toContain('done')
   })
 
   it('库报告收尾影响 0 行时回滚, 不写完成日志', async () => {
     recorder.reply(SENDING_CAMPAIGN, {
-      rows: [{ ...campaignRow, cursor_user_id: 100 }]
+      rows: [{ ...campaignRow, cursor_user_id: 100000 }]
     })
     recorder.reply(UPDATE_CAMPAIGN, { rowCount: 0 })
 
@@ -186,44 +278,50 @@ describe('runCampaignStep 发出的 SQL', () => {
 })
 
 describe('createCampaign 发出的 SQL', () => {
-  it('通告锁是事务里的第一条语句, 与随后的查、插在同一条连接上', async () => {
+  const input = {
+    templateId: 'touchgal' as const,
+    title: '标题',
+    contentHtml: '<p>正文</p>'
+  }
+  const ACTIVE_CHECK =
+    /FROM "public"\."mail_campaign" WHERE "public"\."mail_campaign"\."status" IN/
+  const COUNT_RECIPIENTS = /^SELECT COUNT\(\*\)/
+
+  it('通告锁是事务里的第一条语句, 与随后的查、插在同一条连接上; 数人数不在这个事务里', async () => {
     recorder.reply(/ORDER BY "public"\."user"\."id" DESC/, {
       rows: [{ id: 500 }]
     })
-    recorder.reply(/^SELECT COUNT\(\*\)/, { rows: [{ _count$_all: 321n }] })
+    recorder.reply(COUNT_RECIPIENTS, { rows: [{ _count$_all: 321n }] })
     recorder.reply(/^INSERT INTO "public"\."mail_campaign"/, {
       rows: [{ id: 9 }]
     })
 
-    await expect(
-      createCampaign(
-        { templateId: 'touchgal', title: '标题', contentHtml: '<p>正文</p>' },
-        actor
-      )
-    ).resolves.toEqual({ campaignId: 9 })
+    await expect(createCampaign(input, actor)).resolves.toEqual({
+      campaignId: 9
+    })
 
-    const body = expectSameClientTransaction(recorder.take(), [
+    const statements = recorder.take()
+    const body = expectSameClientTransaction(statements, [
       /^SELECT pg_advisory_xact_lock\(\$1::int, 0\)$/,
-      /FROM "public"\."mail_campaign" WHERE "public"\."mail_campaign"\."status" IN/,
+      ACTIVE_CHECK,
       /^INSERT INTO "public"\."mail_campaign"/,
       INSERT_LOG
     ])
     expect(body[0].sql).toMatch(/^SELECT pg_advisory_xact_lock/)
     expect(body[0].values).toEqual([481005])
+    expect(body.some(({ sql }) => COUNT_RECIPIENTS.test(sql))).toBe(false)
+    expect(
+      statements.find(({ sql }) => COUNT_RECIPIENTS.test(sql))
+    ).toMatchObject({ inTransaction: false })
   })
 
   it('已有进行中的任务时回滚, 不插入', async () => {
-    recorder.reply(
-      /FROM "public"\."mail_campaign" WHERE "public"\."mail_campaign"\."status" IN/,
-      { rows: [{ id: 5 }] }
-    )
+    recorder.reply(COUNT_RECIPIENTS, { rows: [{ _count$_all: 0n }] })
+    recorder.reply(ACTIVE_CHECK, { rows: [{ id: 5 }] })
 
-    await expect(
-      createCampaign(
-        { templateId: 'touchgal', title: '标题', contentHtml: '<p>正文</p>' },
-        actor
-      )
-    ).resolves.toBe('群发任务 #5 还没有结束, 等它发完或取消之后才能再发起')
+    await expect(createCampaign(input, actor)).resolves.toBe(
+      '群发任务 #5 还没有结束, 等它发完或取消之后才能再发起'
+    )
 
     const sent = verbs(recorder.take())
     expect(sent).toContain('ROLLBACK')

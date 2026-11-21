@@ -136,13 +136,16 @@ export interface AdminLog {
 }
 
 // 一次群发邮件任务的进度 (server/mail/campaign.ts)。total 是创建时估计的收件人数,
-// 发送期间有人退订, 最终的 sent + failed 可以比它小
+// 发送期间有人退订或重新开启通知, 最终的 sent + failed 可以与它不等
 export interface AdminMailCampaign {
   id: number
   templateId: string
   title: string
   // sending | paused | done | cancelled
   status: string
+  // 发起这个任务的站点地址; runsHere 为 false 的任务是随数据库副本带过来的, 本站不会推进它
+  siteOrigin: string
+  runsHere: boolean
   total: number
   sent: number
   failed: number
