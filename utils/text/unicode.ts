@@ -16,3 +16,12 @@ export const sliceCodePoints = (text: string, max: number) => {
   }
   return text.slice(0, end).toWellFormed()
 }
+
+// u 模式下成对的代理是一个码点, 只有孤立的才属于 Cs
+const LONE_SURROGATE_RE = /\p{Cs}/u
+
+// 能原样交给严格下游的文本: 没有 NUL (PG 的文本参数拒收 0x00, 报 22021), 没有孤立代理
+// (Meilisearch 判请求体不是合法 JSON, PG 的 jsonb 同样拒收)。客户端也会用到, 所以不用
+// String.prototype.isWellFormed
+export const isWellFormedText = (text: string) =>
+  !text.includes('\u0000') && !LONE_SURROGATE_RE.test(text)

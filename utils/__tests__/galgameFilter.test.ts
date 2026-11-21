@@ -65,6 +65,24 @@ describe('toNumberParam', () => {
   })
 })
 
+// 年月的元素会原样进 PG 的前缀匹配与 Meilisearch 的 filter: NUL 让 PG 报 22021 (500),
+// 孤立代理让 Meilisearch 判请求体非法。这类载荷与坏 JSON 一样当成畸形, 回落到默认选项
+describe('parseGalgameFilterArray 元素里的 NUL 与孤立代理', () => {
+  it.each([
+    ['NUL', ['2020', 'a\u0000b']],
+    ['孤立的高位代理', ['a\uD83Db']],
+    ['孤立的低位代理', ['2020', '\uDE00']]
+  ])('元素含%s时回落到默认选项', (_name, values) => {
+    expect(parseGalgameFilterArray(JSON.stringify(values))).toEqual(
+      DEFAULT_GALGAME_FILTER_SELECTION
+    )
+  })
+
+  it('成对的代理 (emoji) 不受影响', () => {
+    expect(parseGalgameFilterArray(JSON.stringify(['😀']))).toEqual(['😀'])
+  })
+})
+
 describe('kunShouldResetOverflowPage', () => {
   it('筛选收紧后页码越界 (有结果但当前页为空) 时重置', () => {
     expect(kunShouldResetOverflowPage(3, 0, 5)).toBe(true)

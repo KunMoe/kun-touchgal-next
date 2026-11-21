@@ -98,6 +98,75 @@ describe('searchSchema 分页参数硬拒小数', () => {
   })
 })
 
+// 这些自由文本会原样进 PG (basic 引擎) 与 Meilisearch 的请求体:
+// NUL 让 PG 报 22021 → 500, 孤立代理让 Meilisearch 回 400 malformed_payload
+describe('searchSchema 自由文本拒绝 NUL 与孤立代理', () => {
+  const BAD = [
+    ['NUL', 'a\u0000b'],
+    ['孤立代理', 'a\uD83Db']
+  ] as const
+
+  it.each(BAD)('类型 / 语言 / 平台含%s被拒', (_name, text) => {
+    for (const field of [
+      'selectedType',
+      'selectedLanguage',
+      'selectedPlatform'
+    ]) {
+      const result = searchSchema.safeParse({ ...baseInput, [field]: text })
+      expect(result.success, field).toBe(false)
+      expect(firstMessage(result), field).toBe('筛选条件格式错误')
+    }
+  })
+
+  it.each(BAD)('年份 / 月份的元素含%s被拒', (_name, text) => {
+    for (const field of ['selectedYears', 'selectedMonths']) {
+      const result = searchSchema.safeParse({
+        ...baseInput,
+        [field]: ['2020', text]
+      })
+      expect(result.success, field).toBe(false)
+      expect(firstMessage(result), field).toBe('筛选条件格式错误')
+    }
+  })
+
+  it('成对的代理 (emoji) 照常通过', () => {
+    expect(
+      searchSchema.safeParse({ ...baseInput, selectedType: '😀' }).success
+    ).toBe(true)
+  })
+})
+
+// 选了具体年份而月份为空: basic 引擎会把年份条件整个丢掉 (不筛), 索引则一条都不命中。
+// 界面发不出空的月份 (不选就是 ['all']), 在 schema 拒掉这种请求, 两个引擎就不会各说各话
+describe('searchSchema 月份不能是空数组', () => {
+  it('空的月份数组被拒', () => {
+    const result = searchSchema.safeParse({
+      ...baseInput,
+      selectedYears: ['2020'],
+      selectedMonths: []
+    })
+    expect(result.success).toBe(false)
+    expect(firstMessage(result)).toBe('请至少选择一组月份')
+  })
+
+  it("['all'] 照常通过", () => {
+    expect(
+      searchSchema.safeParse({
+        ...baseInput,
+        selectedYears: ['2020'],
+        selectedMonths: ['all']
+      }).success
+    ).toBe(true)
+  })
+
+  // 年份为空在两个引擎上都是「不筛年份」, 没有分歧, 保持放行
+  it('空的年份数组仍然放行', () => {
+    expect(
+      searchSchema.safeParse({ ...baseInput, selectedYears: [] }).success
+    ).toBe(true)
+  })
+})
+
 describe('searchSchema sortField', () => {
   it('接受发售时间排序 released', () => {
     expect(
@@ -125,6 +194,15 @@ describe('parseSearchSuggestions 建议项解析', () => {
     expect(parseSearchSuggestions('[{"type":"evil","name":"测试"}]')).toBe(
       '搜索条件格式错误'
     )
+  })
+
+  it.each([
+    ['关键词含 NUL', '[{"type":"keyword","name":"a\\u0000b"}]'],
+    ['标签名含 NUL', '[{"type":"tag","name":"a\\u0000b"}]'],
+    ['会社名含孤立代理', '[{"type":"company","name":"a\\ud83db"}]'],
+    ['关键词含孤立代理', '[{"type":"keyword","name":"\\ude00"}]']
+  ])('%s被拒', (_name, queryString) => {
+    expect(parseSearchSuggestions(queryString)).toBe('搜索条件格式错误')
   })
 
   it('id 超出 int4 上限被拒', () => {

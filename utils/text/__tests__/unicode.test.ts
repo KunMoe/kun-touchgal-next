@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sliceCodePoints, stripInvisible } from '../unicode'
+import { isWellFormedText, sliceCodePoints, stripInvisible } from '../unicode'
 
 describe('stripInvisible', () => {
   it.each([
@@ -73,5 +73,29 @@ describe('sliceCodePoints', () => {
 
     expect(JSON.parse(JSON.stringify(sliced))).toBe(sliced)
     expect(JSON.stringify(sliced)).not.toMatch(/\\ud[89ab]/i)
+  })
+})
+
+describe('isWellFormedText', () => {
+  it.each([
+    ['空串', ''],
+    ['普通文本', 'ATRI -My Dear Moments-'],
+    ['中日文', '魔女的夜宴 サノバウィッチ'],
+    ['成对的代理 (emoji、扩展区汉字)', '😀𠀀'],
+    ['换行与制表符', 'a\nb\tc'],
+    ['U+FFFD 本身', 'a\uFFFDb']
+  ])('%s: 可以交给下游', (_name, text) => {
+    expect(isWellFormedText(text)).toBe(true)
+  })
+
+  it.each([
+    ['孤立的高位代理', 'a\uD83Db'],
+    ['孤立的低位代理', 'a\uDE00b'],
+    ['结尾的孤立高位代理', 'ab\uD83D'],
+    ['次序颠倒的代理对', '\uDE00\uD83D'],
+    ['NUL', 'a\u0000b'],
+    ['只有 NUL', '\u0000']
+  ])('%s: 不行', (_name, text) => {
+    expect(isWellFormedText(text)).toBe(false)
   })
 })

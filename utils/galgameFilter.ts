@@ -1,4 +1,5 @@
 import type { SortField, SortOrder } from '~/components/galgame/_sort'
+import { isWellFormedText } from '~/utils/text/unicode'
 import type { GalgameSearchEngine } from '~/types/api/search'
 
 export const DEFAULT_GALGAME_SORT_FIELD: SortField = 'resource_update_time'
@@ -25,11 +26,16 @@ export const getSearchParamValue = (
 // (当前年 - 1979), 2026 年共 50 项且每年 +1, 月份选项 13 项, 64 覆盖两者
 export const MAX_GALGAME_FILTER_VALUES = 64
 
+// 元素会原样进 PG 的前缀匹配与 Meilisearch 的 filter: 带 NUL 或孤立代理的不算合法载荷
+// (前者让 PG 报错, 后者让 Meilisearch 判请求体非法), 与坏 JSON 一样回落到默认选项
 const isStringArray = (value: unknown): value is string[] => {
   return (
     Array.isArray(value) &&
     value.length > 0 &&
-    value.every((item) => typeof item === 'string' && item.length > 0)
+    value.every(
+      (item) =>
+        typeof item === 'string' && item.length > 0 && isWellFormedText(item)
+    )
   )
 }
 

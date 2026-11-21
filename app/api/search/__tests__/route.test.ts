@@ -577,18 +577,6 @@ describe('/api/search POST Prisma 降级路径: 筛选', () => {
       years: [],
       months: ['all'],
       date: {}
-    },
-    {
-      name: '精确年份配空月份数组: 年份条件整个消失',
-      years: ['2020'],
-      months: [],
-      date: {}
-    },
-    {
-      name: '精确年份配空月份数组: 只剩 future',
-      years: ['future', '2020'],
-      months: [],
-      date: { OR: [{ released: 'future' }] }
     }
   ])('发售年月, $name', async ({ years, months, date }) => {
     await search({ selectedYears: years, selectedMonths: months })
@@ -646,6 +634,47 @@ describe('/api/search POST Prisma 降级路径: 筛选', () => {
       rating_stat: { count: { gte: 3 } },
       content_limit: 'sfw'
     })
+  })
+})
+
+// 2026-11-21 所有者裁定之后的行为, 不是迁移前的现状: 迁移前空的月份数组会让年份条件
+// 整个消失 (等于不筛年份), NUL 字符会一路打到 PG 报 22021 → 500
+describe('/api/search POST: 到不了 basic 引擎的输入', () => {
+  it.each([
+    {
+      name: '具体年份配空的月份数组',
+      overrides: { selectedYears: ['2020'], selectedMonths: [] },
+      message: '请至少选择一组月份'
+    },
+    {
+      name: '关键词含 NUL',
+      overrides: { queryString: '[{"type":"keyword","name":"a\\u0000b"}]' },
+      message: '搜索条件格式错误'
+    },
+    {
+      name: '不带 id 的标签名含 NUL',
+      overrides: { queryString: '[{"type":"tag","name":"a\\u0000b"}]' },
+      message: '搜索条件格式错误'
+    },
+    {
+      name: '类型筛选含 NUL',
+      overrides: { selectedType: 'a\u0000b' },
+      message: '筛选条件格式错误'
+    },
+    {
+      name: '年份元素含 NUL',
+      overrides: { selectedYears: ['a\u0000b'] },
+      message: '筛选条件格式错误'
+    },
+    {
+      name: '关键词含孤立代理',
+      overrides: { queryString: '[{"type":"keyword","name":"a\\ud83db"}]' },
+      message: '搜索条件格式错误'
+    }
+  ])('$name: 回业务错误, 不查库', async ({ overrides, message }) => {
+    expect(await search(overrides)).toBe(message)
+    expect(findManyMock).not.toHaveBeenCalled()
+    expect(countMock).not.toHaveBeenCalled()
   })
 })
 
