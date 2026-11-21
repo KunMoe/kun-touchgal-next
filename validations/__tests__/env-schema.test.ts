@@ -14,6 +14,7 @@ const validEnv = {
   JWT_SECRET: 'secret',
   KUN_TWO_FACTOR_BACKUP_PEPPER: 'p'.repeat(32),
   KUN_CAP_SECRET: 's'.repeat(32),
+  KUN_EMAIL_UNSUBSCRIBE_SECRET: 'u'.repeat(32),
   NODE_ENV: 'production',
   KUN_VISUAL_NOVEL_EMAIL_FROM: 'from',
   KUN_VISUAL_NOVEL_EMAIL_HOST: 'host',

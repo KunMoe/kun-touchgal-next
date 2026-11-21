@@ -18,6 +18,10 @@ import toast from 'react-hot-toast'
 
 export const KunEmailNoticeCard = () => {
   const searchParams = useSearchParams()
+  // 现行的链接带用户 id 与对它的签名; 改用签名之前发出的邮件带的是邮箱与七天内有效的验证码
+  const uid = searchParams.get('u')
+  const token = searchParams.get('t')
+  const signedLink = uid && token ? { uid, token } : null
   const email = searchParams.get('email') || kunMoyuMoe.domain.main
   const code = searchParams.get('code') || kunMoyuMoe.domain.main
 
@@ -27,7 +31,7 @@ export const KunEmailNoticeCard = () => {
     setLoading(true)
     const res = await kunFetchPost<KunResponse<{}>>(
       `/auth/email-notice/disable`,
-      { email, validateEmailCode: code }
+      signedLink ?? { email, validateEmailCode: code }
     )
     setLoading(false)
     kunErrorHandler(res, () => {
@@ -41,23 +45,29 @@ export const KunEmailNoticeCard = () => {
       <CardBody className="gap-4">
         <Alert
           title="提示"
-          description="您可以在收到邮件的七天内取消邮件订阅, 如果取消失败, 请您登录后在用户设置页面取消邮件订阅"
+          description={
+            signedLink
+              ? '取消之后想重新接收邮件通知, 请您登录后在用户设置页面开启'
+              : '您可以在收到邮件的七天内取消邮件订阅, 如果取消失败, 请您登录后在用户设置页面取消邮件订阅'
+          }
           color="secondary"
           variant="faded"
         />
 
-        <div className="overflow-auto">
-          <Snippet
-            disableCopy
-            symbol=""
-            size="lg"
-            className="w-full overflow-auto"
-            color="primary"
-            copyIcon={<Mail />}
-          >
-            {email}
-          </Snippet>
-        </div>
+        {!signedLink && (
+          <div className="overflow-auto">
+            <Snippet
+              disableCopy
+              symbol=""
+              size="lg"
+              className="w-full overflow-auto"
+              color="primary"
+              copyIcon={<Mail />}
+            >
+              {email}
+            </Snippet>
+          </div>
+        )}
       </CardBody>
 
       <CardFooter className="justify-center">

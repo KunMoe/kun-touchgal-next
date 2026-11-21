@@ -19,18 +19,16 @@ const sendBulkEmail = async (
 
   const users = await prisma.user.findMany({
     where: { enable_email_notice: true },
-    select: { email: true }
+    select: { id: true, email: true }
   })
-
-  const emailList = users.map((user) => user.email)
 
   const batchSize = 100
   let failed = 0
-  for (let i = 0; i < emailList.length; i += batchSize) {
-    const batch = emailList.slice(i, i + batchSize)
+  for (let i = 0; i < users.length; i += batchSize) {
+    const batch = users.slice(i, i + batchSize)
 
     const results = await Promise.all(
-      batch.map((email) => sendEmailHTML(templateId, slots, email))
+      batch.map((user) => sendEmailHTML(templateId, slots, user))
     )
     failed += results.filter((result) => typeof result === 'string').length
   }
@@ -41,12 +39,12 @@ const sendBulkEmail = async (
       user_id: uid,
       // variables 值长度无上限, 截断避免 22001; 此时邮件已群发, 500 会诱导重试
       content: truncateLogContent(
-        `管理员 ${admin.name} 向全体用户发送了邮件 (共 ${emailList.length} 封, 失败 ${failed} 封)\n\n${JSON.stringify(variables)}`
+        `管理员 ${admin.name} 向全体用户发送了邮件 (共 ${users.length} 封, 失败 ${failed} 封)\n\n${JSON.stringify(variables)}`
       )
     }
   })
 
-  return { count: emailList.length, failed }
+  return { count: users.length, failed }
 }
 
 export const POST = kunRoute.post({

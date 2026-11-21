@@ -20,6 +20,7 @@ const rawEnvSchema = z.object({
   JWT_SECRET: z.string(),
   KUN_TWO_FACTOR_BACKUP_PEPPER: z.string().min(32),
   KUN_CAP_SECRET: z.string().min(32),
+  KUN_EMAIL_UNSUBSCRIBE_SECRET: z.string().min(32),
 
   OIDC_ISSUER: z.string().url().optional(),
   OIDC_JWKS: z.string().optional(),

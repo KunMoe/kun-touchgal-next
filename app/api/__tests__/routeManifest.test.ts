@@ -154,7 +154,7 @@ const GUEST_ACCESS: Record<string, string> = {
   'POST /api/auth/captcha/challenge': '人机验证挑战签发, 登录前使用',
   'POST /api/auth/captcha/redeem': '人机验证兑换, 登录前使用',
   'GET /api/auth/check-temp-token': '认的是 2FA 临时令牌, 登录第二步使用',
-  'POST /api/auth/email-notice/disable': '凭邮件里的验证码退订',
+  'POST /api/auth/email-notice/disable': '凭邮件里的退订令牌退订',
   'POST /api/auth/login': '登录',
   'POST /api/auth/register': '注册',
   'POST /api/auth/send-register-code': '注册验证码',
