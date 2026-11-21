@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import {
   Button,
   CircularProgress,
@@ -69,11 +69,20 @@ export const KunCaptchaModal = ({
   onSuccess
 }: CaptchaModalProps) => {
   const { state, canSolve, solve } = useKunCap(isOpen, onSuccess)
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     // 页面一挂载就取厂商的分块与 wasm, 打开弹窗时不用再等网络; 取不到留给打开时那一次去报
     preloadKunCap().catch(() => {})
   }, [])
+
+  useEffect(() => {
+    // 弹窗里只有这一个可操作的控件, 打开时把焦点放上去 (否则焦点停在弹窗容器上, 要再按一次 Tab)。
+    // HeroUI Button 的 autoFocus 属性不起作用 (只拿去当焦点环的初始状态), 所以自己聚焦
+    if (isOpen) {
+      buttonRef.current?.focus()
+    }
+  }, [isOpen])
 
   const { label, announcement } = describeKunCap(state)
 
@@ -85,6 +94,7 @@ export const KunCaptchaModal = ({
               isDisabled / isLoading 会落成原生 disabled, pointer-events-none 会让鼠标点击落到弹窗上,
               两者都会把焦点从按钮挪走 */}
           <Button
+            ref={buttonRef}
             variant="bordered"
             radius="lg"
             disableRipple
