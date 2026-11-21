@@ -24,13 +24,14 @@ describe('scripts/prebuild', () => {
     await expect(runPrebuild()).resolves.toBeDefined()
   })
 
-  it('public/robots.txt 存在时不开始构建', async () => {
-    existsSyncMock.mockImplementation(
-      (file: string) => file === 'public/robots.txt'
-    )
+  it.each(['public/robots.txt', 'public/sitemap.xml'])(
+    '%s 存在时不开始构建',
+    async (stale) => {
+      existsSyncMock.mockImplementation((file: string) => file === stale)
 
-    await expect(runPrebuild()).rejects.toThrow('public/robots.txt')
-  })
+      await expect(runPrebuild()).rejects.toThrow(stale)
+    }
+  )
 
   // 少了这个钩子, 上面的检查就不会在 pnpm build 之前执行
   it('挂在 pnpm build 之前', () => {

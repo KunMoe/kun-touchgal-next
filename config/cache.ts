@@ -27,3 +27,5 @@ export const MARKDOWN_HTML_CACHE_DURATION = 5 * 60
 export const MARKDOWN_RENDER_ERROR_CACHE_DURATION = 60
 export const MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES = 128 * 1024
 export const MARKDOWN_HTML_CACHE_MAX_HTML_BYTES = 256 * 1024
+// 站点地图的进程内记忆时长 (不是 Redis TTL): 加载成功后每个进程每小时至多整表扫描一次
+export const SITEMAP_CACHE_DURATION = 60 * 60

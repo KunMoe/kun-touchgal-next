@@ -280,16 +280,6 @@
       "count": 4
     }
   },
-  "scripts/dynamic-routes/getKunDynamicPatches.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "scripts/generateKunSitemap.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
   "scripts/generateOidcJwks.ts": {
     "no-console": {
       "count": 3

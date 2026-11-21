@@ -1,4 +1,3 @@
-import { execSync } from 'child_process'
 import { mkdir, readdir, copyFile, stat } from 'fs/promises'
 import path from 'path'
 
@@ -51,8 +50,6 @@ const waitForAllCopies = async (copyTasks: Promise<void>[]) => {
 
 const copyFiles = async () => {
   try {
-    execSync('pnpm build:sitemap', { stdio: 'inherit' })
-
     await waitForAllCopies([
       copyDirectory('public', path.join(standaloneDir, 'public')),
       copyDirectory(

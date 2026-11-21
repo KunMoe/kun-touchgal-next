@@ -11,6 +11,7 @@ import { generateKunMetadataTemplate as tagMetadata } from '~/app/tag/[id]/metad
 import { generateKunMetadataTemplate as userMetadata } from '~/app/user/[id]/metadata'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { KUN_ROUTE_POLICY, type KunCrawlPolicy } from '~/config/routePolicy'
+import { buildKunSitemap } from '~/server/sitemap/entries'
 import { kunDocumentTitle } from '~/utils/pageMetadata'
 import { APP_DIR, listKunPages } from './support/pages'
 import type { Metadata, ResolvedMetadata } from 'next'
@@ -234,6 +235,15 @@ const isNoindex = (metadata: ResolvedMetadata) =>
 // 首页自己不声明 metadata, 它解析出的就是根布局给的
 const rootRobots = production.get('/')!.robots
 
+// 用同一组参数展开的站点地图
+const submitted = new Set(
+  buildKunSitemap({
+    patches: [{ uniqueId: SAMPLE_PARAMS.id, resourceUpdateTime: new Date(0) }],
+    companyIds: [Number(SAMPLE_PARAMS.id)],
+    posts: [{ slug: SAMPLE_PARAMS.slug, date: '' }]
+  }).map((entry) => entry.url)
+)
+
 describe('重放的范围', () => {
   it('根布局的 metadata 来自 generateKunMetadata', () => {
     expect(readFileSync(join(APP_DIR, 'layout.tsx'), 'utf-8')).toMatch(
@@ -312,5 +322,12 @@ describe.each(chains)('$route', ({ route, pathname, layers }) => {
 
   it('测试站点上是 noindex', () => {
     expect(isNoindex(testSite.get(route)!)).toBe(true)
+  })
+
+  it('进不进站点地图与登记一致, 提交的地址就是页面的规范地址', () => {
+    expect(submitted.has(selfUrl)).toBe(policy === 'listed')
+    if (policy === 'listed') {
+      expect(metadata.alternates?.canonical?.url).toBe(selfUrl)
+    }
   })
 })
