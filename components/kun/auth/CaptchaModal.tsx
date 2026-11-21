@@ -1,9 +1,17 @@
 'use client'
 
-import toast from 'react-hot-toast'
-import { useEffect, useRef } from 'react'
-import { Modal, ModalBody, ModalContent } from '@heroui/react'
-import type { CapSolveEvent, CapWidget } from 'cap-widget'
+import { useEffect } from 'react'
+import {
+  Button,
+  CircularProgress,
+  Modal,
+  ModalBody,
+  ModalContent
+} from '@heroui/react'
+import { Check, CircleAlert } from 'lucide-react'
+import { cn } from '~/utils/cn'
+import { preloadKunCap, useKunCap } from '~/components/kun/auth/useKunCap'
+import type { KunCapState } from '~/components/kun/auth/useKunCap'
 
 interface CaptchaModalProps {
   isOpen: boolean
@@ -11,64 +19,96 @@ interface CaptchaModalProps {
   onSuccess: (code: string) => void
 }
 
+// 每个状态下按钮上的字与读屏播报的话。按钮的可访问名称就是可见的字, 不另写 aria-label
+const describeKunCap = (state: KunCapState) => {
+  switch (state.status) {
+    case 'loading':
+      return { label: '正在加载...', announcement: '' }
+    case 'idle':
+      return { label: '我是真人', announcement: '' }
+    case 'solving':
+      return { label: '正在验证...', announcement: '正在验证, 请稍候' }
+    case 'solved':
+      return { label: '验证通过', announcement: '验证通过, 您可以继续操作' }
+    case 'error':
+      return state.code === 'load_failed'
+        ? { label: '加载失败, 请点击重试', announcement: '加载失败, 请重试' }
+        : { label: '验证出错, 请点击重试', announcement: '验证出错, 请重试' }
+  }
+}
+
+// 按钮左侧 25px 的指示位: 空勾选框 → 进度环 → 对勾 / 出错
+const KunCapIndicator = ({ state }: { state: KunCapState }) => {
+  switch (state.status) {
+    case 'solving':
+      return (
+        <CircularProgress
+          aria-label="验证进度"
+          value={state.progress}
+          classNames={{ svg: 'size-[25px]', track: 'stroke-default-200' }}
+        />
+      )
+    case 'solved':
+      return (
+        <span className="flex size-full items-center justify-center rounded-full bg-success text-success-foreground">
+          <Check className="size-4" strokeWidth={3} />
+        </span>
+      )
+    case 'error':
+      return <CircleAlert className="size-full text-danger" />
+    default:
+      return (
+        <span className="size-full rounded-md border-small border-default-400 bg-default-100" />
+      )
+  }
+}
+
 export const KunCaptchaModal = ({
   isOpen,
   onClose,
   onSuccess
 }: CaptchaModalProps) => {
-  const widgetRef = useRef<CapWidget | null>(null)
+  const { state, canSolve, solve } = useKunCap(isOpen, onSuccess)
 
   useEffect(() => {
-    // 与 cap-widget 0.1.63 期望的 @cap.js/wasm@0.0.8 对应 (browser 构建与 0.0.7 逐字节相同),
-    // 升级 widget 时需同步更新 public/cap/cap_wasm_bg.wasm (加载失败会自动降级 JS 解题器)
-    window.CAP_CUSTOM_WASM_URL = '/cap/cap_wasm_bg.wasm'
-    // 注入 CSRF 头以通过 middleware 校验 (与 utils/kunFetch.ts 一致)
-    window.CAP_CUSTOM_FETCH = (input, init) => {
-      const headers = new Headers(init?.headers)
-      headers.set('X-Requested-With', 'kun-fetch')
-      return fetch(input, { ...init, headers, credentials: 'include' })
-    }
-    // 自定义元素注册依赖浏览器 API, 只能在客户端动态导入
-    import('cap-widget')
+    // 页面一挂载就取厂商的分块与 wasm, 打开弹窗时不用再等网络; 取不到留给打开时那一次去报
+    preloadKunCap().catch(() => {})
   }, [])
 
-  useEffect(() => {
-    const widget = widgetRef.current
-    if (!widget || !isOpen) {
-      return
-    }
-
-    const handleSolve = (event: CapSolveEvent) => {
-      onSuccess(event.detail.token)
-    }
-    const handleError = () => {
-      toast.error('人机验证出错, 请重试')
-    }
-
-    widget.addEventListener('solve', handleSolve)
-    widget.addEventListener('error', handleError)
-    return () => {
-      widget.removeEventListener('solve', handleSolve)
-      widget.removeEventListener('error', handleError)
-    }
-  }, [isOpen, onSuccess])
+  const { label, announcement } = describeKunCap(state)
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} placement="center" hideCloseButton>
       <ModalContent aria-label="人机验证" className="w-fit">
         <ModalBody className="items-center justify-center p-4">
-          <cap-widget
-            ref={widgetRef}
-            data-cap-api-endpoint="/api/auth/captcha/"
-            data-cap-i18n-initial-state="我是真人"
-            data-cap-i18n-verifying-label="正在验证..."
-            data-cap-i18n-solved-label="验证通过"
-            data-cap-i18n-error-label="验证出错, 请点击重试"
-            data-cap-i18n-verify-aria-label="点击进行人机验证"
-            data-cap-i18n-verifying-aria-label="正在验证, 请稍候"
-            data-cap-i18n-verified-aria-label="验证通过, 您可以继续操作"
-            data-cap-i18n-error-aria-label="验证出错, 请重试"
-          />
+          {/* 不可点时只标 aria-disabled (按下去由 solve 自己忽略), 焦点要留在按钮上:
+              isDisabled / isLoading 会落成原生 disabled, pointer-events-none 会让鼠标点击落到弹窗上,
+              两者都会把焦点从按钮挪走 */}
+          <Button
+            variant="bordered"
+            radius="lg"
+            disableRipple
+            className={cn(
+              'h-[58px] w-[260px] justify-start gap-[15px] border-small border-default-200 px-3.5 text-[15px] font-medium',
+              // HeroUI 基类的 outline-hidden 在 Tailwind 4.3 下把 --tw-outline-style 置成 none,
+              // 它自己的 data-[focus-visible=true]:outline-2 于是画不出焦点环; 这里显式给回 solid
+              'data-[focus-visible=true]:outline-solid',
+              !canSolve && 'cursor-default'
+            )}
+            aria-disabled={!canSolve}
+            aria-busy={state.status === 'loading' || state.status === 'solving'}
+            startContent={
+              <span className="flex size-[25px] shrink-0 items-center justify-center">
+                <KunCapIndicator state={state} />
+              </span>
+            }
+            onPress={solve}
+          >
+            {label}
+          </Button>
+          <span role="status" className="sr-only">
+            {announcement}
+          </span>
         </ModalBody>
       </ModalContent>
     </Modal>
