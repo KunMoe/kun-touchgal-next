@@ -106,7 +106,6 @@ overrides:
 patchedDependencies:
   '@heroui/tabs@2.2.20': 45008b2ff7c8d283dd9dde523eb1e026d57333a5f3c7fed5b72af07b7e08b8c2
   '@react-aria/i18n@3.12.10': 53bb21148230b673bdf1821505194080414ca1127a3acaa4b2dc23b071649e57
-  cap-widget@0.1.63: 979bdf90f0bda874b122482e45420454bd9e34bbc4a72698bcc28f91d75e5e8d
   next@16.4.6: 73de7766e0d62a223483575cb051264c7a4f6652edd1dc3aa9f5da1cbfeb8666
 
 importers:
@@ -196,7 +195,7 @@ importers:
         version: 1.9.4
       cap-widget:
         specifier: 0.1.63
-        version: 0.1.63(patch_hash=979bdf90f0bda874b122482e45420454bd9e34bbc4a72698bcc28f91d75e5e8d)
+        version: 0.1.63
       capjs-core:
         specifier: ^0.1.18
         version: 0.1.18
@@ -11563,7 +11562,7 @@ snapshots:
 
   canvas-confetti@1.9.4: {}
 
-  cap-widget@0.1.63(patch_hash=979bdf90f0bda874b122482e45420454bd9e34bbc4a72698bcc28f91d75e5e8d): {}
+  cap-widget@0.1.63: {}
 
   capjs-core@0.1.18:
     dependencies:
