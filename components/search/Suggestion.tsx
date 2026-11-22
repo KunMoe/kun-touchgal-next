@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState, useTransition } from 'react'
+import { useEffect, useState } from 'react'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
+import { useKunKeyedQuery } from '~/hooks/useKunKeyedQuery'
 import { Chip } from '@heroui/react'
 import { House, Key, Tag } from 'lucide-react'
 import { KunLoading } from '~/components/kun/Loading'
@@ -66,50 +67,39 @@ export const SearchSuggestion = ({
   setActiveIndex,
   navRef
 }: Props) => {
-  const [suggestions, setSuggestions] = useState<SearchSuggestionType[]>([])
   const [showAll, setShowAll] = useState(false)
-  const [isPending, startTransition] = useTransition()
   const queryArraySplitByBlank = query
     .trim()
     .split(/\s+/)
     .map((item) => item.trim())
     .filter(Boolean)
 
-  const fetchSuggestions = async (searchQuery: string) => {
-    if (!searchQuery.trim()) {
-      setSuggestions([])
-      return
-    }
-
-    startTransition(async () => {
-      const res = await kunFetchPost<KunResponse<SearchSuggestionType[]>>(
-        '/search/tag',
-        {
-          query: searchQuery
-            .trim()
-            .split(/\s+/)
-            .map((term) => term.trim())
-            .filter(Boolean)
-        }
-      )
-
-      kunErrorHandler(res, (value) => {
-        setSuggestions(value)
-      })
-    })
-  }
+  // 键是防抖后的词组以单个空格相连: 只差空白的输入不重取, 旧键的慢应答不会盖掉新键 (P29-03)
+  const suggestionKey = debouncedQuery
+    .trim()
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean)
+    .join(' ')
+  const suggestionQuery = useKunKeyedQuery({
+    key: suggestionKey,
+    enabled: suggestionKey !== '',
+    fetch: (key) =>
+      kunFetchPost<KunResponse<SearchSuggestionType[]>>('/search/tag', {
+        query: key.split(' ')
+      }),
+    onFailure: (message) => kunErrorHandler(message, () => {})
+  })
+  const isPending = suggestionQuery.status === 'loading'
+  // 只显示属于当前键的建议: 键为空、取数中或当前键失败时都不拿上一个键的结果充数
+  const suggestions =
+    !isPending && suggestionQuery.dataKey === suggestionKey
+      ? (suggestionQuery.data ?? [])
+      : []
 
   useEffect(() => {
     setShowAll(false)
   }, [query])
-
-  useEffect(() => {
-    if (debouncedQuery.trim()) {
-      fetchSuggestions(debouncedQuery)
-    } else {
-      setSuggestions([])
-    }
-  }, [debouncedQuery])
 
   useEffect(() => {
     setActiveIndex(-1)

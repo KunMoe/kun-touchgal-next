@@ -1,31 +1,21 @@
 'use client'
 
-import { FC, useEffect, useState } from 'react'
+import { FC } from 'react'
 import { StatsCard } from './StatsCard'
 import { kunFetchGet } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
+import { useKunKeyedQuery } from '~/hooks/useKunKeyedQuery'
 import { ADMIN_STATS_SUM_MAP } from '~/constants/admin'
 import type { SumData } from '~/types/api/admin'
 
 export const KunAdminSum: FC = () => {
-  const [sum, setSum] = useState<SumData>({
-    userCount: 0,
-    galgameCount: 0,
-    galgameResourceCount: 0,
-    galgamePatchResourceCount: 0,
-    galgameCommentCount: 0
+  // 常量键: 挂载时取一次。失败时显示 0
+  const sum = useKunKeyedQuery({
+    key: 'sum',
+    fetch: () => kunFetchGet<KunResponse<SumData>>('/admin/stats/sum'),
+    onFailure: (message) => kunErrorHandler(message, () => {})
   })
-  const [loading, setLoading] = useState(true)
-
-  const fetchSummaryData = async () => {
-    const res = await kunFetchGet<KunResponse<SumData>>('/admin/stats/sum')
-    kunErrorHandler(res, setSum)
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    fetchSummaryData()
-  }, [])
+  const loading = sum.status === 'loading'
 
   return (
     <div className="space-y-6">
@@ -36,7 +26,7 @@ export const KunAdminSum: FC = () => {
           <StatsCard
             key={key}
             title={title}
-            value={sum[key as keyof SumData]}
+            value={sum.data?.[key as keyof SumData] ?? 0}
             isLoading={loading}
           />
         ))}

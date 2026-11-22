@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useTransition } from 'react'
+import { useState, useTransition } from 'react'
 import {
   Button,
   Card,
@@ -19,15 +19,36 @@ import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { EditFolderModal } from './EditFolderModal'
 import { UserGalgameCard } from './Card'
 import { KunLoading } from '~/components/kun/Loading'
+import { KunListError } from '~/components/kun/ListError'
 import { KunNull } from '~/components/kun/Null'
 import toast from 'react-hot-toast'
 import { KunPagination } from '~/components/kun/Pagination'
+import { useKunPagedList } from '~/hooks/useKunPagedList'
 import type { UserFavoritePatchFolder } from '~/types/api/user'
 
 interface Props {
   initialFolders: UserFavoritePatchFolder[]
   pageUid: number
   currentUserUid: number
+}
+
+interface FavoriteQuery {
+  page: number
+  limit: number
+  folderId: number
+}
+
+const fetchFolderPatchPage = async (query: FavoriteQuery) => {
+  const res = await kunFetchGet<
+    KunResponse<{ patches: GalgameCard[]; total: number }>
+  >(`/user/profile/favorite/folder/patch`, {
+    folderId: query.folderId,
+    page: query.page,
+    limit: query.limit
+  })
+  return typeof res === 'string'
+    ? res
+    : { items: res.patches, total: res.total }
 }
 
 export const UserFavorite = ({
@@ -39,49 +60,27 @@ export const UserFavorite = ({
     useState<UserFavoritePatchFolder[]>(initialFolders)
   const [selectedFolder, setSelectedFolder] =
     useState<UserFavoritePatchFolder | null>(null)
-  const [patches, setPatches] = useState<GalgameCard[]>([])
-  // 首次成功返回前不渲染空态: 失败路径只 toast, 不得断言「收藏夹为空」
-  const [hasFetched, setHasFetched] = useState(false)
+  // folderId 在查询里: 切换收藏夹后上一夹的作品不会留在新夹的标题下 (P29-05)
+  const list = useKunPagedList<GalgameCard, FavoriteQuery>({
+    // 0 不是任何收藏夹的 id, 第一次点开收藏夹必然换查询
+    query: { page: 1, limit: 48, folderId: 0 },
+    getId: (galgame) => galgame.id,
+    // 移除收藏后: 本页删空且不在第 1 页时退一页, 否则存在下一页时静默补齐本页
+    // (只删本地并递减 total 的话, 删掉末页唯一的一条会停在超出总页数的页码上)
+    afterRemove: 'refillIfNext',
+    // 选中收藏夹之前不取数
+    enabled: selectedFolder !== null,
+    fetchPage: fetchFolderPatchPage
+  })
+  const loading = list.status === 'loading'
+  // 只给删除收藏夹的按钮用
   const [isPending, startTransition] = useTransition()
-  const [page, setPage] = useState(1)
-  const [total, setTotal] = useState(0)
 
   const {
     isOpen: isOpenFolder,
     onOpen: onOpenFolder,
     onClose: onCloseFolder
   } = useDisclosure()
-  // 陈旧响应守卫: 旧收藏夹请求挂起期间切换收藏夹/翻页, 慢响应不得覆盖新数据
-  const latestFetchRequestIdRef = useRef(0)
-
-  const fetchPatchesInFolder = async (folderId: number) => {
-    const requestId = latestFetchRequestIdRef.current + 1
-    latestFetchRequestIdRef.current = requestId
-    setHasFetched(false)
-    startTransition(async () => {
-      try {
-        const res = await kunFetchGet<
-          KunResponse<{ patches: GalgameCard[]; total: number }>
-        >(`/user/profile/favorite/folder/patch`, { folderId, page, limit: 48 })
-        if (requestId !== latestFetchRequestIdRef.current) {
-          return
-        }
-        kunErrorHandler(res, (value) => {
-          setPatches(value.patches)
-          setTotal(value.total)
-          setHasFetched(true)
-        })
-      } catch (error) {
-        errorReporter(error)
-      }
-    })
-  }
-
-  useEffect(() => {
-    if (selectedFolder) {
-      fetchPatchesInFolder(selectedFolder.id)
-    }
-  }, [page])
 
   const {
     isOpen: isOpenDelete,
@@ -109,18 +108,19 @@ export const UserFavorite = ({
 
   const handlePressFolderCard = (folder: UserFavoritePatchFolder) => {
     setSelectedFolder(folder)
-    if (page === 1) {
-      fetchPatchesInFolder(folder.id)
+    if (folder.id !== list.query.folderId) {
+      list.setQuery({ folderId: folder.id })
+    } else if (list.query.page !== 1) {
+      list.setPage(1)
     } else {
-      // 作废旧收藏夹在途请求, 防 setPage 触发 refetch 前的窗口期落地旧数据
-      latestFetchRequestIdRef.current += 1
-      setPage(1)
+      // 再次点开同一个收藏夹也重取第 1 页
+      list.refresh()
     }
     onOpenFolder()
   }
 
   const onRemoveFavorite = (patchId: number) => {
-    setPatches((prev) => prev.filter((p) => p.id !== patchId))
+    list.removeLocal([patchId])
   }
 
   const onEditFolderSuccess = (updatedFolder: UserFavoritePatchFolder) => {
@@ -209,11 +209,16 @@ export const UserFavorite = ({
 
             <ModalBody>
               <div className="space-y-3 min-h-72">
-                {isPending ? (
+                {loading ? (
                   <KunLoading hint="正在获取收藏数据..." />
+                ) : list.status === 'error' ? (
+                  <KunListError
+                    message={list.error ?? ''}
+                    onRetry={() => list.refresh()}
+                  />
                 ) : (
                   <div className="grid grid-cols-2 gap-2 sm:gap-6 lg:grid-cols-3 xl:grid-cols-4">
-                    {patches.map((galgame) => (
+                    {list.items.map((galgame) => (
                       <UserGalgameCard
                         key={galgame.id}
                         galgame={galgame}
@@ -226,17 +231,17 @@ export const UserFavorite = ({
                   </div>
                 )}
 
-                {!isPending && hasFetched && !patches.length && (
+                {list.status === 'ready' && !list.items.length && (
                   <KunNull message="收藏夹为空" />
                 )}
 
-                {!isPending && (
+                {!loading && (
                   <div className="flex justify-center">
                     <KunPagination
-                      total={Math.ceil(total / 48)}
-                      page={page}
-                      onPageChange={setPage}
-                      isLoading={isPending}
+                      total={Math.ceil(list.total / 48)}
+                      page={list.query.page}
+                      onPageChange={list.setPage}
+                      isLoading={loading}
                       disableScrollToTop
                     />
                   </div>
