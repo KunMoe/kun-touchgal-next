@@ -4,6 +4,7 @@ import {
   isEmailShaped,
   loginIdentifierSchema
 } from '~/validations/identifier'
+import { loginSchema } from '~/validations/auth'
 
 const LOGIN_MESSAGE = '请输入合法的邮箱格式, 用户名则应为 1~17 位任意字符'
 
@@ -95,5 +96,15 @@ describe('loginIdentifierSchema', () => {
   it('超过 17 个字符的邮箱照收', () => {
     const email = `${'k'.repeat(30)}@example.com`
     expect(loginIdentifierSchema.safeParse(email).success).toBe(true)
+  })
+
+  it('loginSchema 的 name 由它派生, 先 trim', () => {
+    const result = loginSchema.safeParse({
+      name: '  Mr.Pizza ',
+      password: 'pass1234',
+      captcha: '0123456789abcdef0123456789abcdef'
+    })
+    expect(result.success).toBe(true)
+    expect(result.data?.name).toBe('Mr.Pizza')
   })
 })
