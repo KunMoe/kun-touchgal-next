@@ -18,7 +18,7 @@ import {
 } from '~/server/storage/stagedUpload'
 import { deletePendingModerationTasks } from '~/server/moderation/submit'
 import { deletePendingAppeals } from '~/server/moderation/appeal'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
+import { recordKunChanges } from '~/server/cache/publish'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import {
   RESOURCE_DAILY_UPLOAD_LIMIT_MB,
@@ -279,17 +279,18 @@ export const recalcPatchType = async (
   tx?: Prisma.TransactionClient
 ): Promise<string> => {
   if (!tx) {
-    // 不传 tx 的兜底: 自开事务, 提交后再失效缓存 (与传 tx 时调用方的后置失效等价)
-    const result = await kunTx('patch.recalcType', async ({ tx: t }) => ({
-      uniqueId: await recalcPatchTypeLocked(patchId, t)
-    }))
+    // 不传 tx 的兜底: 自开事务, 提交后再失效缓存 (与传 tx 时调用方报告的 patch 变更等价)
+    const result = await kunTx('patch.recalcType', async (ctx) => {
+      const uniqueId = await recalcPatchTypeLocked(patchId, ctx.tx)
+      recordKunChanges(ctx, [{ kind: 'patch', patchId, uniqueId }])
+      return { uniqueId }
+    })
     // 回调里没有 fail, 走不到字符串结果
     if (typeof result === 'string') {
       throw new Error(result)
     }
-    await invalidatePatchContentCache(result.uniqueId).catch(() => undefined)
     return result.uniqueId
   }
-  // 传 tx: 返回 unique_id, 调用方须在事务提交后 invalidatePatchContentCache
+  // 传 tx: 返回 unique_id, 调用方用它报告 patch 变更 (recordKunChanges), 由规划器在提交后失效
   return recalcPatchTypeLocked(patchId, tx)
 }

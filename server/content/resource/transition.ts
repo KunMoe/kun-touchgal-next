@@ -1,5 +1,5 @@
 import { recalcPatchType } from '~/app/api/patch/resource/_helper'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
+import { recordKunChanges } from '~/server/cache/publish'
 import {
   enqueueSearchOutboxBatch,
   kickSearchOutboxDrain
@@ -62,10 +62,7 @@ export const transitionResources = async (
   // 可见集变了, 补丁的 type / language / platform 聚合要重算
   for (const patchId of patchIds) {
     const uniqueId = await recalcPatchType(patchId, tx)
-    // 事务内失效会被并发读回填旧值 (M-04), 所以放到提交之后
-    ctx.afterCommit(`patchContent:${uniqueId}`, () =>
-      invalidatePatchContentCache(uniqueId)
-    )
+    recordKunChanges(ctx, [{ kind: 'patch', patchId, uniqueId }])
   }
   // 搜索在事务内入箱, 与补丁变更原子提交; 提交后只需踢一次消费
   await enqueueSearchOutboxBatch(tx, patchIds)

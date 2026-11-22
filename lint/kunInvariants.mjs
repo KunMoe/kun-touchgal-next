@@ -148,6 +148,10 @@ const HTTP_METHODS = [
   'OPTIONS'
 ]
 
+// inv-cache-01。资源族的四个失效 helper; 这些名字在仓库里只指这四个函数
+const RESOURCE_CACHE_HELPER =
+  '/^(invalidatePatchResourceDetailCache|invalidateResourceListCache|invalidateResourceStatsListCache|invalidateUserPendingResourceCache)$/'
+
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
   {
@@ -1126,6 +1130,51 @@ export const KUN_INVARIANTS = [
         "import { searchGalgames } from '~/server/galgame/search'",
         "import { SEARCH_QUERY_TIMEOUT_MS } from '~/server/search/query'",
         "import type { GalgameIndexQuery } from '~/server/search/query'"
+      ]
+    }
+  },
+  {
+    id: 'inv-cache-01',
+    aliases: ['T15'],
+    statement:
+      '资源族的四个失效 helper (invalidatePatchResourceDetailCache、invalidateResourceListCache、invalidateResourceStatsListCache、invalidateUserPendingResourceCache) 只许 server/cache/** 引用; 写路径在 kunTx 里用 recordKunChanges 报告改了哪一行、前后是什么状态, 失效哪些缓存由 server/cache/plan.ts 决定',
+    reason:
+      '资源的「公开 / 上架 / 待审」闸门曾在 10 多个处理器里各抄一份, 两天里被点修五次, 抄本之间留下过注释自认恒不成立的分支和过时的理由。规划器把闸门收成一份由表驱动测试覆盖的纯函数; 直接调 helper 就又多出一份闸门。按名字认 (导入、转出、成员访问、解构, 含 import() 的结果), 不按路径: 这四个名字在仓库里只指这四个函数, 而 ./cache 这类相对路径在各目录里指不同的模块。迁移脚本 (migration/、scripts/) 是一次性的批处理, 不在此列',
+    removeWhen:
+      '这四个 helper 不再从各自的缓存模块导出 (只由 server/cache 持有)',
+    ignores: [
+      'server/cache/**',
+      'migration/**',
+      'scripts/**',
+      '**/__tests__/**'
+    ],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `ImportSpecifier[imported.name=${RESOURCE_CACHE_HELPER}]`,
+        `ExportSpecifier[local.name=${RESOURCE_CACHE_HELPER}]`,
+        `MemberExpression[computed=false][property.name=${RESOURCE_CACHE_HELPER}]`,
+        `MemberExpression[computed=true][property.value=${RESOURCE_CACHE_HELPER}]`,
+        // 解构: 命名空间对象或 await import(...) 的结果
+        `ObjectPattern > Property${keyIs(RESOURCE_CACHE_HELPER)}`
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import { invalidateResourceListCache } from '~/app/api/resource/cache'",
+        "import { invalidatePatchResourceDetailCache } from './cache'",
+        "import { invalidateUserPendingResourceCache as drop } from '../utils/pendingResourceCache'",
+        "import * as cache from '~/app/api/resource/cache'\nvoid cache.invalidateResourceStatsListCache()",
+        "import * as cache from '~/app/api/resource/cache'\nvoid cache['invalidateResourceListCache']()",
+        "import * as cache from '~/app/api/resource/cache'\nconst { invalidateResourceListCache } = cache",
+        "const { invalidatePatchResourceDetailCache: drop } = await import('~/app/api/patch/resource/cache')",
+        "export { invalidateResourceStatsListCache } from '~/app/api/resource/cache'"
+      ],
+      good: [
+        "import { recordKunChanges } from '~/server/cache/publish'",
+        "import { getResourceListCacheKey } from '~/app/api/resource/cache'",
+        "import * as cache from '~/app/api/resource/cache'\nvoid cache.getResourceListCacheKey"
       ]
     }
   }

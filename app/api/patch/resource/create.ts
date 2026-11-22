@@ -7,11 +7,7 @@ import {
   bindUploadedResource,
   recalcPatchType
 } from './_helper'
-import { invalidatePatchResourceDetailCache } from './cache'
-import { invalidateResourceListCache } from '~/app/api/resource/cache'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
-import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
 import {
@@ -24,7 +20,9 @@ import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkd
 import { can } from '~/constants/permission'
 import { linkStorageGateError } from './storageGate'
 import { kunTx } from '~/server/db/tx'
+import { recordKunChanges } from '~/server/cache/publish'
 import type { PatchResource } from '~/types/api/patch'
+import type { ResourceStatus } from '~/constants/contentStatus'
 import type { KunActor } from '~/constants/role'
 import type { KunTxContext } from '~/server/db/tx'
 
@@ -150,7 +148,8 @@ export const createPatchResource = async (
   }
 
   // 回调单独成句, 不写进 kunTx 的参数里: 带着选项内联的话 prettier 会把整段事务体重缩进
-  const createInTx = async ({ tx: prisma }: KunTxContext) => {
+  const createInTx = async (ctx: KunTxContext) => {
+    const { tx: prisma } = ctx
     const newResource = await prisma.patch_resource.create({
       data: {
         patch_id: patchId,
@@ -240,6 +239,20 @@ export const createPatchResource = async (
       }
     }
 
+    recordKunChanges(ctx, [
+      { kind: 'patch', patchId, uniqueId: currentPatch.unique_id },
+      {
+        kind: 'resource',
+        id: newResource.id,
+        patchId,
+        ownerId: uid,
+        before: null,
+        after: {
+          status: newResource.status as ResourceStatus,
+          section: newResource.section
+        }
+      }
+    ])
     return resource
   }
   const resource = await kunTx('resource.create', createInTx, {
@@ -251,23 +264,7 @@ export const createPatchResource = async (
   }
 
   queueSearchSync(patchId)
-  // 事务提交后失效: 事务内失效会被并发读回填旧值 (M-04), 且 Redis 故障不应回滚写入
-  await invalidatePatchContentCache(currentPatch.unique_id).catch(
-    () => undefined
-  )
   await invalidateUserSession(uid)
-
-  if (resource.status === 0) {
-    await invalidatePatchResourceDetailCache(patchId)
-    if (resource.section === 'patch') {
-      await invalidateResourceListCache()
-    }
-  }
-
-  // 新资源进入待审核 (2/3): 作者的 hasPendingResource 由 false 翻真, 立即失效
-  if (resource.status === 2 || resource.status === 3) {
-    await invalidateUserPendingResourceCache(uid)
-  }
 
   if (needApproval) {
     await createMessage({

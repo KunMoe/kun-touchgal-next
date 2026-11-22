@@ -262,6 +262,8 @@ describe('资源写入按 section 分派缓存失效', () => {
 
     expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
     expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()
+    // 补丁详情照样失效: 新建写了 patch 的 resource_update_time 并重算了聚合
+    expect(invalidatePatchContentCacheMock.mock.calls).toEqual([['patch-10']])
   })
 
   it('更新 section=galgame 的公开资源只失效详情缓存', async () => {

@@ -7,10 +7,6 @@ import {
   enqueueResourceLinkDeletions,
   recalcPatchType
 } from './_helper'
-import { invalidatePatchResourceDetailCache } from './cache'
-import { invalidateResourceListCache } from '~/app/api/resource/cache'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
-import { invalidateUserPendingResourceCache } from '~/app/api/utils/pendingResourceCache'
 import { enqueueSearchOutbox, queueSearchSync } from '~/server/search/sync'
 import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
 import {
@@ -26,6 +22,7 @@ import { can } from '~/constants/permission'
 import { markResourcePendingReview } from '~/server/content/resource/edit'
 import { linkStorageGateError } from './storageGate'
 import { kunTx } from '~/server/db/tx'
+import { recordKunChanges } from '~/server/cache/publish'
 import type { ResourceStatus } from '~/constants/contentStatus'
 import type { ContentGuard } from '~/server/content/guard'
 import type { PatchResource } from '~/types/api/patch'
@@ -469,47 +466,36 @@ export const updatePatchResource = async (
       }
     }
 
-    // previous 是 update 覆写前的权威行状态 (行锁下读到的): 提交后的失效闸门读它,
-    // 不读事务外快照
-    return {
-      updatedResource: resourceResponse,
-      previousStatus: previous.status,
-      previousSection: previous.section
-    }
+    // 改之前的状态取行锁下读到的 previous, 不取事务外快照
+    recordKunChanges(ctx, [
+      { kind: 'patch', patchId, uniqueId: newResource.patch.unique_id },
+      {
+        kind: 'resource',
+        id: resourceId,
+        patchId,
+        ownerId: resource.user_id,
+        before: {
+          status: previous.status as ResourceStatus,
+          section: previous.section
+        },
+        after: {
+          status: status as ResourceStatus,
+          section: newResource.section
+        }
+      }
+    ])
+    return resourceResponse
   }
-  const updated = await kunTx('resource.update', updateInTx, {
+  const updatedResource = await kunTx('resource.update', updateInTx, {
     // 没有提交时冲突分支的事务内清理入队也随之撤销: 已重绑对象在此兜底清理
     onRollback: () =>
       abandonBoundResourceObjects([...boundLinks.values()], patchId)
   })
-  if (typeof updated === 'string') {
-    return updated
+  if (typeof updatedResource === 'string') {
+    return updatedResource
   }
-  const { updatedResource, previousStatus, previousSection } = updated
 
   queueSearchSync(patchId)
-  // 事务提交后失效: 事务内失效会被并发读回填旧值 (M-04), 且 Redis 故障不应回滚写入
-  await invalidatePatchContentCache(updatedResource.uniqueId).catch(
-    () => undefined
-  )
-
-  const wasPublic = previousStatus === 0
-  const isPublic = updatedResource.status === 0
-  if (wasPublic || isPublic) {
-    await invalidatePatchResourceDetailCache(patchId)
-  }
-
-  const wasListed = wasPublic && previousSection === 'patch'
-  const isListed = isPublic && updatedResource.section === 'patch'
-  if (wasListed || isListed) {
-    await invalidateResourceListCache()
-  }
-
-  // 编辑触发审核拦截 (0→3): 作者的 hasPendingResource 由 false 翻真, 立即失效
-  if (previousStatus !== 3 && updatedResource.status === 3) {
-    await invalidateUserPendingResourceCache(resource.user_id)
-  }
-
   // 即时消费删除出箱；抢不到锁则由定时任务兜底
   kickS3DeletionDrain()
 

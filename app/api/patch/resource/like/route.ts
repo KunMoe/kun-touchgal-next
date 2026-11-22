@@ -4,8 +4,7 @@ import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { createDedupMessage } from '~/app/api/utils/message'
-import { invalidateResourceStatsListCache } from '~/app/api/resource/cache'
-import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
+import { recordKunChanges } from '~/server/cache/publish'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 
@@ -57,7 +56,8 @@ const toggleResourceLike = async (
   // deleteMany + createMany(skipDuplicates) 使并发双击不会触发 P2002/P2025
   const response = await kunTx(
     'resource.like',
-    async ({ tx }) => {
+    async (ctx) => {
+      const { tx } = ctx
       // 串行化同一用户的并发 toggle, 理由与 ::int 强转的必要性见 rating/like/route.ts
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LIKE_LOCK_NAMESPACE}::int, ${uid}::int)`
 
@@ -92,6 +92,13 @@ const toggleResourceLike = async (
         where: { id: resource.user_id },
         data: { moemoepoint: { increment: isRemoved ? -1 : 1 } }
       })
+      recordKunChanges(ctx, [
+        {
+          kind: 'resourceReaction',
+          patchId: resource.patch_id,
+          reaction: 'like'
+        }
+      ])
 
       return !isRemoved
     },
@@ -106,9 +113,6 @@ const toggleResourceLike = async (
   await invalidateUserSession(resource.user_id)
   // 点赞创建通知、取消点赞删除通知, 两支都改资源作者的未读状态, 提交后失效 (L-01)
   await invalidateUnread(resource.user_id).catch(() => undefined)
-  await invalidateResourceStatsListCache()
-  // 详情缓存内嵌 likeCount 且版本键按 patch 分片, 全站 stats 版本不再覆盖它
-  await invalidatePatchResourceDetailCache(resource.patch_id)
   return response
 }
 

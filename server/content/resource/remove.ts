@@ -3,7 +3,7 @@ import {
   enqueueResourceLinkDeletions,
   recalcPatchType
 } from '~/app/api/patch/resource/_helper'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
+import { recordKunChanges } from '~/server/cache/publish'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { deleteOrphanReports } from '~/server/report/pending'
 import {
@@ -130,10 +130,7 @@ export const executeResourceRemoval = async (
   )
   for (const patchId of patchIds) {
     const uniqueId = await recalcPatchType(patchId, tx)
-    // 事务内失效会被并发读回填旧值 (M-04), 所以放到提交之后
-    ctx.afterCommit(`patchContent:${uniqueId}`, () =>
-      invalidatePatchContentCache(uniqueId)
-    )
+    recordKunChanges(ctx, [{ kind: 'patch', patchId, uniqueId }])
   }
   // 搜索与 S3 删除都在事务内入箱, 与行删除原子提交; 提交后只需踢一次消费
   await enqueueSearchOutboxBatch(tx, patchIds)

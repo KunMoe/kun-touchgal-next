@@ -291,6 +291,8 @@ describe('更新资源按 update 前的行锁状态分派缓存失效', () => {
     expect(invalidatePatchResourceDetailCacheMock).not.toHaveBeenCalled()
     expect(invalidateResourceListCacheMock).not.toHaveBeenCalled()
     expect(invalidateUserPendingResourceCacheMock).not.toHaveBeenCalled()
+    // 补丁详情照样失效: 编辑写了 patch 的 resource_update_time 并重算了聚合
+    expect(invalidatePatchContentCacheMock.mock.calls).toEqual([['kun-10']])
   })
 
   // 内容更新 (第一条语句) 返回的行仍是公开态; 转待审核是随后单独的一条写入。响应里的

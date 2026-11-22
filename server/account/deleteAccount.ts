@@ -11,8 +11,7 @@ import {
 import { getUserAvatarKeys } from '~/app/api/user/setting/_upload'
 import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
-import { invalidatePatchResourceDetailCache } from '~/app/api/patch/resource/cache'
-import { invalidateResourceStatsListCache } from '~/app/api/resource/cache'
+import { recordKunChanges } from '~/server/cache/publish'
 import { COMMENT_STATUS, RESOURCE_STATUS } from '~/constants/contentStatus'
 import { ACCOUNT_PURGERS, ACCOUNT_PURGE_ORDER } from './purgers'
 import type { Prisma } from '~/prisma/generated/prisma/client'
@@ -23,6 +22,7 @@ import type {
 } from '~/types/api/admin'
 import type { PurgeCountDb } from './purgers'
 import type { CascadedUserReference } from './userReferences'
+import type { KunChange } from '~/server/cache/changes'
 
 // 账号删除 (全仓唯一的 user.delete)。三步, 各自是独立的事务, 中途失败或超出预算都可以重跑续上:
 //   1. 封禁先行: status=2 与「开始删除」日志在同一事务里, 提交之后删光会话。此后该账号的新请求都被
@@ -52,12 +52,16 @@ const ACCOUNT_DELETION_BUDGET_MS = 20_000
 // 收尾在锁下发现还有残余 (在途请求刚提交的内容) 时回到第 2 步, 最多来回这么多轮
 const ACCOUNT_FINALIZE_ROUNDS = 3
 
-interface CascadeProjection {
+type CascadeProjection = {
   // 收尾事务里、user 行锁下收集受影响的 patch
   collect(tx: Prisma.TransactionClient, uid: number): Promise<number[]>
-  // 提交之后失效
-  invalidate(patchIds: number[]): Promise<unknown>
-}
+} &
+  // 报告给缓存规划器的变更, 由它决定提交后失效什么
+  (
+    | { changes(patchIds: number[]): KunChange[] }
+    // 规划器还没接上的族 (T15 S3): 提交之后直接失效
+    | { invalidate(patchIds: number[]): Promise<unknown> }
+  )
 
 const patchIdsOf = (rows: Array<{ patch_id: number }>) =>
   rows.map((row) => row.patch_id)
@@ -65,7 +69,7 @@ const patchIdsOf = (rows: Array<{ patch_id: number }>) =>
 // cascade 行里被共享缓存内嵌的部分: 库级联删掉这些行, 缓存里的计数不会跟着变。没登记的 cascade
 // 行没有被共享缓存内嵌, 或缓存本身足够短 (站内信未读标记 30 秒)
 const CASCADE_PROJECTIONS = {
-  // 资源详情缓存内嵌点赞数、资源统计列表按点赞数排序, 与点赞入口失效的一致。详情缓存只装公开资源
+  // 与点赞入口报告的是同一个变更。资源详情缓存只装公开资源
   'user_patch_resource_like_relation.user_id': {
     collect: async (tx, uid) =>
       patchIdsOf(
@@ -78,12 +82,12 @@ const CASCADE_PROJECTIONS = {
           distinct: ['patch_id']
         })
       ),
-    invalidate: async (patchIds) => {
-      await Promise.all(
-        patchIds.map((patchId) => invalidatePatchResourceDetailCache(patchId))
-      )
-      await invalidateResourceStatsListCache()
-    }
+    changes: (patchIds) =>
+      patchIds.map((patchId) => ({
+        kind: 'resourceReaction',
+        patchId,
+        reaction: 'like'
+      }))
   },
   // 评论分页缓存内嵌点赞数, 只装公开评论
   'user_patch_comment_like_relation.user_id': {
@@ -195,7 +199,12 @@ const finalizeAccountDeletion = (user: DeletedUserSnapshot, actor: KunActor) =>
 
       for (const [ref, projection] of Object.entries(CASCADE_PROJECTIONS)) {
         const patchIds = await projection.collect(tx, user.id)
-        if (patchIds.length) {
+        if (!patchIds.length) {
+          continue
+        }
+        if ('changes' in projection) {
+          recordKunChanges(ctx, projection.changes(patchIds))
+        } else {
           ctx.afterCommit(`cascade:${ref}`, () =>
             projection.invalidate(patchIds)
           )

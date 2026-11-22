@@ -2,13 +2,11 @@ import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { enqueueResourceLinkDeletions } from './resource/_helper'
-import { invalidateResourceListCache } from '~/app/api/resource/cache'
-import { invalidatePatchContentCache } from '~/app/api/patch/cache'
-import { invalidateTagListCache } from '~/app/api/tag/cache'
-import { invalidateCompanyListCache } from '~/app/api/company/cache'
+import { recordKunChanges } from '~/server/cache/publish'
 import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { queueSearchRemove, enqueueSearchOutbox } from '~/server/search/sync'
 import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
+import type { ResourceStatus } from '~/constants/contentStatus'
 
 const patchIdSchema = z.object({
   patchId: z.coerce.number().min(1).max(9999999)
@@ -24,7 +22,8 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
     return '未找到该游戏'
   }
 
-  const deleted = await kunTx('patch.delete', async ({ tx: prisma }) => {
+  const failure = await kunTx('patch.delete', async (ctx) => {
+    const { tx: prisma } = ctx
     // 升序锁全部资源行: 与 update 的 FOR UPDATE 互斥, 锁序 (先 patch_resource 后
     // patch) 与 update 的「锁资源行 → patch.update」一致 —— 不可先锁 patch 行,
     // 会与 update 构成 AB-BA 死锁. links 必须锁下重读: 事务外快照与级联删除之间的
@@ -49,9 +48,6 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
           hash: link.hash,
           s3Key: link.s3_key
         }))
-    )
-    const shouldInvalidateResourceList = patchResources.some(
-      (resource) => resource.status === 0 && resource.section === 'patch'
     )
 
     // 级联删除会带走该游戏的全部资源/评论/评价, 先收集 id 供删除后清理未决审核任务与申诉
@@ -83,28 +79,27 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
       resource: patchResources.map((resource) => resource.id)
     })
 
-    return { shouldInvalidateResourceList }
+    // 资源行的状态取自上面锁下的重读
+    recordKunChanges(ctx, [
+      { kind: 'patchDeleted', patchId, uniqueId: patch.unique_id },
+      ...patchResources.map((resource) => ({
+        kind: 'resource' as const,
+        id: resource.id,
+        patchId,
+        ownerId: resource.user_id,
+        before: {
+          status: resource.status as ResourceStatus,
+          section: resource.section
+        },
+        after: null
+      }))
+    ])
   })
-  if (typeof deleted === 'string') {
-    return deleted
+  if (typeof failure === 'string') {
+    return failure
   }
 
   queueSearchRemove(patchId)
-
-  // 级联删除经 DB 触发器递减 tag/company 计数, 故需失效列表缓存;
-  // content/introduction 缓存键由 URL 中的 unique_id 构成, 删除后仍可达,
-  // 不失效则幽灵详情页存活至 TTL 过期
-  await Promise.all([
-    invalidateTagListCache(),
-    invalidateCompanyListCache(),
-    invalidatePatchContentCache(patch.unique_id).catch(() => undefined)
-  ])
-
-  // 不失效 patch 资源详情缓存: 该缓存按 patch_id 分键, 补丁连同详情页一并消失后其键
-  // 不再可达, 而版本号是全站共享的, 递增只会白清其他补丁的缓存
-  if (deleted.shouldInvalidateResourceList) {
-    await invalidateResourceListCache()
-  }
 
   // 即时消费删除出箱；抢不到锁则由定时任务兜底
   kickS3DeletionDrain()

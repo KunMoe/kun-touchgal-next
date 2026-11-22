@@ -15,6 +15,7 @@ const {
   kickDrainMock,
   invalidateCacheMock,
   invalidateContentMock,
+  invalidatePendingMock,
   queueSearchRemoveMock
 } = vi.hoisted(() => ({
   findPatchMock: vi.fn(),
@@ -31,6 +32,7 @@ const {
   kickDrainMock: vi.fn(),
   invalidateCacheMock: vi.fn(),
   invalidateContentMock: vi.fn(),
+  invalidatePendingMock: vi.fn(),
   queueSearchRemoveMock: vi.fn()
 }))
 
@@ -66,6 +68,10 @@ vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCache: invalidateContentMock
 }))
 
+vi.mock('~/app/api/utils/pendingResourceCache', () => ({
+  invalidateUserPendingResourceCache: invalidatePendingMock
+}))
+
 vi.mock('~/server/moderation/submit', () => ({
   deletePendingModerationTasks: deleteTasksMock
 }))
@@ -84,6 +90,7 @@ import { deletePatchById } from '~/app/api/patch/delete'
 const resource = (id: number, status: number, section: string) => ({
   id,
   patch_id: 7,
+  user_id: 100 + id,
   status,
   section,
   links: [
@@ -174,6 +181,20 @@ describe('deletePatchById', () => {
     await expect(deletePatchById({ patchId: 7 })).resolves.toEqual({})
 
     expect(invalidateCacheMock).not.toHaveBeenCalled()
+  })
+
+  // 作者的待审标记 (hasPendingResource) 随待初审 / 待审核资源一起消失
+  it('invalidates the pending flag of owners whose awaiting resources are cascaded', async () => {
+    findResourcesMock.mockResolvedValue([
+      resource(1, 0, 'patch'),
+      resource(2, 2, 'patch'),
+      resource(3, 3, 'game'),
+      resource(4, 1, 'game')
+    ])
+
+    await expect(deletePatchById({ patchId: 7 })).resolves.toEqual({})
+
+    expect(invalidatePendingMock.mock.calls).toEqual([[102], [103]])
   })
 
   it('returns an error message when the patch does not exist', async () => {
