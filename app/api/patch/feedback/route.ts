@@ -32,5 +32,6 @@ const createFeedback = async (
 export const POST = kunRoute.post({
   auth: 'user',
   input: createPatchFeedbackSchema,
+  abuse: ['feedback.create'],
   handler: ({ input, actor }) => createFeedback(input, actor.uid, actor.name)
 })

@@ -15,6 +15,7 @@ export const GET = kunRoute.get({
 export const POST = kunRoute.post({
   auth: 'user',
   input: createConversationSchema,
+  abuse: ['conversation.open'],
   handler: async ({ input, actor: payload }) =>
     getOrCreateConversation(input, payload)
 })

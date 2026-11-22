@@ -27,6 +27,7 @@ export const POST = kunRoute.post({
   auth: 'user',
   params: ({ id }) => parseConversationId(id),
   input: sendPrivateMessageSchema,
+  abuse: ['message.send'],
   handler: async ({ params: conversationId, input, actor: payload }) =>
     sendMessage(conversationId, input, payload.uid)
 })

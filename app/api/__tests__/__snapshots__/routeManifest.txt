@@ -87,12 +87,12 @@ GET /api/home                                            optional
 GET /api/message/all                                     user
 PUT /api/message/conversation/[id]/read                  user
 GET /api/message/conversation/[id]                       user
-POST /api/message/conversation/[id]                      user
+POST /api/message/conversation/[id]                      user abuse=message.send
 PUT /api/message/conversation/[id]                       user
 DELETE /api/message/conversation/[id]                    user
 GET /api/message/conversation/check                      user
 GET /api/message/conversation                            user
-POST /api/message/conversation                           user
+POST /api/message/conversation                           user abuse=conversation.open
 PUT /api/message/read                                    user
 DELETE /api/message/read                                 user
 POST /api/message                                        public
@@ -100,13 +100,13 @@ GET /api/message/unread                                  user
 POST /api/patch/banner                                   user capability=banner.edit form
 PUT /api/patch/comment/like                              user
 GET /api/patch/comment/markdown                          user
-POST /api/patch/comment/report                           user
+POST /api/patch/comment/report                           user abuse=report.create
 GET /api/patch/comment                                   user legacyDeny.unauthenticated=用户登录失效
-POST /api/patch/comment                                  user
+POST /api/patch/comment                                  user abuse=content.comment
 PUT /api/patch/comment                                   user
 DELETE /api/patch/comment                                user
 PUT /api/patch/favorite                                  user
-POST /api/patch/feedback                                 user
+POST /api/patch/feedback                                 user abuse=feedback.create
 POST /api/patch/introduction/company/fetch               user capability=company.manage legacyDeny.forbidden=您没有权限执行此操作
 POST /api/patch/introduction/company                     user capability=company.manage
 PUT /api/patch/introduction/company                      user capability=company.manage
@@ -115,9 +115,9 @@ POST /api/patch/introduction/tag                         user capability=tag.man
 PUT /api/patch/introduction/tag                          user capability=tag.manage
 GET /api/patch/moyu                                      public
 PUT /api/patch/rating/like                               user legacyDeny.unauthenticated=请先登录
-POST /api/patch/rating/report                            user
+POST /api/patch/rating/report                            user abuse=report.create
 GET /api/patch/rating                                    user
-POST /api/patch/rating                                   user
+POST /api/patch/rating                                   user abuse=content.rating
 PUT /api/patch/rating                                    user
 DELETE /api/patch/rating                                 user
 PUT /api/patch/resource/download                         optional

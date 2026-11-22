@@ -27,6 +27,10 @@ vi.mock('~/app/api/utils/parseQuery', () => ({
   kunParsePostBody: kunParsePostBodyMock
 }))
 
+// 路由声明了频率预算: 不 mock 的话会去连真实 Redis (连上就写计数, 连不上就放行), 都不该在单测里发生
+vi.mock('~/server/abuse/budget', () => ({
+  kunAbuseGate: vi.fn(async () => null)
+}))
 vi.mock('~/middleware/_verifyHeaderCookie', () => ({
   verifyHeaderCookie: verifyHeaderCookieMock
 }))

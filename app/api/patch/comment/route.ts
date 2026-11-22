@@ -27,6 +27,7 @@ export const GET = kunRoute.get({
 export const POST = kunRoute.post({
   auth: 'user',
   input: patchCommentCreateSchema,
+  abuse: ['content.comment'],
   handler: ({ input, actor }) => createPatchComment(input, actor)
 })
 

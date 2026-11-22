@@ -76,5 +76,6 @@ const createReport = async (
 export const POST = kunRoute.post({
   auth: 'user',
   input: createPatchCommentReportSchema,
+  abuse: ['report.create'],
   handler: ({ input, actor }) => createReport(input, actor.uid)
 })
