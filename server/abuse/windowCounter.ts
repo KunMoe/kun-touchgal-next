@@ -7,8 +7,11 @@ import { evalKvScript } from '~/lib/redis'
 // 再全部计数, 所以 N 个并发请求不会同时通过检查:
 // - 窗口从第一次计数起算, 之后的计数不续期
 // - 任何一个 enforce 组的窗口装不下这组的 cost, 整次拒绝, 哪个窗口都不加
-// - 不 enforce 的组 (观察期) 装不下时照常放行, 只记进统计; 那个窗口这次不计数, 与 enforce
-//   之后被拒的请求不计数一致, 观察期里「装不下」的次数就是 enforce 之后会被拒的次数
+// - 不 enforce 的组 (观察期) 有窗口装不下时照常放行, 但这组的窗口一个都不加: 与它 enforce 之后
+//   拒掉这次请求时一样, 这组的计数器才与 enforce 之后走得一模一样, 观察期里记下的「装不下」
+//   就是这组改成 enforce 之后会多拒的次数
+// - 统计只记这次请求的实际结局: 放行时每组记 total, 装不下的观察组再记 exceeded; 被拒时只记
+//   拒绝它的那几组 (enforce 且装不下), 别的组不记 —— 这次请求不论它们怎样都会被拒
 // - 组的止损键值为 off 时, 这组既不检查也不计数, 也不记统计
 // 脚本只用 GET / INCRBY / EXPIRE / TTL / PTTL / HINCRBY / DEL (生产是 Redis 8.0, 这些都是
 // 2.x 就有的命令)。语义由真 Redis 契约测试守护 (__tests__/windowCounter.redis.test.ts,
@@ -29,8 +32,7 @@ export interface KunCounterGroup {
   cost?: number
   // false 即观察期: 装不下也放行
   enforce: boolean
-  // 统计用的 hash: total 是这组被检查的次数, exceeded 是其中装不下的次数。ttlSeconds 只在
-  // hash 刚建出来时设
+  // 统计用的 hash: total 与 exceeded, 记法见文件头。ttlSeconds 只在 hash 刚建出来时设
   stats?: { key: string; ttlSeconds: number }
   // 值为 off 时这组既不检查也不计数 (止损开关; 不带 TTL, 不会被 volatile-* 淘汰)
   overrideKey?: string
@@ -43,10 +45,12 @@ export interface KunCounterGuard {
 }
 
 export type KunCounterReservation =
-  // remaining 按各组窗口依次展开后的顺序: 本次之后各窗口还剩多少。观察期装不下的窗口是
-  // 负数 (还差多少), 关掉的组的窗口按满额报
+  // remaining 按各组窗口依次展开后的顺序: 本次之后各窗口还剩多少。观察组装不下时这组都没
+  // 计数, 装不下的窗口报负数 (还差多少); 关掉的组的窗口按满额报
   | { status: 'reserved'; remaining: number[] }
-  // group 是组下标, window 是展开后的窗口下标 (都从 0 起); retryAfterSec 是那个窗口还剩多久
+  // group / window 是第一个装不下的 enforce 窗口所在的组与它展开后的下标 (都从 0 起);
+  // retryAfterSec 取所有装不下的 enforce 窗口里还剩最久的那个: 只报第一个的话, 到点重试
+  // 还会被更长的窗口拒掉
   | {
       status: 'exceeded'
       group: number
@@ -59,8 +63,8 @@ export type KunCounterReservation =
 // KEYS = 各组依次: [统计键] [止损键] 窗口键...; 带 guard 时最后再加 guard 键
 // ARGV = 是否带 guard, guard 期望值, 组数; 每组六项: 窗口数, cost, 是否 enforce, 是否有统计键,
 // 统计键 TTL, 是否有止损键; 之后每个窗口三项: limit, 窗口秒数, 是否随 guard 过期
-// 回复: {1, 各窗口剩余...} 放行; {2, 窗口下标, 组下标, 该窗口 PTTL} 拒绝 (下标从 1 起);
-// {0} guard 不在; {-1} guard 的值不对
+// 回复: {1, 各窗口剩余...} 放行; {2, 窗口下标, 组下标, 重试毫秒数} 拒绝 (下标从 1 起;
+// 键不在或没有 TTL 时那个窗口按整个窗口算); {0} guard 不在; {-1} guard 的值不对
 const RESERVE_SCRIPT = `
   local groupCount = tonumber(ARGV[3])
   local groups = {}
@@ -127,21 +131,42 @@ const RESERVE_SCRIPT = `
     end
   end
 
-  for _, group in ipairs(groups) do
-    if group.stats and not group.off then
-      redis.call("hincrby", group.stats, "total", 1)
-      if group.full then
-        redis.call("hincrby", group.stats, "exceeded", 1)
-      end
-      if redis.call("ttl", group.stats) < 0 then
-        redis.call("expire", group.stats, group.statsTtl)
-      end
+  local function record(group)
+    redis.call("hincrby", group.stats, "total", 1)
+    if group.full then
+      redis.call("hincrby", group.stats, "exceeded", 1)
+    end
+    if redis.call("ttl", group.stats) < 0 then
+      redis.call("expire", group.stats, group.statsTtl)
     end
   end
 
   if denied then
-    local window = windows[denied]
-    return {2, denied, window.group, redis.call("pttl", window.key)}
+    local retryMs = 0
+    for _, window in ipairs(windows) do
+      local group = groups[window.group]
+      if window.full and group.enforce then
+        local pttl = redis.call("pttl", window.key)
+        if pttl <= 0 then
+          pttl = window.seconds * 1000
+        end
+        if pttl > retryMs then
+          retryMs = pttl
+        end
+      end
+    end
+    for _, group in ipairs(groups) do
+      if group.stats and group.full and group.enforce then
+        record(group)
+      end
+    end
+    return {2, denied, windows[denied].group, retryMs}
+  end
+
+  for _, group in ipairs(groups) do
+    if group.stats and not group.off then
+      record(group)
+    end
   end
 
   local reply = {1}
@@ -151,6 +176,8 @@ const RESERVE_SCRIPT = `
       reply[i + 1] = window.limit
     elseif window.full then
       reply[i + 1] = window.limit - window.used - group.cost
+    elseif group.full then
+      reply[i + 1] = window.limit - window.used
     else
       local count = redis.call("incrby", window.key, group.cost)
       if count == group.cost then
@@ -242,14 +269,12 @@ export const reserveWindows = async (
     return { status: 'reserved', remaining: rest }
   }
   if (status === 2) {
-    const [window, group, pttl] = rest
+    const [window, group, retryMs] = rest
     return {
       status: 'exceeded',
       group: group - 1,
       window: window - 1,
-      // 键不在 (cost 本身就超过 limit) 或没有 TTL 时没有剩余寿命可报, 退回整个窗口
-      retryAfterSec:
-        pttl > 0 ? Math.ceil(pttl / 1000) : windows[window - 1].windowSeconds
+      retryAfterSec: Math.ceil(retryMs / 1000)
     }
   }
   return { status: status === 0 ? 'guard-missing' : 'guard-mismatch' }

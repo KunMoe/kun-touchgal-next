@@ -165,7 +165,7 @@ describe.skipIf(!redisContractUrl)('window counter on real Redis', () => {
   })
 
   describe('observe mode', () => {
-    it('lets the request through when a window is full and does not count it there, but counts the windows that fit', async () => {
+    it('lets the request through when a window is full but counts none of that group', async () => {
       const burst = win(2)
       const day = win(100, 86400)
       const observed = group([burst, day], { enforce: false })
@@ -174,10 +174,46 @@ describe.skipIf(!redisContractUrl)('window counter on real Redis', () => {
 
       await expect(counter.reserveWindows([observed])).resolves.toEqual({
         status: 'reserved',
-        remaining: [-1, 97]
+        remaining: [-1, 98]
       })
       expect(await kv.get(burst.key)).toBe('2')
-      expect(await kv.get(day.key)).toBe('3')
+      expect(await kv.get(day.key)).toBe('2')
+    })
+
+    // 观察期的统计要能直接拿来定阈值: 同一串请求, 观察组记下的 exceeded 与 enforce 组拒掉的
+    // 次数相同, 两边的计数器也走得一样 (每轮删掉短窗口的键, 当作它到期滚动)
+    it('records as exceeded exactly the requests enforce would refuse, and keeps the same counters', async () => {
+      const enforcedBurst = win(2)
+      const enforcedDay = win(5, 86400)
+      const observedBurst = win(2)
+      const observedDay = win(5, 86400)
+      const stats = withStats()
+      const enforced = group([enforcedBurst, enforcedDay])
+      const observed = group([observedBurst, observedDay], {
+        enforce: false,
+        stats
+      })
+
+      let refused = 0
+      for (let round = 0; round < 3; round++) {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const result = await counter.reserveWindows([enforced])
+          if (result.status === 'exceeded') {
+            refused++
+          }
+          await expect(
+            counter.reserveWindows([observed])
+          ).resolves.toMatchObject({ status: 'reserved' })
+        }
+        await kv.del(enforcedBurst.key, observedBurst.key)
+      }
+
+      expect(refused).toBe(7)
+      expect(await kv.hgetall(stats.key)).toEqual({
+        total: '12',
+        exceeded: '7'
+      })
+      expect(await kv.get(observedDay.key)).toBe(await kv.get(enforcedDay.key))
     })
 
     it('still refuses because of an enforcing group next to an observing one', async () => {
@@ -194,6 +230,42 @@ describe.skipIf(!redisContractUrl)('window counter on real Redis', () => {
           group([enforcedWindow])
         ])
       ).resolves.toMatchObject({ status: 'exceeded', group: 1, window: 1 })
+    })
+  })
+
+  describe('retry time', () => {
+    it('reports the longest wait among the full enforcing windows, not the first one', async () => {
+      const burst = win(1, 600)
+      const day = win(1, 86400)
+      const both = group([burst, day])
+      await counter.reserveWindows([both])
+
+      await expect(counter.reserveWindows([both])).resolves.toMatchObject({
+        status: 'exceeded',
+        window: 0
+      })
+      const result = await counter.reserveWindows([both])
+      expect(result.status).toBe('exceeded')
+      expect(
+        result.status === 'exceeded' && result.retryAfterSec
+      ).toBeGreaterThan(86400 - 5)
+    })
+
+    it('ignores a full window of an observing group when reporting the wait', async () => {
+      const observedDay = win(1, 86400)
+      const enforcedMinute = win(1, 60)
+      const call = () =>
+        counter.reserveWindows([
+          group([observedDay], { enforce: false }),
+          group([enforcedMinute])
+        ])
+      await call()
+
+      const result = await call()
+      expect(result).toMatchObject({ status: 'exceeded', group: 1, window: 1 })
+      expect(
+        result.status === 'exceeded' && result.retryAfterSec
+      ).toBeLessThanOrEqual(60)
     })
   })
 
@@ -214,6 +286,27 @@ describe.skipIf(!redisContractUrl)('window counter on real Redis', () => {
         exceeded: '2'
       })
       expectTtl(await kv.ttl(stats.key), 1000)
+    })
+
+    it('on a refusal records only the groups that refused it', async () => {
+      const refusingStats = withStats()
+      const passingStats = withStats()
+      const observedStats = withStats()
+      const full = win(1)
+      await counter.reserveWindows([group([full])])
+
+      await counter.reserveWindows([
+        group([full], { stats: refusingStats }),
+        group([win(10)], { stats: passingStats }),
+        group([win(1)], { enforce: false, stats: observedStats })
+      ])
+
+      expect(await kv.hgetall(refusingStats.key)).toEqual({
+        total: '1',
+        exceeded: '1'
+      })
+      expect(await kv.hgetall(passingStats.key)).toEqual({})
+      expect(await kv.hgetall(observedStats.key)).toEqual({})
     })
 
     it('creates the hash with its TTL on the first check', async () => {
