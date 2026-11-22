@@ -42,6 +42,10 @@ const readDef = (object: ts.ObjectLiteralExpression) => {
     if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)) {
       fields.set(property.name.text, property.initializer)
     }
+    // 简写 ({ abuse }) 的值是个标识符: 记下它, 读出来就是非字面量, 而不是当成没写
+    if (ts.isShorthandPropertyAssignment(property)) {
+      fields.set(property.name.text, property.name)
+    }
   }
   const text = (key: string) => {
     const value = fields.get(key)
