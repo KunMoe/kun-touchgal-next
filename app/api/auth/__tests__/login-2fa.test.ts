@@ -195,3 +195,73 @@ describe('POST /api/auth/login without 2FA', () => {
     expect(establishSessionMock).not.toHaveBeenCalled()
   })
 })
+
+// P07-02 / X07-03: 有人把用户名改成别人的邮箱之后, 登录以前用一条 OR 同时查两列且不排序,
+// 在两行里随机取一行, 邮箱的持有者可能一直登不进去。这里按 where 里的列分流模拟库;
+// OR 形状 (旧写法) 返回邮箱形态用户名那一行, 模拟顺扫先碰到它
+describe('POST /api/auth/login 按种类解析登录标识符', () => {
+  const owner = {
+    id: 1,
+    name: 'victim',
+    email: 'Victim@QQ.com',
+    password: 'owner-hash',
+    role: 1,
+    status: 0,
+    enable_2fa: false,
+    avatar: ''
+  }
+  const squatter = {
+    ...owner,
+    id: 2,
+    name: 'victim@qq.com',
+    email: 'attacker@qq.com',
+    password: 'squatter-hash'
+  }
+
+  type Filter = { equals: string; mode: 'insensitive' }
+  type Where = { email?: Filter; name?: Filter; OR?: unknown[] }
+  const same = (a: string, filter: Filter) =>
+    a.toLowerCase() === filter.equals.toLowerCase()
+
+  beforeEach(() => {
+    findFirstMock.mockImplementation(async ({ where }: { where: Where }) => {
+      if (where.OR) {
+        return squatter
+      }
+      if (where.email) {
+        return (
+          [owner, squatter].find((r) => same(r.email, where.email!)) ?? null
+        )
+      }
+      return [owner, squatter].find((r) => same(r.name, where.name!)) ?? null
+    })
+    establishSessionMock.mockResolvedValue({ ok: true })
+    getUserStatusMock.mockResolvedValue({ uid: 1, name: 'victim' })
+  })
+
+  const loginWith = async (name: string) => {
+    kunParsePostBodyMock.mockResolvedValue({
+      name,
+      password: 'password1',
+      captcha: 'captcha-token'
+    })
+    return (await POST(createRequest())).json()
+  }
+
+  it('邮箱形态的输入先查 email 列, 邮箱的持有者登得进去', async () => {
+    await loginWith('victim@qq.com')
+
+    expect(verifyPasswordMock).toHaveBeenCalledWith('password1', 'owner-hash')
+    expect(establishSessionMock).toHaveBeenCalledWith(owner, expect.anything())
+  })
+
+  it('用户名形态的输入只查 name 列', async () => {
+    await loginWith('Victim')
+
+    expect(establishSessionMock).toHaveBeenCalledWith(owner, expect.anything())
+    for (const [args] of findFirstMock.mock.calls) {
+      expect(args.where).not.toHaveProperty('email')
+      expect(args.where).not.toHaveProperty('OR')
+    }
+  })
+})

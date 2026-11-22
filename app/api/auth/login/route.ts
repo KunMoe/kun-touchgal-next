@@ -24,7 +24,8 @@ import { prisma } from '~/prisma/index'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { getUserStatus } from '~/app/api/user/status/service'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
-import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
+import { findUserForLogin } from '~/server/identity/lookup'
+import { classifyLoginIdentifier } from '~/validations/identifier'
 import {
   createTwoFactorChallenge,
   TWO_FACTOR_CHALLENGE_TTL_SECONDS
@@ -60,14 +61,7 @@ const login = async (
     return '人机验证无效, 请完成人机验证'
   }
 
-  const user = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { email: insensitiveEquals(name) },
-        { name: insensitiveEquals(name) }
-      ]
-    }
-  })
+  const user = await findUserForLogin(classifyLoginIdentifier(name))
 
   const isPasswordValid = await verifyPassword(
     password,
