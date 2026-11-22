@@ -277,3 +277,9 @@ CREATE UNIQUE INDEX patch_vndb_id_solo_key ON public.patch USING btree (vndb_id)
 
 -- index: patch_vndb_relation_id_solo_key
 CREATE UNIQUE INDEX patch_vndb_relation_id_solo_key ON public.patch USING btree (vndb_relation_id) WHERE (vndb_id IS NULL);
+
+-- index: user_email_lower_key
+CREATE UNIQUE INDEX user_email_lower_key ON public."user" USING btree (lower((email)::text));
+
+-- index: user_name_lower_key
+CREATE UNIQUE INDEX user_name_lower_key ON public."user" USING btree (lower((name)::text));
