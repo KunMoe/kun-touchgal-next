@@ -129,8 +129,53 @@
       "count": 3
     }
   },
+  "components/admin/appeal/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/admin/creator/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/admin/feedback/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/admin/galgame/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/admin/log/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/admin/resource-apply/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/admin/user/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/company/detail/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
   "components/edit/components/ReleaseDateInput.tsx": {
     "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "components/galgame/Container.tsx": {
+    "kun/inv-list-01": {
       "count": 1
     }
   },
@@ -154,9 +199,19 @@
       "count": 1
     }
   },
+  "components/patch/comment/Comments.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
   "components/patch/introduction/IntroductionTab.tsx": {
     "kun/inv-content-04": {
       "count": 1
+    }
+  },
+  "components/patch/rating/RatingLike.tsx": {
+    "kun/inv-list-01": {
+      "count": 2
     }
   },
   "components/patch/rating/RatingModal.tsx": {
@@ -176,6 +231,46 @@
   },
   "components/patch/resource/kun/KunResourceDownload.tsx": {
     "kun/inv-content-04": {
+      "count": 1
+    }
+  },
+  "components/resource/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/search/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/settings/user/appeal/AppealSettings.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/tag/detail/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/user/comment/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/user/follow/UserList.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/user/rating/Container.tsx": {
+    "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/user/resource/Container.tsx": {
+    "kun/inv-list-01": {
       "count": 1
     }
   },

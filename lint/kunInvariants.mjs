@@ -152,6 +152,11 @@ const HTTP_METHODS = [
 const RESOURCE_CACHE_HELPER =
   '/^(invalidatePatchResourceDetailCache|invalidateResourceListCache|invalidateResourceStatsListCache|invalidateUserPendingResourceCache)$/'
 
+// inv-list-01。服务端实体上会被复制进叶子组件 useState 的点赞字段
+const USE_STATE_CALL =
+  "CallExpression:matches([callee.name='useState'], [callee.property.name='useState'])"
+const LIKE_FIELD = '/^(isLike|likeCount)$/'
+
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
   {
@@ -1175,6 +1180,53 @@ export const KUN_INVARIANTS = [
         "import { recordKunChanges } from '~/server/cache/publish'",
         "import { getResourceListCacheKey } from '~/app/api/resource/cache'",
         "import * as cache from '~/app/api/resource/cache'\nvoid cache.getResourceListCacheKey"
+      ]
+    }
+  },
+  {
+    id: 'inv-list-01',
+    aliases: ['T17'],
+    statement:
+      '组件里不得再手写列表取数的生命周期: 不新声明 *RequestIdRef 守卫, 不自己 new IntersectionObserver 做加载哨兵 (改用 hooks/useKunPagedList、useKunInfiniteList、useKunKeyedQuery, 规则在 utils/list/kunListMachine.ts); 不把服务端实体的 isLike / likeCount 复制进叶子组件的 useState (由持有列表的组件拥有, 叶子组件受控)',
+    reason:
+      '「只让最新请求落地、写后刷新取当前查询、越界钳制、失败即停、追加去重、删行退页或补齐」这些规则曾在 30 多个容器里各抄一份, 没有 DOM 测试只能用源码正则守拼写; 兄弟副本只抄到一部分, 缺陷就按副本数复现 (P22-02、P28-01、P29-03/05、P23-02)。复制进 useState 的点赞字段不回写列表, 重新挂载即回退成旧值, 再点一次服务端执行的是取消点赞 (D09-01)。存量的手写副本记在 eslint-suppressions.json 基线里, 迁走一个删一条',
+    removeWhen:
+      '列表取数换成别的机制 (例如引入 DOM 测试后改用跨挂载缓存), 或这三个 hook 被删除',
+    files: ['components/**', 'app/**'],
+    // 目录页的滚动高亮也用 IntersectionObserver, 与列表加载无关
+    ignores: ['components/doc/TableOfContents.tsx', '**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      // 名字不分大小写 (requestIdRef 也算); new window.IntersectionObserver 也算; useState 的
+      // 初值认 x.isLike、x?.isLike 与解构出来的 isLike, React.useState 也算
+      selectors: [
+        'VariableDeclarator[id.name=/requestidref$/i]',
+        "NewExpression:matches([callee.name='IntersectionObserver'], [callee.property.name='IntersectionObserver'])",
+        `${USE_STATE_CALL} > MemberExpression.arguments[property.name=${LIKE_FIELD}]`,
+        `${USE_STATE_CALL} > ChainExpression.arguments > MemberExpression[property.name=${LIKE_FIELD}]`,
+        `${USE_STATE_CALL} > Identifier.arguments[name=${LIKE_FIELD}]`
+      ]
+    },
+    examples: {
+      file: 'components/kun/KunInvariantExample.tsx',
+      bad: [
+        'export const C = () => { const latestFetchRequestIdRef = useRef(0); return latestFetchRequestIdRef }',
+        'export const C = () => { const latestSearchRequestIdRef = useRef(0); return latestSearchRequestIdRef }',
+        'export const C = () => { useEffect(() => { const o = new IntersectionObserver(() => {}); return () => o.disconnect() }, []) }',
+        'export const C = () => { const requestIdRef = useRef(0); return requestIdRef }',
+        'export const C = () => { useEffect(() => { const o = new window.IntersectionObserver(() => {}); return () => o.disconnect() }, []) }',
+        'export const C = ({ resource }) => { const [liked] = useState(resource.isLike); return liked }',
+        'export const C = ({ rating }) => { const [count] = useState(rating.likeCount); return count }',
+        'export const C = ({ resource }) => { const [liked] = useState(resource?.isLike); return liked }',
+        'export const C = ({ resource }) => { const [liked] = React.useState(resource.isLike); return liked }',
+        'export const C = ({ isLike }) => { const [liked] = useState(isLike); return liked }'
+      ],
+      good: [
+        'export const C = () => useKunPagedList({ query: { page: 1, limit: 30 }, getId: (item) => item.id, fetchPage })',
+        'export const C = () => { const scrolledRatingIdRef = useRef(null); return scrolledRatingIdRef }',
+        'export const C = ({ isLike }) => { const [loading] = useState(false); return isLike && loading }',
+        'export const C = ({ resource }) => resource.likeCount',
+        'export const C = ({ isLike }) => { const [liked, setLiked] = useState(false); return isLike || liked || setLiked }'
       ]
     }
   }
