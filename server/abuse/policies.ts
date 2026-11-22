@@ -7,8 +7,9 @@ import type { KunCapability } from '~/constants/permission'
 // 新增一种预算 = 这里加一行 + 入口加一处引用 (kunRoute 的 abuse 字段, 或属主处调
 // reserveAbuseBudget)。__tests__/policies.test.ts 要求每行至少被引用一次。
 //
-// 取值: 初值按本机库 (生产数据副本) 里每个账号每 10 分钟 / 每天的实际峰值留出余量, 见
-// docs/tasks/t12-abuse-budget.md; 观察期里超限只记统计, 一周后按统计逐行改成 enforce。
+// 取值: 初值按生产数据副本 (截至 2026-09-18) 里每个账号的历史峰值 (滑动窗口, 全部历史)
+// 留出约 1.5 到 2.5 倍余量, 各行注释里是那个峰值; 外部抓取没有可查的历史, 是估的。观察期里
+// 超限只记统计, 一周后按统计逐行改成 enforce。
 // 线上止损不用重新构建: SET kun:touchgal:abuse:override:<策略名> off (这行既不检查也不计数),
 // 观察统计: HGETALL kun:touchgal:abuse:stats:<策略名>:<UTC 日期>
 
@@ -33,43 +34,46 @@ const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
 
 export const KUN_ABUSE_POLICIES = {
-  // 评论: 送审, 带提及扇出与回复通知
+  // 评论: 送审, 带提及扇出与回复通知。峰值 10 分钟 13 条, 24 小时 42 条
   'content.comment': {
     windows: [
       { per: 'uid', limit: 20, windowSeconds: 10 * MINUTE },
-      { per: 'uid', limit: 200, windowSeconds: DAY }
+      { per: 'uid', limit: 100, windowSeconds: DAY }
     ],
     exempt: 'abuse.exempt',
     mode: 'observe'
   },
-  // 评价: 每部作品只能评一次, 但跨作品无界; 送审
+  // 评价: 每部作品只能评一次, 但跨作品无界; 送审。有成批补评的老用户: 峰值 10 分钟 40 条,
+  // 24 小时 359 条
   'content.rating': {
     windows: [
-      { per: 'uid', limit: 20, windowSeconds: 10 * MINUTE },
-      { per: 'uid', limit: 200, windowSeconds: DAY }
+      { per: 'uid', limit: 60, windowSeconds: 10 * MINUTE },
+      { per: 'uid', limit: 500, windowSeconds: DAY }
     ],
     exempt: 'abuse.exempt',
     mode: 'observe'
   },
-  // 评论与评价的举报共用一份: 都进管理员的待处理列表
+  // 评论与评价的举报共用一份: 都进管理员的待处理列表。峰值是一次成立的刷屏清理: 8 分钟
+  // 31 条, 24 小时 98 条 (其次的人 24 小时 14 条)
   'report.create': {
     windows: [
-      { per: 'uid', limit: 10, windowSeconds: HOUR },
-      { per: 'uid', limit: 30, windowSeconds: DAY }
+      { per: 'uid', limit: 50, windowSeconds: HOUR },
+      { per: 'uid', limit: 150, windowSeconds: DAY }
     ],
     exempt: 'abuse.exempt',
     mode: 'observe'
   },
-  // 反馈: 每次都向管理员收件箱发一条, 不去重
+  // 反馈: 每次都向管理员收件箱发一条, 不去重。峰值 1 小时 13 条
   'feedback.create': {
     windows: [
-      { per: 'uid', limit: 5, windowSeconds: HOUR },
-      { per: 'uid', limit: 20, windowSeconds: DAY }
+      { per: 'uid', limit: 20, windowSeconds: HOUR },
+      { per: 'uid', limit: 40, windowSeconds: DAY }
     ],
     exempt: 'abuse.exempt',
     mode: 'observe'
   },
-  // 开会话: 向任意用户开一个新收件箱 (全站没有用户屏蔽)
+  // 开会话: 向任意用户开一个新收件箱 (全站没有用户屏蔽)。库里不记发起者, 按参与者计的
+  // 峰值是 24 小时 5 个
   'conversation.open': {
     windows: [
       { per: 'uid', limit: 10, windowSeconds: HOUR },
@@ -78,18 +82,19 @@ export const KUN_ABUSE_POLICIES = {
     exempt: 'abuse.exempt',
     mode: 'observe'
   },
-  // 会话内发信
+  // 会话内发信。峰值是一段一对一聊天: 1 分钟 11 条, 24 小时 119 条
   'message.send': {
     windows: [
       { per: 'uid', limit: 30, windowSeconds: MINUTE },
-      { per: 'uid', limit: 600, windowSeconds: DAY }
+      { per: 'uid', limit: 300, windowSeconds: DAY }
     ],
     exempt: 'abuse.exempt',
     mode: 'observe'
   },
-  // 提及通知按真正新增的收件人计费 (cost = 人数), 即时发布与审核通过后的补发都经这里
+  // 提及通知按真正新增的收件人计费 (cost = 人数), 即时发布与审核通过后的补发都经这里。
+  // 峰值每天 4 人、单条评论 8 人; 一条评论提及的人超过 limit 时这条的提及永远发不出去
   'notify.mention': {
-    windows: [{ per: 'uid', limit: 100, windowSeconds: DAY }],
+    windows: [{ per: 'uid', limit: 50, windowSeconds: DAY }],
     exempt: 'abuse.exempt',
     mode: 'observe'
   },
