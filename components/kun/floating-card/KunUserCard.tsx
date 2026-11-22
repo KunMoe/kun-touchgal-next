@@ -46,11 +46,16 @@ export const KunUserCard = ({ uid }: UserCardProps) => {
           className="mb-2"
         />
 
+        {/* 浮动卡片可出现在任何页面上, 不刷新路由: 卡片数据是自己取的, 刷新
+            更新不到它, 在 /[id] 上还会多计一次浏览量 */}
         <UserFollow
           uid={user.id}
           name={user.name}
-          follow={user.isFollow}
+          isFollow={user.isFollow}
           fullWidth={false}
+          onChange={(isFollow) =>
+            setUser((prev) => (prev ? { ...prev, isFollow } : prev))
+          }
         />
       </div>
 

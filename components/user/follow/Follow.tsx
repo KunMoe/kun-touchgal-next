@@ -12,29 +12,30 @@ import {
 } from '@heroui/modal'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { Check, Plus } from 'lucide-react'
-import { useRouter } from '@bprogress/next/app'
 import { useUserStore } from '~/store/userStore'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 
+// 受控: 关注状态归宿主, 只在关注 / 取消关注成功后经 onChange 上报.
+// 要不要刷新路由由宿主决定: /[id] 上每次刷新都会重跑页面读取器、多计一次浏览量
 interface Props {
   uid: number
   name: string
-  follow: boolean
+  isFollow: boolean
   fullWidth?: boolean
   size?: 'sm' | 'md' | 'lg'
+  onChange: (next: boolean) => void
 }
 
 export const UserFollow = ({
   uid,
   name,
-  follow,
+  isFollow,
   fullWidth = true,
-  size
+  size,
+  onChange
 }: Props) => {
-  const router = useRouter()
   const user = useUserStore((state) => state.user)
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const [isFollow, setIsFollow] = useState(follow)
   const [following, setFollowing] = useState(false)
 
   const handleUnfollow = async () => {
@@ -44,7 +45,7 @@ export const UserFollow = ({
         uid
       })
       kunErrorHandler(res, () => {
-        setIsFollow(false)
+        onChange(false)
         onClose()
       })
     } catch (error) {
@@ -64,10 +65,8 @@ export const UserFollow = ({
         const res = await kunFetchPost<KunResponse<{}>>('/user/follow/follow', {
           uid
         })
-        kunErrorHandler(res, () => setIsFollow(true))
+        kunErrorHandler(res, () => onChange(true))
       }
-
-      router.refresh()
     } catch (error) {
       errorReporter(error)
     } finally {

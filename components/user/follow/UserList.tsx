@@ -108,11 +108,21 @@ export const UserList = ({ userId, type }: UserListProps) => {
                   </div>
                 </div>
 
+                {/* 列表只挂在 /user/[id] 的关注弹窗里: 刷新让资料卡的「正在关注」
+                    计数跟上 (在自己主页上关注 / 取关列表里的人时会变) */}
                 <UserFollow
                   uid={user.id}
                   name={user.name}
-                  follow={user.isFollow}
+                  isFollow={user.isFollow}
                   fullWidth={false}
+                  onChange={(isFollow) => {
+                    setUsers((prev) =>
+                      prev.map((item) =>
+                        item.id === user.id ? { ...item, isFollow } : item
+                      )
+                    )
+                    router.refresh()
+                  }}
                 />
               </CardBody>
             </Card>

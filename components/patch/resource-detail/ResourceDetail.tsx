@@ -75,12 +75,15 @@ export const ResourceDetail = ({ detail, isLoggedIn }: Props) => {
   // 待审核资源后端只放行 content.moderateAny (patch/resource/update.ts 的
   // frontResourceEditGuard), 作者本人提交必被拒, 故置灰而非让他点了才看到报错
   const isEditDisabled = isPending && !isAdmin
-  // 点赞状态归本页持有 (按钮受控), 以 SSR 数据为初值;
-  // 换资源时路由段重新挂载会重新取初值, 编辑后的 router.refresh() 不覆盖它
+  // 点赞与关注上传者的状态归本页持有 (两个按钮受控), 以 SSR 数据为初值;
+  // 换资源时路由段重新挂载会重新取初值, 编辑后的 router.refresh() 不覆盖它们
   const [like, setLike] = useState({
     isLike: resource.isLike,
     likeCount: resource.likeCount
   })
+  const [isFollowingUploader, setIsFollowingUploader] = useState(
+    detail.isFollowingUploader
+  )
   const {
     isOpen: isOpenEdit,
     onOpen: onOpenEdit,
@@ -250,9 +253,10 @@ export const ResourceDetail = ({ detail, isLoggedIn }: Props) => {
               <UserFollow
                 uid={resource.user.id}
                 name={resource.user.name}
-                follow={detail.isFollowingUploader}
+                isFollow={isFollowingUploader}
                 fullWidth={false}
                 size="sm"
+                onChange={setIsFollowingUploader}
               />
             </CardBody>
           </Card>

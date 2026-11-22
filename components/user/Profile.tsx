@@ -6,7 +6,7 @@ import { Divider } from '@heroui/divider'
 import { Progress } from '@heroui/progress'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { Calendar, Link as LinkIcon } from 'lucide-react'
-import { UserFollow } from './follow/Follow'
+import { ProfileFollow } from './follow/ProfileFollow'
 import { Stats } from './follow/Stats'
 import { SelfButton } from './SelfButton'
 import { StartChatButton } from './StartChatButton'
@@ -92,10 +92,10 @@ export const UserProfile = ({ user }: { user: UserInfo }) => {
                 <SelfButton user={user} />
               ) : (
                 <>
-                  <UserFollow
+                  <ProfileFollow
                     uid={user.id}
                     name={user.name}
-                    follow={user.isFollow}
+                    isFollow={user.isFollow}
                   />
                   <StartChatButton targetUserId={user.id} />
                 </>
