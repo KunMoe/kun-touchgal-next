@@ -11,10 +11,12 @@ import {
 import { can, KUN_CAPABILITY } from '~/constants/permission'
 import { KUN_ROLE_LABEL } from '~/constants/role'
 import { kunViolationCodeOf } from '~/server/db/violations'
+import { kunAbuseGate } from '~/server/abuse/budget'
 import type * as z from 'zod'
 import type { NextRequest } from 'next/server'
 import type { KunCapability } from '~/constants/permission'
 import type { KunViolationCode } from '~/server/db/violations'
+import type { KunAbusePolicyName } from '~/server/abuse/policies'
 
 // Route Handler 的入口构造器 (T10): 每个导出的 HTTP 方法在定义处声明访问级别, auth 必填,
 // kun/inv-route-01 要求它是字面量, app/api/__tests__/routeManifest.test.ts 把全部声明列成清单。
@@ -22,6 +24,8 @@ import type { KunViolationCode } from '~/server/db/violations'
 // 仍在 service 里。这是高阶函数, 不是依赖注入
 //
 // 默认先解析后鉴权 (#52): 校验失败的请求不碰会话。只有 #60 裁定的表单用 order: 'auth-first'
+// abuse 声明的频率预算 (server/abuse/policies.ts) 排在解析与鉴权之后、handler 之前: 校验失败、
+// 没登录的请求不计数
 //
 // 测试兼容 (路由测试按模块 mock 依赖, 改这个文件时要守住):
 // - next/server 只用 NextResponse.json: 多数测试把它 mock 成只有这一个导出
@@ -76,6 +80,9 @@ interface KunRouteDefBase<A extends KunRouteAuth, I, P> {
   params?: (raw: KunRouteParams) => P | string
   // proxy 的 matcher 不覆盖 /api/upload/* (避免缓冲大请求体), 这些写方法在这里补 CSRF
   csrf?: 'handler'
+  // 只给 user: 按账号 (及全站) 计的频率预算, 超限时回策略的文案。要按成本计费 (提及按人数)
+  // 或只在部分分支计数 (moyu 只在缓存未命中时) 的, 在属主处调 reserveAbuseBudget
+  abuse?: A extends 'user' ? readonly KunAbusePolicyName[] : never
   legacyDeny?: A extends 'user' ? KunRouteLegacyDeny : never
   handler: (
     ctx: KunRouteContext<A, I, P>
@@ -273,6 +280,13 @@ const defineRoute =
         return auth.response
       }
       actor = auth.actor
+    }
+
+    if (def.abuse?.length) {
+      const denied = await kunAbuseGate(def.abuse, actor as KunRoutePayload)
+      if (denied) {
+        return NextResponse.json(denied)
+      }
     }
 
     return toResponse(

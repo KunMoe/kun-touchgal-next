@@ -9,7 +9,8 @@ const {
   deleteQueryMock,
   postBodyMock,
   putBodyMock,
-  formDataMock
+  formDataMock,
+  kunAbuseGateMock
 } = vi.hoisted(() => ({
   verifyHeaderCookieMock: vi.fn(),
   verifyKunCsrfMock: vi.fn(),
@@ -17,7 +18,8 @@ const {
   deleteQueryMock: vi.fn(),
   postBodyMock: vi.fn(),
   putBodyMock: vi.fn(),
-  formDataMock: vi.fn()
+  formDataMock: vi.fn(),
+  kunAbuseGateMock: vi.fn()
 }))
 
 // 与路由测试同样的 mock 形状: next/server 只有 NextResponse.json
@@ -34,6 +36,7 @@ vi.mock('~/middleware/_verifyHeaderCookie', () => ({
   verifyHeaderCookie: verifyHeaderCookieMock
 }))
 vi.mock('~/middleware/_csrf', () => ({ verifyKunCsrf: verifyKunCsrfMock }))
+vi.mock('~/server/abuse/budget', () => ({ kunAbuseGate: kunAbuseGateMock }))
 vi.mock('~/app/api/utils/parseQuery', () => ({
   kunParseGetQuery: getQueryMock,
   kunParseDeleteQuery: deleteQueryMock,
@@ -336,6 +339,72 @@ describe('CSRF', () => {
   })
 })
 
+describe('频率预算', () => {
+  it('声明 abuse 时在解析与鉴权之后按会话的操作者扣, 再进 handler', async () => {
+    postBodyMock.mockReturnValue({ id: 1 })
+    verifyHeaderCookieMock.mockResolvedValue(user)
+    kunAbuseGateMock.mockResolvedValue(null)
+    const handler = vi.fn(async () => ({ ok: true }))
+    const POST = kunRoute.post({
+      auth: 'user',
+      input: schema,
+      abuse: ['content.comment', 'report.create'],
+      handler
+    })
+
+    await expect(body(await POST(req))).resolves.toEqual({ ok: true })
+    expect(kunAbuseGateMock).toHaveBeenCalledExactlyOnceWith(
+      ['content.comment', 'report.create'],
+      user
+    )
+    expect(verifyHeaderCookieMock.mock.invocationCallOrder[0]).toBeLessThan(
+      kunAbuseGateMock.mock.invocationCallOrder[0]
+    )
+    expect(kunAbuseGateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      handler.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('超限时以 200 回预算的文案, 不进 handler', async () => {
+    verifyHeaderCookieMock.mockResolvedValue(user)
+    kunAbuseGateMock.mockResolvedValue('操作过于频繁, 请 3 分钟后再试')
+    const handler = vi.fn(async () => ({}))
+    const response = await kunRoute.post({
+      auth: 'user',
+      abuse: ['content.comment'],
+      handler
+    })(req)
+
+    expect(response.status).toBe(200)
+    await expect(body(response)).resolves.toBe('操作过于频繁, 请 3 分钟后再试')
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('校验失败、没登录的请求不计数', async () => {
+    const POST = kunRoute.post({
+      auth: 'user',
+      input: schema,
+      abuse: ['content.comment'],
+      handler: async () => ({})
+    })
+
+    postBodyMock.mockReturnValue('评论内容不能为空')
+    await POST(req)
+    postBodyMock.mockReturnValue({ id: 1 })
+    verifyHeaderCookieMock.mockResolvedValue(null)
+    await POST(req)
+
+    expect(kunAbuseGateMock).not.toHaveBeenCalled()
+  })
+
+  it('不声明 abuse 时不计数', async () => {
+    verifyHeaderCookieMock.mockResolvedValue(user)
+    await kunRoute.post({ auth: 'user', handler: async () => ({}) })(req)
+
+    expect(kunAbuseGateMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('返回值', () => {
   it('字符串以 200 返回', async () => {
     const response = await kunRoute.get({
@@ -478,6 +547,20 @@ describe('类型', () => {
       auth: 'public',
       // @ts-expect-error public 没有拒绝文案可留
       legacyDeny: { unauthenticated: 'x' },
+      handler: async () => ({})
+    })
+
+    kunRoute.post({
+      auth: 'optional',
+      // @ts-expect-error abuse 只能跟 user (游客只扣全站窗口, 在属主处调)
+      abuse: ['upstream.moyu'],
+      handler: async () => ({})
+    })
+
+    kunRoute.post({
+      auth: 'user',
+      // @ts-expect-error 不在策略表里的名字
+      abuse: ['content.like'],
       handler: async () => ({})
     })
 

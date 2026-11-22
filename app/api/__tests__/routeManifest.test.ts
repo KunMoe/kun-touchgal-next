@@ -22,6 +22,8 @@ interface RouteDecl {
   csrf: string | null
   form: boolean
   legacyDeny: Record<string, string>
+  // 频率预算的策略名 (server/abuse/policies.ts); 不是字面量的元素记成 <非字面量>
+  abuse: string[]
 }
 
 const literalText = (node: ts.Expression): string | null => {
@@ -55,13 +57,21 @@ const readDef = (object: ts.ObjectLiteralExpression) => {
       }
     }
   }
+  const abuse = fields.get('abuse')
   return {
     auth: text('auth'),
     capability: text('capability'),
     order: text('order'),
     csrf: text('csrf'),
     form: text('form') === 'true',
-    legacyDeny
+    legacyDeny,
+    abuse: !abuse
+      ? []
+      : ts.isArrayLiteralExpression(abuse)
+        ? abuse.elements.map((element) =>
+            ts.isStringLiteralLike(element) ? element.text : '<非字面量>'
+          )
+        : ['<非字面量>']
   }
 }
 
@@ -132,7 +142,8 @@ const collectRoutes = () => {
                 order: null,
                 csrf: null,
                 form: false,
-                legacyDeny: {}
+                legacyDeny: {},
+                abuse: []
               })
         })
       }
@@ -241,7 +252,8 @@ const formatDecl = (decl: RouteDecl) =>
     decl.form && 'form',
     ...Object.entries(decl.legacyDeny).map(
       ([key, value]) => `legacyDeny.${key}=${value}`
-    )
+    ),
+    decl.abuse.length > 0 && `abuse=${decl.abuse.join(',')}`
   ]
     .filter(Boolean)
     .join(' ')
@@ -263,6 +275,7 @@ describe('Route Handler 访问清单', () => {
       if (decl.capability !== null) {
         expect(decl.auth, keyOf(decl)).toBe('user')
       }
+      expect(decl.abuse, keyOf(decl)).not.toContain('<非字面量>')
     }
   })
 
