@@ -33,6 +33,7 @@ export const openRedisContract = async () => {
   return {
     get: (key: string) => redis.get(prefixed(key)),
     set: (key: string, value: string) => redis.set(prefixed(key), value),
+    hgetall: (key: string) => redis.hgetall(prefixed(key)),
     ttl: (key: string) => redis.ttl(prefixed(key)),
     expire: (key: string, seconds: number) =>
       redis.expire(prefixed(key), seconds),
