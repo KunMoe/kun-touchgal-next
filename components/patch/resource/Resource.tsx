@@ -123,6 +123,19 @@ export const Resources = ({
     fetchData()
   }, [])
 
+  // 资源的服务端字段 (点赞状态 / 计数等) 只由这份列表持有, 卡片里的交互组件受控,
+  // 结果经这里回写; 切分区卸载卡片后再挂载才不会按列表里的旧值重新初始化
+  const patchResource = (
+    resourceId: number,
+    partial: Partial<PatchResource>
+  ) => {
+    setResources((prev) =>
+      prev.map((resource) =>
+        resource.id === resourceId ? { ...resource, ...partial } : resource
+      )
+    )
+  }
+
   const {
     isOpen: isOpenCreate,
     onOpen: onOpenCreate,
@@ -200,6 +213,7 @@ export const Resources = ({
               onOpenEdit={onOpenEdit}
               onOpenDelete={onOpenDelete}
               setDeleteResourceId={setDeleteResourceId}
+              patchResource={patchResource}
             />
           )}
         </div>
@@ -235,9 +249,17 @@ export const Resources = ({
           onClose={onCloseEdit}
           resource={editResource!}
           onSuccess={(res) => {
+            // 编辑接口的应答把点赞写死成 0 / 未点赞 (P04-01, 归 T47), 点赞按钮受控之后
+            // 会当场显示出来, 再点一次就是服务端取消点赞: 点赞两项沿用列表里的值
             setResources((prevResources) =>
               prevResources.map((resource) =>
-                resource.id === res.id ? res : resource
+                resource.id === res.id
+                  ? {
+                      ...res,
+                      isLike: resource.isLike,
+                      likeCount: resource.likeCount
+                    }
+                  : resource
               )
             )
             onCloseEdit()

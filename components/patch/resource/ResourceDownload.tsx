@@ -12,10 +12,11 @@ import type { PatchResource } from '~/types/api/patch'
 
 interface Props {
   resource: PatchResource
+  patchResource: (resourceId: number, partial: Partial<PatchResource>) => void
 }
 
 // 资源备注不在卡片上展示, 点击资源名进入资源详情页查看简介与评论
-export const ResourceDownload = ({ resource }: Props) => {
+export const ResourceDownload = ({ resource, patchResource }: Props) => {
   const isPending = resource.status === 2 || resource.status === 3
   const [showLinks, setShowLinks] = useState(() =>
     getResourceView().expandedIds.has(resource.id)
@@ -53,7 +54,14 @@ export const ResourceDownload = ({ resource }: Props) => {
         />
 
         <div className="flex gap-2">
-          <ResourceLikeButton resource={resource} isDisabled={isPending} />
+          <ResourceLikeButton
+            resourceId={resource.id}
+            authorId={resource.user.id}
+            isLike={resource.isLike}
+            likeCount={resource.likeCount}
+            isDisabled={isPending}
+            onChange={(next) => patchResource(resource.id, next)}
+          />
           <Button
             color="primary"
             isIconOnly

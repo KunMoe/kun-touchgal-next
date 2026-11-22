@@ -58,6 +58,7 @@ interface Props {
   onOpenEdit: () => void
   onOpenDelete: () => void
   setDeleteResourceId: (resourceId: number) => void
+  patchResource: (resourceId: number, partial: Partial<PatchResource>) => void
   targetResourceId: number | null
   targetResourceSection: ResourceSection | null
   isViewRestored: boolean
@@ -70,6 +71,7 @@ export const ResourceTabs = ({
   onOpenEdit,
   onOpenDelete,
   setDeleteResourceId,
+  patchResource,
   targetResourceId,
   targetResourceSection,
   isViewRestored
@@ -317,7 +319,7 @@ export const ResourceTabs = ({
             </DropdownMenu>
           </Dropdown>
         </div>
-        <ResourceDownload resource={resource} />
+        <ResourceDownload resource={resource} patchResource={patchResource} />
       </div>
     </div>
   )

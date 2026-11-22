@@ -7,18 +7,28 @@ import { useUserStore } from '~/store/userStore'
 import toast from 'react-hot-toast'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { cn } from '~/utils/cn'
-import { PatchResource } from '~/types/api/patch'
 
+// 受控: 点赞状态与计数归持有资源数据的宿主 (资源列表 / 资源详情页), 按钮只上报结果.
+// 自己复制一份 useState 的话结果回不到宿主, 切分区重新挂载就按旧数据重新初始化
 interface Props {
-  resource: PatchResource
+  resourceId: number
+  authorId: number
+  isLike: boolean
+  likeCount: number
   isDisabled?: boolean
+  onChange: (next: { isLike: boolean; likeCount: number }) => void
 }
 
-export const ResourceLikeButton = ({ resource, isDisabled }: Props) => {
+export const ResourceLikeButton = ({
+  resourceId,
+  authorId,
+  isLike,
+  likeCount,
+  isDisabled,
+  onChange
+}: Props) => {
   const user = useUserStore((state) => state.user)
 
-  const [liked, setLiked] = useState(resource.isLike)
-  const [likeCount, setLikeCount] = useState(resource.likeCount)
   const [loading, setLoading] = useState(false)
 
   const toggleLike = async () => {
@@ -27,7 +37,7 @@ export const ResourceLikeButton = ({ resource, isDisabled }: Props) => {
       return
     }
 
-    if (resource.user.id === user.uid) {
+    if (authorId === user.uid) {
       toast.error('您不能给自己点赞')
       return
     }
@@ -36,13 +46,15 @@ export const ResourceLikeButton = ({ resource, isDisabled }: Props) => {
 
     const res = await kunFetchPut<KunResponse<boolean>>(
       '/patch/resource/like',
-      { resourceId: resource.id }
+      { resourceId }
     )
 
     setLoading(false)
     kunErrorHandler(res, (value) => {
-      setLiked(value)
-      setLikeCount((prev) => (value ? prev + 1 : prev - 1))
+      onChange({
+        isLike: value,
+        likeCount: value ? likeCount + 1 : likeCount - 1
+      })
     })
   }
 
@@ -54,7 +66,7 @@ export const ResourceLikeButton = ({ resource, isDisabled }: Props) => {
         onPress={toggleLike}
         className="min-w-0 px-2"
       >
-        <ThumbsUp className={cn('w-4 h-4', liked ? 'text-danger-500' : '')} />
+        <ThumbsUp className={cn('w-4 h-4', isLike ? 'text-danger-500' : '')} />
         {likeCount}
       </Button>
     </Tooltip>
