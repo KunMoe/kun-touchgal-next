@@ -51,6 +51,9 @@ const updateUserAvatar = async (actor: KunActor, avatar: ArrayBuffer) => {
   }
 
   const moderation = await preScreenMedia(actor)
+  if (typeof moderation === 'string') {
+    return moderation
+  }
 
   // 审核拦截时用每次上传唯一的暂存 key, 使送审读取与 apply 复制绑定同一不可变对象,
   // 并发双上传各写各的 key, 无从互相覆盖; 留档 key 复用同一 nonce, 便于按对象追溯

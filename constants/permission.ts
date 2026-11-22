@@ -27,6 +27,9 @@ export const KUN_CAPABILITY = {
   'upload.skipCaptcha': KUN_ROLE.ADMIN,
   'upload.skipPointsGate': KUN_ROLE.ADMIN,
   'message.skipPointsGate': KUN_ROLE.ADMIN,
+  // 不受按账号的频率预算与审核在途上限约束 (server/abuse、送审第一段): 管理员的入口本身是
+  // 特权入口。整站共用的上游配额不看这一项
+  'abuse.exempt': KUN_ROLE.ADMIN,
   // 与审核后台的门槛一致: 豁免送审的人必须自己能复核
   'moderation.skip': KUN_ROLE.SUPER_ADMIN
 } as const satisfies Record<string, KunRole>

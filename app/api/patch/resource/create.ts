@@ -94,6 +94,9 @@ export const createPatchResource = async (
         }),
         { actor }
       )
+  if (typeof moderation === 'string') {
+    return moderation
+  }
 
   const preparedLinks: Array<{
     storage: string

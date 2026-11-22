@@ -1,15 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getModerationConfigMock, taskUpdateManyMock, taskCreateMock } =
-  vi.hoisted(() => ({
-    getModerationConfigMock: vi.fn(),
-    taskUpdateManyMock: vi.fn(),
-    taskCreateMock: vi.fn()
-  }))
+const {
+  getModerationConfigMock,
+  taskCountMock,
+  taskUpdateManyMock,
+  taskCreateMock
+} = vi.hoisted(() => ({
+  getModerationConfigMock: vi.fn(),
+  taskCountMock: vi.fn(),
+  taskUpdateManyMock: vi.fn(),
+  taskCreateMock: vi.fn()
+}))
 
 vi.mock('~/prisma/index', () => ({
   prisma: {
-    moderation_task: { updateMany: taskUpdateManyMock, create: taskCreateMock }
+    moderation_task: {
+      count: taskCountMock,
+      updateMany: taskUpdateManyMock,
+      create: taskCreateMock
+    }
   }
 }))
 
@@ -35,6 +44,7 @@ import {
 beforeEach(() => {
   vi.resetAllMocks()
   getModerationConfigMock.mockResolvedValue({ enabled: true, dryRun: false })
+  taskCountMock.mockResolvedValue(0)
   taskUpdateManyMock.mockResolvedValue({ count: 0 })
   taskCreateMock.mockResolvedValue({ id: 1 })
 })
@@ -122,7 +132,7 @@ describe('planTextModeration', () => {
       previous: commentSubject('编辑前的正文')
     })
 
-    expect(plan.queue).toBe(true)
+    expect(plan).toMatchObject({ queue: true })
   })
 
   it.each([
@@ -150,6 +160,68 @@ describe('planTextModeration', () => {
     await expect(
       planTextModeration(subject, { actor: kunTestActor({ uid: 1, role: 1 }) })
     ).rejects.toThrow('redis down')
+  })
+})
+
+// 在途上限 (MODERATION_MAX_PENDING_PER_USER = 10): 一个账号不能把全站的审核队列占住
+describe('提交者在途任务上限', () => {
+  const user = kunTestActor({ uid: 7, role: 1 })
+  const plan = () => planTextModeration(subject, { actor: user })
+
+  it('只数这个提交者 dry_run = false 的 pending 任务', async () => {
+    await plan()
+
+    expect(taskCountMock).toHaveBeenCalledExactlyOnceWith({
+      where: { user_id: 7, status: 'pending', dry_run: false }
+    })
+  })
+
+  it('在途 9 条时照常送审, 到 10 条时文本与媒体都拒绝且不排队', async () => {
+    taskCountMock.mockResolvedValue(9)
+    await expect(plan()).resolves.toMatchObject({ queue: true })
+    await expect(preScreenMedia(user)).resolves.toMatchObject({ queue: true })
+
+    taskCountMock.mockResolvedValue(10)
+    await expect(plan()).resolves.toBe(
+      '您已有 10 条内容在等待审核, 请等审核完成后再提交'
+    )
+    await expect(preScreenMedia(user)).resolves.toBe(
+      '您已有 10 条内容在等待审核, 请等审核完成后再提交'
+    )
+    expect(taskCreateMock).not.toHaveBeenCalled()
+  })
+
+  it('灰度时同样只数非灰度任务: 灰度任务不占额度, 不挡人', async () => {
+    getModerationConfigMock.mockResolvedValue({ enabled: true, dryRun: true })
+
+    await expect(plan()).resolves.toMatchObject({ queue: true, dryRun: true })
+    expect(taskCountMock.mock.calls[0][0].where.dry_run).toBe(false)
+  })
+
+  it('管理员 (role 3) 照常送审, 但不受在途上限约束, 也不查库', async () => {
+    taskCountMock.mockResolvedValue(50)
+    const admin = kunTestActor({ uid: 7, role: 3 })
+
+    await expect(
+      planTextModeration(subject, { actor: admin })
+    ).resolves.toMatchObject({ queue: true, intercept: true })
+    await expect(preScreenMedia(admin)).resolves.toMatchObject({ queue: true })
+    expect(taskCountMock).not.toHaveBeenCalled()
+  })
+
+  it('不送审的情形 (审核关闭、超级管理员、没变、没字) 都不查库', async () => {
+    getModerationConfigMock.mockResolvedValue({ enabled: false, dryRun: false })
+    await plan()
+    await preScreenMedia(user)
+
+    getModerationConfigMock.mockResolvedValue({ enabled: true, dryRun: false })
+    await planTextModeration(subject, {
+      actor: kunTestActor({ uid: 7, role: 4 })
+    })
+    await planTextModeration(subject, { actor: user, previous: subject })
+    await planTextModeration(bioSubject(' '), { actor: user })
+
+    expect(taskCountMock).not.toHaveBeenCalled()
   })
 })
 

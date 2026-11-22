@@ -179,6 +179,12 @@ export const MODERATION_SYSTEMATIC_DETECTION = 'log' as 'log' | 'enforce'
 
 export const MODERATION_BATCH_SIZE = 10
 
+// 每个提交者同时在等待 AI 审核的任务数上限 (server/moderation/submit.ts 的送审第一段)。
+// worker 全站按到达先后取批、不看提交者, 没有这个上限时一个账号批量提交就能把所有人新提交
+// 的内容压在后面。它限的是在途数量而不是速率: 一批里有一个调用挂到 AI 超时, 排空就降到
+// 每分钟两条以下, 任何固定速率的窗口都可能高于它; 在途上限则与排空速率无关
+export const MODERATION_MAX_PENDING_PER_USER = 10
+
 // 单批内并发处理的任务数上限, 即同时在途的 AI 调用数; 受 provider 限流约束,
 // 应 <= MODERATION_BATCH_SIZE
 export const MODERATION_CONCURRENCY = 5

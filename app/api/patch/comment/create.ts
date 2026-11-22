@@ -75,6 +75,9 @@ export const createPatchComment = async (
   if (typeof prepared === 'string') {
     return prepared
   }
+  if (typeof moderation === 'string') {
+    return moderation
+  }
 
   const data = await kunTx(
     'comment.create',

@@ -21,6 +21,9 @@ export const POST = kunRoute.post({
     const moderation = await planTextModeration(bioSubject(input.bio), {
       actor: payload
     })
+    if (typeof moderation === 'string') {
+      return moderation
+    }
 
     if (moderation.intercept) {
       // 新签名暂存于任务 payload, 通过审核后由 apply.ts 写入 user 表

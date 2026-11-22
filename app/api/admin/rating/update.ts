@@ -28,6 +28,9 @@ export const updateRating = async (
     ratingSubject(input.shortSummary),
     { actor, previous: ratingSubject(rating.short_summary) }
   )
+  if (typeof moderation === 'string') {
+    return moderation
+  }
 
   // 后台编辑不设守卫: 隐藏、待审的评价都能改; 也不作废在途的审核任务
   const failure = await kunTx('admin.rating.update', async (ctx) => {

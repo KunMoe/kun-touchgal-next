@@ -161,6 +161,9 @@ export const updatePatchResource = async (
             })
           }
         )
+  if (typeof moderation === 'string') {
+    return moderation
+  }
 
   // 阶段一 (事务外): 只完成 S3 重绑 —— copy 不进事务; 链接 diff 与删除入队推迟到
   // 行锁之下, 以锁下集合为事实源. 事务外快照与行锁之间的并发编辑是 deleteMany +

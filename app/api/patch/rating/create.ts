@@ -38,6 +38,9 @@ export const createPatchRating = async (
   const moderation = await planTextModeration(ratingSubject(shortSummary), {
     actor
   })
+  if (typeof moderation === 'string') {
+    return moderation
+  }
 
   const data = await kunTx(
     'rating.create',

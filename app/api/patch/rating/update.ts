@@ -57,6 +57,9 @@ export const updatePatchRating = async (
     actor,
     previous: ratingSubject(rating.short_summary)
   })
+  if (typeof moderation === 'string') {
+    return moderation
+  }
 
   // 上面判的是事务外快照。同一组条件交给命令在行锁下再判一次: 其间被管理员隐藏的
   // 评价不会被这次编辑写回待审核

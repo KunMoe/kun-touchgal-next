@@ -39,6 +39,9 @@ export const updateComment = async (
     actor,
     previous: commentSubject(comment.content)
   })
+  if (typeof moderation === 'string') {
+    return moderation
+  }
 
   // 后台编辑不设守卫: 隐藏、待审的评论都能改; 也不作废在途的审核任务
   const failure = await kunTx('admin.comment.update', async (ctx) => {

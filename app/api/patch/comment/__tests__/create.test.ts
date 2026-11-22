@@ -181,6 +181,23 @@ describe('createPatchComment', () => {
     expect(invalidateContentMock).not.toHaveBeenCalled()
   })
 
+  it('提交者在途的审核任务已到上限时原样返回拒绝消息, 什么都不写', async () => {
+    planTextModerationMock.mockResolvedValueOnce(
+      '您已有 10 条内容在等待审核, 请等审核完成后再提交'
+    )
+
+    const result = await createPatchComment(
+      input,
+      kunTestActor({ uid: 7, role: 1 })
+    )
+
+    expect(result).toBe('您已有 10 条内容在等待审核, 请等审核完成后再提交')
+    expect(transactionMock).not.toHaveBeenCalled()
+    expect(enqueueTextModerationMock).not.toHaveBeenCalled()
+    expect(onCommentPublishedMock).not.toHaveBeenCalled()
+    expect(invalidateContentMock).not.toHaveBeenCalled()
+  })
+
   it('评论创建后按 unique_id 失效补丁详情缓存 (M-05)', async () => {
     await createPatchComment(input, kunTestActor({ uid: 7, role: 2 }))
 

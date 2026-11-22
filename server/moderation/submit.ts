@@ -1,5 +1,6 @@
 import { prisma } from '~/prisma/index'
 import type { Prisma } from '~/prisma/generated/prisma/client'
+import { MODERATION_MAX_PENDING_PER_USER } from '~/constants/moderation'
 import type {
   ModerationContentType,
   ModerationTextType
@@ -47,11 +48,12 @@ export type ModerationPlan<T extends ModerationTextType> =
 // 豁免集中在此处并靠必传的 actor 强制携带操作者, 防止新增调用点漏加检查 (资源 create
 // 路径曾因此漏过豁免)。actor 只能由会话构造, 调用点写不出字面量角色 (后台资源编辑曾以
 // 字面量 3 调用, 超级管理员因此被送审)。
-// previous 是编辑前的主体: 送审字段没有变化就不重审。能在本地判定的都排在读配置之前
+// previous 是编辑前的主体: 送审字段没有变化就不重审。能在本地判定的都排在读配置之前。
+// 返回 string 即提交者在途的任务已到上限 (见 pendingLimitError), 调用点原样返回给用户
 export const planTextModeration = async <T extends ModerationTextType>(
   subject: ModerationSubject<T>,
   options: { actor: KunActor; previous?: ModerationSubject<T> }
-): Promise<ModerationPlan<T>> => {
+): Promise<ModerationPlan<T> | string> => {
   if (can(options.actor, 'moderation.skip')) {
     return MODERATION_SKIP
   }
@@ -65,6 +67,10 @@ export const planTextModeration = async <T extends ModerationTextType>(
   if (!config.enabled) {
     return MODERATION_SKIP
   }
+  const limitError = await pendingLimitError(options.actor)
+  if (limitError) {
+    return limitError
+  }
   return {
     queue: true,
     intercept: !config.dryRun,
@@ -75,7 +81,7 @@ export const planTextModeration = async <T extends ModerationTextType>(
 
 export const preScreenMedia = async (
   actor: KunActor
-): Promise<ModerationPreScreen> => {
+): Promise<ModerationPreScreen | string> => {
   if (can(actor, 'moderation.skip')) {
     return MODERATION_SKIP
   }
@@ -83,7 +89,28 @@ export const preScreenMedia = async (
   if (!config.enabled) {
     return MODERATION_SKIP
   }
+  const limitError = await pendingLimitError(actor)
+  if (limitError) {
+    return limitError
+  }
   return { queue: true, intercept: !config.dryRun, dryRun: config.dryRun }
+}
+
+// 按提交者限在途任务数 (MODERATION_MAX_PENDING_PER_USER 有为什么限数量不限速率)。落在
+// 送审第一段而不是各入口: 现有与新增的送审面都要先过这里, 返回类型带 string, 调用点不处理
+// 编译不过。只数 dry_run = false 的 pending: 与 hasPendingModeration 同口径, 灰度不挡人;
+// 转人工的任务不占 worker。判定在写事务之前, 超限时什么都没写; 它是先查后写, 并发提交能
+// 超出几条, 超出量由入口的频率预算 (server/abuse) 封顶
+const pendingLimitError = async (actor: KunActor) => {
+  if (can(actor, 'abuse.exempt')) {
+    return null
+  }
+  const pending = await prisma.moderation_task.count({
+    where: { user_id: actor.uid, status: 'pending', dry_run: false }
+  })
+  return pending >= MODERATION_MAX_PENDING_PER_USER
+    ? `您已有 ${pending} 条内容在等待审核, 请等审核完成后再提交`
+    : null
 }
 
 // 内容存在未裁决的审核任务 (AI 审核中或等待人工) 时禁止作者再次修改,

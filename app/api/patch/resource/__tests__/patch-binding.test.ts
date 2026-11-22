@@ -311,6 +311,40 @@ describe('资源写入 patch 绑定', () => {
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
+  it('提交者在途的审核任务已到上限时, 创建与更新都在 S3 绑定前拒绝', async () => {
+    const limited = '您已有 10 条内容在等待审核, 请等审核完成后再提交'
+    planTextModerationMock.mockResolvedValue(limited)
+    patchFindUniqueMock.mockResolvedValue({
+      id: 10,
+      unique_id: 'patch-10',
+      name: 'Game'
+    })
+    resourceCountMock.mockResolvedValue(1)
+    resourceFindUniqueMock.mockResolvedValue({ ...storedResource, links: [] })
+    const s3Links = [
+      {
+        ...resourceInput.links[0],
+        storage: 's3',
+        hash: 'upload-token',
+        content: ''
+      }
+    ]
+
+    await expect(
+      createPatchResource(
+        { ...resourceInput, links: s3Links },
+        kunTestActor({ uid: 7, role: 2 })
+      )
+    ).resolves.toBe(limited)
+    await expect(
+      updateResource({ ...resourceInput, resourceId: 1, links: s3Links }, 7, 2)
+    ).resolves.toBe(limited)
+
+    expect(planTextModerationMock).toHaveBeenCalledTimes(2)
+    expect(bindUploadedResourceMock).not.toHaveBeenCalled()
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+
   it('创建资源时使用已确认存在的 patch ID', async () => {
     patchFindUniqueMock.mockResolvedValue({
       id: 10,
