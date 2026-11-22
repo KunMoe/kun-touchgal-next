@@ -98,9 +98,11 @@ export const preScreenMedia = async (
 
 // 按提交者限在途任务数 (MODERATION_MAX_PENDING_PER_USER 有为什么限数量不限速率)。落在
 // 送审第一段而不是各入口: 现有与新增的送审面都要先过这里, 返回类型带 string, 调用点不处理
-// 编译不过。只数 dry_run = false 的 pending: 与 hasPendingModeration 同口径, 灰度不挡人;
-// 转人工的任务不占 worker。判定在写事务之前, 超限时什么都没写; 它是先查后写, 并发提交能
-// 超出几条, 超出量由入口的频率预算 (server/abuse) 封顶
+// 编译不过。只数 dry_run = false 的 pending (与 hasPendingModeration 一样排除灰度, 但不数转
+// 人工的: 那些不占 worker), 灰度不挡人。判定在写事务之前, 超限时什么都没写。
+// 它是先查后写, 并发提交能一起越过上限: 新建评论 / 评价的入口预算改成 enforce 之后, 超出量
+// 由那里的窗口封顶; 编辑没有入口预算, 超出量的上界是这个账号能同时编辑的内容数。
+// 车道打开或 worker 停摆时 pending 只进不出, 到上限的人在排空之前提交不了任何送审内容
 const pendingLimitError = async (actor: KunActor) => {
   if (can(actor, 'abuse.exempt')) {
     return null
