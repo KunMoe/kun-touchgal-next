@@ -12,8 +12,6 @@ const readSource = (file: string) =>
 // 自建功能起就带着 isMounted。正确形态是体内 !isMounted 早退 + 依赖数组不含 isMounted。
 // 无 SSR 数据、纯客户端首取的组件 (如 settings/user/appeal) 不在此列。
 const containers = [
-  '../message/Container.tsx',
-  '../message/chat/ConversationList.tsx',
   '../admin/appeal/Container.tsx',
   '../admin/creator/Container.tsx',
   '../admin/feedback/Container.tsx',
@@ -27,6 +25,8 @@ const containers = [
 // 状态机, 「有 initial 时挂载不请求」由 utils/list/__tests__/kunListMachine.test.ts 的
 // 用例守护。这里钉住容器确实把首屏数据交了出去, 而不是退回不给 initial、挂载后再取一遍
 const pagedListContainers = [
+  '../message/Container.tsx',
+  '../message/chat/ConversationList.tsx',
   '../admin/comment/Container.tsx',
   '../admin/moderation/Container.tsx',
   '../admin/rating/Container.tsx',
