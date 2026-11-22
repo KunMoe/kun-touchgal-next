@@ -90,7 +90,7 @@ export const KUN_ABUSE_POLICIES = {
   // 提及通知按真正新增的收件人计费 (cost = 人数), 即时发布与审核通过后的补发都经这里
   'notify.mention': {
     windows: [{ per: 'uid', limit: 100, windowSeconds: DAY }],
-    exempt: null,
+    exempt: 'abuse.exempt',
     mode: 'observe'
   },
   // 外部元数据抓取 (五条 /api/edit/* 路由), 按账号; 另由下面的 upstream.* 管整站
