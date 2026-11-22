@@ -63,6 +63,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - 人机验证的界面由本站自己画（`components/kun/auth/CaptchaModal.tsx`），厂商的 `cap-widget` 只经 `useKunCap.ts` 当看不见的求解引擎用（`new Cap(...)`，只取模块的 `default`）：不把 `<cap-widget>` 渲染进页面，不给它打补丁；`useKunCap` 在常驻挂载的组件里调用，关闭弹窗即同步销毁实例，关闭后不得再触发 `onSuccess`。`cap-widget` 钉精确版本，与 `public/cap/` 下自托管的 wasm 由 `components/kun/auth/__tests__/capVendorContract.test.ts` 核对；升级后在 `next dev` 与生产构建上各冒烟一次（清单见 `AGENTS.md`）。
 - 项目自有 helper / export 多带 `kun` 前缀；跨组件、需持久化的状态放 `store/*`（Zustand）。
 - 会被写回库的表单不从展示用的缓存预填：Galgame 重写页 `/edit/rewrite/[uniqueId]` 自己经 `getGalgameForRewrite` 读库，表单 store 是用这份基线初始化的页内实例。`PUT /api/edit` 的标签是按 id 的差量（`removeTagIds` + `addTagNames`，只走 `applyManualTagChange`），并带 `baseFingerprint` 做并发检查（规范化与指纹只在 `app/api/edit/_editFields.ts`；事务里锁 patch 行用 `FOR UPDATE`）。建档 / 重写的表单 store 改字段只有 `update(patch | fn)`，`await` 之后写表单用函数式；抓取结果经 `components/edit/form/merge.ts` 的纯函数并入。
+- 共享读缓存的失效知识只在 `server/cache/plan.ts`：写路径在 `kunTx` 回调里用 `recordKunChanges(ctx, changes)` 报告改了哪一行与前后状态（只取行锁下读值或 `RETURNING`），要失效哪些缓存由规划器推导、提交后逐条执行且不抛错；资源族四个失效 helper 只许 `server/cache/**` 引用（`kun/inv-cache-01`）。被内嵌却刻意不精确失效的字段登记在 `KUN_TTL_TOLERATED`（带陈旧上限，TTL 调长超过它测试变红）。
 - 缓存 TTL 常量在 `config/cache.ts`，Redis key 统一经 `lib/redis.ts` 前缀。
 - 代码风格（Prettier）：单引号、无分号、2 空格缩进、无尾逗号。
 - 启动 / 构建前 `.env` 必须通过 `validations/dotenv-check.ts` 校验，否则会失败（参考 `.env.example`）。
