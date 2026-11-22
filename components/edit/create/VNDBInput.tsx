@@ -52,6 +52,11 @@ export const VNDBInput = ({ errors, data, update }: Props) => {
       if (isStale()) {
         return
       }
+      if (typeof result === 'string') {
+        setFetched(null)
+        toast.error(result)
+        return
+      }
 
       const applied = applyFetchMerge(update, (prev) =>
         mergeVndbFetch(prev, requestedId, result)
@@ -67,19 +72,7 @@ export const VNDBInput = ({ errors, data, update }: Props) => {
         return
       }
       setFetched(null)
-      if (
-        error instanceof Error &&
-        (error.message === 'VNDB_API_ERROR' ||
-          error.message === 'VNDB_NOT_FOUND')
-      ) {
-        const message =
-          error.message === 'VNDB_NOT_FOUND'
-            ? '未找到对应的 VNDB 数据'
-            : 'VNDB API 请求失败, 请稍后重试'
-        toast.error(message)
-      } else {
-        toast.error('VNDB API 请求失败, 请稍后重试')
-      }
+      toast.error('VNDB API 请求失败, 请稍后重试')
     }
   }
 

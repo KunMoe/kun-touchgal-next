@@ -115,6 +115,11 @@ export const VNDBRelationInput = ({
       if (isStale()) {
         return
       }
+      if (typeof details === 'string') {
+        setFetched(null)
+        toast.error(details)
+        return
+      }
 
       const result = combineVndbRelationFetch(relationResult, details)
       const applied = applyFetchMerge(update, (prev) =>
@@ -131,19 +136,7 @@ export const VNDBRelationInput = ({
         return
       }
       setFetched(null)
-      if (
-        error instanceof Error &&
-        (error.message === 'VNDB_API_ERROR' ||
-          error.message === 'VNDB_NOT_FOUND')
-      ) {
-        const message =
-          error.message === 'VNDB_NOT_FOUND'
-            ? '未找到对应的 VNDB 数据'
-            : 'VNDB API 请求失败, 请稍后重试'
-        toast.error(message)
-      } else {
-        toast.error('获取 Release 数据失败, 请稍后重试')
-      }
+      toast.error('获取 Release 数据失败, 请稍后重试')
     }
   }
 

@@ -9,20 +9,8 @@ interface VNDBDetailsResponse {
   developers: string[]
 }
 
-export const fetchVNDBDetails = async (
-  vnId: string
-): Promise<VNDBDetailsResponse> => {
-  const response = await kunFetchPost<VNDBDetailsResponse | string>(
-    '/edit/vndb/details',
-    { vndbId: vnId }
-  )
-
-  if (typeof response === 'string') {
-    if (response === '未找到对应的 VNDB 条目') {
-      throw new Error('VNDB_NOT_FOUND')
-    }
-    throw new Error('VNDB_API_ERROR')
-  }
-
-  return response
-}
+// 失败时是服务端或 kunFetch 给出的文案 (未收录、上游失败、请求过于频繁、断网), 调用点原样提示
+export const fetchVNDBDetails = (vnId: string) =>
+  kunFetchPost<VNDBDetailsResponse | string>('/edit/vndb/details', {
+    vndbId: vnId
+  })

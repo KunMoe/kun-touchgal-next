@@ -86,6 +86,7 @@ export const ResourceTabs = ({
   const [kunResources, setKunResources] = useState<KunMoyuPatchResource[]>([])
   const [kunLoading, setKunLoading] = useState(false)
   const [kunLoaded, setKunLoaded] = useState(false)
+  const [kunError, setKunError] = useState<string | null>(null)
   // 深链目标只定位一次: tab 保活后目标会一直留在 props 里, 不设防的话之后每次增删改
   // 资源或切分区, 都会把用户拽回目标分区 / 目标卡片
   // 后退还原时深链目标视为已定位过, 以离开前的分区和浏览器恢复的位置为准
@@ -136,12 +137,19 @@ export const ResourceTabs = ({
         '/patch/moyu',
         { vndbId }
       )
-      setKunResources(typeof response === 'string' ? [] : response)
+      // 失败 (上游出错、整站配额用完、断网) 显示原因且不算加载过, 下次切回补丁栏时重试
+      if (typeof response === 'string') {
+        setKunError(response)
+        return
+      }
+      setKunError(null)
+      setKunResources(response)
+      setKunLoaded(true)
     } catch {
       setKunResources([])
+      setKunLoaded(true)
     } finally {
       setKunLoading(false)
-      setKunLoaded(true)
     }
   }
 
@@ -410,6 +418,8 @@ export const ResourceTabs = ({
                           </div>
                         ))}
                       </>
+                    ) : kunError ? (
+                      <KunNull message={kunError} />
                     ) : (
                       (!vndbId || kunLoaded) && (
                         <KunNull message="本游戏在鲲 Galgame 补丁暂无对应补丁" />
