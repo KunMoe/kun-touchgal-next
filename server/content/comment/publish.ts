@@ -5,6 +5,7 @@ import {
   extractMentionUserIds
 } from '~/app/api/utils/createMentionMessage'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { reserveAbuseBudget } from '~/server/abuse/budget'
 
 // 评论「变为公开」时要发的站内信, 全仓只有这一份: 回复通知、资源一级评论通知、提及通知。
 // 直接发布、审核通过、申诉通过、管理员恢复都走 onCommentPublished; 评论被审核拦截时
@@ -91,6 +92,8 @@ export const planCommentNotifications = (
 // 提交之后调用。同一条评论可能多次变为公开 (编辑后重审通过、隐藏后恢复), 所以三类通知
 // 都以 (type, sender, recipient, link) 去重, 不含正文: 父评论或评论自己的正文会变,
 // link 按评论 id 构造, 是稳定的。
+// 提及的收件人取自正文、跨评论无界, 所以去重之后按真正新增的收件人数向评论者计费
+// (notify.mention); 超出预算时这一轮的提及通知整批不发, 回复与资源通知照发
 // 不向调用方抛错: 通知是可丢失的副作用, 评论已经落库, 不能因为它把请求变成 500
 export const onCommentPublished = async (commentId: number) => {
   try {
@@ -102,7 +105,7 @@ export const onCommentPublished = async (commentId: number) => {
         user_id: true,
         resource_id: true,
         patch: { select: { name: true, unique_id: true } },
-        user: { select: { name: true } },
+        user: { select: { name: true, role: true } },
         parent: { select: { user_id: true, content: true } },
         resource: { select: { user_id: true } }
       }
@@ -156,11 +159,30 @@ export const onCommentPublished = async (commentId: number) => {
     const sentKeys = new Set(
       sent.map((message) => `${message.type}:${message.recipient_id}`)
     )
-    const pending = planned.filter(
+    let pending = planned.filter(
       (item) =>
         (item.type !== 'mention' || existingUserIds.has(item.recipient_id)) &&
         !sentKeys.has(`${item.type}:${item.recipient_id}`)
     )
+    const mentionCount = pending.filter(
+      (item) => item.type === 'mention'
+    ).length
+    if (mentionCount) {
+      const denial = await reserveAbuseBudget(
+        [{ policy: 'notify.mention', cost: mentionCount }],
+        { uid: comment.user_id, role: comment.user.role }
+      )
+      if (denial) {
+        // eslint-disable-next-line no-console
+        console.warn('[abuse] mention notifications dropped', {
+          commentId,
+          senderUid: comment.user_id,
+          recipients: mentionCount,
+          retryAfterSec: denial.retryAfterSec
+        })
+        pending = pending.filter((item) => item.type !== 'mention')
+      }
+    }
     if (!pending.length) {
       return
     }

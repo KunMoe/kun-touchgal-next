@@ -5,13 +5,17 @@ const rec = await vi.hoisted(async () =>
     await import('~/server/db/__tests__/recordingTransaction')
   ).recordingTransaction()
 )
-const { invalidateUnreadMock } = vi.hoisted(() => ({
-  invalidateUnreadMock: vi.fn()
+const { invalidateUnreadMock, reserveAbuseBudgetMock } = vi.hoisted(() => ({
+  invalidateUnreadMock: vi.fn(),
+  reserveAbuseBudgetMock: vi.fn()
 }))
 
 vi.mock('~/prisma/index', () => rec.module)
 vi.mock('~/app/api/message/unread/cache', () => ({
   invalidateUnread: invalidateUnreadMock
+}))
+vi.mock('~/server/abuse/budget', () => ({
+  reserveAbuseBudget: reserveAbuseBudgetMock
 }))
 
 import {
@@ -153,7 +157,7 @@ const row = (overrides: Record<string, unknown> = {}) => ({
   user_id: 7,
   resource_id: null,
   patch: { name: '游戏名', unique_id: 'patch-10' },
-  user: { name: 'kun' },
+  user: { name: 'kun', role: 1 },
   parent: null,
   resource: null,
   ...overrides
@@ -172,6 +176,7 @@ beforeEach(() => {
     args.where.id.in.map((id) => ({ id }))
   )
   rec.on('user_message.findMany', [])
+  reserveAbuseBudgetMock.mockResolvedValue(null)
 })
 
 describe('onCommentPublished', () => {
@@ -289,6 +294,89 @@ describe('onCommentPublished', () => {
         expect.objectContaining({ type: 'mention', recipient_id: 5 })
       ]
     ])
+  })
+
+  // 提及跨评论无界: 每一轮 (即时发布、审核通过后的补发、编辑后重审) 按真正新增的收件人计费
+  it('只按去重、剔除不存在的用户之后新增的提及收件人向评论者计费', async () => {
+    rec.on(
+      'patch_comment.findUnique',
+      row({
+        content:
+          '[@a](/user/5/comment) [@b](/user/6/comment) [@ghost](/user/404/comment)',
+        parent: { user_id: 9, content: 'parent' }
+      })
+    )
+    rec.on('user.findMany', [{ id: 5 }, { id: 6 }])
+    rec.on('user_message.findMany', [{ type: 'mention', recipient_id: 5 }])
+
+    await onCommentPublished(11)
+
+    expect(reserveAbuseBudgetMock).toHaveBeenCalledExactlyOnceWith(
+      [{ policy: 'notify.mention', cost: 1 }],
+      { uid: 7, role: 1 }
+    )
+    expect(created()).toEqual([
+      [
+        expect.objectContaining({ type: 'comment', recipient_id: 9 }),
+        expect.objectContaining({ type: 'mention', recipient_id: 6 })
+      ]
+    ])
+  })
+
+  it('没有新增的提及时不计费', async () => {
+    rec.on(
+      'patch_comment.findUnique',
+      row({ parent: { user_id: 9, content: 'parent' } })
+    )
+
+    await onCommentPublished(11)
+
+    expect(reserveAbuseBudgetMock).not.toHaveBeenCalled()
+    expect(created()).toHaveLength(1)
+  })
+
+  it('提及超出预算时这一轮的提及整批不发、记 warn, 回复通知照发', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    reserveAbuseBudgetMock.mockResolvedValue({
+      policy: 'notify.mention',
+      per: 'uid',
+      retryAfterSec: 3600
+    })
+    rec.on(
+      'patch_comment.findUnique',
+      row({
+        content: '[@a](/user/5/comment) [@b](/user/6/comment)',
+        parent: { user_id: 9, content: 'parent' }
+      })
+    )
+
+    await onCommentPublished(11)
+
+    expect(created()).toEqual([
+      [expect.objectContaining({ type: 'comment', recipient_id: 9 })]
+    ])
+    expect(invalidateUnreadMock.mock.calls).toEqual([[9]])
+    expect(warnSpy).toHaveBeenCalledOnce()
+    warnSpy.mockRestore()
+  })
+
+  it('提及超出预算且没有别的通知时什么都不写', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    reserveAbuseBudgetMock.mockResolvedValue({
+      policy: 'notify.mention',
+      per: 'uid',
+      retryAfterSec: 3600
+    })
+    rec.on(
+      'patch_comment.findUnique',
+      row({ content: '[@a](/user/5/comment)' })
+    )
+
+    await onCommentPublished(11)
+
+    expect(created()).toEqual([])
+    expect(invalidateUnreadMock).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
   it('写入失败只记日志, 不向调用方抛错', async () => {
