@@ -1,15 +1,6 @@
 'use client'
 
-import {
-  Autocomplete,
-  AutocompleteItem,
-  Avatar,
-  Button,
-  Chip,
-  Input,
-  Select,
-  SelectItem
-} from '@heroui/react'
+import { Button, Chip, Input, Select, SelectItem } from '@heroui/react'
 import {
   Modal,
   ModalBody,
@@ -19,15 +10,19 @@ import {
   useDisclosure
 } from '@heroui/modal'
 import { Search } from 'lucide-react'
-import { useEffect, useRef, useState, type Key } from 'react'
+import { useEffect, useState, type Key } from 'react'
 import { kunFetchDelete, kunFetchGet } from '~/utils/kunFetch'
+import { kunDescribeBatchShortfall } from '~/utils/list/kunChunkedBatch'
 import { ADMIN_COMMENT_DELETE_LIMIT } from '~/constants/admin'
 import { KunCardSkeleton } from '~/components/kun/CardSkeleton'
-import { useMounted } from '~/hooks/useMounted'
+import { KunListError } from '~/components/kun/ListError'
+import { useKunChunkedBatch } from '~/hooks/useKunChunkedBatch'
+import { useKunPagedList } from '~/hooks/useKunPagedList'
+import { AdminUserFilter } from '../AdminUserFilter'
 import { CommentCard } from './Card'
 import { useDebounce } from 'use-debounce'
 import { KunPagination } from '~/components/kun/Pagination'
-import type { AdminComment, AdminUser } from '~/types/api/admin'
+import type { AdminComment } from '~/types/api/admin'
 import toast from 'react-hot-toast'
 
 type AdminCommentSearchType = 'content' | 'user'
@@ -41,10 +36,35 @@ const searchTypeOptions: Array<{
   { key: 'user', label: '用户名', placeholder: '输入用户名搜索...' }
 ]
 
-interface UserOption {
-  id: number
-  name: string
-  avatar: string
+interface CommentQuery {
+  page: number
+  limit: number
+  searchType: AdminCommentSearchType
+  search: string
+  userId: number | null
+}
+
+const fetchCommentPage = async (query: CommentQuery) => {
+  const params: Record<string, string | number> = {
+    page: query.page,
+    limit: query.limit,
+    searchType: query.searchType
+  }
+  if (query.searchType === 'content' && query.search) {
+    params.search = query.search
+  }
+  if (query.searchType === 'user' && query.userId) {
+    params.userId = query.userId
+  }
+  const response = await kunFetchGet<
+    KunResponse<{
+      comments: AdminComment[]
+      total: number
+    }>
+  >('/admin/comment', params)
+  return typeof response === 'string'
+    ? response
+    : { items: response.comments, total: response.total }
 }
 
 interface Props {
@@ -53,321 +73,79 @@ interface Props {
 }
 
 export const Comment = ({ initialComments, initialTotal }: Props) => {
-  const [comments, setComments] = useState<AdminComment[]>(initialComments)
-  const [total, setTotal] = useState(initialTotal)
-  const [page, setPage] = useState(1)
-  const [limit, setLimit] = useState(30)
-  const [searchType, setSearchType] =
-    useState<AdminCommentSearchType>('content')
-  const [selectedCommentIds, setSelectedCommentIds] = useState<Set<number>>(
-    new Set()
-  )
+  const list = useKunPagedList<AdminComment, CommentQuery>({
+    query: {
+      page: 1,
+      limit: 30,
+      searchType: 'content',
+      search: '',
+      userId: null
+    },
+    initial: { items: initialComments, total: initialTotal },
+    getId: (comment) => comment.id,
+    clamp: 'toLastPage',
+    // 删除会级联删掉回复, 它们可跨页且是否命中当前筛选客户端不可判定: 本地递减只是
+    // 即时反馈, 无条件静默补齐以服务端为准 (顺带补上前移的行)
+    afterRemove: 'alwaysRefill',
+    fetchPage: fetchCommentPage
+  })
+  const { query, selection, setQuery } = list
+  const loading = list.status === 'loading'
 
   const [contentQuery, setContentQuery] = useState('')
   const [debouncedContent] = useDebounce(contentQuery, 500)
 
-  const [userInput, setUserInput] = useState('')
-  const [debouncedUserInput] = useDebounce(userInput, 400)
-  const [userOptions, setUserOptions] = useState<UserOption[]>([])
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
-  const [userSearchLoading, setUserSearchLoading] = useState(false)
-
-  const isMounted = useMounted()
   const {
     isOpen: isOpenDelete,
     onOpen: onOpenDelete,
     onClose: onCloseDelete
   } = useDisclosure()
-
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  // 页码钳制帧列表已清空而 refetch 尚未发起, 渲染层以骨架屏遮住误导空态
-  const [clampRefetchPending, setClampRefetchPending] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [deleteProgress, setDeleteProgress] = useState('')
+  const batch = useKunChunkedBatch({
+    // 分块大小必须不超过后端单次删除上限, 否则整块被校验拒绝
+    chunkSize: ADMIN_COMMENT_DELETE_LIMIT,
+    send: async (chunk) => {
+      const res = await kunFetchDelete<KunResponse<{}>>('/admin/comment', {
+        commentIds: chunk.join(',')
+      })
+      return typeof res === 'string' ? res : chunk.length
+    }
+  })
 
   useEffect(() => {
-    if (!debouncedUserInput.trim()) {
-      setUserOptions([])
-      return
-    }
-    let cancelled = false
-    const fetchUsers = async () => {
-      setUserSearchLoading(true)
-      try {
-        const res = await kunFetchGet<{
-          users: AdminUser[]
-          total: number
-        }>('/admin/user', {
-          page: 1,
-          limit: 10,
-          search: debouncedUserInput,
-          searchType: 'name'
-        })
-        if (!cancelled) {
-          if (typeof res === 'string') {
-            toast.error(res)
-          } else {
-            setUserOptions(
-              res.users.map((u) => ({
-                id: u.id,
-                name: u.name,
-                avatar: u.avatar
-              }))
-            )
-          }
-        }
-      } finally {
-        if (!cancelled) {
-          setUserSearchLoading(false)
-        }
-      }
-    }
-    fetchUsers()
-    return () => {
-      cancelled = true
-    }
-  }, [debouncedUserInput])
-
-  const latestFetchRequestIdRef = useRef(0)
-  // 本渲染时刻的请求序号; 删行后补齐前比对, 若期间有过新请求 (翻页/筛选变更)
-  // 则闭包参数已过期, 跳过静默补齐让用户请求的响应落地
-  const renderFetchRequestId = latestFetchRequestIdRef.current
-
-  const fetchData = async ({ silent = false } = {}) => {
-    const requestId = latestFetchRequestIdRef.current + 1
-    latestFetchRequestIdRef.current = requestId
-    if (!silent) {
-      setLoading(true)
-      setError('')
-      setClampRefetchPending(false)
-    }
-
-    try {
-      const params: Record<string, string | number> = {
-        page,
-        limit,
-        searchType
-      }
-      if (searchType === 'content' && debouncedContent) {
-        params.search = debouncedContent
-      }
-      if (searchType === 'user' && selectedUserId) {
-        params.userId = selectedUserId
-      }
-
-      const response = await kunFetchGet<
-        KunResponse<{
-          comments: AdminComment[]
-          total: number
-        }>
-      >('/admin/comment', params)
-      if (requestId !== latestFetchRequestIdRef.current) {
-        return
-      }
-      if (typeof response === 'string') {
-        if (!silent) {
-          setError(response)
-        }
-        return
-      }
-
-      const totalPage = Math.max(1, Math.ceil(response.total / limit))
-      const clamped = page > totalPage
-      if (clamped) {
-        setPage(totalPage)
-        setClampRefetchPending(true)
-      }
-
-      setComments(response.comments)
-      setTotal(response.total)
-      // 钳制帧响应是空列表, 过滤会误清已前移行的选中态, 留给 refetch 落地帧
-      if (!clamped) {
-        setSelectedCommentIds((prev) => {
-          const currentCommentIds = new Set(
-            response.comments.map((comment) => comment.id)
-          )
-          return new Set(
-            [...prev].filter((commentId) => currentCommentIds.has(commentId))
-          )
-        })
-      }
-    } catch {
-      if (!silent && requestId === latestFetchRequestIdRef.current) {
-        setError('网络错误, 请稍后重试')
-      }
-    } finally {
-      if (requestId === latestFetchRequestIdRef.current) {
-        setLoading(false)
-      }
-    }
-  }
-
-  useEffect(() => {
-    if (!isMounted) {
-      return
-    }
-    fetchData()
-  }, [page, limit, searchType, debouncedContent, selectedUserId])
+    setQuery({ search: debouncedContent })
+  }, [setQuery, debouncedContent])
 
   const handleSearchTypeChange = (keys: 'all' | Set<Key>) => {
     const key = Array.from(keys)[0] as AdminCommentSearchType | undefined
     if (!key) {
       return
     }
-    setSearchType(key)
-    setPage(1)
     setContentQuery('')
-    setUserInput('')
-    setSelectedUserId(null)
-    setUserOptions([])
+    setQuery({ searchType: key, search: '', userId: null })
   }
 
-  const handleContentSearch = (value: string) => {
-    setContentQuery(value)
-    setPage(1)
-  }
-
-  const handleUserSelectionChange = (key: Key | null) => {
-    if (!key) {
-      setSelectedUserId(null)
-    } else {
-      setSelectedUserId(Number(key))
-    }
-    setPage(1)
-  }
-
-  const handleUserInputChange = (value: string) => {
-    setUserInput(value)
-    if (!value) {
-      setSelectedUserId(null)
-      setPage(1)
-    }
-  }
-
-  const handleCommentSelectionChange = (
-    commentId: number,
-    isSelected: boolean
-  ) => {
-    setSelectedCommentIds((prev) => {
-      const next = new Set(prev)
-      if (isSelected) {
-        next.add(commentId)
-      } else {
-        next.delete(commentId)
-      }
-      return next
-    })
-  }
-
-  const handleToggleSelectAll = () => {
-    setSelectedCommentIds((prev) => {
-      const next = new Set(prev)
-      const isAllSelected =
-        comments.length > 0 && comments.every((comment) => prev.has(comment.id))
-
-      comments.forEach((comment) => {
-        if (isAllSelected) {
-          next.delete(comment.id)
-        } else {
-          next.add(comment.id)
-        }
-      })
-
-      return next
-    })
-  }
-
-  const handleClearSelection = () => {
-    setSelectedCommentIds(new Set())
-  }
-
-  // 单条编辑/隐藏后就地更新该卡片, 不整表刷新
-  const handleCommentUpdated = (updated: AdminComment) => {
-    setComments((prev) =>
-      prev.map((comment) =>
-        comment.id === updated.id ? { ...comment, ...updated } : comment
-      )
-    )
-  }
-
-  // 单条删除后只移除对应卡片 (服务端级联删除的回复一并移除);
-  // 当前页被抽空且不在第一页时回退页码走正常 refetch。
-  // 级联删除的回复可跨页且是否命中当前筛选客户端不可判定, 本地递减只是
-  // 即时反馈, total 须无条件静默 refetch 以服务端为准 (顺带补齐前移行)
-  const handleCommentDeleted = (commentIds: number[]) => {
-    const idSet = new Set(commentIds)
-    setSelectedCommentIds((prev) => {
-      const next = new Set([...prev].filter((id) => !idSet.has(id)))
-      return next.size === prev.size ? prev : next
-    })
-    const removedCount = comments.filter((comment) =>
-      idSet.has(comment.id)
-    ).length
-    if (removedCount >= comments.length && page > 1) {
-      setPage(page - 1)
-      return
-    }
-    setComments((prev) => prev.filter((comment) => !idSet.has(comment.id)))
-    setTotal((prev) => Math.max(0, prev - removedCount))
-    if (latestFetchRequestIdRef.current === renderFetchRequestId) {
-      fetchData({ silent: true })
-    }
-  }
   const handleBatchDelete = async () => {
-    if (!selectedCommentIds.size) {
+    const ids = [...selection.ids]
+    if (!ids.length) {
       return
     }
 
-    const ids = Array.from(selectedCommentIds)
-    // 分块大小必须不超过后端单次删除上限, 否则整块被校验拒绝
-    const chunkSize = ADMIN_COMMENT_DELETE_LIMIT
-    setDeleting(true)
-    try {
-      let deletedCount = 0
-      const failedIds: number[] = []
-      for (let i = 0; i < ids.length; i += chunkSize) {
-        const chunk = ids.slice(i, i + chunkSize)
-        setDeleteProgress(
-          `${Math.min(i + chunkSize, ids.length)} / ${ids.length}`
-        )
-        try {
-          const res = await kunFetchDelete<KunResponse<{}>>('/admin/comment', {
-            commentIds: chunk.join(',')
-          })
-          if (typeof res === 'string') {
-            failedIds.push(...chunk)
-          } else {
-            deletedCount += chunk.length
-          }
-        } catch {
-          failedIds.push(...chunk)
-        }
-      }
-
-      if (failedIds.length) {
-        setSelectedCommentIds(new Set(failedIds))
-        toast.error(
-          `已删除 ${deletedCount} 条, ${failedIds.length} 条删除失败, 已保留选中可重试`
-        )
-      } else {
-        onCloseDelete()
-        setSelectedCommentIds(new Set())
-        toast.success(`已删除 ${deletedCount} 条评论`)
-      }
-      await fetchData()
-    } finally {
-      setDeleting(false)
-      setDeleteProgress('')
+    const result = await batch.run(ids)
+    const unfinished = [...result.failed, ...result.notRun]
+    if (unfinished.length) {
+      selection.replace(unfinished)
+      toast.error(kunDescribeBatchShortfall(result, '删除'))
+    } else {
+      onCloseDelete()
+      selection.clear()
+      toast.success(`已删除 ${result.succeeded} 条评论`)
     }
+    list.refresh()
   }
 
   const currentPlaceholder =
-    searchTypeOptions.find((option) => option.key === searchType)
+    searchTypeOptions.find((option) => option.key === query.searchType)
       ?.placeholder ?? ''
-  const isAllSelected =
-    comments.length > 0 &&
-    comments.every((comment) => selectedCommentIds.has(comment.id))
 
   return (
     <div className="space-y-6">
@@ -378,7 +156,7 @@ export const Comment = ({ initialComments, initialTotal }: Props) => {
           <Select
             aria-label="搜索类型"
             className="w-full sm:max-w-40"
-            selectedKeys={new Set([searchType])}
+            selectedKeys={new Set([query.searchType])}
             onSelectionChange={handleSearchTypeChange}
           >
             {searchTypeOptions.map((option) => (
@@ -386,32 +164,11 @@ export const Comment = ({ initialComments, initialTotal }: Props) => {
             ))}
           </Select>
 
-          {searchType === 'user' ? (
-            <Autocomplete
-              fullWidth
-              isClearable
+          {query.searchType === 'user' ? (
+            <AdminUserFilter
               placeholder={currentPlaceholder}
-              startContent={<Search className="text-default-300" size={20} />}
-              inputValue={userInput}
-              isLoading={userSearchLoading}
-              items={userOptions}
-              onInputChange={handleUserInputChange}
-              onSelectionChange={handleUserSelectionChange}
-            >
-              {(user) => (
-                <AutocompleteItem key={user.id} textValue={user.name}>
-                  <div className="flex items-center gap-2">
-                    <Avatar
-                      src={user.avatar}
-                      size="sm"
-                      showFallback
-                      name={user.name.charAt(0).toUpperCase()}
-                    />
-                    <span>{user.name}</span>
-                  </div>
-                </AutocompleteItem>
-              )}
-            </Autocomplete>
+              onChange={(userId) => setQuery({ userId })}
+            />
           ) : (
             <Input
               fullWidth
@@ -420,35 +177,35 @@ export const Comment = ({ initialComments, initialTotal }: Props) => {
               placeholder={currentPlaceholder}
               startContent={<Search className="text-default-300" size={20} />}
               value={contentQuery}
-              onValueChange={handleContentSearch}
+              onValueChange={setContentQuery}
             />
           )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {selectedCommentIds.size ? (
+          {selection.ids.size ? (
             <Chip color="primary" variant="flat">
-              {`已选择 ${selectedCommentIds.size} 条`}
+              {`已选择 ${selection.ids.size} 条`}
             </Chip>
           ) : null}
           <Button
             variant="flat"
-            onPress={handleToggleSelectAll}
-            isDisabled={!comments.length || loading}
+            onPress={selection.togglePage}
+            isDisabled={!list.items.length || loading}
           >
-            {isAllSelected ? '取消全选' : '全选当前页'}
+            {selection.isPageSelected ? '取消全选' : '全选当前页'}
           </Button>
           <Button
             variant="light"
-            onPress={handleClearSelection}
-            isDisabled={!selectedCommentIds.size || loading}
+            onPress={selection.clear}
+            isDisabled={!selection.ids.size || loading}
           >
             清空选择
           </Button>
           <Button
             color="danger"
             onPress={onOpenDelete}
-            isDisabled={!selectedCommentIds.size || loading}
+            isDisabled={!selection.ids.size || loading}
           >
             批量删除
           </Button>
@@ -456,28 +213,28 @@ export const Comment = ({ initialComments, initialTotal }: Props) => {
       </div>
 
       <div className="space-y-4">
-        {loading || clampRefetchPending ? (
+        {loading ? (
           <KunCardSkeleton count={3} />
-        ) : error ? (
-          <div className="space-y-3 py-12 text-center">
-            <p className="text-danger">{error}</p>
-            <Button variant="flat" onPress={() => fetchData()}>
-              重试
-            </Button>
-          </div>
-        ) : comments.length ? (
+        ) : list.status === 'error' ? (
+          <KunListError
+            message={list.error ?? ''}
+            onRetry={() => list.refresh()}
+          />
+        ) : list.items.length ? (
           <>
-            {comments.map((comment) => (
+            {list.items.map((comment) => (
               <CommentCard
                 key={comment.id}
                 comment={comment}
-                isSelected={selectedCommentIds.has(comment.id)}
-                isSelectionDisabled={deleting}
+                isSelected={selection.ids.has(comment.id)}
+                isSelectionDisabled={batch.isRunning}
                 onSelectionChange={(isSelected) =>
-                  handleCommentSelectionChange(comment.id, isSelected)
+                  selection.toggle(comment.id, isSelected)
                 }
-                onUpdated={handleCommentUpdated}
-                onDeleted={handleCommentDeleted}
+                // 单条编辑 / 隐藏后就地更新该卡片, 不整表刷新
+                onUpdated={(updated) => list.patchLocal(updated.id, updated)}
+                // 单条删除后移除该卡片与服务端级联删除的回复
+                onDeleted={list.removeLocal}
               />
             ))}
           </>
@@ -493,9 +250,9 @@ export const Comment = ({ initialComments, initialTotal }: Props) => {
 
       <div className="flex justify-center">
         <KunPagination
-          total={Math.ceil(total / limit)}
-          page={page}
-          onPageChange={setPage}
+          total={Math.ceil(list.total / query.limit)}
+          page={query.page}
+          onPageChange={list.setPage}
           isLoading={loading}
         />
       </div>
@@ -506,12 +263,11 @@ export const Comment = ({ initialComments, initialTotal }: Props) => {
           aria-label="每页显示数量"
           size="sm"
           className="w-20"
-          selectedKeys={new Set([String(limit)])}
+          selectedKeys={new Set([String(query.limit)])}
           onSelectionChange={(keys) => {
             const val = Number(Array.from(keys)[0])
-            if (val && val !== limit) {
-              setLimit(val)
-              setPage(1)
+            if (val && val !== query.limit) {
+              setQuery({ limit: val })
             }
           }}
         >
@@ -520,31 +276,51 @@ export const Comment = ({ initialComments, initialTotal }: Props) => {
           <SelectItem key="100">100</SelectItem>
           <SelectItem key="500">500</SelectItem>
         </Select>
-        <span>条，共 {total} 条</span>
+        <span>条，共 {list.total} 条</span>
       </div>
 
-      <Modal isOpen={isOpenDelete} onClose={onCloseDelete} placement="center">
+      {/* 批量进行中不可关闭: 关掉弹窗不会停下循环 (P22-01), 要停用「停止剩余」 */}
+      <Modal
+        isOpen={isOpenDelete}
+        onClose={onCloseDelete}
+        placement="center"
+        isDismissable={!batch.isRunning}
+        isKeyboardDismissDisabled={batch.isRunning}
+        hideCloseButton={batch.isRunning}
+      >
         <ModalContent>
           <ModalHeader className="flex flex-col gap-1">
             批量删除评论
           </ModalHeader>
           <ModalBody>
             <p>
-              您确定要删除已选择的 {selectedCommentIds.size} 条评论吗?
+              您确定要删除已选择的 {selection.ids.size} 条评论吗?
               如果这些评论存在回复, 相关回复也会一并删除, 该操作不可撤销
             </p>
           </ModalBody>
           <ModalFooter>
-            <Button variant="light" onPress={onCloseDelete}>
-              取消
-            </Button>
+            {batch.isRunning ? (
+              <Button
+                variant="light"
+                onPress={batch.stop}
+                isDisabled={batch.isStopping}
+              >
+                停止剩余
+              </Button>
+            ) : (
+              <Button variant="light" onPress={onCloseDelete}>
+                取消
+              </Button>
+            )}
             <Button
               color="danger"
               onPress={handleBatchDelete}
-              isLoading={deleting}
-              isDisabled={deleting}
+              isLoading={batch.isRunning}
+              isDisabled={batch.isRunning}
             >
-              {deleteProgress ? `删除中 ${deleteProgress}` : '删除'}
+              {batch.progress
+                ? `删除中 ${batch.progress.sent} / ${batch.progress.total}`
+                : '删除'}
             </Button>
           </ModalFooter>
         </ModalContent>

@@ -17,7 +17,7 @@ import {
   ModalHeader,
   useDisclosure
 } from '@heroui/modal'
-import { useEffect, useRef, useState, type Key } from 'react'
+import { useEffect, useState, type Key } from 'react'
 import toast from 'react-hot-toast'
 import {
   kunFetchDelete,
@@ -26,10 +26,10 @@ import {
   kunFetchPut
 } from '~/utils/kunFetch'
 import { errorReporter } from '~/utils/kunErrorHandler'
-import { kunShouldBackfillDeletedRow } from '~/utils/pagination'
 import { KunCardSkeleton } from '~/components/kun/CardSkeleton'
+import { KunListError } from '~/components/kun/ListError'
 import { KunPagination } from '~/components/kun/Pagination'
-import { useMounted } from '~/hooks/useMounted'
+import { useKunPagedList } from '~/hooks/useKunPagedList'
 import { canReviewModerationTask, ModerationTaskCard } from './Card'
 import { ModerationHealth } from './Health'
 import {
@@ -70,24 +70,50 @@ const batchActionConfig = {
   retry: { title: '批量重试', verb: '重新加入审核队列', color: 'warning' }
 } as const
 
+interface ModerationQuery {
+  page: number
+  limit: number
+  status: string
+  failureKind: string
+}
+
+const fetchModerationPage = async (query: ModerationQuery) => {
+  const response = await kunFetchGet<
+    KunResponse<{
+      tasks: AdminModerationTask[]
+      total: number
+    }>
+  >('/admin/moderation', {
+    page: query.page,
+    limit: query.limit,
+    status: query.status,
+    failureKind: query.failureKind
+  })
+  return typeof response === 'string'
+    ? response
+    : { items: response.tasks, total: response.total }
+}
+
 interface Props {
   initialTasks: AdminModerationTask[]
   initialTotal: number
 }
 
 export const Moderation = ({ initialTasks, initialTotal }: Props) => {
-  const [tasks, setTasks] = useState<AdminModerationTask[]>(initialTasks)
-  const [total, setTotal] = useState(initialTotal)
-  const [page, setPage] = useState(1)
-  const [status, setStatus] = useState('all')
-  const [failureKind, setFailureKind] = useState('all')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  // 页码钳制帧列表已清空而 refetch 尚未发起, 渲染层以骨架屏遮住误导空态
-  const [clampRefetchPending, setClampRefetchPending] = useState(false)
+  const list = useKunPagedList<AdminModerationTask, ModerationQuery>({
+    query: { page: 1, limit: 30, status: 'all', failureKind: 'all' },
+    initial: { items: initialTasks, total: initialTotal },
+    getId: (task) => task.id,
+    clamp: 'toLastPage',
+    afterRemove: 'refillIfNext',
+    // 按「仍可操作」而非「仍在本页」收敛选中集: 裁决后的任务仍留在列表里,
+    // 但已不可再改判, 留在选中集只会虚增计数
+    isSelectable: canReviewModerationTask,
+    fetchPage: fetchModerationPage
+  })
+  const { query, selection } = list
+  const loading = list.status === 'loading'
   const [stats, setStats] = useState<AdminModerationStats | null>(null)
-  const limit = 30
-  const isMounted = useMounted()
 
   const {
     isOpen: isOpenBlacklist,
@@ -104,74 +130,8 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
     onOpen: onOpenBatch,
     onClose: onCloseBatch
   } = useDisclosure()
-  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set())
   const [batchAction, setBatchAction] = useState<BatchAction>('approve')
   const [batching, setBatching] = useState(false)
-
-  const latestFetchRequestIdRef = useRef(0)
-  // 本渲染时刻的请求序号; 删行后补齐前比对, 若期间有过新请求 (翻页/筛选变更)
-  // 则闭包参数已过期, 跳过静默补齐让用户请求的响应落地
-  const renderFetchRequestId = latestFetchRequestIdRef.current
-
-  const fetchData = async ({ silent = false } = {}) => {
-    const requestId = latestFetchRequestIdRef.current + 1
-    latestFetchRequestIdRef.current = requestId
-    if (!silent) {
-      setLoading(true)
-      setError('')
-      setClampRefetchPending(false)
-    }
-    try {
-      const response = await kunFetchGet<
-        KunResponse<{
-          tasks: AdminModerationTask[]
-          total: number
-        }>
-      >('/admin/moderation', { page, limit, status, failureKind })
-      if (requestId !== latestFetchRequestIdRef.current) {
-        return
-      }
-      if (typeof response === 'string') {
-        if (!silent) {
-          setError(response)
-        }
-        return
-      }
-
-      const totalPage = Math.max(1, Math.ceil(response.total / limit))
-      const clamped = page > totalPage
-      if (clamped) {
-        setPage(totalPage)
-        setClampRefetchPending(true)
-      }
-
-      setTasks(response.tasks)
-      setTotal(response.total)
-      // 按「仍可操作」而非「仍在本页」收敛选中集: 裁决后的任务仍留在列表里,
-      // 但已不可再改判, 留在选中集只会虚增计数;
-      // 钳制帧响应是空列表, 过滤会误清已前移行的选中态, 留给 refetch 落地帧
-      if (!clamped) {
-        setSelectedTaskIds((prev) => {
-          const selectableIds = new Set(
-            response.tasks
-              .filter(canReviewModerationTask)
-              .map((task) => task.id)
-          )
-          return new Set(
-            [...prev].filter((taskId) => selectableIds.has(taskId))
-          )
-        })
-      }
-    } catch {
-      if (!silent && requestId === latestFetchRequestIdRef.current) {
-        setError('网络错误, 请稍后重试')
-      }
-    } finally {
-      if (requestId === latestFetchRequestIdRef.current) {
-        setLoading(false)
-      }
-    }
-  }
 
   const fetchStats = async () => {
     const res = await kunFetchGet<KunResponse<AdminModerationStats>>(
@@ -184,59 +144,27 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
   }
 
   useEffect(() => {
-    if (!isMounted) {
-      return
-    }
-    fetchData()
-  }, [page, status, failureKind])
-
-  useEffect(() => {
     fetchStats()
   }, [])
 
   // 单条改判/重试后只更新对应卡片: 状态或失败类别不再匹配当前筛选时从列表移除,
-  // 否则就地更新 (改判与重试都会清掉失败类别)
+  // 否则就地更新 (改判与重试都会清掉失败类别)。改判后不可再操作的任务由状态机移出选中集;
+  // 离开当前筛选的任务 (如 manual 筛选下重试回 pending) 随删行一并移出
   const handleTaskUpdated = (
     taskId: number,
     patch: Partial<AdminModerationTask>
   ) => {
     const staysVisible =
-      (!patch.status || status === 'all' || status === patch.status) &&
+      (!patch.status ||
+        query.status === 'all' ||
+        query.status === patch.status) &&
       (patch.failureKind === undefined ||
-        failureKind === 'all' ||
-        failureKind === patch.failureKind)
+        query.failureKind === 'all' ||
+        query.failureKind === patch.failureKind)
     if (staysVisible) {
-      setTasks((prev) =>
-        prev.map((task) => (task.id === taskId ? { ...task, ...patch } : task))
-      )
-    } else if (tasks.length === 1 && page > 1) {
-      setPage(page - 1)
+      list.patchLocal(taskId, patch)
     } else {
-      setTasks((prev) => prev.filter((task) => task.id !== taskId))
-      setTotal((prev) => Math.max(0, prev - 1))
-      if (
-        kunShouldBackfillDeletedRow(total, page, limit) &&
-        latestFetchRequestIdRef.current === renderFetchRequestId
-      ) {
-        fetchData({ silent: true })
-      }
-    }
-    // 改判后任务不可再操作, 或任务已离开当前筛选列表 (如 manual 筛选下重试回
-    // pending), 均从批量选中集移除——不可见的任务绝不能留作批量操作目标;
-    // 仅当重试后任务仍可见 (all 筛选) 才保留选中
-    if (
-      !staysVisible ||
-      patch.status === 'approved' ||
-      patch.status === 'rejected'
-    ) {
-      setSelectedTaskIds((prev) => {
-        if (!prev.has(taskId)) {
-          return prev
-        }
-        const next = new Set(prev)
-        next.delete(taskId)
-        return next
-      })
+      list.removeLocal([taskId])
     }
     fetchStats()
   }
@@ -300,8 +228,7 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
     if (!key) {
       return
     }
-    setStatus(key)
-    setPage(1)
+    list.setQuery({ status: key })
   }
 
   const handleFailureKindChange = (keys: 'all' | Set<Key>) => {
@@ -309,44 +236,14 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
     if (!key) {
       return
     }
-    setFailureKind(key)
-    setPage(1)
+    list.setQuery({ failureKind: key })
   }
 
-  const selectableTasks = tasks.filter(canReviewModerationTask)
-  const isAllSelected =
-    selectableTasks.length > 0 &&
-    selectableTasks.every((task) => selectedTaskIds.has(task.id))
+  const hasSelectableTask = list.items.some(canReviewModerationTask)
   // 重试的适用面比改判窄, 但客户端提交完整选中集, 由服务端逐条裁决并回报
   // failedIds——否则被静默剔除的任务会永远留在选中集里, 每次都报失败却无法区分
   // 「客户端没提交」与「服务端拒绝」
-  const batchTargetIds = [...selectedTaskIds]
-
-  const handleTaskSelectionChange = (taskId: number, isSelected: boolean) => {
-    setSelectedTaskIds((prev) => {
-      const next = new Set(prev)
-      if (isSelected) {
-        next.add(taskId)
-      } else {
-        next.delete(taskId)
-      }
-      return next
-    })
-  }
-
-  const handleToggleSelectAll = () => {
-    setSelectedTaskIds((prev) => {
-      const next = new Set(prev)
-      selectableTasks.forEach((task) => {
-        if (isAllSelected) {
-          next.delete(task.id)
-        } else {
-          next.add(task.id)
-        }
-      })
-      return next
-    })
-  }
+  const batchTargetIds = [...selection.ids]
 
   const handleOpenBatch = (action: BatchAction) => {
     setBatchAction(action)
@@ -371,9 +268,9 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
         return
       }
       if (res.failedIds.length) {
-        setSelectedTaskIds(new Set(res.failedIds))
+        selection.replace(res.failedIds)
         const skipped =
-          selectedTaskIds.size - res.success - res.failedIds.length
+          batchTargetIds.length - res.success - res.failedIds.length
         toast.error(
           `已${verb} ${res.success} 个任务, ${res.failedIds.length} 个失败` +
             (skipped > 0 ? `, ${skipped} 个不适用` : '') +
@@ -381,10 +278,10 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
         )
       } else {
         onCloseBatch()
-        setSelectedTaskIds(new Set())
+        selection.clear()
         toast.success(`已${verb} ${res.success} 个任务`)
       }
-      await fetchData()
+      list.refresh()
       await fetchStats()
     } catch (error) {
       errorReporter(error)
@@ -437,7 +334,7 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
           <Select
             aria-label="任务状态筛选"
             className="w-full sm:w-40"
-            selectedKeys={new Set([status])}
+            selectedKeys={new Set([query.status])}
             onSelectionChange={handleStatusChange}
           >
             {statusFilterOptions.map((option) => (
@@ -447,7 +344,7 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
           <Select
             aria-label="失败类别筛选"
             className="w-full sm:w-44"
-            selectedKeys={new Set([failureKind])}
+            selectedKeys={new Set([query.failureKind])}
             onSelectionChange={handleFailureKindChange}
           >
             {failureKindFilterOptions.map((option) => (
@@ -461,22 +358,22 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {selectedTaskIds.size ? (
+        {selection.ids.size ? (
           <Chip color="primary" variant="flat">
-            {`已选择 ${selectedTaskIds.size} 个`}
+            {`已选择 ${selection.ids.size} 个`}
           </Chip>
         ) : null}
         <Button
           variant="flat"
-          onPress={handleToggleSelectAll}
-          isDisabled={!selectableTasks.length || loading || batching}
+          onPress={selection.togglePage}
+          isDisabled={!hasSelectableTask || loading || batching}
         >
-          {isAllSelected ? '取消全选' : '全选当前页'}
+          {selection.isPageSelected ? '取消全选' : '全选当前页'}
         </Button>
         <Button
           variant="light"
-          onPress={() => setSelectedTaskIds(new Set())}
-          isDisabled={!selectedTaskIds.size || loading || batching}
+          onPress={selection.clear}
+          isDisabled={!selection.ids.size || loading || batching}
         >
           清空选择
         </Button>
@@ -485,7 +382,7 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
             color="warning"
             variant="flat"
             onPress={() => handleOpenBatch('retry')}
-            isDisabled={!selectedTaskIds.size || loading || batching}
+            isDisabled={!selection.ids.size || loading || batching}
           >
             批量重试
           </Button>
@@ -493,7 +390,7 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
             color="success"
             variant="flat"
             onPress={() => handleOpenBatch('approve')}
-            isDisabled={!selectedTaskIds.size || loading || batching}
+            isDisabled={!selection.ids.size || loading || batching}
           >
             批量改判通过
           </Button>
@@ -501,7 +398,7 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
             color="danger"
             variant="flat"
             onPress={() => handleOpenBatch('reject')}
-            isDisabled={!selectedTaskIds.size || loading || batching}
+            isDisabled={!selection.ids.size || loading || batching}
           >
             批量改判拒绝
           </Button>
@@ -509,24 +406,22 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
       </div>
 
       <div className="space-y-4">
-        {loading || clampRefetchPending ? (
+        {loading ? (
           <KunCardSkeleton count={3} />
-        ) : error ? (
-          <div className="space-y-3 py-12 text-center">
-            <p className="text-danger">{error}</p>
-            <Button variant="flat" onPress={() => fetchData()}>
-              重试
-            </Button>
-          </div>
-        ) : tasks.length ? (
-          tasks.map((task) => (
+        ) : list.status === 'error' ? (
+          <KunListError
+            message={list.error ?? ''}
+            onRetry={() => list.refresh()}
+          />
+        ) : list.items.length ? (
+          list.items.map((task) => (
             <ModerationTaskCard
               key={task.id}
               task={task}
-              isSelected={selectedTaskIds.has(task.id)}
+              isSelected={selection.ids.has(task.id)}
               isSelectionDisabled={batching}
               onSelectionChange={(isSelected) =>
-                handleTaskSelectionChange(task.id, isSelected)
+                selection.toggle(task.id, isSelected)
               }
               onTaskUpdated={handleTaskUpdated}
               onAddBlacklist={handleOpenBlacklist}
@@ -544,9 +439,9 @@ export const Moderation = ({ initialTasks, initialTotal }: Props) => {
 
       <div className="flex justify-center">
         <KunPagination
-          total={Math.max(1, Math.ceil(total / limit))}
-          page={page}
-          onPageChange={setPage}
+          total={Math.max(1, Math.ceil(list.total / query.limit))}
+          page={query.page}
+          onPageChange={list.setPage}
           isLoading={loading}
         />
       </div>

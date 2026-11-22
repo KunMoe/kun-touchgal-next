@@ -1,9 +1,6 @@
 'use client'
 
 import {
-  Autocomplete,
-  AutocompleteItem,
-  Avatar,
   Button,
   Dropdown,
   DropdownItem,
@@ -29,17 +26,18 @@ import { ChevronDown, Eye, EyeOff, Search, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { kunFetchDelete, kunFetchGet, kunFetchPut } from '~/utils/kunFetch'
 import { errorReporter } from '~/utils/kunErrorHandler'
-import { kunShouldBackfillDeletedRow } from '~/utils/pagination'
+import { kunDescribeBatchShortfall } from '~/utils/list/kunChunkedBatch'
 import { ADMIN_RESOURCE_DELETE_LIMIT } from '~/constants/admin'
-import { useEffect, useRef, useState, type Key } from 'react'
-import type { Selection } from '@heroui/table'
-import { useMounted } from '~/hooks/useMounted'
+import { useEffect, useState, type Key } from 'react'
+import { useKunChunkedBatch } from '~/hooks/useKunChunkedBatch'
+import { useKunPagedList } from '~/hooks/useKunPagedList'
+import { KunListError } from '~/components/kun/ListError'
 import { KunTableSkeleton } from '~/components/kun/TableSkeleton'
+import { AdminUserFilter } from '../AdminUserFilter'
 import { RenderCell } from './RenderCell'
 import { useDebounce } from 'use-debounce'
 import { KunPagination } from '~/components/kun/Pagination'
-import type { AdminResource, AdminUser } from '~/types/api/admin'
-import type { PatchResource } from '~/types/api/patch'
+import type { AdminResource } from '~/types/api/admin'
 
 type ResourceSearchType = 'content' | 'info' | 'user'
 
@@ -71,10 +69,33 @@ const searchTypeOptions: Array<{
   { key: 'user', label: '用户名', placeholder: '输入用户名搜索...' }
 ]
 
-interface UserOption {
-  id: number
-  name: string
-  avatar: string
+interface ResourceQuery {
+  page: number
+  limit: number
+  searchType: ResourceSearchType
+  search: string
+  userId: number | null
+}
+
+const fetchResourcePage = async (query: ResourceQuery) => {
+  const params: Record<string, string | number> = {
+    page: query.page,
+    limit: query.limit
+  }
+  if (query.searchType !== 'user' && query.search) {
+    params.search = query.search
+    params.searchType = query.searchType
+  }
+  if (query.searchType === 'user' && query.userId) {
+    params.userId = query.userId
+  }
+  const res = await kunFetchGet<{
+    resources: AdminResource[]
+    total: number
+  }>('/admin/resource', params)
+  return typeof res === 'string'
+    ? res
+    : { items: res.resources, total: res.total }
 }
 
 interface Props {
@@ -83,14 +104,22 @@ interface Props {
 }
 
 export const Resource = ({ initialResources, initialTotal }: Props) => {
-  const [resources, setResources] = useState<AdminResource[]>(initialResources)
-  const [total, setTotal] = useState(initialTotal)
-  const [page, setPage] = useState(1)
-  const [limit, setLimit] = useState(30)
-  const [searchType, setSearchType] = useState<ResourceSearchType>('content')
-  const [selectedKeys, setSelectedKeys] = useState<Selection>(new Set())
-  const [batchDeleting, setBatchDeleting] = useState(false)
-  const [deleteProgress, setDeleteProgress] = useState('')
+  const list = useKunPagedList<AdminResource, ResourceQuery>({
+    query: {
+      page: 1,
+      limit: 30,
+      searchType: 'content',
+      search: '',
+      userId: null
+    },
+    initial: { items: initialResources, total: initialTotal },
+    getId: (resource) => resource.id,
+    clamp: 'toLastPage',
+    afterRemove: 'refillIfNext',
+    fetchPage: fetchResourcePage
+  })
+  const { query, selection, setQuery } = list
+  const loading = list.status === 'loading'
   const [batchHiding, setBatchHiding] = useState(false)
   const {
     isOpen: isBatchOpen,
@@ -101,240 +130,47 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
   const [contentQuery, setContentQuery] = useState('')
   const [debouncedContent] = useDebounce(contentQuery, 500)
 
-  const [userInput, setUserInput] = useState('')
-  const [debouncedUserInput] = useDebounce(userInput, 400)
-  const [userOptions, setUserOptions] = useState<UserOption[]>([])
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
-  const [userSearchLoading, setUserSearchLoading] = useState(false)
-
-  const isMounted = useMounted()
-  const [loading, setLoading] = useState(false)
-  // 页码钳制帧列表已清空而 refetch 尚未发起, 渲染层以骨架屏遮住误导空态
-  const [clampRefetchPending, setClampRefetchPending] = useState(false)
-
-  useEffect(() => {
-    if (!debouncedUserInput.trim()) {
-      setUserOptions([])
-      return
-    }
-    let cancelled = false
-    const fetchUsers = async () => {
-      setUserSearchLoading(true)
-      try {
-        const res = await kunFetchGet<{
-          users: AdminUser[]
-          total: number
-        }>('/admin/user', {
-          page: 1,
-          limit: 10,
-          search: debouncedUserInput,
-          searchType: 'name'
-        })
-        if (!cancelled) {
-          if (typeof res === 'string') {
-            toast.error(res)
-          } else {
-            setUserOptions(
-              res.users.map((u) => ({
-                id: u.id,
-                name: u.name,
-                avatar: u.avatar
-              }))
-            )
-          }
-        }
-      } finally {
-        if (!cancelled) {
-          setUserSearchLoading(false)
-        }
-      }
-    }
-    fetchUsers()
-    return () => {
-      cancelled = true
-    }
-  }, [debouncedUserInput])
-
-  const latestFetchRequestIdRef = useRef(0)
-  // 本渲染时刻的请求序号; 删行/批量后刷新前比对, 若期间有过新请求 (翻页/筛选
-  // 变更) 则闭包参数已过期, 跳过静默刷新让用户请求的响应落地
-  const renderFetchRequestId = latestFetchRequestIdRef.current
-
-  const fetchData = async ({ silent = false } = {}) => {
-    const requestId = latestFetchRequestIdRef.current + 1
-    latestFetchRequestIdRef.current = requestId
-    if (!silent) {
-      setLoading(true)
-      setClampRefetchPending(false)
-    }
-    try {
-      const params: Record<string, string | number> = { page, limit }
-      if (searchType !== 'user' && debouncedContent) {
-        params.search = debouncedContent
-        params.searchType = searchType
-      }
-      if (searchType === 'user' && selectedUserId) {
-        params.userId = selectedUserId
-      }
-
-      const res = await kunFetchGet<{
-        resources: AdminResource[]
-        total: number
-      }>('/admin/resource', params)
-
-      if (requestId !== latestFetchRequestIdRef.current) {
-        return
-      }
-
+  // 分块大小必须不超过后端单次删除上限, 否则整块被校验拒绝; 串行发送避免
+  // 同 patch 的删除事务在通告锁上排队占满连接池
+  const batch = useKunChunkedBatch({
+    chunkSize: ADMIN_RESOURCE_DELETE_LIMIT,
+    send: async (chunk) => {
+      const res = await kunFetchDelete<KunResponse<{ count: number }>>(
+        '/admin/resource',
+        { resourceIds: chunk.join(',') }
+      )
       if (typeof res === 'string') {
-        // 静默刷新失败不提示: 刚展示过操作成功的 toast, 紧跟报错只会误导
-        if (!silent) {
-          toast.error(res)
-        }
-        return
+        // 透出服务端原因 (未登录 / 权限 / 校验), 否则汇总 toast 只剩「N 条失败」
+        toast.error(res)
+        return res
       }
-
-      const totalPage = Math.max(1, Math.ceil(res.total / limit))
-      if (page > totalPage) {
-        setPage(totalPage)
-        setClampRefetchPending(true)
-      }
-
-      setResources(res.resources)
-      setTotal(res.total)
-      if (!silent) {
-        setSelectedKeys(new Set<string | number>())
-      }
-    } catch (error) {
-      if (silent || requestId !== latestFetchRequestIdRef.current) {
-        return
-      }
-      errorReporter(error)
-    } finally {
-      if (requestId === latestFetchRequestIdRef.current) {
-        setLoading(false)
-      }
+      return res.count
     }
-  }
+  })
 
   useEffect(() => {
-    if (!isMounted) {
-      return
-    }
-    fetchData()
-  }, [page, limit, searchType, debouncedContent, selectedUserId])
-
-  const selectedCount =
-    selectedKeys === 'all' ? resources.length : selectedKeys.size
-
-  // 单条编辑后就地更新该行, 不整表刷新
-  const handleResourceUpdated = (updated: PatchResource) => {
-    setResources((prev) =>
-      prev.map((resource) =>
-        resource.id === updated.id ? { ...resource, ...updated } : resource
-      )
-    )
-  }
-
-  // 单条删除后只移除该行; 当前页被抽空且不在第一页时回退页码走正常 refetch
-  const handleResourceDeleted = (resourceId: number) => {
-    if (resources.length === 1 && page > 1) {
-      setSelectedKeys(new Set<string | number>())
-      setPage(page - 1)
-      return
-    }
-    setSelectedKeys((prev) => {
-      if (prev === 'all') {
-        return prev
-      }
-      const next = new Set(
-        [...prev].filter((key) => Number(key) !== resourceId)
-      )
-      return next.size === prev.size ? prev : next
-    })
-    setResources((prev) =>
-      prev.filter((resource) => resource.id !== resourceId)
-    )
-    setTotal((prev) => Math.max(0, prev - 1))
-    if (
-      kunShouldBackfillDeletedRow(total, page, limit) &&
-      latestFetchRequestIdRef.current === renderFetchRequestId
-    ) {
-      // 'all' 的语义是「当前页全部」, 补齐会换入未展示过的新行,
-      // 先清空选中避免批量操作误伤
-      if (selectedKeys === 'all') {
-        setSelectedKeys(new Set<string | number>())
-      }
-      fetchData({ silent: true })
-    }
-  }
+    setQuery({ search: debouncedContent })
+  }, [setQuery, debouncedContent])
 
   const handleBatchDelete = async () => {
-    setBatchDeleting(true)
-    const ids =
-      selectedKeys === 'all'
-        ? resources.map((r) => r.id)
-        : Array.from(selectedKeys).map(Number)
-
-    // 分块大小必须不超过后端单次删除上限, 否则整块被校验拒绝; 串行发送避免
-    // 同 patch 的删除事务在通告锁上排队占满连接池
-    const chunkSize = ADMIN_RESOURCE_DELETE_LIMIT
-    try {
-      let deletedCount = 0
-      const failedIds: number[] = []
-      for (let i = 0; i < ids.length; i += chunkSize) {
-        const chunk = ids.slice(i, i + chunkSize)
-        setDeleteProgress(
-          `${Math.min(i + chunkSize, ids.length)} / ${ids.length}`
-        )
-        try {
-          const res = await kunFetchDelete<KunResponse<{ count: number }>>(
-            '/admin/resource',
-            { resourceIds: chunk.join(',') }
-          )
-          if (typeof res === 'string') {
-            // 透出服务端原因 (未登录 / 权限 / 校验), 否则汇总 toast 只剩「N 条失败」
-            toast.error(res)
-            failedIds.push(...chunk)
-          } else {
-            deletedCount += res.count
-          }
-        } catch (error) {
-          errorReporter(error)
-          failedIds.push(...chunk)
-        }
-      }
-
-      if (failedIds.length) {
-        // 失败块回填选中集, 模态框保持打开供直接重试
-        setSelectedKeys(new Set(failedIds.map(String)))
-        toast.error(
-          `已删除 ${deletedCount} 条, ${failedIds.length} 条删除失败, 已保留选中可重试`
-        )
-      } else {
-        onBatchClose()
-        setSelectedKeys(new Set<string | number>())
-        toast.success(`已删除 ${deletedCount} 条资源`)
-      }
-
-      // 批量操作已自行处理选中 (成功清空 / 失败回填), 刷新走 silent 避免整表
-      // 骨架屏闪烁且不动选中集; 期间有过新请求 (翻页/筛选变更) 则参数已过期,
-      // 跳过让用户请求的响应落地
-      if (latestFetchRequestIdRef.current === renderFetchRequestId) {
-        await fetchData({ silent: true })
-      }
-    } finally {
-      setBatchDeleting(false)
-      setDeleteProgress('')
+    const result = await batch.run([...selection.ids])
+    const unfinished = [...result.failed, ...result.notRun]
+    if (unfinished.length) {
+      // 失败与没执行的回填选中集, 模态框保持打开供直接重试
+      selection.replace(unfinished)
+      toast.error(kunDescribeBatchShortfall(result, '删除'))
+    } else {
+      onBatchClose()
+      selection.clear()
+      toast.success(`已删除 ${result.succeeded} 条资源`)
     }
+    // 批量操作已自行处理选中 (成功清空 / 失败回填), 刷新走后台避免整表骨架屏闪烁
+    list.refresh({ background: true })
   }
 
   const handleBatchStatus = async (status: 0 | 1) => {
     setBatchHiding(true)
-    const ids =
-      selectedKeys === 'all'
-        ? resources.map((r) => r.id)
-        : Array.from(selectedKeys).map(Number)
+    const ids = [...selection.ids]
 
     try {
       const res = await kunFetchPut<KunResponse<{ count: number }>>(
@@ -351,13 +187,10 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
         toast.success(`成功${actionLabel} ${res.count} 条资源`)
       }
 
-      setSelectedKeys(new Set<string | number>())
+      selection.clear()
 
-      // 批量操作已自行清空选中, 刷新走 silent 避免整表骨架屏闪烁; 期间有过
-      // 新请求 (翻页/筛选变更) 则参数已过期, 跳过让用户请求的响应落地
-      if (latestFetchRequestIdRef.current === renderFetchRequestId) {
-        await fetchData({ silent: true })
-      }
+      // 批量操作已自行清空选中, 刷新走后台避免整表骨架屏闪烁
+      list.refresh({ background: true })
     } catch (error) {
       errorReporter(error)
     } finally {
@@ -370,38 +203,14 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
     if (!key) {
       return
     }
-    setSearchType(key)
-    setPage(1)
     setContentQuery('')
-    setUserInput('')
-    setSelectedUserId(null)
-    setUserOptions([])
+    setQuery({ searchType: key, search: '', userId: null })
   }
 
-  const handleContentSearch = (value: string) => {
-    setContentQuery(value)
-    setPage(1)
-  }
-
-  const handleUserSelectionChange = (key: Key | null) => {
-    if (!key) {
-      setSelectedUserId(null)
-    } else {
-      setSelectedUserId(Number(key))
-    }
-    setPage(1)
-  }
-
-  const handleUserInputChange = (value: string) => {
-    setUserInput(value)
-    if (!value) {
-      setSelectedUserId(null)
-      setPage(1)
-    }
-  }
+  const selectedCount = selection.ids.size
 
   const currentPlaceholder =
-    searchTypeOptions.find((o) => o.key === searchType)?.placeholder ?? ''
+    searchTypeOptions.find((o) => o.key === query.searchType)?.placeholder ?? ''
 
   return (
     <div className="space-y-6">
@@ -452,7 +261,7 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
         <Select
           aria-label="搜索类型"
           className="w-full sm:max-w-40"
-          selectedKeys={new Set([searchType])}
+          selectedKeys={new Set([query.searchType])}
           onSelectionChange={handleSearchTypeChange}
         >
           {searchTypeOptions.map((option) => (
@@ -460,32 +269,11 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
           ))}
         </Select>
 
-        {searchType === 'user' ? (
-          <Autocomplete
-            fullWidth
-            isClearable
+        {query.searchType === 'user' ? (
+          <AdminUserFilter
             placeholder={currentPlaceholder}
-            startContent={<Search className="text-default-300" size={20} />}
-            inputValue={userInput}
-            isLoading={userSearchLoading}
-            items={userOptions}
-            onInputChange={handleUserInputChange}
-            onSelectionChange={handleUserSelectionChange}
-          >
-            {(user) => (
-              <AutocompleteItem key={user.id} textValue={user.name}>
-                <div className="flex items-center gap-2">
-                  <Avatar
-                    src={user.avatar}
-                    size="sm"
-                    showFallback
-                    name={user.name.charAt(0).toUpperCase()}
-                  />
-                  <span>{user.name}</span>
-                </div>
-              </AutocompleteItem>
-            )}
-          </Autocomplete>
+            onChange={(userId) => setQuery({ userId })}
+          />
         ) : (
           <Input
             fullWidth
@@ -494,26 +282,39 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
             placeholder={currentPlaceholder}
             startContent={<Search className="text-default-300" size={20} />}
             value={contentQuery}
-            onValueChange={handleContentSearch}
+            onValueChange={setContentQuery}
           />
         )}
       </div>
 
-      {loading || clampRefetchPending ? (
+      {loading ? (
         <KunTableSkeleton />
+      ) : list.status === 'error' ? (
+        <KunListError
+          message={list.error ?? ''}
+          onRetry={() => list.refresh()}
+        />
       ) : (
         <Table
           aria-label="资源管理列表"
           selectionMode="multiple"
-          selectedKeys={selectedKeys}
-          onSelectionChange={setSelectedKeys}
+          // 选中集一律是显式的 id: 表头全选 ('all') 当场展开成本页可见的行, 之后补齐
+          // 换入的新行不会被批量带上 (react-stately 对包含全部可见 key 的集合照样显示全选)
+          selectedKeys={new Set([...selection.ids].map(String))}
+          onSelectionChange={(keys) =>
+            selection.replace(
+              keys === 'all'
+                ? list.items.map((resource) => resource.id)
+                : Array.from(keys).map(Number)
+            )
+          }
           bottomContent={
             <div className="flex justify-center w-full">
               <KunPagination
-                total={Math.ceil(total / limit)}
-                onPageChange={setPage}
+                total={Math.ceil(list.total / query.limit)}
+                onPageChange={list.setPage}
                 isLoading={loading}
-                page={page}
+                page={query.page}
               />
             </div>
           }
@@ -524,13 +325,15 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
             )}
           </TableHeader>
           <TableBody>
-            {resources.map((item) => (
+            {list.items.map((item) => (
               <TableRow key={item.id}>
                 {columns.map((column) => (
                   <TableCell key={column.id}>
                     {RenderCell(item, column.id, {
-                      onUpdated: handleResourceUpdated,
-                      onDeleted: handleResourceDeleted
+                      // 单条编辑后就地更新该行, 不整表刷新
+                      onUpdated: (updated) =>
+                        list.patchLocal(updated.id, updated),
+                      onDeleted: (resourceId) => list.removeLocal([resourceId])
                     })}
                   </TableCell>
                 ))}
@@ -546,12 +349,11 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
           aria-label="每页显示数量"
           size="sm"
           className="w-20"
-          selectedKeys={new Set([String(limit)])}
+          selectedKeys={new Set([String(query.limit)])}
           onSelectionChange={(keys) => {
             const val = Number(Array.from(keys)[0])
-            if (val && val !== limit) {
-              setLimit(val)
-              setPage(1)
+            if (val && val !== query.limit) {
+              setQuery({ limit: val })
             }
           }}
         >
@@ -560,10 +362,18 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
           <SelectItem key="100">100</SelectItem>
           <SelectItem key="500">500</SelectItem>
         </Select>
-        <span>条，共 {total} 条</span>
+        <span>条，共 {list.total} 条</span>
       </div>
 
-      <Modal isOpen={isBatchOpen} onClose={onBatchClose} placement="center">
+      {/* 批量进行中不可关闭: 关掉弹窗不会停下循环 (P22-01), 要停用「停止剩余」 */}
+      <Modal
+        isOpen={isBatchOpen}
+        onClose={onBatchClose}
+        placement="center"
+        isDismissable={!batch.isRunning}
+        isKeyboardDismissDisabled={batch.isRunning}
+        hideCloseButton={batch.isRunning}
+      >
         <ModalContent>
           <ModalHeader>批量删除资源</ModalHeader>
           <ModalBody>
@@ -571,20 +381,30 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
               您确定要删除选中的 <strong>{selectedCount}</strong>{' '}
               条资源吗？该操作不可撤销。
             </p>
-            {deleteProgress && (
+            {batch.progress && (
               <p className="text-sm text-default-500">
-                正在删除 {deleteProgress}
+                正在删除 {batch.progress.sent} / {batch.progress.total}
               </p>
             )}
           </ModalBody>
           <ModalFooter>
-            <Button variant="light" onPress={onBatchClose}>
-              取消
-            </Button>
+            {batch.isRunning ? (
+              <Button
+                variant="light"
+                onPress={batch.stop}
+                isDisabled={batch.isStopping}
+              >
+                停止剩余
+              </Button>
+            ) : (
+              <Button variant="light" onPress={onBatchClose}>
+                取消
+              </Button>
+            )}
             <Button
               color="danger"
               onPress={handleBatchDelete}
-              isLoading={batchDeleting}
+              isLoading={batch.isRunning}
             >
               确认删除
             </Button>
