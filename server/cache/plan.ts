@@ -150,6 +150,20 @@ export const planKunInvalidations = (
         )
         deletedPatchIds.add(change.patchId)
         break
+      case 'taxonomyRenamed':
+      case 'taxonomyDeleted':
+        // 补丁详情内嵌标签名, 简介内嵌标签与会社 (id、名字、作品数、别名)。标签 / 会社列表
+        // 的失效还由入口直接调 (T15 S3 未做)
+        for (const patchId of change.patchIds) {
+          targets.push({ cache: 'patchContent', patchId })
+        }
+        break
+      case 'favoritesRemoved':
+        // 补丁详情内嵌 favorite_count
+        for (const patchId of change.patchIds) {
+          targets.push({ cache: 'patchContent', patchId })
+        }
+        break
       default: {
         const unreachable: never = change
         throw new Error(`未知的缓存变更: ${JSON.stringify(unreachable)}`)
@@ -181,11 +195,6 @@ export const planKunInvalidations = (
 // 被共享缓存内嵌、但刻意不精确失效的字段: 写入之后最多陈旧到缓存的 TTL。每个内嵌的跨行字段,
 // 要么在上面的规划里有一条边, 要么在这里有一条带理由的记录。accepted 是论证时假定的陈旧上限,
 // 把 TTL 调到超过它时 __tests__/plan.test.ts 会变红, 要回来重新论证
-//
-// 还没有接线、也不是刻意容忍的 (等 T15 S3, 取决于 T25 是否保留补丁详情两键):
-//   标签改名 / 删除 → 补丁详情的 tags 与简介的 tag[] (D06-01、X05-01)
-//   会社改名 / 删除 → 简介的 company[]
-//   删收藏夹 → 补丁详情的收藏数 (D06-02、X05-02; 删号的那一半已由 deleteAccount.ts 的投影失效)
 export interface KunTtlTolerance {
   // 缓存的键前缀
   caches: readonly string[]
@@ -228,6 +237,14 @@ export const KUN_TTL_TOLERATED: readonly KunTtlTolerance[] = [
     accepted: 300,
     reason:
       '这个数属于共享该标签或会社的全部补丁, 任何一部补丁增删关联都会改它; 精确失效要扇出到全部共享者, 一个热门标签就是几千部补丁'
+  },
+  {
+    caches: ['patch:introduction:<uniqueId>'],
+    field: 'tag[].alias 与 company[].alias (标签 / 会社的别名)',
+    ttl: PATCH_INTRODUCTION_CACHE_DURATION,
+    accepted: 300,
+    reason:
+      '没有界面消费方 (简介里的标签与会社只渲染名字和作品数); 只改别名或简介时不扇出到关联补丁, 改名与删除才扇出 (taxonomyRenamed / taxonomyDeleted)'
   },
   {
     caches: [

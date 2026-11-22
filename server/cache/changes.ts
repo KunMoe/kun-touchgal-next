@@ -48,3 +48,11 @@ export type KunChange =
   | { kind: 'patch'; patchId: number; uniqueId: string }
   // patch 行被删除。随级联消失的资源另由 resource 变更 (after 为 null) 描述
   | { kind: 'patchDeleted'; patchId: number; uniqueId: string }
+  // 标签或会社被改名、删除。patchIds 是改名时 / 删除前的全部关联补丁
+  | {
+      kind: 'taxonomyRenamed' | 'taxonomyDeleted'
+      taxonomy: 'tag' | 'company'
+      patchIds: number[]
+    }
+  // 这些补丁上的收藏关系被删掉 (删收藏夹时随级联消失), 触发器随之递减 patch.favorite_count
+  | { kind: 'favoritesRemoved'; patchIds: number[] }

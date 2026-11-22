@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
+import { recordKunChanges } from '~/server/cache/publish'
 import { updateTagSchema } from '~/validations/tag'
 import { invalidateTagListCache } from './cache'
 import {
@@ -30,7 +31,8 @@ export const updateTag = async (input: z.infer<typeof updateTagSchema>) => {
   const shouldSyncSearch = !!currentTag && currentTag.name !== name
 
   // 事务性入队：标签变更与写出箱入队原子提交，关闭崩溃丢失窗口
-  const result = await kunTx('tag.update', async ({ tx }) => {
+  const result = await kunTx('tag.update', async (ctx) => {
+    const { tx } = ctx
     const newTag: TagDetail = await tx.patch_tag.update({
       where: { id: tagId },
       data: {
@@ -57,6 +59,11 @@ export const updateTag = async (input: z.infer<typeof updateTagSchema>) => {
         ).map((relation) => relation.patch_id)
       : []
     await enqueueSearchOutboxBatch(tx, patchIds)
+    if (shouldSyncSearch) {
+      recordKunChanges(ctx, [
+        { kind: 'taxonomyRenamed', taxonomy: 'tag', patchIds }
+      ])
+    }
     return { newTag, patchIds }
   })
   if (typeof result === 'string') {

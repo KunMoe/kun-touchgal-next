@@ -1,5 +1,7 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { kunTx } from '~/server/db/tx'
+import { recordKunChanges } from '~/server/cache/publish'
 import {
   bumpPatchFavoriteCacheVersion,
   invalidatePatchFavoriteCaches
@@ -36,13 +38,27 @@ export const deleteFolder = async (
     },
     take: PATCH_FAVORITE_EXACT_INVALIDATE_LIMIT + 1
   })
+  const truncated = relations.length > PATCH_FAVORITE_EXACT_INVALIDATE_LIMIT
 
-  await prisma.user_patch_favorite_folder.delete({
-    where: { id: input.folderId }
+  // 收藏关系随级联消失, 所以补丁在删除之前读; 只取 id, 不受上面的精确失效上限限制
+  await kunTx('favorite.folder.delete', async (ctx) => {
+    const removed = await ctx.tx.user_patch_favorite_folder_relation.findMany({
+      where: { folder_id: input.folderId },
+      select: { patch_id: true }
+    })
+    await ctx.tx.user_patch_favorite_folder.delete({
+      where: { id: input.folderId }
+    })
+    recordKunChanges(ctx, [
+      {
+        kind: 'favoritesRemoved',
+        patchIds: removed.map((relation) => relation.patch_id)
+      }
+    ])
   })
 
   try {
-    if (relations.length > PATCH_FAVORITE_EXACT_INVALIDATE_LIMIT) {
+    if (truncated) {
       await bumpPatchFavoriteCacheVersion(uid)
     } else {
       await invalidatePatchFavoriteCaches(

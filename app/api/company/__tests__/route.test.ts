@@ -16,6 +16,7 @@ const {
   invalidateMock,
   enqueueBatchMock,
   kickDrainMock,
+  patchContentMock,
   tx
 } = vi.hoisted(() => {
   const updateMock = vi.fn()
@@ -37,6 +38,7 @@ const {
     invalidateMock: vi.fn(),
     enqueueBatchMock: vi.fn(),
     kickDrainMock: vi.fn(),
+    patchContentMock: vi.fn(),
     tx: {
       patch_company: { update: updateMock, delete: deleteMock },
       patch_company_relation: { findMany: relationFindManyMock }
@@ -86,6 +88,11 @@ vi.mock('~/app/api/company/service', () => ({
 
 vi.mock('~/app/api/company/cache', () => ({
   invalidateCompanyListCache: invalidateMock
+}))
+
+// 关联补丁的简介内嵌会社名, 改名与删除要失效它们
+vi.mock('~/app/api/patch/cache', () => ({
+  invalidatePatchContentCacheByPatchId: patchContentMock
 }))
 
 import { Prisma } from '~/prisma/generated/prisma/client'
@@ -195,6 +202,7 @@ describe('company search index sync', () => {
     // 入队作用在事务 tx 上，与会社变更原子提交
     expect(enqueueBatchMock).toHaveBeenCalledWith(tx, [11, 12])
     expect(kickDrainMock).toHaveBeenCalledTimes(1)
+    expect(patchContentMock.mock.calls).toEqual([[[11, 12]]])
   })
 
   it('update without rename enqueues nothing and does not kick', async () => {
@@ -205,6 +213,7 @@ describe('company search index sync', () => {
     expect(relationFindManyMock).not.toHaveBeenCalled()
     expect(enqueueBatchMock).toHaveBeenCalledWith(tx, [])
     expect(kickDrainMock).not.toHaveBeenCalled()
+    expect(patchContentMock).not.toHaveBeenCalled()
   })
 
   it('delete reads relations before deletion, enqueues and kicks', async () => {
@@ -224,6 +233,7 @@ describe('company search index sync', () => {
     expect(events).toEqual(['relation-read', 'company-delete'])
     expect(enqueueBatchMock).toHaveBeenCalledWith(tx, [11, 12])
     expect(kickDrainMock).toHaveBeenCalledTimes(1)
+    expect(patchContentMock.mock.calls).toEqual([[[11, 12]]])
   })
 
   it('delete failure rolls back without kicking drain', async () => {
@@ -234,5 +244,6 @@ describe('company search index sync', () => {
     expect(await response.json()).toBe('未找到对应的会社')
     expect(kickDrainMock).not.toHaveBeenCalled()
     expect(invalidateMock).not.toHaveBeenCalled()
+    expect(patchContentMock).not.toHaveBeenCalled()
   })
 })

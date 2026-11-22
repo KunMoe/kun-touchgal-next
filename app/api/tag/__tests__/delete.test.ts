@@ -8,6 +8,7 @@ const {
   invalidateMock,
   enqueueBatchMock,
   kickDrainMock,
+  patchContentMock,
   tx
 } = vi.hoisted(() => {
   const deleteMock = vi.fn()
@@ -20,6 +21,7 @@ const {
     invalidateMock: vi.fn(),
     enqueueBatchMock: vi.fn(),
     kickDrainMock: vi.fn(),
+    patchContentMock: vi.fn(),
     tx: {
       patch_tag: { delete: deleteMock },
       patch_tag_relation: { findMany: relationFindManyMock }
@@ -41,6 +43,11 @@ vi.mock('~/app/api/tag/cache', () => ({
 vi.mock('~/server/search/sync', () => ({
   enqueueSearchOutboxBatch: enqueueBatchMock,
   kickSearchOutboxDrain: kickDrainMock
+}))
+
+// 关联补丁的详情与简介内嵌标签 / 会社名, 改名与删除要失效它们 (D06-01)
+vi.mock('~/app/api/patch/cache', () => ({
+  invalidatePatchContentCacheByPatchId: patchContentMock
 }))
 
 import { deleteTag } from '~/app/api/tag/delete'
@@ -76,6 +83,7 @@ describe('deleteTag 搜索索引同步', () => {
     expect(enqueueBatchMock).toHaveBeenCalledWith(tx, [11, 12])
     expect(kickDrainMock).toHaveBeenCalledTimes(1)
     expect(invalidateMock).toHaveBeenCalledTimes(1)
+    expect(patchContentMock.mock.calls).toEqual([[[11, 12]]])
   })
 
   it('无关联 patch 时入队空数组、不 kick', async () => {
@@ -94,5 +102,6 @@ describe('deleteTag 搜索索引同步', () => {
 
     expect(deleteMock).not.toHaveBeenCalled()
     expect(enqueueBatchMock).not.toHaveBeenCalled()
+    expect(patchContentMock).not.toHaveBeenCalled()
   })
 })

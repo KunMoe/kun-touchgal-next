@@ -201,6 +201,28 @@ describe('补丁删除', () => {
   })
 })
 
+describe('标签 / 会社与收藏', () => {
+  it.each<[string, KunChange]>([
+    [
+      '标签改名',
+      { kind: 'taxonomyRenamed', taxonomy: 'tag', patchIds: [12, P] }
+    ],
+    [
+      '会社删除',
+      { kind: 'taxonomyDeleted', taxonomy: 'company', patchIds: [12, P] }
+    ],
+    ['删收藏夹', { kind: 'favoritesRemoved', patchIds: [12, P] }]
+  ])('%s: 失效全部关联补丁的详情两键, 按 id 回库查', (_name, change) => {
+    expect(plan([change])).toEqual([`patchContent:${P}`, 'patchContent:12'])
+  })
+
+  it('没有关联补丁时没有目标', () => {
+    expect(
+      plan([{ kind: 'taxonomyDeleted', taxonomy: 'tag', patchIds: [] }])
+    ).toEqual([])
+  })
+})
+
 describe('内容行 (评论 / 评价) 的补丁详情失效按 id 回库查', () => {
   it('非资源评论进出公开集', () => {
     expect(

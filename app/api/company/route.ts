@@ -2,6 +2,7 @@ import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { kunTx } from '~/server/db/tx'
+import { recordKunChanges } from '~/server/cache/publish'
 import {
   createCompanySchema,
   getCompanyByIdSchema,
@@ -52,7 +53,8 @@ const rewriteCompany = async (input: z.infer<typeof updateCompanySchema>) => {
   // 事务性入队：会社变更与写出箱入队原子提交，关闭崩溃丢失窗口
   const result = await kunTx(
     'company.update',
-    async ({ tx }) => {
+    async (ctx) => {
+      const { tx } = ctx
       const newCompany = await tx.patch_company.update({
         where: { id: companyId },
         data: {
@@ -82,6 +84,11 @@ const rewriteCompany = async (input: z.infer<typeof updateCompanySchema>) => {
           ).map((relation) => relation.patch_id)
         : []
       await enqueueSearchOutboxBatch(tx, patchIds)
+      if (shouldSyncSearch) {
+        recordKunChanges(ctx, [
+          { kind: 'taxonomyRenamed', taxonomy: 'company', patchIds }
+        ])
+      }
       return { newCompany, patchIds }
     },
     // name 唯一索引兜底并发改名
@@ -177,7 +184,8 @@ export const DELETE = kunRoute.delete({
     // patch 必须在删除前读取；删除与入队原子提交，消费者按 DB 最新状态重建文档
     let patchIds: number[] | string
     try {
-      patchIds = await kunTx('company.delete', async ({ tx }) => {
+      patchIds = await kunTx('company.delete', async (ctx) => {
+        const { tx } = ctx
         const relations = await tx.patch_company_relation.findMany({
           where: { company_id: input.companyId },
           select: { patch_id: true }
@@ -185,6 +193,9 @@ export const DELETE = kunRoute.delete({
         await tx.patch_company.delete({ where: { id: input.companyId } })
         const ids = relations.map((relation) => relation.patch_id)
         await enqueueSearchOutboxBatch(tx, ids)
+        recordKunChanges(ctx, [
+          { kind: 'taxonomyDeleted', taxonomy: 'company', patchIds: ids }
+        ])
         return ids
       })
     } catch {

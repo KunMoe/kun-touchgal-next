@@ -9,6 +9,7 @@ const {
   invalidateMock,
   enqueueBatchMock,
   kickDrainMock,
+  patchContentMock,
   tx
 } = vi.hoisted(() => {
   const updateMock = vi.fn()
@@ -22,6 +23,7 @@ const {
     invalidateMock: vi.fn(),
     enqueueBatchMock: vi.fn(),
     kickDrainMock: vi.fn(),
+    patchContentMock: vi.fn(),
     tx: {
       patch_tag: { update: updateMock },
       patch_tag_relation: { findMany: relationFindManyMock }
@@ -46,6 +48,11 @@ vi.mock('~/app/api/tag/cache', () => ({
 vi.mock('~/server/search/sync', () => ({
   enqueueSearchOutboxBatch: enqueueBatchMock,
   kickSearchOutboxDrain: kickDrainMock
+}))
+
+// 关联补丁的详情与简介内嵌标签 / 会社名, 改名与删除要失效它们 (D06-01)
+vi.mock('~/app/api/patch/cache', () => ({
+  invalidatePatchContentCacheByPatchId: patchContentMock
 }))
 
 import { updateTag } from '~/app/api/tag/update'
@@ -76,6 +83,7 @@ describe('updateTag 搜索索引同步', () => {
     expect(enqueueBatchMock).toHaveBeenCalledWith(tx, [11, 12])
     expect(kickDrainMock).toHaveBeenCalledTimes(1)
     expect(invalidateMock).toHaveBeenCalledTimes(1)
+    expect(patchContentMock.mock.calls).toEqual([[[11, 12]]])
   })
 
   it('仅改简介/别名（name 未变）不查关系、入队空数组、不 kick', async () => {
@@ -86,6 +94,8 @@ describe('updateTag 搜索索引同步', () => {
     expect(relationFindManyMock).not.toHaveBeenCalled()
     expect(enqueueBatchMock).toHaveBeenCalledWith(tx, [])
     expect(kickDrainMock).not.toHaveBeenCalled()
+    // 别名在简介里没有界面消费方, 不扇出到关联补丁 (KUN_TTL_TOLERATED)
+    expect(patchContentMock).not.toHaveBeenCalled()
   })
 
   it('重名冲突时返回错误、不更新、不入队', async () => {
