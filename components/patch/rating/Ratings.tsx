@@ -11,9 +11,9 @@ import { KunNull } from '~/components/kun/Null'
 import { RatingCard } from './RatingCard'
 import { RatingCardSkeleton } from './RatingCardSkeleton'
 import { RatingModal } from './RatingModal'
-import { dropLoadedRatings } from './dropLoadedRatings'
 import { useDisclosure } from '@heroui/react'
 import { useUserStore } from '~/store/userStore'
+import { useKunInfiniteList } from '~/hooks/useKunInfiniteList'
 import type {
   KunPatchRating,
   KunPatchRatingResponse
@@ -22,6 +22,14 @@ import type {
 interface Props {
   id: number
   // 深链 ?ratingId=, 由详情页 tabs 解析后传入; 本组件不订阅 URL, 以免随 ?tab= 变化重渲染
+  targetRatingId: number | null
+}
+
+interface RatingQuery {
+  page: number
+  limit: number
+  patchId: number
+  onlyWithShortSummary: boolean
   targetRatingId: number | null
 }
 
@@ -36,112 +44,53 @@ const MASONRY_BREAKPOINTS = {
 const hasShortSummary = (rating: KunPatchRating) =>
   Boolean(rating.shortSummary?.trim())
 
+const fetchRatingPage = async (query: RatingQuery) => {
+  const params: Record<string, string | number> = {
+    patchId: query.patchId,
+    page: query.page,
+    limit: query.limit,
+    onlyWithShortSummary: query.onlyWithShortSummary ? 'true' : 'false'
+  }
+  if (query.targetRatingId) {
+    params.targetRatingId = query.targetRatingId
+  }
+  const res = await kunFetchGet<KunPatchRatingResponse>('/patch/rating', params)
+  return typeof res === 'string'
+    ? res
+    : { items: res.ratings, total: res.total }
+}
+
 export const Ratings = ({ id, targetRatingId }: Props) => {
-  const [ratings, setRatings] = useState<KunPatchRating[]>([])
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
-  const [loading, setLoading] = useState(false)
-  const [hasMore, setHasMore] = useState(true)
-  const [initialized, setInitialized] = useState(false)
-  const [hideNoContent, setHideNoContent] = useState(true)
+  const user = useUserStore((state) => state.user)
+  const list = useKunInfiniteList<KunPatchRating, RatingQuery>({
+    query: {
+      page: 1,
+      limit: RATINGS_PER_PAGE,
+      patchId: id,
+      onlyWithShortSummary: true,
+      targetRatingId
+    },
+    getId: (rating) => rating.id,
+    grow: 'append',
+    // 登录态由 cookie 决定, uid 不进查询键: 用户 store 在首帧之后才水合, 首帧 uid 为 0,
+    // 若 uid 在键里, 水合后会先发出首帧建好的请求、再因键变了重发一次
+    enabled: user.uid > 0,
+    fetchPage: fetchRatingPage
+  })
+  const { setQuery, insertLocal, removeLocal, patchLocal } = list
+  const hideNoContent = list.query.onlyWithShortSummary
+  const loading = list.status === 'loading'
   const [highlightedRatingId, setHighlightedRatingId] = useState<number | null>(
     null
   )
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const user = useUserStore((state) => state.user)
-  const observerRef = useRef<IntersectionObserver | null>(null)
-  const loadMoreRef = useRef<HTMLDivElement>(null)
-  const loadingRef = useRef(false)
-  const requestIdRef = useRef(0)
   // 已滚动定位过的深链 ratingId: 同一目标只滚一次, 否则之后每次无限滚动加载下一页
   // 或切换过滤开关都会把页面拽回目标评价 (tab 保活后目标会一直留在 props 里)
   const scrolledRatingIdRef = useRef<number | null>(null)
 
-  const fetchRatings = useCallback(
-    async (pageNum: number, reset = false) => {
-      if (!reset && loadingRef.current) return
-
-      const query: Record<string, string | number> = {
-        patchId: Number(id),
-        page: pageNum,
-        limit: RATINGS_PER_PAGE,
-        onlyWithShortSummary: hideNoContent ? 'true' : 'false'
-      }
-      if (targetRatingId) {
-        query.targetRatingId = targetRatingId
-      }
-
-      const requestId = ++requestIdRef.current
-      loadingRef.current = true
-      setLoading(true)
-      try {
-        const res = await kunFetchGet<KunPatchRatingResponse>(
-          '/patch/rating',
-          query
-        )
-
-        if (requestId !== requestIdRef.current) {
-          return
-        }
-
-        if (res && typeof res !== 'string') {
-          if (reset) {
-            setRatings(res.ratings)
-          } else {
-            setRatings((prev) => [
-              ...prev,
-              ...dropLoadedRatings(prev, res.ratings)
-            ])
-          }
-          setTotal(res.total)
-          setHasMore(pageNum * RATINGS_PER_PAGE < res.total)
-        }
-      } finally {
-        if (requestId === requestIdRef.current) {
-          loadingRef.current = false
-          setLoading(false)
-          setInitialized(true)
-        }
-      }
-    },
-    [hideNoContent, id, targetRatingId]
-  )
-
   useEffect(() => {
-    if (!user.uid) return
-
-    setPage(1)
-    setRatings([])
-    setTotal(0)
-    setHasMore(true)
-    setInitialized(false)
-    fetchRatings(1, true)
-  }, [fetchRatings, user.uid])
-
-  useEffect(() => {
-    if (!loadMoreRef.current || !hasMore || loading) return
-
-    observerRef.current = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loadingRef.current) {
-          setPage((prev) => prev + 1)
-        }
-      },
-      { threshold: 0.1 }
-    )
-
-    observerRef.current.observe(loadMoreRef.current)
-
-    return () => {
-      observerRef.current?.disconnect()
-    }
-  }, [hasMore, loading])
-
-  useEffect(() => {
-    if (page > 1) {
-      fetchRatings(page)
-    }
-  }, [fetchRatings, page])
+    setQuery({ patchId: id, targetRatingId })
+  }, [setQuery, id, targetRatingId])
 
   useEffect(() => {
     if (
@@ -185,7 +134,7 @@ export const Ratings = ({ id, targetRatingId }: Props) => {
     raf = requestAnimationFrame(waitForLayout)
 
     return () => cancelAnimationFrame(raf)
-  }, [ratings, loading, targetRatingId])
+  }, [list.items, loading, targetRatingId])
 
   // 高亮计时独立于定位 effect: 后者重跑时会提前返回, 不能靠它的 cleanup 清计时器
   useEffect(() => {
@@ -200,11 +149,10 @@ export const Ratings = ({ id, targetRatingId }: Props) => {
   const handleCreated = useCallback(
     (rating?: KunPatchRating) => {
       if (rating && (!hideNoContent || hasShortSummary(rating))) {
-        setRatings((prev) => [rating, ...prev])
-        setTotal((prev) => prev + 1)
+        insertLocal(rating, 'start')
       }
     },
-    [hideNoContent]
+    [hideNoContent, insertLocal]
   )
 
   const handlePatchUpdated = useCallback(
@@ -214,20 +162,19 @@ export const Ratings = ({ id, targetRatingId }: Props) => {
         !hasShortSummary(rating) &&
         rating.id !== targetRatingId
       ) {
-        setRatings((prev) => prev.filter((r) => r.id !== rating.id))
-        setTotal((prev) => Math.max(0, prev - 1))
+        removeLocal([rating.id])
         return
       }
 
-      setRatings((prev) => prev.map((r) => (r.id === rating.id ? rating : r)))
+      patchLocal(rating.id, rating)
     },
-    [hideNoContent, targetRatingId]
+    [hideNoContent, targetRatingId, removeLocal, patchLocal]
   )
 
-  const handleDeleted = useCallback((ratingId: number) => {
-    setRatings((prev) => prev.filter((r) => r.id !== ratingId))
-    setTotal((prev) => Math.max(0, prev - 1))
-  }, [])
+  const handleDeleted = useCallback(
+    (ratingId: number) => removeLocal([ratingId]),
+    [removeLocal]
+  )
 
   if (!user.uid) {
     return <KunNull message="请登录后查看游戏评价" />
@@ -238,7 +185,7 @@ export const Ratings = ({ id, targetRatingId }: Props) => {
       <div className="flex items-center justify-between">
         <Switch
           isSelected={hideNoContent}
-          onValueChange={setHideNoContent}
+          onValueChange={(value) => setQuery({ onlyWithShortSummary: value })}
           size="sm"
         >
           隐藏无短评评价
@@ -255,7 +202,8 @@ export const Ratings = ({ id, targetRatingId }: Props) => {
 
       <KunMasonry breakpointCols={MASONRY_BREAKPOINTS} gap={16}>
         {[
-          ...ratings.map((rating) => (
+          // 过滤开关刚切换时手里的行属于旧的筛选, 新的第一页落地前只画骨架
+          ...(list.isStale ? [] : list.items).map((rating) => (
             <div
               key={`rating-${rating.id}`}
               id={`rating-${rating.id}`}
@@ -273,7 +221,7 @@ export const Ratings = ({ id, targetRatingId }: Props) => {
               />
             </div>
           )),
-          ...(!initialized || loading
+          ...(loading
             ? Array.from({ length: 6 }).map((_, index) => (
                 <div key={`skeleton-${index}`}>
                   <RatingCardSkeleton />
@@ -283,9 +231,9 @@ export const Ratings = ({ id, targetRatingId }: Props) => {
         ]}
       </KunMasonry>
 
-      <div ref={loadMoreRef} className="w-full h-4" />
+      <div ref={list.sentinelRef} className="w-full h-4" />
 
-      {initialized && !ratings.length && !loading && (
+      {list.status === 'ready' && !list.items.length && (
         <KunNull
           message={
             hideNoContent
@@ -295,9 +243,14 @@ export const Ratings = ({ id, targetRatingId }: Props) => {
         />
       )}
 
-      {!hasMore && ratings.length > 0 && (
+      {/* 失败即停: 不再自动加载、不加重试按钮 (#23), 刷新页面恢复 */}
+      {list.status === 'error' && (
+        <p className="text-center text-danger text-sm">{list.error}</p>
+      )}
+
+      {list.status === 'ready' && !list.hasMore && list.items.length > 0 && (
         <p className="text-center text-default-500 text-sm">
-          已加载全部 {total} 条评价
+          已加载全部 {list.total} 条评价
         </p>
       )}
 

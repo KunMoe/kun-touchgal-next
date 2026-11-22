@@ -149,11 +149,6 @@
       "count": 1
     }
   },
-  "components/message/chat/ChatContainer.tsx": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "components/patch/comment/CommentContent.tsx": {
     "kun/inv-content-04": {
       "count": 1
