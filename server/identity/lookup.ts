@@ -4,7 +4,8 @@ import type { LoginIdentifier } from '~/validations/identifier'
 // 按登录标识符 (用户名、邮箱) 找人与查重的唯一出处 (T18)。数据库里 name / email 各有一个
 // 大小写敏感的 @unique 与一个 lower() 表达式唯一索引 (迁移 0018), 这里的查询都是大小写
 // 不敏感的精确匹配, 与 lower() 索引同一个口径。按 id 找人、按库里存的原值回查
-// (退订、重置密码对比令牌里的邮箱) 不在这里。
+// (退订、重置密码对比令牌里的邮箱) 不在这里。lint 的 kun/inv-identity-01/02 拦这个模块
+// 之外的同类写法。
 
 // Prisma 把 `{ equals, mode: 'insensitive' }` 编译成不转义的 `ILIKE $1`, 参数里的 `_` / `%`
 // 是活通配符 (prisma/prisma#10810、#22072 自 2021 确认未修, 官方文档要求调用方自行转义):
