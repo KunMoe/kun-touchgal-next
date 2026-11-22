@@ -5,8 +5,9 @@ import { createHash } from 'node:crypto'
 // 本文件依赖 node:crypto, 客户端打不进来; 校验只在服务端做, 客户端 schema
 // (validations/{auth,user,admin}.ts) 一律不引用本文件, 否则整份表会随 chunk 下发。
 // 明文条目必须为小写, 摘要对象为 normalizeReservedUsername(词) 的 UTF-8 字节。
-// 与数据库用户名查重（mode: 'insensitive'）一样只折叠 ASCII 大小写；
-// 全角/同形异义/繁简变体（ａｄｍｉｎ、аdmin、天安門）两边一致地放过，
+// 与数据库用户名查重（server/identity/lookup.ts, ILIKE）一样只折叠大小写：JS 的
+// toLowerCase 与 PG 的 lower() 都按 Unicode 折叠, 不只 ASCII（个别字符两边可能不同）；
+// 全角/同形异义/繁简变体（ａｄｍｉｎ、аdmin、天安門）不是大小写差异, 两边一致地放过，
 // 属既有用户名体系限制，不做 NFKC 归一化以免与 DB 查重语义分叉。
 // 例外是不可见格式字符（\p{Cf}：零宽空格/ZWNJ/ZWJ/BOM/双向覆写）：它们不改变
 // 用户名的视觉呈现, 留着就等于 'admin​' 可冒名而肉眼无从分辨。剥掉它们

@@ -14,19 +14,12 @@ import {
   isEmailChangeCoolingDown,
   issueRevertToken
 } from '~/server/auth/emailChange'
+import { isEmailTaken } from '~/server/identity/lookup'
 import { sendEmailChangeNotification } from './_emailChange'
 import type { NextRequest } from 'next/server'
 import type { KunRoutePayload } from '~/app/api/utils/kunRoute'
 
 const NOTICE_FAILED = '发送旧邮箱安全通知失败, 请稍后重试'
-
-const isEmailTaken = async (uid: number, email: string) => {
-  const existedUser = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true }
-  })
-  return !!existedUser && existedUser.id !== uid
-}
 
 const updateEmail = async (
   req: NextRequest,
@@ -68,8 +61,9 @@ const updateEmail = async (
     return stepUp.message
   }
 
-  // 查重排在两道证明之后: 没证明身份、没收到新邮箱的验证码, 就问不出一个邮箱注册没有
-  if (await isEmailTaken(payload.uid, input.email)) {
+  // 查重排在两道证明之后: 没证明身份、没收到新邮箱的验证码, 就问不出一个邮箱注册没有。
+  // 与注册同一个口径 (大小写不敏感); 排除自己: 只改自己邮箱的大小写不算被占用
+  if (await isEmailTaken(input.email, { exceptUid: payload.uid })) {
     return '该邮箱已被使用'
   }
 

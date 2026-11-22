@@ -1,6 +1,6 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
+import { isUsernameTaken } from '~/server/identity/lookup'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { usernameServerSchema } from '~/validations/reserved-username.server'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
@@ -8,13 +8,9 @@ import { invalidateUserSession } from '~/app/api/user/session/cache'
 // verifyHeaderCookie 已在 verifyAndLoadUser 里拦掉不存在/封禁的用户, 故此处不再
 // 重复查一次用户; 用户不存在时 updateMany 自然 count=0, 不会扣分也不会改名
 const updateUsername = async (username: string, uid: number) => {
-  // 这条 ILIKE 只用来拦他人抢注的大小写变体, 必须排除调用者自己那一行: 不排除时
-  // Kun -> KUN 这类改自己名字大小写的请求会命中本人, 恒报「已经有人注册」
-  const sameUsernameUser = await prisma.user.findFirst({
-    where: { name: insensitiveEquals(username), id: { not: uid } },
-    select: { id: true }
-  })
-  if (sameUsernameUser) {
+  // 排除调用者自己那一行: 不排除时 Kun -> KUN 这类改自己名字大小写的请求会命中本人,
+  // 恒报「已经有人注册」
+  if (await isUsernameTaken(username, { exceptUid: uid })) {
     return '您的用户名已经有人注册了, 请修改'
   }
 
@@ -38,9 +34,8 @@ const updateUsername = async (username: string, uid: number) => {
       return '更改用户名最少需要 30 萌萌点, 您的萌萌点不足'
     }
   } catch (error) {
-    // name 唯一索引兜底并发改名: 上面的查重与写入之间有窗口. 但索引是大小写敏感的
-    // btree(name), 只兜底完全同名; 预检那条 ILIKE 想防的大小写变体 (Kun / kun 并发)
-    // 不触发唯一索引, 要闭合须给生产库补 lower(name) 函数唯一索引
+    // 唯一索引兜底并发改名: 上面的查重与写入之间有窗口, 完全同名撞 name 的 @unique,
+    // 只差大小写 (Kun / kun 并发) 撞迁移 0018 的 lower(name) 索引, 都是 P2002
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002'

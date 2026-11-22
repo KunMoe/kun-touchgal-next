@@ -1,10 +1,9 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { forgotPasswordRequestSchema } from '~/validations/forgot'
-import { prisma } from '~/prisma/index'
 import { sendResetPasswordLinkEmail } from '~/app/api/utils/sendResetPasswordLinkEmail'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
-import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
+import { findUserByEmailForReset } from '~/server/identity/lookup'
 import { getKv, setKv } from '~/lib/redis'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 
@@ -23,9 +22,7 @@ const requestReset = async (
     return '您发送邮件的频率太快了, 请 60 秒后重试'
   }
 
-  const user = await prisma.user.findFirst({
-    where: { email: insensitiveEquals(input.email) }
-  })
+  const user = await findUserByEmailForReset(input.email)
 
   if (!user) {
     await setKv(`limit:ip:${ip}`, '1', 60)

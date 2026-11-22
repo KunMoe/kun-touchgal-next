@@ -84,6 +84,18 @@ const strict = <T extends object>(name: string, target: T): T =>
 const prismaError = (code: string, message: string) =>
   Object.assign(new Error(message), { code })
 
+const isInsensitiveEquals = (
+  value: unknown
+): value is { equals: string; mode: 'insensitive' } =>
+  typeof value === 'object' &&
+  value !== null &&
+  Object.keys(value).length === 2 &&
+  typeof (value as { equals?: unknown }).equals === 'string' &&
+  (value as { mode?: unknown }).mode === 'insensitive'
+
+// ILIKE 的反斜杠转义还原成字面值 (insensitiveEquals 的逆)
+const unescapeLike = (value: string) => value.replace(/\\([\\%_])/g, '$1')
+
 const isScalar = (value: unknown) =>
   value === null || ['string', 'number', 'boolean'].includes(typeof value)
 
@@ -190,7 +202,8 @@ const createFakeDb = () => {
     })
   }
 
-  // 写入一行; email / name 守唯一约束 (P2002)
+  // 写入一行; email / name 守唯一约束 (P2002)。库里每列除了大小写敏感的 @unique 还有
+  // lower() 唯一索引 (迁移 0018), 所以只差大小写也算冲突
   const writeUser = (
     journal: Journal,
     row: FakeUserRow,
@@ -200,7 +213,9 @@ const createFakeDb = () => {
     const next = { ...row, ...structuredClone(data) } as FakeUserRow
     for (const column of ['email', 'name'] as const) {
       const taken = [...users.values()].some(
-        (other) => other.id !== row.id && other[column] === next[column]
+        (other) =>
+          other.id !== row.id &&
+          other[column].toLowerCase() === next[column].toLowerCase()
       )
       if (column in data && taken) {
         throw prismaError(
@@ -220,6 +235,36 @@ const createFakeDb = () => {
       }) => {
         queries.push('user.findUnique')
         const row = findByUniqueWhere(args.where)
+        return row ? project(row, args.select) : null
+      },
+      // 只实现 server/identity/lookup.ts 的查重形状: 一列转义过的大小写不敏感精确匹配,
+      // 可带 id: { not } 排除自身
+      findFirst: async (args: {
+        where: Record<string, unknown>
+        select?: Record<string, unknown>
+      }) => {
+        queries.push('user.findFirst')
+        const { id, ...rest } = args.where ?? {}
+        const entries = Object.entries(rest)
+        const [column, filter] = entries[0] ?? []
+        const except = (id as { not?: unknown } | undefined)?.not
+        if (
+          entries.length !== 1 ||
+          (column !== 'email' && column !== 'name') ||
+          !isInsensitiveEquals(filter) ||
+          (id !== undefined &&
+            (Object.keys(id as object).length !== 1 ||
+              typeof except !== 'number'))
+        ) {
+          return unsupported('user.findFirst where', args.where)
+        }
+        const wanted = unescapeLike(filter.equals).toLowerCase()
+        const row = [...users.values()]
+          .sort((a, b) => a.id - b.id)
+          .find(
+            (user) =>
+              user.id !== except && user[column].toLowerCase() === wanted
+          )
         return row ? project(row, args.select) : null
       },
       update: async (args: {

@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { reservedUsernameMessage } from '~/constants/reserved-usernames.server'
+import { emailShapedUsernameMessage } from '~/server/identity/username'
+import { Prisma } from '~/prisma/generated/prisma/client'
 
 const {
   findUserMock,
+  findFirstMock,
   transactionMock,
   updateUserMock,
   createLogMock,
@@ -10,6 +13,7 @@ const {
   hashPasswordMock
 } = vi.hoisted(() => ({
   findUserMock: vi.fn(),
+  findFirstMock: vi.fn(),
   transactionMock: vi.fn(),
   updateUserMock: vi.fn(),
   createLogMock: vi.fn(),
@@ -25,7 +29,8 @@ const transactionClient = {
 
 vi.mock('~/prisma/index', () => ({
   prisma: {
-    user: { findUnique: findUserMock },
+    // findFirst 是 server/identity/lookup.ts 的查重 (大小写不敏感, 排除目标用户自己)
+    user: { findUnique: findUserMock, findFirst: findFirstMock },
     $transaction: transactionMock
   }
 }))
@@ -70,6 +75,8 @@ beforeEach(() => {
   findUserMock
     .mockResolvedValueOnce(reservedNameUser)
     .mockResolvedValueOnce({ role: 4, name: 'root-admin' })
+  findFirstMock.mockReset()
+  findFirstMock.mockResolvedValue(null)
   updateUserMock.mockResolvedValue({ count: 1 })
   createLogMock.mockResolvedValue({})
   finishMock.mockResolvedValue({ revokedOthers: 0 })
@@ -119,14 +126,15 @@ describe('updateUser 保留用户名', () => {
   })
 
   it('允许把存量保留名用户改成非保留名', async () => {
-    findUserMock.mockResolvedValueOnce(null)
-
     await expect(
       updateUser({ ...baseInput, name: 'kun-admin' }, 99)
     ).resolves.toEqual({})
 
-    expect(findUserMock).toHaveBeenNthCalledWith(3, {
-      where: { name: 'kun-admin' },
+    expect(findFirstMock).toHaveBeenCalledWith({
+      where: {
+        name: { equals: 'kun-admin', mode: 'insensitive' },
+        id: { not: 7 }
+      },
       select: { id: true }
     })
     expect(updateUserMock).toHaveBeenCalledWith(
@@ -137,20 +145,97 @@ describe('updateUser 保留用户名', () => {
   })
 })
 
+describe('updateUser 新名字的规则与查重 (T18)', () => {
+  const setupTarget = (name: string) => {
+    findUserMock.mockReset()
+    findUserMock
+      .mockResolvedValueOnce({ ...reservedNameUser, name })
+      .mockResolvedValueOnce({ role: 4, name: 'root-admin' })
+  }
+
+  it('拒绝改成邮箱形态的名字, 不查重也不落库', async () => {
+    setupTarget('kun')
+
+    await expect(
+      updateUser({ ...baseInput, name: 'victim@qq.com' }, 99)
+    ).resolves.toBe(emailShapedUsernameMessage)
+
+    expect(findFirstMock).not.toHaveBeenCalled()
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+
+  // 存量里改名规则收紧之前取的邮箱形态名: 整表单提交时 name 恒定携带, 不改名就不判
+  it('不改名时放行存量的邮箱形态名', async () => {
+    setupTarget('legacy@qq.com')
+
+    await expect(
+      updateUser({ ...baseInput, name: 'legacy@qq.com', status: 1 }, 99)
+    ).resolves.toEqual({})
+
+    expect(findFirstMock).not.toHaveBeenCalled()
+  })
+
+  it('别人已有只差大小写的名字时拒绝', async () => {
+    setupTarget('kun')
+    findFirstMock.mockResolvedValue({ id: 9 })
+
+    await expect(updateUser({ ...baseInput, name: 'Taken' }, 99)).resolves.toBe(
+      '该用户名已被其他用户使用'
+    )
+
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+
+  it('别人已有只差大小写的邮箱时拒绝', async () => {
+    findFirstMock.mockResolvedValue({ id: 9 })
+
+    await expect(
+      updateUser({ ...baseInput, email: 'TAKEN@example.com' }, 99)
+    ).resolves.toBe('该邮箱已被其他用户使用')
+
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+
+  // 查重与写入之间被别人取走 (含只差大小写, 撞 lower() 唯一索引)
+  it('写入撞唯一约束时回业务错误, 不写审计日志', async () => {
+    setupTarget('kun')
+    transactionMock.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test'
+      })
+    )
+
+    await expect(updateUser({ ...baseInput, name: 'Fresh' }, 99)).resolves.toBe(
+      '该用户名或邮箱已被其他用户使用'
+    )
+
+    expect(finishMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('updateUser 改了密码或邮箱 (账号恢复)', () => {
   it.each([
     ['设了新密码', { password: 'newpass123' }, false],
     ['改了邮箱', { email: 'recovered@example.com' }, true]
   ])('%s: 走刷新安全戳的事件', async (_label, change, checksEmail) => {
     hashPasswordMock.mockResolvedValue('new-hash')
-    if (checksEmail) {
-      // 新邮箱的查重: 没人占用
-      findUserMock.mockResolvedValueOnce(null)
-    }
 
     await expect(updateUser({ ...baseInput, ...change }, 99)).resolves.toEqual(
       {}
     )
+
+    // 新邮箱的查重: 大小写不敏感, 排除目标用户自己; 没改邮箱就不查
+    expect(findFirstMock).toHaveBeenCalledTimes(checksEmail ? 1 : 0)
+    if (checksEmail) {
+      expect(findFirstMock).toHaveBeenCalledWith({
+        where: {
+          email: { equals: 'recovered@example.com', mode: 'insensitive' },
+          id: { not: 7 }
+        },
+        select: { id: true }
+      })
+    }
 
     expect(updateUserMock).toHaveBeenCalledWith(
       expect.objectContaining({

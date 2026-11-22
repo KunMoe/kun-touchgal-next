@@ -198,16 +198,26 @@ describe('POST /api/user/setting/email: request gates', () => {
     expect(db.user(UID)?.email).toBe(OLD_EMAIL)
   })
 
-  it('[current: case-sensitive duplicate check] accepts a case variant of an address owned by another user', async () => {
-    // 注册查重与登录都按大小写不敏感匹配邮箱, 这里是精确匹配, 库里也没有 lower(email) 唯一索引
+  // 与注册、登录同一个口径: 只差大小写的地址也算被占用 (T18, 以前这里是精确匹配)
+  it('rejects a case variant of an address owned by another user', async () => {
     const variant = 'TAKEN@example.com'
+    kv.put(variant, CODE, 600)
+
+    const response = await post(passwordBody({ email: variant }))
+
+    expect(await read(response)).toBe('该邮箱已被使用')
+    expect(db.user(UID)?.email).toBe(OLD_EMAIL)
+    expect(db.user(8)?.email).toBe(TAKEN_EMAIL)
+  })
+
+  it('lets the owner change only the case of their own address', async () => {
+    const variant = OLD_EMAIL.toUpperCase()
     kv.put(variant, CODE, 600)
 
     const response = await post(passwordBody({ email: variant }))
 
     expect(await read(response)).toEqual({})
     expect(db.user(UID)?.email).toBe(variant)
-    expect(db.user(8)?.email).toBe(TAKEN_EMAIL)
   })
 
   // P07-08: 查重曾排在身份证明之前, 只凭会话就能探测一个地址注册没有。现在回答只取决于

@@ -123,7 +123,8 @@ describe('POST /api/auth/send-register-code email dedup', () => {
 
     await expect(response.json()).resolves.toEqual({})
     expect(findFirstMock).toHaveBeenNthCalledWith(2, {
-      where: { email: { equals: 'Tester@Example.com', mode: 'insensitive' } }
+      where: { email: { equals: 'Tester@Example.com', mode: 'insensitive' } },
+      select: { id: true }
     })
     expect(sendVerificationCodeEmailMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -142,10 +143,12 @@ describe('POST /api/auth/send-register-code email dedup', () => {
     await POST(createRequest())
 
     expect(findFirstMock).toHaveBeenNthCalledWith(1, {
-      where: { name: { equals: 'k\\_n', mode: 'insensitive' } }
+      where: { name: { equals: 'k\\_n', mode: 'insensitive' } },
+      select: { id: true }
     })
     expect(findFirstMock).toHaveBeenNthCalledWith(2, {
-      where: { email: { equals: 'kun\\_chan@qq.com', mode: 'insensitive' } }
+      where: { email: { equals: 'kun\\_chan@qq.com', mode: 'insensitive' } },
+      select: { id: true }
     })
     expect(sendVerificationCodeEmailMock).toHaveBeenCalledWith(
       expect.anything(),

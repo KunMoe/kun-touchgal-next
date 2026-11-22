@@ -3,7 +3,7 @@ import { kunRoute } from '~/app/api/utils/kunRoute'
 import { hashPassword } from '~/app/api/utils/algorithm'
 import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
-import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
+import { isEmailTaken, isUsernameTaken } from '~/server/identity/lookup'
 import { establishKunSession } from '~/server/auth/session'
 import { registerServerSchema } from '~/validations/reserved-username.server'
 import { checkDisableRegister } from '~/app/api/utils/checkDisableRegister'
@@ -29,26 +29,19 @@ const register = async (
     return '您的验证码无效, 请重新输入'
   }
 
-  const sameUsernameUser = await prisma.user.findFirst({
-    where: { name: insensitiveEquals(name) }
-  })
-  if (sameUsernameUser) {
+  if (await isUsernameTaken(name, { exceptUid: null })) {
     return '您的用户名已经有人注册了, 请修改'
   }
 
-  const sameEmailUser = await prisma.user.findFirst({
-    where: { email: insensitiveEquals(email) }
-  })
-  if (sameEmailUser) {
+  if (await isEmailTaken(email, { exceptUid: null })) {
     return '您的邮箱已经有人注册了, 请修改'
   }
 
   const hashedPassword = await hashPassword(password)
 
-  // name / email 唯一索引兜底并发注册: 上面两条查重与 create 之间有窗口, 同名或同邮箱
-  // 的并发请求会双双通过预检. 索引挡住了重复建号, 这里把 P2002 翻回字符串, 否则用户
-  // 拿到 500 而非本仓「业务错误即字符串」的响应约定. name 索引是大小写敏感的 btree,
-  // 只兜底完全同名, 与 user/setting/username 同一处未闭合的大小写变体窗口
+  // 唯一索引兜底并发注册: 上面两条查重与 create 之间有窗口, 同名或同邮箱 (含只差大小写,
+  // 迁移 0018 的 lower() 索引) 的并发请求会双双通过预检. 索引挡住了重复建号, 这里把 P2002
+  // 翻回字符串, 否则用户拿到 500 而非本仓「业务错误即字符串」的响应约定
   let user
   try {
     user = await prisma.user.create({

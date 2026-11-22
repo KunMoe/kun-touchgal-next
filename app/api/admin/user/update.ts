@@ -2,10 +2,8 @@ import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { adminUpdateUserSchema } from '~/validations/admin'
-import {
-  isReservedUsername,
-  reservedUsernameMessage
-} from '~/constants/reserved-usernames.server'
+import { newUsernameError } from '~/server/identity/username'
+import { isEmailTaken, isUsernameTaken } from '~/server/identity/lookup'
 import {
   applyKunCredentialChange,
   finishKunSecurityEvent
@@ -53,26 +51,20 @@ export const updateUser = async (
       ? '不能将用户设置为该角色'
       : '设置用户为管理员仅限超级管理员可用'
   }
-  // 保留词只拦「改名」这一步: 表单整体提交, name 恒定携带, 若在 schema 层判
-  // 会把库里存量的保留名用户 (含 uid 1 与冒名的 admin) 锁死, 连封禁都做不了
+  // 新名字的规则 (保留词、不得为邮箱形态) 只拦「改名」这一步: 表单整体提交, name 恒定
+  // 携带, 若在 schema 层判会把库里存量的保留名用户 (含 uid 1 与冒名的 admin) 锁死, 连封禁
+  // 都做不了。查重与注册同一个口径 (大小写不敏感), 并排除目标用户自己: 只改大小写不算占用
   if (rest.name !== user.name) {
-    if (isReservedUsername(rest.name)) {
-      return reservedUsernameMessage
+    const nameError = newUsernameError(rest.name)
+    if (nameError) {
+      return nameError
     }
-    const existingUserByName = await prisma.user.findUnique({
-      where: { name: rest.name },
-      select: { id: true }
-    })
-    if (existingUserByName) {
+    if (await isUsernameTaken(rest.name, { exceptUid: uid })) {
       return '该用户名已被其他用户使用'
     }
   }
   if (email !== user.email) {
-    const existingUserByEmail = await prisma.user.findUnique({
-      where: { email },
-      select: { id: true }
-    })
-    if (existingUserByEmail) {
+    if (await isEmailTaken(email, { exceptUid: uid })) {
       return '该邮箱已被其他用户使用'
     }
   }
@@ -88,32 +80,39 @@ export const updateUser = async (
     hashedPassword || email !== user.email
       ? 'admin-credentials-changed'
       : 'admin-edited'
-  const failure = await kunTx('admin.user.update', async ({ tx: prisma }) => {
-    const { count } = await applyKunCredentialChange(prisma, {
-      uid,
-      event,
-      data: {
-        daily_image_count: dailyImageCount,
-        email,
-        role,
-        status,
-        ...rest,
-        ...(hashedPassword ? { password: hashedPassword } : {})
+  const failure = await kunTx(
+    'admin.user.update',
+    async ({ tx: prisma }) => {
+      const { count } = await applyKunCredentialChange(prisma, {
+        uid,
+        event,
+        data: {
+          daily_image_count: dailyImageCount,
+          email,
+          role,
+          status,
+          ...rest,
+          ...(hashedPassword ? { password: hashedPassword } : {})
+        }
+      })
+      // 与此前的 update 一样: 用户在查询之后被删了就整笔回滚 (不写审计日志)
+      if (!count) {
+        throw new Error(`用户 ${uid} 已不存在`)
       }
-    })
-    // 与此前的 update 一样: 用户在查询之后被删了就整笔回滚 (不写审计日志)
-    if (!count) {
-      throw new Error(`用户 ${uid} 已不存在`)
-    }
 
-    await prisma.admin_log.create({
-      data: {
-        type: 'update',
-        user_id: adminUid,
-        content: `管理员 ${admin.name} 更改了一个用户的信息\n\n更改内容:\n${JSON.stringify(logInput)}\n\n原用户信息:\n${JSON.stringify(user)}`
-      }
-    })
-  })
+      await prisma.admin_log.create({
+        data: {
+          type: 'update',
+          user_id: adminUid,
+          content: `管理员 ${admin.name} 更改了一个用户的信息\n\n更改内容:\n${JSON.stringify(logInput)}\n\n原用户信息:\n${JSON.stringify(user)}`
+        }
+      })
+    },
+    {
+      // 上面的查重与这里的写入之间有窗口: 同时被别人取走的名字或邮箱 (含只差大小写) 撞唯一索引
+      violations: { P2002: '该用户名或邮箱已被其他用户使用' }
+    }
+  )
   if (typeof failure === 'string') {
     return failure
   }

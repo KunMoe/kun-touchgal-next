@@ -189,4 +189,16 @@ describe('服务端 schema 拦截保留词', () => {
       true
     )
   })
+
+  // T18: 登录框据「是不是邮箱形态」分辨输入的是邮箱还是用户名, 新名字不能取成邮箱形态
+  it('usernameServerSchema 拒绝邮箱形态的新名字, 错误定位在 username', () => {
+    const result = usernameServerSchema.safeParse({ username: 'victim@qq.com' })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues).toMatchObject([
+      { path: ['username'], message: '用户名不能是邮箱格式, 请更换' }
+    ])
+    expect(
+      usernameServerSchema.safeParse({ username: 'Mr.Pizza' }).success
+    ).toBe(true)
+  })
 })

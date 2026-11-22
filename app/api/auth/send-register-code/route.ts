@@ -4,9 +4,8 @@ import { sendVerificationCodeEmail } from '~/app/api/utils/sendVerificationCodeE
 import { sendRegisterEmailVerificationCodeServerSchema } from '~/validations/reserved-username.server'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
-import { insensitiveEquals } from '~/app/api/utils/insensitiveEquals'
+import { isEmailTaken, isUsernameTaken } from '~/server/identity/lookup'
 import { checkDisableRegister } from '~/app/api/utils/checkDisableRegister'
-import { prisma } from '~/prisma/index'
 
 const sendRegisterCode = async (
   input: z.infer<typeof sendRegisterEmailVerificationCodeServerSchema>,
@@ -22,17 +21,11 @@ const sendRegisterCode = async (
     return '人机验证无效, 请完成人机验证'
   }
 
-  const sameUsernameUser = await prisma.user.findFirst({
-    where: { name: insensitiveEquals(input.name) }
-  })
-  if (sameUsernameUser) {
+  if (await isUsernameTaken(input.name, { exceptUid: null })) {
     return '您的用户名已经有人注册了, 请修改'
   }
 
-  const sameEmailUser = await prisma.user.findFirst({
-    where: { email: insensitiveEquals(input.email) }
-  })
-  if (sameEmailUser) {
+  if (await isEmailTaken(input.email, { exceptUid: null })) {
     return '您的邮箱已经有人注册了, 请修改'
   }
 
