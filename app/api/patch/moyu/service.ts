@@ -1,6 +1,7 @@
 import { MOYU_PATCH_RESOURCE_CACHE_DURATION } from '~/config/cache'
 import { getKv, setKv } from '~/lib/redis'
 import { prisma } from '~/prisma'
+import { kunAbuseGate } from '~/server/abuse/budget'
 import type {
   KunMoyuPatchList,
   KunMoyuPatchResource
@@ -68,6 +69,12 @@ export const getMoyuPatchResources = async (
   })
   if (!patch) {
     return []
+  }
+  // 收录检查挡不住遍历: 收录的 vndb_id 逐个请求、个个没缓存时照样把上游配额打满 (X05-04)。
+  // 所以真要打上游之前再扣整站预算, 缓存命中不扣; 游客没有 uid, 按 IP 计要等 T23 定下可信代理
+  const denied = await kunAbuseGate(['upstream.moyu'], 'anonymous')
+  if (denied) {
+    return denied
   }
 
   let resources: KunMoyuPatchResource[]

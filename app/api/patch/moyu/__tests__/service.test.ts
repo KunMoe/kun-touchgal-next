@@ -1,18 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getKvMock, setKvMock, patchFindFirstMock, fetchMock } = vi.hoisted(
-  () => ({
+const { getKvMock, setKvMock, patchFindFirstMock, fetchMock, abuseGateMock } =
+  vi.hoisted(() => ({
     getKvMock: vi.fn(),
     setKvMock: vi.fn(),
     patchFindFirstMock: vi.fn(),
-    fetchMock: vi.fn()
-  })
-)
+    fetchMock: vi.fn(),
+    abuseGateMock: vi.fn()
+  }))
 
 vi.mock('~/lib/redis', () => ({
   getKv: getKvMock,
   setKv: setKvMock
 }))
+
+vi.mock('~/server/abuse/budget', () => ({ kunAbuseGate: abuseGateMock }))
 
 vi.mock('~/prisma', () => ({
   prisma: {
@@ -63,6 +65,7 @@ describe('getMoyuPatchResources', () => {
     getKvMock.mockResolvedValue(null)
     setKvMock.mockResolvedValue(undefined)
     patchFindFirstMock.mockResolvedValue({ id: 1 })
+    abuseGateMock.mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -148,6 +151,42 @@ describe('getMoyuPatchResources', () => {
       '获取鲲 Galgame 补丁资源失败'
     )
     expect(setKvMock).not.toHaveBeenCalled()
+  })
+
+  // 整站共用一把每分钟 60 次的密钥 (X05-04): 只在真要打上游时扣, 游客按全站计
+  it('缓存未命中、真要请求上游时先扣整站预算', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ object: 'list', items: [], next_cursor: null, total: 0 })
+    )
+
+    await getMoyuPatchResources('v4145')
+
+    expect(abuseGateMock).toHaveBeenCalledExactlyOnceWith(
+      ['upstream.moyu'],
+      'anonymous'
+    )
+    expect(abuseGateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      fetchMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('整站预算用完时返回文案, 不请求上游也不写缓存', async () => {
+    abuseGateMock.mockResolvedValue('当前使用的人太多, 请 20 秒后再试')
+
+    await expect(getMoyuPatchResources('v4145')).resolves.toBe(
+      '当前使用的人太多, 请 20 秒后再试'
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(setKvMock).not.toHaveBeenCalled()
+  })
+
+  it('命中缓存与未收录的 vndb_id 都不扣预算', async () => {
+    getKvMock.mockResolvedValueOnce(JSON.stringify([resource]))
+    await getMoyuPatchResources('v4145')
+    patchFindFirstMock.mockResolvedValueOnce(null)
+    await getMoyuPatchResources('v9999')
+
+    expect(abuseGateMock).not.toHaveBeenCalled()
   })
 
   it('读缓存失败时降级为直接请求上游', async () => {

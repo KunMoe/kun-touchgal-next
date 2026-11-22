@@ -10,6 +10,7 @@ const steamSchema = z.object({
 export const POST = kunRoute.post({
   auth: 'user',
   input: steamSchema,
+  abuse: ['external.fetch', 'upstream.steam'],
   handler: async ({ input }) => {
     try {
       const data = await fetchSteamAppData(Number(input.steamId))

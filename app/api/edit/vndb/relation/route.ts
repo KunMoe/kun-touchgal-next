@@ -10,6 +10,7 @@ const relationSchema = z.object({
 export const POST = kunRoute.post({
   auth: 'user',
   input: relationSchema,
+  abuse: ['external.fetch', 'upstream.vndb'],
   handler: async ({ input }) => {
     const relationId = input.relationId.toLowerCase()
 

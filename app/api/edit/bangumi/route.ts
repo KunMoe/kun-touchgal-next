@@ -29,6 +29,7 @@ const dirtyTagSet = new Set(lowQualityTags)
 export const POST = kunRoute.post({
   auth: 'user',
   input: bangumiSchema,
+  abuse: ['external.fetch', 'upstream.bangumi'],
   handler: async ({ input }) => {
     try {
       const res = await fetch(

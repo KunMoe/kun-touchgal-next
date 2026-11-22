@@ -71,14 +71,14 @@ PUT /api/company                                         user capability=company
 POST /api/company                                        user capability=company.manage
 DELETE /api/company                                      user capability=company.manage
 POST /api/company/search                                 public
-POST /api/edit/bangumi                                   user
-POST /api/edit/dlsite                                    user
+POST /api/edit/bangumi                                   user abuse=external.fetch,upstream.bangumi
+POST /api/edit/dlsite                                    user abuse=external.fetch,upstream.dlsite
 GET /api/edit/duplicate                                  public
 POST /api/edit                                           user capability=galgame.create form
 PUT /api/edit                                            user capability=galgame.rewrite
-POST /api/edit/steam                                     user
-POST /api/edit/vndb/details                              user
-POST /api/edit/vndb/relation                             user
+POST /api/edit/steam                                     user abuse=external.fetch,upstream.steam
+POST /api/edit/vndb/details                              user abuse=external.fetch,upstream.vndb
+POST /api/edit/vndb/relation                             user abuse=external.fetch,upstream.vndb
 POST /api/forgot/request                                 public
 POST /api/forgot/reset                                   public
 GET /api/galgame                                         optional

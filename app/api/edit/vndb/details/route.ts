@@ -57,6 +57,7 @@ const buildDevelopers = (results: VNDBFullResult[]) => {
 export const POST = kunRoute.post({
   auth: 'user',
   input: detailsSchema,
+  abuse: ['external.fetch', 'upstream.vndb'],
   handler: async ({ input }) => {
     const vndbId = input.vndbId.toLowerCase()
 

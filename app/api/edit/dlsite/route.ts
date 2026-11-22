@@ -10,6 +10,7 @@ const dlsiteSchema = z.object({
 export const POST = kunRoute.post({
   auth: 'user',
   input: dlsiteSchema,
+  abuse: ['external.fetch', 'upstream.dlsite'],
   handler: async ({ input }) => {
     try {
       const data = await fetchDlsiteData(input.code)
