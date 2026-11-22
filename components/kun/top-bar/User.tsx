@@ -162,9 +162,9 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
     getServerUserDropdownModule
   )
   const missingSessionCheckedRef = useRef(false)
-  const [isMissingSessionChecked, setIsMissingSessionChecked] = useState(
-    !!initialSession || isSessionPending
-  )
+  // 骨架只等首次判定访客身份, 判定的每个出口都置真且不再回落: 根布局在软导航里不重渲染,
+  // initialSession 一直是整页加载时的值, 之后的站内登录 / 登出只改 store 里的 user
+  const [isSessionReady, setIsSessionReady] = useState(false)
 
   useEffect(() => {
     if (!isMounted || !initialSession) {
@@ -183,7 +183,7 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
 
       setUser(initialSession.user)
       setUnreadMessageStatus(initialSession.unread)
-      setIsMissingSessionChecked(true)
+      setIsSessionReady(true)
     }
 
     void hydrateSession()
@@ -229,11 +229,11 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
         if (sessionCheck.status === 'valid') {
           setUser(sessionCheck.session.user)
           setUnreadMessageStatus(sessionCheck.session.unread)
-          setIsMissingSessionChecked(true)
+          setIsSessionReady(true)
           return
         }
         if (sessionCheck.status === 'unreachable') {
-          setIsMissingSessionChecked(true)
+          setIsSessionReady(true)
           return
         }
 
@@ -241,12 +241,13 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
         logout()
         resetUnreadMessageStatus()
         resetSettings()
+        setIsSessionReady(true)
         router.push(
           buildKunLoginHref(window.location.pathname, window.location.search)
         )
         return
       }
-      setIsMissingSessionChecked(true)
+      setIsSessionReady(true)
     }
 
     void handleMissingSession()
@@ -265,12 +266,6 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
     resetUnreadMessageStatus,
     router
   ])
-
-  const isSessionReady = isSessionPending
-    ? false
-    : initialSession
-      ? user.uid === initialSession.user.uid
-      : isMissingSessionChecked
 
   const hasUnread = hasUnreadNotification || hasUnreadConversation
   const isUserReady = isMounted && isSessionReady && !!user.name
