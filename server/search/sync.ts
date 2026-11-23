@@ -14,7 +14,7 @@ import {
 
 // 活索引只有这一个写者: 文档的增删改只经 drainSearchOutbox (逐行读最新状态后写入), 计数只经
 // 写锁内的 applyCounts。两者共用一把锁, 任意时刻至多一方在写; 对账 (reconcile.ts) 只读、
-// 只入箱。Meilisearch 的文档写 API 只许出现在这个文件里
+// 只入箱。Meilisearch 的文档写 API 只许出现在这个文件里 (lint kun/inv-search-03)
 
 // 单文档实时同步的任务等待上限；超时按引擎不可用处理，该行留在出箱等下一轮
 const SEARCH_SYNC_TASK_TIMEOUT_MS = 30_000
@@ -72,7 +72,8 @@ const callMeili = async <T>(call: () => Promise<T>) => {
 // 低层应用器：按 patchId 读取补丁最新状态后写入 Meilisearch —— 存在则 upsert 文档，
 // 已删除则删除索引文档。必须 waitTask 等到任务终态：SDK 的 addDocuments/deleteDocument
 // 仅返回“已入队”任务，后台处理失败不会 reject；不等终态会把静默失败误判为成功、
-// 使删除/更新永久停留在陈旧值。只由 drain 在写锁内调用
+// 使删除/更新永久停留在陈旧值。只由 drain 在写锁内调用 (别处导入它由 lint
+// kun/inv-search-03 拦下)
 export const syncPatchToSearch = async (patchId: number) => {
   const client = getMeiliClient()
   if (!client) {

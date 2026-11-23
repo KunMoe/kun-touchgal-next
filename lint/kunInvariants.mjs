@@ -26,6 +26,13 @@
 // syntax 类的 strings: 字符串字面量与模板字符串命中任一正则即报。模板字符串按「各段文本用占位符
 // $1 接起来」的整串匹配, 一句 SQL 被插值切成几段时关键字与列名仍在同一串里; 选择器只能逐段匹配
 
+// inv-search-03 / 04 的成员名。Index 自己的 update / delete (改主键、删索引) 与 Prisma delegate
+// 的方法同名, 按名字认不出来, 不在表里
+const MEILI_DOCUMENT_WRITE =
+  '/^(addDocuments|addDocumentsFromString|addDocumentsInBatches|updateDocuments|updateDocumentsByFunction|updateDocumentsFromString|updateDocumentsInBatches|deleteDocument|deleteDocuments|deleteAllDocuments)$/'
+const MEILI_INDEX_ADMIN =
+  '/^(createIndex|updateIndex|deleteIndex|deleteIndexIfExists|swapIndexes|(update|reset)(Settings|DisplayedAttributes|DistinctAttribute|Embedders|Faceting|FacetSearch|FilterableAttributes|LocalizedAttributes|NonSeparatorTokens|Pagination|PrefixSearch|ProximityPrecision|RankingRules|SearchableAttributes|SearchCutoffMs|SeparatorTokens|SortableAttributes|StopWords|Synonyms|TypoTolerance|Dictionary|ForeignKeys))$/'
+
 // inv-content-05/06 共用。三张内容表的 Prisma delegate 名, user 上的同名关系字段与 _count 计数也叫这个名字
 const CONTENT_DELEGATE = '/^patch_(comment|rating|resource)$/'
 const CONTENT_UPDATE_METHODS = 'update|updateMany|updateManyAndReturn|upsert'
@@ -1081,7 +1088,7 @@ export const KUN_INVARIANTS = [
     statement:
       'isMeiliEnabled 只许 server/search/failure.ts 导入 (具名或整模块命名空间都算), 要不要走索引由那里的 withMeiliEngine 决定',
     reason:
-      '作品列表、标签页、会社页与关键词搜索曾各写一份 `if (isMeiliEnabled()) try { … } catch { 降级 }`, catch 不分错误类别: 请求参数被 Meilisearch 拒绝 (小数页码、带孤立代理的筛选值都是 400) 和写在 try 里的 PG 错误一律当成索引宕机, 匿名请求可以按需把搜索切到最重的 Prisma 路径, 部署漂移 (漏跑 search:init) 也被同一个 catch 悄悄盖住。withMeiliEngine 只对 Meilisearch 自身的故障换引擎, 并让调用方拿到用了哪一个。本条只认静态导入, 拦的是「读开关」这一步: 不读开关、直接调索引查询再自己包 try/catch 的写法由 inv-search-02 管',
+      '作品列表、标签页、会社页与关键词搜索曾各写一份 `if (isMeiliEnabled()) try { … } catch { 降级 }`, catch 不分错误类别: 请求参数被 Meilisearch 拒绝 (小数页码、带孤立代理的筛选值都是 400) 和写在 try 里的 PG 错误一律当成索引宕机, 匿名请求可以按需把搜索切到最重的 Prisma 路径, 部署漂移 (线上索引定义落后于代码) 也被同一个 catch 悄悄盖住。withMeiliEngine 只对 Meilisearch 自身的故障换引擎, 并让调用方拿到用了哪一个。本条只认静态导入, 拦的是「读开关」这一步: 不读开关、直接调索引查询再自己包 try/catch 的写法由 inv-search-02 管',
     removeWhen: 'Meilisearch 不再是可选后端 (改为必需, 或整体移除)',
     ignores: ['server/search/failure.ts'],
     enforce: {
@@ -1144,6 +1151,94 @@ export const KUN_INVARIANTS = [
         "import { searchGalgames } from '~/server/galgame/search'",
         "import { SEARCH_QUERY_TIMEOUT_MS } from '~/server/search/query'",
         "import type { GalgameIndexQuery } from '~/server/search/query'"
+      ]
+    }
+  },
+  {
+    id: 'inv-search-03',
+    aliases: ['T24'],
+    statement:
+      'Meilisearch 的文档写 API (addDocuments* / updateDocuments* / deleteDocument* / deleteAllDocuments) 只许 server/search/sync.ts 调用, 它的低层应用器 syncPatchToSearch 也不许别处导入: 文档的增删改只经出箱的 drain, 计数只经写锁内的 applyCounts',
+    reason:
+      '索引是 PG 的派生副本, 它对不对取决于「最后一个写者读到的是最新状态」。曾经有四个写者: drain、对账、全量同步脚本、计数刷新, 各持各的锁或不持锁, 都是先读 PG、过几秒再写; Meilisearch 按入队顺序应用任务、没有条件写, 旧快照后写就会复活已删的游戏、覆盖新标题, 计数刷新的 PUT 还会为索引里没有的 id 建出只有计数的残缺文档。现在活索引只有 sync.ts 一个写者, 它与计数写入共用一把写锁, 对账只检测、只入箱。按成员名认 (调用、取引用、计算属性、解构), 这些名字在仓库里只指 Meilisearch SDK 的方法',
+    removeWhen:
+      '索引写入改由别的机制保证单写者 (例如 Meilisearch 支持按版本的条件写)',
+    ignores: ['server/search/sync.ts', '**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `MemberExpression[property.name=${MEILI_DOCUMENT_WRITE}]`,
+        `MemberExpression[property.value=${MEILI_DOCUMENT_WRITE}]`,
+        `MemberExpression > TemplateLiteral.property:has(TemplateElement[value.raw=${MEILI_DOCUMENT_WRITE}])`,
+        `ObjectPattern > Property[key.name=${MEILI_DOCUMENT_WRITE}]`,
+        `ObjectPattern > Property[key.value=${MEILI_DOCUMENT_WRITE}]`,
+        // 在写锁外调用应用器就是第二个写者
+        "ImportSpecifier[imported.name='syncPatchToSearch']",
+        "MemberExpression[property.name='syncPatchToSearch']"
+      ]
+    },
+    examples: {
+      file: 'scripts/search/kunInvariantExample.ts',
+      bad: [
+        "import { syncPatchToSearch } from '~/server/search/sync'",
+        "import * as sync from '~/server/search/sync'; export const run = () => sync.syncPatchToSearch(1)",
+        'export const run = (index: any, docs: any[]) => index.addDocuments(docs).waitTask()',
+        'export const run = (index: any, docs: any[]) => index.updateDocuments(docs)',
+        'export const run = (index: any) => index.deleteDocuments([1, 2])',
+        'export const run = (index: any) => index.deleteDocument(1)',
+        'export const run = (index: any) => index.deleteAllDocuments()',
+        "export const run = (index: any, docs: any[]) => index['addDocumentsInBatches'](docs, 1000)",
+        'export const run = (index: any, docs: any[]) => index[`updateDocumentsInBatches`](docs)',
+        'export const run = (index: any, docs: any[]) => { const { addDocuments } = index; return addDocuments(docs) }'
+      ],
+      good: [
+        'export const run = (index: any) => index.getDocuments({ fields: ["id"] })',
+        'export const run = (index: any) => index.search("kun")',
+        'export const run = () => drainSearchOutbox({ budgetMs: 50000 })',
+        'export const run = (tx: any) => tx.patch.deleteMany({ where: { id: 1 } })'
+      ]
+    }
+  },
+  {
+    id: 'inv-search-04',
+    aliases: ['T24'],
+    statement:
+      '服务端代码里, 建索引、改索引与 settings 的 Meilisearch API (createIndex / updateIndex / deleteIndex / swapIndexes / updateSettings / resetSettings 与逐项的 update* / reset* 设置) 只许 server/search/indexAdmin.ts 调用',
+    reason:
+      'settings 以前只能手工 pnpm search:init (已删, 现为 search:ensure) 下发, 部署从不调用: 一次上线带着按 releasedSort 排序的代码, 线上索引却一直没有这个可排序字段, 依赖它的查询被拒后降级到 basic 引擎; 下发了 settings 而没重写文档时查询不报错、排序却是错的。现在由 indexAdmin.ts 比对代码里声明的 settings 与线上读数, 按扩张 / 收缩分在部署的切换前后下发。别处再调这些 API, 线上定义就又有了第二个来源。按成员名认 (调用、取引用、计算属性、解构), 不认裸标识符: 客户端有同名的局部函数 resetSettings',
+    removeWhen:
+      '索引定义改由 Meilisearch 之外的机制下发 (例如引擎自带的声明式配置)',
+    // 只管服务端代码: updateSettings / resetSettings 是常见的名字, 客户端 store 里出现它们与
+    // Meilisearch 无关, 而管理密钥本来就到不了客户端
+    files: ['server/**', 'scripts/**', 'lib/**', 'app/api/**', 'prisma/**'],
+    ignores: ['server/search/indexAdmin.ts', '**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `MemberExpression[property.name=${MEILI_INDEX_ADMIN}]`,
+        `MemberExpression[property.value=${MEILI_INDEX_ADMIN}]`,
+        `MemberExpression > TemplateLiteral.property:has(TemplateElement[value.raw=${MEILI_INDEX_ADMIN}])`,
+        `ObjectPattern > Property[key.name=${MEILI_INDEX_ADMIN}]`,
+        `ObjectPattern > Property[key.value=${MEILI_INDEX_ADMIN}]`
+      ]
+    },
+    examples: {
+      file: 'scripts/search/kunInvariantExample.ts',
+      bad: [
+        "export const run = (client: any) => client.createIndex('galgame', { primaryKey: 'id' })",
+        'export const run = (index: any, settings: any) => index.updateSettings(settings).waitTask()',
+        "export const run = (index: any) => index.updateSortableAttributes(['id'])",
+        'export const run = (index: any) => index.resetSettings()',
+        "export const run = (client: any) => client.deleteIndex('galgame')",
+        "export const run = (client: any) => client.swapIndexes([{ indexes: ['a', 'b'] }])",
+        "export const run = (client: any) => client['updateIndex']('galgame', { primaryKey: 'id' })",
+        'export const run = (index: any, settings: any) => { const { updateSettings } = index; return updateSettings(settings) }'
+      ],
+      good: [
+        'export const run = (index: any) => index.getSettings()',
+        "export const run = (client: any) => client.getIndex('galgame')",
+        "export const run = () => ensureSearchIndex({ mode: 'check' })",
+        'export const run = (resetSettings: () => void) => resetSettings()'
       ]
     }
   },
