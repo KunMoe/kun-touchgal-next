@@ -16,7 +16,7 @@ const {
   aliasCreateManyMock,
   userUpdateMock,
   enqueueSearchOutboxMock,
-  queueSearchSyncMock,
+  kickSearchOutboxDrainMock,
   invalidateUserSessionMock,
   processSubmittedExternalDataMock,
   postToIndexNowMock
@@ -34,7 +34,7 @@ const {
   aliasCreateManyMock: vi.fn(),
   userUpdateMock: vi.fn(),
   enqueueSearchOutboxMock: vi.fn(),
-  queueSearchSyncMock: vi.fn(),
+  kickSearchOutboxDrainMock: vi.fn(),
   invalidateUserSessionMock: vi.fn(),
   processSubmittedExternalDataMock: vi.fn(),
   postToIndexNowMock: vi.fn()
@@ -66,7 +66,7 @@ vi.mock('~/prisma/index', () => ({
 
 vi.mock('~/server/search/sync', () => ({
   enqueueSearchOutbox: enqueueSearchOutboxMock,
-  queueSearchSync: queueSearchSyncMock
+  kickSearchOutboxDrain: kickSearchOutboxDrainMock
 }))
 
 vi.mock('~/app/api/user/session/cache', () => ({
@@ -246,7 +246,7 @@ describe('createGalgame', () => {
     expect(res).toBe('您填写的外部 ID 已经被其它 Galgame 使用, 请检查后重试')
     expect(committed).toBe(false)
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
-    expect(queueSearchSyncMock).not.toHaveBeenCalled()
+    expect(kickSearchOutboxDrainMock).not.toHaveBeenCalled()
     // P2002 抛自 patch.create, 早于上传, 不应触发 banner 补偿清理
     expect(patchFindUniqueMock).not.toHaveBeenCalled()
     expect(deleteFileFromS3Mock).not.toHaveBeenCalled()
@@ -328,7 +328,24 @@ describe('createGalgame', () => {
     expect(enqueueSearchOutboxMock).toHaveBeenCalledWith(transactionClient, 42)
     expect(invalidateUserSessionMock).toHaveBeenCalledWith(1)
     expect(processSubmittedExternalDataMock).toHaveBeenCalledTimes(1)
-    expect(queueSearchSyncMock).toHaveBeenCalledWith(42)
+    expect(kickSearchOutboxDrainMock).toHaveBeenCalledTimes(1)
+  }, 30000)
+
+  // 入队归入库函数 (它写完之后自己入一次), 路由只在它返回之后踢一次消费
+  it('入库函数返回之后才踢搜索出箱的消费', async () => {
+    const image = await createPng(400, 300)
+    const events: string[] = []
+    processSubmittedExternalDataMock.mockImplementationOnce(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      events.push('ingested')
+    })
+    kickSearchOutboxDrainMock.mockImplementationOnce(() => {
+      events.push('kick')
+    })
+
+    await createGalgame(makeInput(image), 1)
+
+    expect(events).toEqual(['ingested', 'kick'])
   }, 30000)
 
   it('DLsite 标签随外部来源透传, 不混入手动标签', async () => {

@@ -11,7 +11,7 @@ const {
   aliasDeleteManyMock,
   aliasCreateManyMock,
   enqueueSearchOutboxMock,
-  queueSearchSyncMock,
+  kickSearchOutboxDrainMock,
   invalidatePatchContentCacheMock,
   processSubmittedExternalDataMock
 } = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ const {
   aliasDeleteManyMock: vi.fn(),
   aliasCreateManyMock: vi.fn(),
   enqueueSearchOutboxMock: vi.fn(),
-  queueSearchSyncMock: vi.fn(),
+  kickSearchOutboxDrainMock: vi.fn(),
   invalidatePatchContentCacheMock: vi.fn(),
   processSubmittedExternalDataMock: vi.fn()
 }))
@@ -48,7 +48,7 @@ vi.mock('~/prisma/index', () => ({
 
 vi.mock('~/server/search/sync', () => ({
   enqueueSearchOutbox: enqueueSearchOutboxMock,
-  queueSearchSync: queueSearchSyncMock
+  kickSearchOutboxDrain: kickSearchOutboxDrainMock
 }))
 
 vi.mock('~/app/api/patch/cache', () => ({
@@ -326,7 +326,7 @@ describe('updateGalgame', () => {
     expect(transactionMock).toHaveBeenCalledTimes(1)
     expect(aliasDeleteManyMock).not.toHaveBeenCalled()
     expect(processSubmittedExternalDataMock).not.toHaveBeenCalled()
-    expect(queueSearchSyncMock).not.toHaveBeenCalled()
+    expect(kickSearchOutboxDrainMock).not.toHaveBeenCalled()
     expect(invalidatePatchContentCacheMock).not.toHaveBeenCalled()
   })
 
@@ -378,8 +378,24 @@ describe('updateGalgame', () => {
     )
     expect(lockedId).toBe(5)
     expect(processSubmittedExternalDataMock).toHaveBeenCalledTimes(1)
-    expect(queueSearchSyncMock).toHaveBeenCalledWith(5)
+    expect(kickSearchOutboxDrainMock).toHaveBeenCalledTimes(1)
     expect(invalidatePatchContentCacheMock).toHaveBeenCalledWith('abcd1234')
+  })
+
+  // 入队归入库函数 (它写完之后自己入一次), 路由只在它返回之后踢一次消费
+  it('入库函数返回之后才踢搜索出箱的消费', async () => {
+    const events: string[] = []
+    processSubmittedExternalDataMock.mockImplementationOnce(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      events.push('ingested')
+    })
+    kickSearchOutboxDrainMock.mockImplementationOnce(() => {
+      events.push('kick')
+    })
+
+    expect(await updateGalgame(makeInput(), 1)).toEqual({})
+
+    expect(events).toEqual(['ingested', 'kick'])
   })
 
   it('DLsite 标签随外部来源透传, 手动标签按差量原样下传', async () => {
@@ -437,7 +453,7 @@ describe('updateGalgame 的编辑并发令牌', () => {
     expect(aliasCreateManyMock).not.toHaveBeenCalled()
     expect(enqueueSearchOutboxMock).not.toHaveBeenCalled()
     expect(processSubmittedExternalDataMock).not.toHaveBeenCalled()
-    expect(queueSearchSyncMock).not.toHaveBeenCalled()
+    expect(kickSearchOutboxDrainMock).not.toHaveBeenCalled()
     expect(invalidatePatchContentCacheMock).not.toHaveBeenCalled()
   }
 

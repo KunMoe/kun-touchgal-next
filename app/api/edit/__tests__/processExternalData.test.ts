@@ -12,7 +12,8 @@ const {
   aliasFindManyMock,
   aliasCreateManyMock,
   invalidateTagCacheMock,
-  invalidateCompanyCacheMock
+  invalidateCompanyCacheMock,
+  enqueueSearchOutboxMock
 } = vi.hoisted(() => ({
   saveManualTagChangeMock: vi.fn(),
   tagFindManyMock: vi.fn(),
@@ -25,7 +26,8 @@ const {
   aliasFindManyMock: vi.fn(),
   aliasCreateManyMock: vi.fn(),
   invalidateTagCacheMock: vi.fn(),
-  invalidateCompanyCacheMock: vi.fn()
+  invalidateCompanyCacheMock: vi.fn(),
+  enqueueSearchOutboxMock: vi.fn()
 }))
 
 vi.mock('~/app/api/edit/batchTag', () => ({
@@ -38,6 +40,10 @@ vi.mock('~/app/api/tag/cache', () => ({
 
 vi.mock('~/app/api/company/cache', () => ({
   invalidateCompanyListCache: invalidateCompanyCacheMock
+}))
+
+vi.mock('~/server/search/sync', () => ({
+  enqueueSearchOutbox: enqueueSearchOutboxMock
 }))
 
 vi.mock('~/prisma/index', () => ({
@@ -64,6 +70,7 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
+import { prisma } from '~/prisma/index'
 import { processSubmittedExternalData } from '~/app/api/edit/processExternalData'
 
 const NO_TAG_CHANGE = { removeTagIds: [], addTagNames: [] }
@@ -98,6 +105,7 @@ beforeEach(() => {
   aliasCreateManyMock.mockResolvedValue({ count: 1 })
   invalidateTagCacheMock.mockResolvedValue(undefined)
   invalidateCompanyCacheMock.mockResolvedValue(undefined)
+  enqueueSearchOutboxMock.mockResolvedValue(undefined)
 })
 
 describe('processSubmittedExternalData cache invalidation', () => {
@@ -415,5 +423,85 @@ describe('processSubmittedExternalData aliases', () => {
     expect(aliasFindManyMock).not.toHaveBeenCalled()
     expect(aliasCreateManyMock).not.toHaveBeenCalled()
     expect(errorSpy).not.toHaveBeenCalled()
+  })
+})
+
+// 写完之后入搜索出箱归入库函数自己: 调用方各自补的时候, 有整套漏掉的, 也有排在写入之前的
+// (drain 恰在两者之间消费, 之后写入的标签与会社就进不了索引, 对账只比 updated 修不回来)
+describe('processSubmittedExternalData search outbox', () => {
+  it('enqueues the patch once, after every write has settled', async () => {
+    tagFindManyMock.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 3 }])
+    companyFindManyMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 4 }])
+
+    await processSubmittedExternalData(
+      1,
+      { ...EMPTY_DATA, vndbTags: ['ADV'], vndbDevelopers: ['Key'] },
+      { removeTagIds: [], addTagNames: ['手动'] },
+      7
+    )
+
+    expect(enqueueSearchOutboxMock).toHaveBeenCalledTimes(1)
+    expect(enqueueSearchOutboxMock).toHaveBeenCalledWith(prisma, 1)
+    const enqueuedAt = enqueueSearchOutboxMock.mock.invocationCallOrder[0]
+    for (const write of [
+      saveManualTagChangeMock,
+      tagCreateManyMock,
+      tagRelationCreateManyMock,
+      companyCreateManyMock,
+      companyRelationCreateManyMock
+    ]) {
+      expect(write).toHaveBeenCalledTimes(1)
+      expect(write.mock.invocationCallOrder[0]).toBeLessThan(enqueuedAt)
+    }
+  })
+
+  // 调用方在此之前写的别名与字段也靠这一次入队收尾
+  it('enqueues even when nothing external was submitted', async () => {
+    await processSubmittedExternalData(1, EMPTY_DATA, NO_TAG_CHANGE, 7)
+
+    expect(enqueueSearchOutboxMock).toHaveBeenCalledTimes(1)
+    expect(enqueueSearchOutboxMock).toHaveBeenCalledWith(prisma, 1)
+  })
+
+  it('still enqueues when a task fails after part of its writes landed', async () => {
+    tagFindManyMock
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('tag reread failed'))
+
+    await processSubmittedExternalData(
+      1,
+      { ...EMPTY_DATA, vndbTags: ['ADV'] },
+      NO_TAG_CHANGE,
+      7
+    )
+
+    expect(enqueueSearchOutboxMock).toHaveBeenCalledTimes(1)
+    expect(tagCreateManyMock.mock.invocationCallOrder[0]).toBeLessThan(
+      enqueueSearchOutboxMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  // 主事务已提交, 上抛只会让建档的重试撞 P2002; 与外部数据任务同理只留痕
+  it('logs an enqueue failure instead of throwing', async () => {
+    const error = new Error('outbox write failed')
+    enqueueSearchOutboxMock.mockRejectedValue(error)
+
+    await expect(
+      processSubmittedExternalData(
+        1,
+        { ...EMPTY_DATA, vndbTags: ['ADV'] },
+        NO_TAG_CHANGE,
+        7
+      )
+    ).resolves.toBeUndefined()
+
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Failed to enqueue search sync for patch 1:',
+      error
+    )
+    expect(invalidateTagCacheMock).toHaveBeenCalledTimes(1)
   })
 })

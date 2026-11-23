@@ -18,7 +18,10 @@ import { postToIndexNow } from './_postToIndexNow'
 import { processSubmittedExternalData } from './processExternalData'
 import { normalizeGalgameExternalIds } from './_editFields'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
-import { queueSearchSync, enqueueSearchOutbox } from '~/server/search/sync'
+import {
+  enqueueSearchOutbox,
+  kickSearchOutboxDrain
+} from '~/server/search/sync'
 
 // 事务回滚后的 banner 孤儿补偿: S3 上传发生在事务内, 回滚使对象失去 DB 引用, 而自增
 // id 不随回滚回退、永不复用, patch/ 前缀又无 lifecycle 规则, 对象会永久滞留. 先查
@@ -220,7 +223,7 @@ export const createGalgame = async (input: CreateGalgameInput, uid: number) => {
       })
 
       // 事务性入队：与 patch.create 原子提交，关闭崩溃丢失窗口；tags 由后续
-      // processSubmittedExternalData 独立事务写入，drain 读最新状态仍会纳入
+      // processSubmittedExternalData 另行写入，它写完之后自己再入队一次
       await enqueueSearchOutbox(prisma, newId)
 
       return { patchId: newId }
@@ -262,7 +265,8 @@ export const createGalgame = async (input: CreateGalgameInput, uid: number) => {
     uid
   )
 
-  queueSearchSync(res.patchId)
+  // 入库函数写完之后已自己入队 (建档事务里也入过一次), 这里只踢一次消费
+  kickSearchOutboxDrain()
 
   if (contentLimit === 'sfw') {
     const newPatchUrl = `${kunMoyuMoe.domain.main}/${galgameUniqueId}`

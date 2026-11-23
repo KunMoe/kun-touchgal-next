@@ -4,7 +4,10 @@ import { kunTx } from '~/server/db/tx'
 import { patchUpdateSchema } from '~/validations/edit'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import { processSubmittedExternalData } from './processExternalData'
-import { queueSearchSync, enqueueSearchOutbox } from '~/server/search/sync'
+import {
+  enqueueSearchOutbox,
+  kickSearchOutboxDrain
+} from '~/server/search/sync'
 import {
   GALGAME_EDIT_SELECT,
   galgameEditFieldsFromRow,
@@ -203,7 +206,8 @@ export const updateGalgame = async (
     uid
   )
 
-  queueSearchSync(id)
+  // 入库函数写完之后已自己入队 (编辑事务里也入过一次), 这里只踢一次消费
+  kickSearchOutboxDrain()
 
   try {
     await invalidatePatchContentCache(patch.unique_id)
