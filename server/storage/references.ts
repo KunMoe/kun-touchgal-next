@@ -8,9 +8,11 @@ type RefDb = Pick<Prisma.TransactionClient, '$queryRaw'>
 // 对象, 入队端怎么写都会删掉别人的文件。
 //
 // 引用就是 s3_key 精确相等, 走 patch_resource_link_s3_key_idx 的索引点查。早先 s3_key 为空的
-// 历史行另按 content 尾段匹配; 2026-11-19 生产回填 (migration/backfillResourceLinkS3Key.ts)
-// 报告剩余 0 行之后收窄成现在这样。前提是不再有 storage = 's3' 而 s3_key 为空的行: 新建资源
-// 的 s3 链接都带 bind 的随机 key, 编辑保留的链接从原行复制 s3_key, 申诉不改 s3_key。
+// 历史行另按 content 尾段匹配; 2026-11-19 生产回填 (migration/backfillResourceLinkS3Key.ts,
+// 已移出仓库, 取回用 git show 553662bc:migration/backfillResourceLinkS3Key.ts) 报告剩余 0 行之后
+// 收窄成现在这样。库若从那之前的备份恢复, 先跑该脚本到剩余 0 行再放开删除, 否则会删掉共享对象。
+// 前提是不再有 storage = 's3' 而 s3_key 为空的行: 新建资源的 s3 链接都带 bind 的随机 key, 编辑保留的
+// 链接从原行复制 s3_key, 申诉不改 s3_key。
 // 判错的方向只有一个危险: 把在用判成无引用。多判成在用只会留下孤儿。
 //
 // 写入不变量 (消费端点查不加锁的依据): 对既有 key 新建引用, 只能在持有旧引用行的行锁下、同一

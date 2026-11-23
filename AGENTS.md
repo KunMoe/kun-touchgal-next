@@ -32,7 +32,7 @@ TouchGal (`kun-touchgal-next`) 是一个基于 Next.js 16 App Router 的 Galgame
 - `utils/`：fetch、错误处理、cookie、Markdown、URL/文件名安全处理及页面读取器 helper（`utils/actions/`）。
 - `constants/`、`types/`、`config/`：领域常量/Prisma select、API DTO 和运行时配置。
 - `scripts/`：构建后复制、搜索、部署、OIDC 和数据回填脚本。
-- `migration/`：人工执行的一次性数据脚本与同步作业，不得当作常规工作流运行；库的结构变更不放这里，走 `db/migrations/`。`migration/backup/` 只放这些脚本的运行产物（缓存、报告、数据备份），整个目录被 git 忽略，也被排除在 standalone 构建之外。
+- `migration/`：人工执行的一次性数据脚本与同步作业，不得当作常规工作流运行；库的结构变更不放这里，走 `db/migrations/`。`migration/backup/` 放这些脚本的运行产物（缓存、报告、数据备份）和执行完毕、移出仓库的脚本归档（只留在本机，取回旧脚本用 git 历史，如 `git show 553662bc:migration/<脚本>.ts`），整个目录被 git 忽略，也被排除在 standalone 构建、lint、typecheck 与 vitest 之外。
 - `posts/`、`public/`：运行时 MDX 内容和静态资源；两者由 postbuild 复制进 standalone。`public/` 下不放 `robots.txt` 与 `sitemap.xml`：它们由 `app/robots.ts`、`app/sitemap.ts` 输出，`public/` 里的同名文件会先于路由被返回。
 
 ## Development Commands

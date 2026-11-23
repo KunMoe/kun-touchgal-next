@@ -18,6 +18,9 @@ const kunConfigs = defineConfig([
     // gitignore 的本地工作区, 内含 perf-audit 留下的压缩包产物 (单文件 450KB), 全量 lint 会跑 10 分钟以上;
     // tsconfig 与 vitest 已同样排除, CI 的 checkout 里没有这个目录
     'docs/',
+    // gitignore 的本地归档: 执行完毕、移出仓库的一次性脚本与它们的运行产物, 不再随应用代码维护;
+    // tsconfig 与 vitest 同样排除, CI 的 checkout 里只有 .gitignore
+    'migration/backup/',
     'node_modules/',
     'prisma/generated/'
   ]),
