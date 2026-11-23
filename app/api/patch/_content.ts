@@ -7,6 +7,7 @@ import { getKv, setKv, setKvIfAbsent } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
 import { roundOneDecimal } from '~/utils/rating/average'
 import { renderKunMarkdown } from '~/app/api/utils/render/renderKunMarkdown'
+import { kunRecordCacheOutcome } from '~/server/cache/stats'
 import {
   getCachedPatchFavoriteStatus,
   getPatchCacheKey,
@@ -245,11 +246,18 @@ export const getPatchFavoriteStatus = async (
     return false
   }
 
+  const startedAt = performance.now()
   const cachedFavoriteStatus = await getCachedPatchFavoriteStatus(uniqueId, uid)
   if (cachedFavoriteStatus.isFavorite !== null) {
+    kunRecordCacheOutcome(
+      'patch:favorite',
+      'hit',
+      performance.now() - startedAt
+    )
     return cachedFavoriteStatus.isFavorite
   }
 
+  const queryStartedAt = performance.now()
   const relation = await prisma.user_patch_favorite_folder_relation.findFirst({
     where: {
       patch_id: patchId,
@@ -261,6 +269,7 @@ export const getPatchFavoriteStatus = async (
       id: true
     }
   })
+  const sourceMs = performance.now() - queryStartedAt
 
   const isFavorite = Boolean(relation)
   if (cachedFavoriteStatus.canWrite) {
@@ -272,6 +281,12 @@ export const getPatchFavoriteStatus = async (
     )
   }
 
+  kunRecordCacheOutcome(
+    'patch:favorite',
+    cachedFavoriteStatus.canWrite ? 'miss' : 'degraded',
+    performance.now() - startedAt,
+    sourceMs
+  )
   return isFavorite
 }
 

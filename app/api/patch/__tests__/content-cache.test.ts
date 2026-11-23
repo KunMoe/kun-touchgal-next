@@ -11,7 +11,8 @@ const {
   releaseKvLockMock,
   findUniqueMock,
   favoriteFindFirstMock,
-  markdownMock
+  markdownMock,
+  recordOutcomeMock
 } = vi.hoisted(() => {
   const kvStore = new Map<string, string>()
   const lockStore = new Set<string>()
@@ -47,7 +48,8 @@ const {
       ok: true,
       html: `<p>${markdown}</p>`,
       version: 1
-    }))
+    })),
+    recordOutcomeMock: vi.fn()
   }
 })
 
@@ -73,6 +75,10 @@ vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
   renderKunMarkdown: markdownMock
 }))
 
+vi.mock('~/server/cache/stats', () => ({
+  kunRecordCacheOutcome: recordOutcomeMock
+}))
+
 import { getPatchById } from '~/app/api/patch/get'
 import { getPatchPageData } from '~/app/api/patch/pageData'
 import { getPatchIntroduction } from '~/app/api/patch/introduction/service'
@@ -83,6 +89,12 @@ import {
 
 const uniqueId = 'abcdefgh'
 const input = { uniqueId }
+
+// 某个命名空间按调用顺序记下的 [结果, 有没有回源耗时]
+const recordedOutcomes = (ns: string) =>
+  recordOutcomeMock.mock.calls
+    .filter((call) => call[0] === ns)
+    .map((call) => [call[1], typeof call[3] === 'number'])
 
 const patchRow = {
   id: 7,
@@ -248,6 +260,22 @@ describe('getPatchPageData', () => {
     })
     expect(kvStore.has(getPatchCacheKey(uniqueId))).toBe(true)
     expect(kvStore.has(getPatchIntroductionCacheKey(uniqueId))).toBe(true)
+    // 持锁者回源记 miss (带回源耗时), 等待者读到别人写的缓存记 wait
+    expect(recordedOutcomes('patch:page')).toEqual([
+      ['miss', true],
+      ['wait', false]
+    ])
+  })
+
+  it('两个键都命中时不查库, 记 hit', async () => {
+    await getPatchPageData(input, null)
+    findUniqueMock.mockClear()
+    recordOutcomeMock.mockClear()
+
+    await getPatchPageData(input, null)
+
+    expect(findUniqueMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes('patch:page')).toEqual([['hit', false]])
   })
 
   it('patch 缓存命中但 introduction 缺失时仍回源并补齐两个缓存', async () => {
@@ -272,6 +300,7 @@ describe('getPatchPageData', () => {
 
     expect(setKvMock).not.toHaveBeenCalled()
     expect(setKvIfAbsentMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes('patch:page')).toEqual([['notFound', true]])
   })
 
   it('拿不到锁且缓存持续为空时回退直查并以 NX 补写', async () => {
@@ -287,6 +316,8 @@ describe('getPatchPageData', () => {
     expect(result).toMatchObject({
       patch: { id: 7, uniqueId, isFavorite: false }
     })
+    // 等满重试梯后自己回源, 仍是 miss
+    expect(recordedOutcomes('patch:page')).toEqual([['miss', true]])
   })
 })
 
@@ -399,6 +430,7 @@ describe('Redis 故障降级', () => {
     expect(findUniqueMock).toHaveBeenCalledTimes(1)
     expect(acquireKvLockMock).not.toHaveBeenCalled()
     expect(setKvMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes('patch:page')).toEqual([['degraded', true]])
   })
 
   it('读缓存抛错时 getPatchIntroduction 直连数据库且不参与单飞', async () => {
@@ -435,6 +467,7 @@ describe('Redis 故障降级', () => {
 
     expect(result).toMatchObject({ id: 7, uniqueId, isFavorite: true })
     expect(favoriteFindFirstMock).toHaveBeenCalledTimes(1)
+    expect(recordedOutcomes('patch:favorite')).toEqual([['degraded', true]])
     // 写回会在慢 Redis 下再耗一个 commandTimeout, 读失败后必须跳过
     expect(setKvMock).not.toHaveBeenCalledWith(
       expect.stringContaining('patch:favorite'),
@@ -452,5 +485,6 @@ describe('Redis 故障降级', () => {
       isFavorite: false
     })
     expect(favoriteFindFirstMock).toHaveBeenCalledTimes(1)
+    expect(recordedOutcomes('patch:favorite')).toEqual([['miss', true]])
   })
 })

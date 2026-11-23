@@ -9,6 +9,7 @@ import {
 } from './cache'
 import { getListResourceStatusWhere } from '~/app/api/utils/contentVisibility'
 import { kunCacheSingleflight } from '~/app/api/utils/cacheSingleflight'
+import { kunRecordCacheOutcome } from '~/server/cache/stats'
 import {
   toCacheVariant,
   toPatchWhere,
@@ -16,6 +17,7 @@ import {
 } from '~/server/viewer/patchVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { PatchResource, ResourceListResponse } from '~/types/api/resource'
+import type { KunCacheNamespace, KunCacheOutcome } from '~/server/cache/stats'
 
 const queryPatchResource = async (
   input: z.infer<typeof resourceSchema>,
@@ -115,28 +117,51 @@ export const getPatchResource = async (
   const visibilityWhere = toPatchWhere(view.visibility)
   const statusWhere = getListResourceStatusWhere(view)
 
-  // 只有 shared 视角读写共享缓存 (各视角的含义见 ListView)
-  const cacheKey =
-    view.kind === 'shared'
-      ? await getResourceListCacheKey(input, toCacheVariant(view))
-      : null
+  // 键带全站 stats 版本的两种排序单独记, 供决定它们是否改用纯 TTL
+  const ns: KunCacheNamespace =
+    input.sortField === 'download' || input.sortField === 'like'
+      ? 'resource:list:stats'
+      : 'resource:list'
+  const startedAt = performance.now()
+  let sourceMs: number | undefined
+  const query = async () => {
+    const queryStartedAt = performance.now()
+    const response = await queryPatchResource(
+      input,
+      visibilityWhere,
+      statusWhere
+    )
+    sourceMs = performance.now() - queryStartedAt
+    return response
+  }
+  const done = (response: ResourceListResponse, outcome: KunCacheOutcome) => {
+    kunRecordCacheOutcome(ns, outcome, performance.now() - startedAt, sourceMs)
+    return response
+  }
 
+  // 只有 shared 视角读写共享缓存 (各视角的含义见 ListView), 其余视角按设计直读
+  if (view.kind !== 'shared') {
+    return done(await query(), 'direct')
+  }
+
+  const cacheKey = await getResourceListCacheKey(input, toCacheVariant(view))
   const cached = await getCachedResourceList(cacheKey)
   if (cached.response) {
-    return cached.response
+    return done(cached.response, 'hit')
   }
 
-  // 非 shared 视角 / 版本号读取失败 (cacheKey 为 null) 与缓存读失败均不参与单飞
+  // 版本号读取失败 (cacheKey 为 null) 与缓存读失败均不参与单飞
   if (!cacheKey || !cached.canWrite) {
-    return queryPatchResource(input, visibilityWhere, statusWhere)
+    return done(await query(), 'degraded')
   }
 
-  return kunCacheSingleflight({
+  const response = await kunCacheSingleflight({
     cacheKey,
     readCache: () => getCachedResourceList(cacheKey),
     writeCache: (response) => setResourceListCache(cacheKey, response),
     writeCacheIfAbsent: (response) =>
       setResourceListCacheIfAbsent(cacheKey, response),
-    query: () => queryPatchResource(input, visibilityWhere, statusWhere)
+    query
   })
+  return done(response, sourceMs === undefined ? 'wait' : 'miss')
 }

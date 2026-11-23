@@ -5,13 +5,15 @@ const {
   setKvMock,
   delKvMock,
   messageFindFirstMock,
-  conversationFindFirstMock
+  conversationFindFirstMock,
+  recordOutcomeMock
 } = vi.hoisted(() => ({
   getKvMock: vi.fn(),
   setKvMock: vi.fn(),
   delKvMock: vi.fn(),
   messageFindFirstMock: vi.fn(),
-  conversationFindFirstMock: vi.fn()
+  conversationFindFirstMock: vi.fn(),
+  recordOutcomeMock: vi.fn()
 }))
 
 vi.mock('~/lib/redis', () => ({
@@ -27,11 +29,18 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
+vi.mock('~/server/cache/stats', () => ({
+  kunRecordCacheOutcome: recordOutcomeMock
+}))
+
 import { getUnreadMessageStatus } from '~/app/api/message/unread/service'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 
 const UID = 42
 const CACHE_KEY = `message:unread:${UID}`
+
+const recordedOutcomes = () =>
+  recordOutcomeMock.mock.calls.map((call) => [call[0], call[1]])
 
 describe('getUnreadMessageStatus', () => {
   beforeEach(() => {
@@ -59,6 +68,7 @@ describe('getUnreadMessageStatus', () => {
     expect(messageFindFirstMock).not.toHaveBeenCalled()
     expect(conversationFindFirstMock).not.toHaveBeenCalled()
     expect(setKvMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes()).toEqual([['message:unread', 'hit']])
   })
 
   it('queries postgres and writes through on cache miss', async () => {
@@ -79,6 +89,7 @@ describe('getUnreadMessageStatus', () => {
       JSON.stringify(status),
       30
     )
+    expect(recordedOutcomes()).toEqual([['message:unread', 'miss']])
   })
 
   it('falls back to postgres when the cache read throws', async () => {
@@ -91,6 +102,7 @@ describe('getUnreadMessageStatus', () => {
       hasUnreadConversation: false
     })
     expect(messageFindFirstMock).toHaveBeenCalledTimes(1)
+    expect(recordedOutcomes()).toEqual([['message:unread', 'degraded']])
   })
 
   it('ignores malformed cached payloads and re-queries', async () => {

@@ -9,7 +9,8 @@ const {
   acquireKvLockMock,
   releaseKvLockMock,
   resourceFindManyMock,
-  resourceCountMock
+  resourceCountMock,
+  recordOutcomeMock
 } = vi.hoisted(() => ({
   getKvMock: vi.fn(),
   getKvsMock: vi.fn(),
@@ -19,7 +20,8 @@ const {
   acquireKvLockMock: vi.fn(),
   releaseKvLockMock: vi.fn(),
   resourceFindManyMock: vi.fn(),
-  resourceCountMock: vi.fn()
+  resourceCountMock: vi.fn(),
+  recordOutcomeMock: vi.fn()
 }))
 
 vi.mock('~/lib/redis', () => ({
@@ -39,6 +41,10 @@ vi.mock('~/prisma/index', () => ({
       count: resourceCountMock
     }
   }
+}))
+
+vi.mock('~/server/cache/stats', () => ({
+  kunRecordCacheOutcome: recordOutcomeMock
 }))
 
 import { getPatchResource } from '~/app/api/resource/service'
@@ -65,6 +71,9 @@ const CACHED_RESPONSE = { resources: [{ id: 1 }], total: 1 }
 
 const getRequestedCacheKey = () => getKvMock.mock.calls[0][0] as string
 
+const recordedOutcomes = () =>
+  recordOutcomeMock.mock.calls.map((call) => [call[0], call[1]])
+
 describe('getPatchResource', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -86,6 +95,7 @@ describe('getPatchResource', () => {
     expect(getKvMock).not.toHaveBeenCalled()
     expect(acquireKvLockMock).not.toHaveBeenCalled()
     expect(setKvMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes()).toEqual([['resource:list', 'direct']])
   })
 
   it('skips the shared cache for large blocked tag sets too', async () => {
@@ -106,7 +116,19 @@ describe('getPatchResource', () => {
     expect(response).toEqual(CACHED_RESPONSE)
     expect(acquireKvLockMock).not.toHaveBeenCalled()
     expect(resourceFindManyMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes()).toEqual([['resource:list', 'hit']])
   })
+
+  it.each(['download', 'like'] as const)(
+    'records %s-sorted reads under the stats namespace',
+    async (sortField) => {
+      getKvMock.mockResolvedValue(JSON.stringify(CACHED_RESPONSE))
+
+      await getPatchResource({ ...INPUT, sortField }, ALL_VIEW)
+
+      expect(recordedOutcomes()).toEqual([['resource:list:stats', 'hit']])
+    }
+  )
 
   it('queries once and writes cache when the lock is acquired on miss', async () => {
     getKvMock.mockResolvedValue(null)
@@ -128,6 +150,7 @@ describe('getPatchResource', () => {
       `${cacheKey}:lock`,
       'token-1'
     )
+    expect(recordedOutcomes()).toEqual([['resource:list', 'miss']])
   })
 
   // C15: 资源级 _count (like_by/links) 从未被渲染, 且 Prisma 7 会把它编译成
@@ -194,6 +217,7 @@ describe('getPatchResource', () => {
     expect(resourceFindManyMock).not.toHaveBeenCalled()
     expect(setKvMock).not.toHaveBeenCalled()
     expect(setKvIfAbsentMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes()).toEqual([['resource:list', 'wait']])
   })
 
   it('falls back to the database and heals the cache when the wait times out', async () => {
@@ -212,6 +236,7 @@ describe('getPatchResource', () => {
       60
     )
     expect(releaseKvLockMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes()).toEqual([['resource:list', 'miss']])
   })
 
   it('bypasses cache and singleflight for personalized viewers', async () => {
@@ -232,6 +257,7 @@ describe('getPatchResource', () => {
         where: expect.objectContaining({ status: { in: [0, 2, 3] } })
       })
     )
+    expect(recordedOutcomes()).toEqual([['resource:list', 'direct']])
   })
 
   it('skips singleflight when the cache version read fails', async () => {
@@ -245,6 +271,7 @@ describe('getPatchResource', () => {
     expect(acquireKvLockMock).not.toHaveBeenCalled()
     expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
     expect(setKvMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes()).toEqual([['resource:list', 'degraded']])
   })
 
   it('queries directly without locking when the cache read fails', async () => {
@@ -257,5 +284,6 @@ describe('getPatchResource', () => {
     expect(acquireKvLockMock).not.toHaveBeenCalled()
     expect(resourceFindManyMock).toHaveBeenCalledTimes(1)
     expect(setKvMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes()).toEqual([['resource:list', 'degraded']])
   })
 })
