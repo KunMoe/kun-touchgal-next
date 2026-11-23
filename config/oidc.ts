@@ -1,4 +1,6 @@
 // OIDC Provider 常量。issuer 必须带 /oidc 前缀，dev 无 OIDC_ISSUER 时回退到本地地址。
+// provider 输出的全部绝对地址与 cookie 的 Secure 只由 issuer 决定（lib/oidc/webToNode.ts），
+// 不跟请求的 Host 走：生产上它必须等于依赖方实际访问的源；换端口另起 dev 时要同时设 OIDC_ISSUER。
 export const OIDC_ISSUER =
   process.env.OIDC_ISSUER || 'http://127.0.0.1:3000/oidc'
 

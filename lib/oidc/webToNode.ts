@@ -1,7 +1,8 @@
 import { IncomingMessage, ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
 import { cookies, headers } from 'next/headers'
-import { OIDC_MOUNT_PATH } from '~/config/oidc'
+import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
+import { OIDC_ISSUER, OIDC_MOUNT_PATH } from '~/config/oidc'
 import { getOidcCallback } from './provider'
 
 export interface NodeBridge {
@@ -70,6 +71,30 @@ const attachCapture = (req: IncomingMessage): NodeBridge => {
   return { req, res, bodyBuffer: null, toResponse }
 }
 
+const ISSUER_URL = new URL(OIDC_ISSUER)
+const FORWARDED_HEADERS = [
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-forwarded-port',
+  'x-forwarded-for'
+]
+
+// provider 输出的绝对地址 (discovery 端点、交互的 returnTo) 取自 Koa 的 ctx.href, 会话 cookie
+// 带不带 Secure 取自 ctx.secure。Next 对 X-Forwarded-* 只做 ??= 补齐、不覆盖客户端自带的值,
+// 所以不能让 provider 从请求里推导自己的对外地址: Host 与协议一律按 issuer 写定。删掉的是 Koa
+// 开 proxy 时会读的转发头 (外加 Next 补齐的 port): provider 现在不开 proxy, 删掉是为了以后有人
+// 重新打开它时, 这些头也到不了 provider
+export const normalizeOidcRequestView = (req: IncomingMessage, issuer: URL) => {
+  req.headers.host = issuer.host
+  for (const name of FORWARDED_HEADERS) {
+    delete req.headers[name]
+  }
+  if (issuer.protocol === 'https:') {
+    // Koa 的 protocol 在 socket.encrypted 为真时取 https
+    ;(req.socket as Socket & { encrypted?: boolean }).encrypted = true
+  }
+}
+
 const makeReq = (
   method: string,
   url: string,
@@ -89,6 +114,7 @@ const makeReq = (
   // provider 用 originalUrl 减去路由后的 url 推出 mountPath，以便 discovery 端点带上 /oidc 前缀。
   ;(req as unknown as { originalUrl?: string }).originalUrl = originalUrl
   req.headers = Object.fromEntries(headerEntries)
+  normalizeOidcRequestView(req, ISSUER_URL)
   return req
 }
 
@@ -106,18 +132,13 @@ export const buildRequestBridge = async (
     path = path.slice(OIDC_MOUNT_PATH.length) || '/'
   }
 
-  const headerEntries = [...request.headers.entries()]
-  const forwardedFor = request.headers.get('x-forwarded-for')
   const req = makeReq(
     request.method,
     path + url.search,
     url.pathname + url.search,
-    headerEntries,
-    forwardedFor?.split(',')[0]?.trim() || '127.0.0.1'
+    [...request.headers.entries()],
+    getRemoteIp(request.headers) || '127.0.0.1'
   )
-  if (!req.headers.host) {
-    req.headers.host = url.host
-  }
 
   const bridge = attachCapture(req)
   const bodyless =

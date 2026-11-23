@@ -109,10 +109,7 @@ const createProvider = () => {
 
   const provider = new Provider(OIDC_ISSUER, configuration)
   registerKunSiteLogout(provider)
-  // 生产环境经反向代理，信任 x-forwarded-proto 以匹配 https issuer。
-  if (process.env.NODE_ENV === 'production') {
-    provider.proxy = true
-  }
+  // 不开 provider.proxy: 对外的 Host 与协议由 webToNode.ts 按 issuer 写进桥里的请求
   return provider
 }
 
