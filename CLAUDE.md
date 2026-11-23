@@ -68,5 +68,6 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - 会被写回库的表单不从展示用的缓存预填：Galgame 重写页 `/edit/rewrite/[uniqueId]` 自己经 `getGalgameForRewrite` 读库，表单 store 是用这份基线初始化的页内实例。`PUT /api/edit` 的标签是按 id 的差量（`removeTagIds` + `addTagNames`，只走 `applyManualTagChange`），并带 `baseFingerprint` 做并发检查（规范化与指纹只在 `app/api/edit/_editFields.ts`；事务里锁 patch 行用 `FOR UPDATE`）。建档 / 重写的表单 store 改字段只有 `update(patch | fn)`，`await` 之后写表单用函数式；抓取结果经 `components/edit/form/merge.ts` 的纯函数并入。
 - 共享读缓存的失效知识只在 `server/cache/plan.ts`：写路径在 `kunTx` 回调里用 `recordKunChanges(ctx, changes)` 报告改了哪一行与前后状态（只取行锁下读值或 `RETURNING`），要失效哪些缓存由规划器推导、提交后逐条执行且不抛错；资源族四个失效 helper 只许 `server/cache/**` 引用（`kun/inv-cache-01`）。被内嵌却刻意不精确失效的字段登记在 `KUN_TTL_TOLERATED`（带陈旧上限，TTL 调长超过它测试变红）。
 - 缓存 TTL 常量在 `config/cache.ts`，Redis key 统一经 `lib/redis.ts` 前缀。
+- 读缓存的命中 / 回源度量在 `server/cache/stats.ts`（`kunRecordCacheOutcome`，每进程每 5 分钟一行 `kun.cache.stats`，`pnpm cache:stats` 汇总）；补丁详情的直读开关 `KUN_PATCH_DETAIL_CACHE=off` 关掉期间失效调用点照常执行，对照结论出来之前不要删失效点或改成空实现（详见 `AGENTS.md`）。
 - 代码风格（Prettier）：单引号、无分号、2 空格缩进、无尾逗号。
 - 启动 / 构建前 `.env` 必须通过 `validations/dotenv-check.ts` 校验，否则会失败（参考 `.env.example`）。
