@@ -39,7 +39,8 @@ export class MeiliProtocolError extends Error {
 // 一次索引查询的失败说明了什么范围的问题 (词表见 lib/resilience/failure.ts):
 // transient / rate_limited  Meilisearch 此刻不可用: 连不上、超时、5xx 与 408 / 425、429
 // misconfigured             索引与代码不一致: 索引不存在, 排序 / 过滤 / 检索字段没注册
-//                           (漏跑 pnpm search:init), 密钥不对, 应答不是 Meilisearch 的
+//                           (线上定义落后于代码, pnpm search:ensure --check 可见),
+//                           密钥不对, 应答不是 Meilisearch 的
 // request                   这一次请求的参数被拒, 换一个引擎也不该受理
 // 不是 Meilisearch 抛出的错误返回 null。
 // 按 name 与错误码判别, 不用 instanceof: SDK 被重复加载成两份时 instanceof 恒假。
@@ -132,7 +133,7 @@ export const withMeiliEngine = async <M, B>(
       // 降级让页面照常可用, 也让配置问题一直没人发现, 所以按 error 级别记
       // eslint-disable-next-line no-console
       console.error(
-        '[kun-search] Meilisearch 与代码不一致 (检查 pnpm search:init、密钥与地址), 本次改用 basic 引擎:',
+        '[kun-search] Meilisearch 与代码不一致 (检查 pnpm search:ensure --check、密钥与地址), 本次改用 basic 引擎:',
         summarizeMeiliError(error)
       )
     } else {

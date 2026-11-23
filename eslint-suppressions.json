@@ -319,11 +319,6 @@
       "count": 3
     }
   },
-  "scripts/search/init.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
   "scripts/seedOidcTestClient.ts": {
     "no-console": {
       "count": 1

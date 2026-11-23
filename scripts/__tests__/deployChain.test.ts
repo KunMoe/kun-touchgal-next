@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  KUN_SEARCH_POST_ACTIVATE_STEPS,
+  KUN_SEARCH_PRE_ACTIVATE_STEPS,
   kunCountPlannedMigrations,
   kunReportDeployChain,
   kunRunDeployChain
@@ -11,6 +13,9 @@ const FULL_VERIFY = 'pnpm db:verify --prisma'
 const PRE_ONLY_VERIFY = 'pnpm db:verify --phase pre --expand'
 const GENERATE = 'pnpm prisma:generate'
 const POST_MIGRATE = 'pnpm db:migrate --phase post'
+const SEARCH_PRE = 'pnpm search:ensure --apply --phase pre'
+const SEARCH_POST = 'pnpm search:ensure --apply --phase post'
+const SEARCH_RECONCILE = 'pnpm search:reconcile --enqueue-only --retry-failed'
 
 // 构建之前的那次校验: 没有待执行的 post 时查全量, 有时只确认表与列都已建好
 const chainWith = (verifyBeforeBuild: string) => [
@@ -20,9 +25,12 @@ const chainWith = (verifyBeforeBuild: string) => [
   verifyBeforeBuild,
   GENERATE,
   'build',
+  SEARCH_PRE,
   'activate',
   POST_MIGRATE,
-  FULL_VERIFY
+  FULL_VERIFY,
+  SEARCH_POST,
+  SEARCH_RECONCILE
 ]
 const NO_PENDING_POST_CHAIN = chainWith(FULL_VERIFY)
 const PENDING_POST_CHAIN = chainWith(PRE_ONLY_VERIFY)
@@ -57,9 +65,11 @@ const createChain = ({
 
 describe('kunRunDeployChain', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>
+  let warnSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
   afterEach(() => {
@@ -150,7 +160,12 @@ describe('kunRunDeployChain', () => {
     const { steps, deps } = createChain({ failing: ['activate'] })
 
     expect(() => kunRunDeployChain(deps)).toThrow('activate')
-    expect(steps).toEqual(NO_PENDING_POST_CHAIN.slice(0, 7))
+    expect(steps).toEqual(
+      NO_PENDING_POST_CHAIN.slice(
+        0,
+        NO_PENDING_POST_CHAIN.indexOf('activate') + 1
+      )
+    )
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining('post 迁移尚未执行')
     )
@@ -168,7 +183,10 @@ describe('kunRunDeployChain', () => {
     })
 
     expect(kunRunDeployChain(deps)).toBe('post-migration-failed')
-    expect(steps).toEqual(PENDING_POST_CHAIN.slice(0, 8))
+    // 搜索的收尾与数据库无关, 照常执行
+    expect(steps).toEqual(
+      PENDING_POST_CHAIN.filter((step) => step !== FULL_VERIFY)
+    )
   })
 
   it.each([
@@ -183,7 +201,36 @@ describe('kunRunDeployChain', () => {
       })
 
       expect(kunRunDeployChain(deps)).toBe('verify-failed')
-      expect(steps).toHaveLength(9)
+      expect(steps).toHaveLength(NO_PENDING_POST_CHAIN.length)
+    }
+  )
+
+  it('搜索索引的扩张在切换之前、收缩与对账在 post 迁移之后', () => {
+    const commands = (steps: { command: string }[]) =>
+      steps.map(({ command }) => command)
+    expect(commands(KUN_SEARCH_PRE_ACTIVATE_STEPS)).toEqual([SEARCH_PRE])
+    expect(commands(KUN_SEARCH_POST_ACTIVATE_STEPS)).toEqual([
+      SEARCH_POST,
+      SEARCH_RECONCILE
+    ])
+    const order = (step: string) => NO_PENDING_POST_CHAIN.indexOf(step)
+    expect(order(SEARCH_PRE)).toBe(order('activate') - 1)
+    expect(order(SEARCH_POST)).toBeGreaterThan(order(FULL_VERIFY))
+  })
+
+  it.each([SEARCH_PRE, SEARCH_POST, SEARCH_RECONCILE])(
+    '搜索步骤 %s 失败只告警: 后面的步骤照常执行, 结局不变',
+    (failingStep) => {
+      const { steps, deps } = createChain({ failing: [failingStep] })
+
+      expect(kunRunDeployChain(deps)).toBe('ok')
+      expect(steps).toEqual(NO_PENDING_POST_CHAIN)
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `搜索索引的部署步骤失败, 部署照常继续: ${failingStep}`
+        )
+      )
+      expect(warnSpy).toHaveBeenCalledTimes(1)
     }
   )
 })
@@ -240,6 +287,8 @@ describe('kunReportDeployChain', () => {
     expect(printed()).toContain(
       'pnpm db:migrate --phase post && pnpm db:verify --prisma'
     )
+    // post 迁移改到的文档要再对账一次才会重写
+    expect(printed()).toContain('pnpm search:reconcile --enqueue-only')
     expect(printed()).not.toContain('收尾的数据库校验')
   })
 

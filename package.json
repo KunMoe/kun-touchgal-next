@@ -24,7 +24,7 @@
     "db:inspect": "esno scripts/db/inspect.ts",
     "db:snapshot": "esno scripts/db/snapshot.ts",
     "db:new": "esno scripts/db/new.ts",
-    "search:init": "esno scripts/search/init.ts",
+    "search:ensure": "esno scripts/search/ensure.ts",
     "search:reconcile": "esno scripts/search/reconcile.ts",
     "search:engine": "esno scripts/search/engine.ts",
     "search:setup": "esno scripts/search/setup.ts",
