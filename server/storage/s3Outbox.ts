@@ -79,8 +79,8 @@ export const drainS3DeletionOutbox = async () =>
         } catch (error) {
           // 失败不删行、累加 attempts 待下一轮重试。updateMany 会隐式刷新 @updatedAt，
           // 使失败行在 orderBy(updated asc) 中沉到队尾——反复失败的行不会卡队头阻塞新
-          // 入队行 (与 search_outbox「失败完全不碰行」有意不同：此处有 attempts 字段必
-          // 写库，顺带得到「最久未重试优先」的沉底调度，无饥饿)
+          // 入队行 (search_outbox 被拒时同样记 attempts 并顺带沉底，另有退避与隔离；此处
+          // 只累加次数，得到「最久未重试优先」的沉底调度，无饥饿)
           await prisma.s3_deletion_outbox
             .updateMany({
               where: { s3_key: row.s3_key },

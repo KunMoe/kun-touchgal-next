@@ -354,11 +354,6 @@
       "count": 1
     }
   },
-  "server/search/sync.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
   "server/storage/s3Outbox.ts": {
     "no-console": {
       "count": 2

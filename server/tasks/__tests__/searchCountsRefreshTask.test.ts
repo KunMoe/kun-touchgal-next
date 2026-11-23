@@ -3,15 +3,17 @@ import type { GalgameSearchCountsDoc } from '~/server/search/document'
 
 const {
   patchFindManyMock,
-  updateDocumentsMock,
-  waitTaskMock,
+  applyCountsMock,
+  renewMock,
+  withSearchWriterMock,
   getMeiliClientMock,
   getKvHashAllMock,
   setKvHashFieldsMock
 } = vi.hoisted(() => ({
   patchFindManyMock: vi.fn(),
-  updateDocumentsMock: vi.fn(),
-  waitTaskMock: vi.fn(),
+  applyCountsMock: vi.fn(),
+  renewMock: vi.fn(),
+  withSearchWriterMock: vi.fn(),
   getMeiliClientMock: vi.fn(),
   getKvHashAllMock: vi.fn(),
   setKvHashFieldsMock: vi.fn()
@@ -30,10 +32,25 @@ vi.mock('~/lib/redis', () => ({
   setKvHashFields: setKvHashFieldsMock
 }))
 
+// 写锁与 applyCounts 的行为 (剔除出箱里挂着行的 id、等任务终态) 在 sync.test.ts 里测
+vi.mock('~/server/search/sync', () => ({
+  withSearchWriter: withSearchWriterMock
+}))
+
+// 取出 cron 回调直接调用
+vi.mock('node-cron', () => ({
+  default: {
+    createTask: (_expression: string, run: () => Promise<void>) => ({ run })
+  }
+}))
+
 import {
   refreshSearchCounts,
-  countsFingerprint
+  countsFingerprint,
+  searchCountsRefreshTask
 } from '~/server/tasks/searchCountsRefreshTask'
+
+const writer = { renew: renewMock, applyCounts: applyCountsMock }
 
 interface PatchCountsRow {
   id: number
@@ -78,36 +95,91 @@ const mockRowsOnce = (rows: PatchCountsRow[]) => {
 }
 
 const pushedDocs = (call: number): GalgameSearchCountsDoc[] =>
-  updateDocumentsMock.mock.calls[call][0]
+  applyCountsMock.mock.calls[call][0]
 
-describe('refreshSearchCounts 快照 diff', () => {
-  beforeEach(() => {
-    patchFindManyMock.mockReset()
-    updateDocumentsMock.mockReset().mockReturnValue({ waitTask: waitTaskMock })
-    waitTaskMock.mockReset().mockResolvedValue({ status: 'succeeded' })
-    getKvHashAllMock.mockReset().mockResolvedValue({})
-    setKvHashFieldsMock.mockReset().mockResolvedValue(undefined)
-    getMeiliClientMock.mockReset().mockReturnValue({
-      index: () => ({ updateDocuments: updateDocumentsMock })
-    })
-  })
+beforeEach(() => {
+  patchFindManyMock.mockReset()
+  // 默认全部写入: 原样返回传入的文档
+  applyCountsMock
+    .mockReset()
+    .mockImplementation(async (docs: GalgameSearchCountsDoc[]) => docs)
+  renewMock.mockReset().mockResolvedValue(undefined)
+  withSearchWriterMock
+    .mockReset()
+    .mockImplementation(
+      (_name: string, fn: (w: typeof writer) => Promise<unknown>) => fn(writer)
+    )
+  getKvHashAllMock.mockReset().mockResolvedValue({})
+  setKvHashFieldsMock.mockReset().mockResolvedValue(undefined)
+  getMeiliClientMock.mockReset().mockReturnValue({})
+})
 
-  it('未配置 Meili 时直接返回，不读库、不读快照', async () => {
+describe('searchCountsRefreshTask 与出箱共用写锁', () => {
+  it('未配置 Meili 时直接返回，不抢锁、不读库', async () => {
     getMeiliClientMock.mockReturnValue(null)
 
-    await refreshSearchCounts()
+    await (
+      searchCountsRefreshTask as unknown as { run: () => Promise<void> }
+    ).run()
 
+    expect(withSearchWriterMock).not.toHaveBeenCalled()
     expect(patchFindManyMock).not.toHaveBeenCalled()
-    expect(getKvHashAllMock).not.toHaveBeenCalled()
   })
 
+  const runTask = () =>
+    (searchCountsRefreshTask as unknown as { run: () => Promise<void> }).run()
+
+  it('经写锁运行, 锁被占着时等 drain 放锁 (两者在同一秒触发)', async () => {
+    mockRowsOnce([makeRow(1)])
+
+    await runTask()
+
+    expect(withSearchWriterMock).toHaveBeenCalledWith(
+      'searchCountsRefreshTask',
+      expect.any(Function),
+      { waitMs: 90_000 }
+    )
+    expect(applyCountsMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('等不到锁时本轮跳过、不读库, 并留一条日志', async () => {
+    withSearchWriterMock.mockResolvedValue(undefined)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await runTask()
+
+    expect(patchFindManyMock).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('搜索计数快照刷新跳过')
+    )
+    warnSpy.mockRestore()
+  })
+
+  it('刷新出错只记 error, 不当成没等到锁', async () => {
+    withSearchWriterMock.mockRejectedValue(new Error('boom'))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await runTask()
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      '搜索计数快照刷新失败:',
+      expect.any(Error)
+    )
+    expect(warnSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
+})
+
+describe('refreshSearchCounts 快照 diff', () => {
   it('快照为空（冷启动）时推送全部行并写回其指纹', async () => {
     getKvHashAllMock.mockResolvedValue({})
     mockRowsOnce([makeRow(1), makeRow(2)])
 
-    await refreshSearchCounts()
+    await refreshSearchCounts(writer)
 
-    expect(updateDocumentsMock).toHaveBeenCalledTimes(1)
+    expect(applyCountsMock).toHaveBeenCalledTimes(1)
     expect(pushedDocs(0).map((d) => d.id)).toEqual([1, 2])
     expect(setKvHashFieldsMock).toHaveBeenCalledWith('search:counts:fp', {
       '1': fpOf(makeRow(1)),
@@ -125,33 +197,52 @@ describe('refreshSearchCounts 快照 diff', () => {
     })
     mockRowsOnce([unchanged, changed])
 
-    await refreshSearchCounts()
+    await refreshSearchCounts(writer)
 
-    expect(updateDocumentsMock).toHaveBeenCalledTimes(1)
+    expect(applyCountsMock).toHaveBeenCalledTimes(1)
     expect(pushedDocs(0).map((d) => d.id)).toEqual([2])
     expect(setKvHashFieldsMock).toHaveBeenCalledWith('search:counts:fp', {
       '2': fpOf(changed)
     })
   })
 
-  it('整批零变更时跳过 Meili 写与快照写', async () => {
+  it('整批零变更时没有要写的文档，也不写快照', async () => {
     const r1 = makeRow(1)
     const r2 = makeRow(2)
     getKvHashAllMock.mockResolvedValue({ '1': fpOf(r1), '2': fpOf(r2) })
     mockRowsOnce([r1, r2])
 
-    await refreshSearchCounts()
+    await refreshSearchCounts(writer)
 
-    expect(updateDocumentsMock).not.toHaveBeenCalled()
+    expect(pushedDocs(0)).toEqual([])
     expect(setKvHashFieldsMock).not.toHaveBeenCalled()
   })
 
+  it('出箱里挂着行而被剔除的 id 不写快照，下一轮照旧比对', async () => {
+    mockRowsOnce([makeRow(1), makeRow(2)])
+    applyCountsMock.mockImplementation(async (docs: GalgameSearchCountsDoc[]) =>
+      docs.filter((doc) => doc.id !== 2)
+    )
+
+    await refreshSearchCounts(writer)
+
+    expect(setKvHashFieldsMock).toHaveBeenCalledWith('search:counts:fp', {
+      '1': fpOf(makeRow(1))
+    })
+  })
+
   it('Meili 批次失败时抛错且不写回快照（保留下轮重推）', async () => {
-    waitTaskMock.mockResolvedValue({ status: 'failed', error: { code: 'x' } })
+    applyCountsMock.mockRejectedValue(new Error('计数快照批次写入失败'))
     mockRowsOnce([makeRow(1)])
 
-    await expect(refreshSearchCounts()).rejects.toThrow('计数快照批次写入失败')
+    await expect(refreshSearchCounts(writer)).rejects.toThrow(
+      '计数快照批次写入失败'
+    )
     expect(setKvHashFieldsMock).not.toHaveBeenCalled()
+  })
+
+  it('指纹串与改造前逐个手写的格式相同，Redis 里已有的快照照常可用', () => {
+    expect(countsFingerprint(docOf(makeRow(1)))).toBe('10|5|2|1|3|4|8')
   })
 
   it('指纹覆盖 avgRating/ratingCount 等全部计数字段', async () => {
@@ -173,10 +264,11 @@ describe('refreshSearchCounts 快照 diff', () => {
       .mockResolvedValueOnce([r3])
       .mockResolvedValueOnce([])
 
-    await refreshSearchCounts()
+    await refreshSearchCounts(writer)
 
-    // 每批各推一次，r2 未变被剔除
-    expect(updateDocumentsMock).toHaveBeenCalledTimes(2)
+    // 每批各推一次，r2 未变被剔除；每批之后续锁
+    expect(applyCountsMock).toHaveBeenCalledTimes(2)
+    expect(renewMock).toHaveBeenCalledTimes(2)
     expect(pushedDocs(0).map((d) => d.id)).toEqual([1])
     expect(pushedDocs(1).map((d) => d.id)).toEqual([3])
     // 游标随批推进：即便 r2 未变，lastId 也推进到 2，第三批查 id>3

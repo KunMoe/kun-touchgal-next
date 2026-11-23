@@ -1,6 +1,7 @@
 // 搜索索引写出箱：补丁的增量同步意图在此排队，由单一 worker (drainSearchOutbox)
 // 加锁串行消费——读取补丁最新状态后写入 Meilisearch。单 writer + 读最新 从根本上
-// 消除并发写的反序覆盖；应用失败的行滞留于此等待下一轮，取代原 Redis search:retry 集合。
+// 消除并发写的反序覆盖；被 Meilisearch 拒绝的行按 attempts 退避重试，到上限后留在表里不再取
+// (隔离)，引擎整体不可用时不计次数。对账 (reconcile.ts) 发现的漂移同样经这里修回。
 // patch_id 不设外键：补丁删除后仍需入队一条意图，由消费者据 DB 现状执行删除索引。
 model search_outbox {
   // 每个补丁至多一行待同步意图，冲突即累加 seq
@@ -10,6 +11,13 @@ model search_outbox {
   // 若又是 0，并发的第二个 drain (续锁失败) 会按旧读数把它删掉，那次变更就不再同步。
   // 刻意保持 int4：类型不变，部署窗口里仍在线的旧构建照常读写这一列
   seq      Int @default(autoincrement())
+
+  // 这一版内容被 Meilisearch 拒绝的次数与下次可取的时刻 (UTC 墙钟)。应用写入的入队把三列
+  // 复位 (内容变了, 毒文档可能已经修好)；对账的入队不复位，已隔离的行不会每晚被拉回重试，
+  // 只在部署之后的对账 (--retry-failed) 或人工重试时复位
+  attempts        Int       @default(0)
+  next_attempt_at DateTime?
+  last_error      String?   @db.VarChar(1007)
 
   created DateTime @default(now())
   updated DateTime @updatedAt

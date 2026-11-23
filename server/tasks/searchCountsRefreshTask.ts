@@ -2,32 +2,30 @@ import cron from 'node-cron'
 import { prisma } from '~/prisma'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { getKvHashAll, setKvHashFields } from '~/lib/redis'
-import { GALGAME_INDEX } from '~/server/search/settings'
 import type { GalgameSearchCountsDoc } from '~/server/search/document'
-import { withTaskLock } from './withTaskLock'
+import { withSearchWriter, type SearchWriter } from '~/server/search/sync'
 
 const COUNTS_REFRESH_BATCH_SIZE = 2000
-const COUNTS_REFRESH_LOCK_KEY = 'search:counts-refresh:lock'
-const COUNTS_REFRESH_LOCK_TTL_SECONDS = 1500
 const COUNTS_SNAPSHOT_KEY = 'search:counts:fp'
+// 与每分钟的 drain 同一秒触发、抢同一把写锁：等它放锁，drain 每分钟至多持锁约 50 秒 (积压时
+// 最后一行的任务等待还可能多出 30 秒)
+const COUNTS_REFRESH_LOCK_WAIT_MS = 90_000
 
 // 指纹覆盖全部会刷入 Meili 的数值字段：任一变化都会触发该行重推
 export const countsFingerprint = (doc: GalgameSearchCountsDoc) =>
   `${doc.view}|${doc.download}|${doc.favoriteCount}|${doc.resourceCount}|${doc.commentCount}|${doc.ratingCount}|${doc.avgRating}`
 
-// view/download 等计数只影响排序，变化不触发实时同步；本任务分批读全表，
+// view/download 等计数只影响排序 (以及 ratingCount 过滤)，变化不触发实时同步；本任务分批读全表，
 // 仅将指纹相较 Redis 快照发生变化的行以 partial update（PUT）刷入 Meili，
 // 未变的长尾静态行不重推，消除对 Meili 的周期性写放大。
 // 快照纯为优化：Meili 写成功后才更新，故快照丢失只会导致一次全量重推、绝不漏推。
+// 出箱里还挂着行的 id 由 applyCounts 剔除，不写快照，下一轮照旧比对。
 // 已删除 patch 会在快照里残留死字段：不被任何现存行的 diff 命中、无正确性影响，
 // 仅极缓慢占用内存（每条数十字节）；确需回收时整键删除 COUNTS_SNAPSHOT_KEY 即可。
-export const refreshSearchCounts = async () => {
-  const client = getMeiliClient()
-  if (!client) {
-    return
-  }
-  const index = client.index(GALGAME_INDEX)
-
+export const refreshSearchCounts = async ({
+  renew,
+  applyCounts
+}: SearchWriter) => {
   const snapshot = await getKvHashAll(COUNTS_SNAPSHOT_KEY)
 
   let lastId = 0
@@ -51,7 +49,6 @@ export const refreshSearchCounts = async () => {
     }
 
     const changedDocs: GalgameSearchCountsDoc[] = []
-    const changedFingerprints: Record<string, string> = {}
     for (const row of rows) {
       const doc: GalgameSearchCountsDoc = {
         id: row.id,
@@ -63,43 +60,50 @@ export const refreshSearchCounts = async () => {
         ratingCount: row.rating_stat?.count ?? 0,
         avgRating: row.rating_stat?.avg_overall ?? 0
       }
-      const idKey = String(row.id)
-      const fingerprint = countsFingerprint(doc)
-      if (snapshot[idKey] !== fingerprint) {
+      if (snapshot[String(row.id)] !== countsFingerprint(doc)) {
         changedDocs.push(doc)
-        changedFingerprints[idKey] = fingerprint
       }
     }
 
     lastId = rows[rows.length - 1].id
 
-    if (changedDocs.length === 0) {
-      continue
+    const applied = await applyCounts(changedDocs)
+    if (applied.length > 0) {
+      await setKvHashFields(
+        COUNTS_SNAPSHOT_KEY,
+        Object.fromEntries(
+          applied.map((doc) => [String(doc.id), countsFingerprint(doc)])
+        )
+      )
     }
-
-    const task = await index
-      .updateDocuments(changedDocs)
-      .waitTask({ timeout: 600000 })
-    if (task.status !== 'succeeded') {
-      throw new Error(`计数快照批次写入失败: ${JSON.stringify(task.error)}`)
-    }
-
-    await setKvHashFields(COUNTS_SNAPSHOT_KEY, changedFingerprints)
+    await renew()
   }
 }
 
+// 与出箱的 drain 共用写锁：持锁期间 drain 不运行。锁被占着时等一会儿，等不到才本轮跳过
+// (30 分钟后再来)，跳过要留日志：索引里的计数会因此多陈旧 30 分钟
 export const searchCountsRefreshTask = cron.createTask(
   '*/30 * * * *',
   async () => {
-    await withTaskLock(
-      {
-        key: COUNTS_REFRESH_LOCK_KEY,
-        ttlSeconds: COUNTS_REFRESH_LOCK_TTL_SECONDS,
-        taskName: 'searchCountsRefreshTask'
+    if (!getMeiliClient()) {
+      return
+    }
+    const ran = await withSearchWriter(
+      'searchCountsRefreshTask',
+      async (writer) => {
+        await refreshSearchCounts(writer)
+        return true
       },
-      refreshSearchCounts
+      { waitMs: COUNTS_REFRESH_LOCK_WAIT_MS }
     ).catch((error) => {
       console.error('搜索计数快照刷新失败:', error)
+      return true
     })
+    if (!ran) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[kun-search] 搜索计数快照刷新跳过: ${COUNTS_REFRESH_LOCK_WAIT_MS / 1000} 秒内没等到写锁`
+      )
+    }
   }
 )
