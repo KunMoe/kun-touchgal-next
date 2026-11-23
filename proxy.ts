@@ -8,9 +8,8 @@ export const config = {
     '/admin/:path*',
     '/user/:path*',
     '/edit/:path*',
-    // 排除上传路由, 避免 Next.js 缓冲大体积 body (默认 10MB)
-    // 上传路由在 handler 内部调用 verifyKunCsrf 自行校验
-    '/api/((?!upload/).*)'
+    // 全部 /api 都过 CSRF, 不设排除: 文件由浏览器经预签名 PUT 直传 S3, 上传接口只收小 JSON
+    '/api/:path*'
   ]
 }
 

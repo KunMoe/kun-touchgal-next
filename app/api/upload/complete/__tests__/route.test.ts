@@ -2,24 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 
 const {
-  verifyKunCsrfMock,
   verifyHeaderCookieMock,
   getKvMock,
   delKvMock,
   headObjectMock,
   deleteFileFromS3Mock
 } = vi.hoisted(() => ({
-  verifyKunCsrfMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
   getKvMock: vi.fn(),
   delKvMock: vi.fn(),
   headObjectMock: vi.fn(),
   deleteFileFromS3Mock: vi.fn()
-}))
-
-// /api/upload/* 被 proxy 的 CSRF 排除, 由 handler 自行校验; 校验细节另有测试, 这里只钉 handler 如何处理其结果
-vi.mock('~/middleware/_csrf', () => ({
-  verifyKunCsrf: verifyKunCsrfMock
 }))
 
 vi.mock('~/middleware/_verifyHeaderCookie', () => ({
@@ -74,7 +67,6 @@ const expectCleanedUp = () => {
 
 beforeEach(() => {
   vi.resetAllMocks()
-  verifyKunCsrfMock.mockReturnValue(null)
   verifyHeaderCookieMock.mockResolvedValue({ uid: UID, name: 'kun', role: 2 })
   getKvMock.mockResolvedValue(meta())
   delKvMock.mockResolvedValue(undefined)
@@ -83,16 +75,6 @@ beforeEach(() => {
 })
 
 describe('POST /api/upload/complete 前置闸门顺序', () => {
-  it('CSRF 校验失败返回 403 与其错误串, 先于请求体解析与鉴权', async () => {
-    verifyKunCsrfMock.mockReturnValue('非法请求来源')
-    const res = await POST(postRequest({ token: '' }))
-
-    expect(res.status).toBe(403)
-    expect(await res.json()).toBe('非法请求来源')
-    expect(verifyHeaderCookieMock).not.toHaveBeenCalled()
-    expect(getKvMock).not.toHaveBeenCalled()
-  })
-
   it('token 过短时返回校验消息, 且解析先于鉴权不读会话', async () => {
     const res = await POST(postRequest({ token: 'short' }))
 

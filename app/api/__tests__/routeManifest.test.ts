@@ -19,7 +19,6 @@ interface RouteDecl {
   auth: string | null
   capability: string | null
   order: string | null
-  csrf: string | null
   form: boolean
   legacyDeny: Record<string, string>
   // 频率预算的策略名 (server/abuse/policies.ts); 不是字面量的元素记成 <非字面量>
@@ -66,7 +65,6 @@ const readDef = (object: ts.ObjectLiteralExpression) => {
     auth: text('auth'),
     capability: text('capability'),
     order: text('order'),
-    csrf: text('csrf'),
     form: text('form') === 'true',
     legacyDeny,
     abuse: !abuse
@@ -144,7 +142,6 @@ const collectRoutes = () => {
                 auth: null,
                 capability: null,
                 order: null,
-                csrf: null,
                 form: false,
                 legacyDeny: {},
                 abuse: []
@@ -252,7 +249,6 @@ const formatDecl = (decl: RouteDecl) =>
     decl.auth,
     decl.capability && `capability=${decl.capability}`,
     decl.order && `order=${decl.order}`,
-    decl.csrf && `csrf=${decl.csrf}`,
     decl.form && 'form',
     ...Object.entries(decl.legacyDeny).map(
       ([key, value]) => `legacyDeny.${key}=${value}`
@@ -307,17 +303,6 @@ describe('Route Handler 访问清单', () => {
     expect(violations).toEqual([])
     for (const key of Object.keys(policy.except)) {
       expect(decls.map(keyOf), `例外条目已不存在: ${key}`).toContain(key)
-    }
-  })
-
-  // proxy 的 matcher 只把 /api/upload/* 排除在 CSRF 之外 (避免缓冲大请求体)
-  it("/api/upload/* 的写方法都在 handler 里补 CSRF, 别处不声明 csrf: 'handler'", () => {
-    for (const decl of decls) {
-      const isUpload = decl.path.startsWith('/api/upload/')
-      const isWrite = decl.exportName !== 'GET' && decl.exportName !== 'HEAD'
-      expect(decl.csrf, keyOf(decl)).toBe(
-        isUpload && isWrite ? 'handler' : null
-      )
     }
   })
 

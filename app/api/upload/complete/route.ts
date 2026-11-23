@@ -11,7 +11,6 @@ const completeSchema = z.object({
 
 export const POST = kunRoute.post({
   auth: 'user',
-  csrf: 'handler',
   input: completeSchema,
   legacyDeny: { unauthenticated: '用户未认证' },
   handler: async ({ input, actor: payload }) => {

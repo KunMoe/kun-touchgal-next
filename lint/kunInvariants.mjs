@@ -950,7 +950,7 @@ export const KUN_INVARIANTS = [
     id: 'inv-route-01',
     aliases: ['T10'],
     statement:
-      '导出的 HTTP 方法一律写成 export const <方法> = kunRoute.<同名小写方法>({ ... }): 参数是行内对象字面量, auth、capability、order、csrf、form 是字面量; 身份从 handler 的 actor 取, 不再调 verifyHeaderCookie, 声明 public 的 handler 里也不建视角上下文',
+      '导出的 HTTP 方法一律写成 export const <方法> = kunRoute.<同名小写方法>({ ... }): 参数是行内对象字面量, auth、capability、order、form 是字面量; 身份从 handler 的 actor 取, 不再调 verifyHeaderCookie, 声明 public 的 handler 里也不建视角上下文',
     reason:
       '访问级别以前写在 handler 体内, 是一段整段删掉也能通过类型、lint 与测试的语句: 外部抓取五路由匿名可达约 5 个月、@提及搜索约 18 个月, 都靠人工评审才发现; 「调了 verifyHeaderCookie 却不判空」的可选登录与忘了拦截在代码上长得一样。做成入口定义上的必填字面量后, 漏写编译不过, app/api/__tests__/routeManifest.test.ts 才能静态读出全站访问清单',
     removeWhen: 'Route Handler 改由别的、同样带必填访问声明的机制定义',
@@ -968,7 +968,7 @@ export const KUN_INVARIANTS = [
         `${KUN_ROUTE_CALL}:not([arguments.length=1][arguments.0.type='ObjectExpression'])`,
         `${KUN_ROUTE_CALL} > ObjectExpression > :matches(SpreadElement, Property[computed=true])`,
         `${KUN_ROUTE_CALL} > ObjectExpression:not(:has(> Property[key.name='auth']))`,
-        `${KUN_ROUTE_CALL} > ObjectExpression > Property[key.name=/^(auth|capability|order|csrf|form)$/]:not([value.type='Literal'])`,
+        `${KUN_ROUTE_CALL} > ObjectExpression > Property[key.name=/^(auth|capability|order|form)$/]:not([value.type='Literal'])`,
         "CallExpression[callee.name='verifyHeaderCookie']",
         // esquery 的 :has 里多级子选择器 (> A > B) 不生效, 要逐级嵌套
         `${KUN_ROUTE_CALL}:has(> ObjectExpression:has(> Property[key.name='auth'][value.value='public'])) CallExpression[callee.name='viewerContextFromRequest']`

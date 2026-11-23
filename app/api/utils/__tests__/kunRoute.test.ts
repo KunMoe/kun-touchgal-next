@@ -4,7 +4,6 @@ import type { NextRequest } from 'next/server'
 
 const {
   verifyHeaderCookieMock,
-  verifyKunCsrfMock,
   getQueryMock,
   deleteQueryMock,
   postBodyMock,
@@ -13,7 +12,6 @@ const {
   kunAbuseGateMock
 } = vi.hoisted(() => ({
   verifyHeaderCookieMock: vi.fn(),
-  verifyKunCsrfMock: vi.fn(),
   getQueryMock: vi.fn(),
   deleteQueryMock: vi.fn(),
   postBodyMock: vi.fn(),
@@ -35,7 +33,6 @@ vi.mock('next/server', () => ({
 vi.mock('~/middleware/_verifyHeaderCookie', () => ({
   verifyHeaderCookie: verifyHeaderCookieMock
 }))
-vi.mock('~/middleware/_csrf', () => ({ verifyKunCsrf: verifyKunCsrfMock }))
 vi.mock('~/server/abuse/budget', () => ({ kunAbuseGate: kunAbuseGateMock }))
 vi.mock('~/app/api/utils/parseQuery', () => ({
   kunParseGetQuery: getQueryMock,
@@ -57,7 +54,6 @@ const body = async (response: Response) => response.json()
 
 beforeEach(() => {
   vi.resetAllMocks()
-  verifyKunCsrfMock.mockReturnValue(null)
 })
 
 describe('访问级别', () => {
@@ -313,29 +309,6 @@ describe('动态段', () => {
     })(req)
 
     expect(parser).toHaveBeenCalledWith({})
-  })
-})
-
-describe('CSRF', () => {
-  it("csrf: 'handler' 校验失败时 403, 先于解析与鉴权", async () => {
-    verifyKunCsrfMock.mockReturnValue('非法请求')
-    const response = await kunRoute.post({
-      auth: 'user',
-      csrf: 'handler',
-      input: schema,
-      handler: async () => ({})
-    })(req)
-
-    expect(response.status).toBe(403)
-    await expect(body(response)).resolves.toBe('非法请求')
-    expect(postBodyMock).not.toHaveBeenCalled()
-    expect(verifyHeaderCookieMock).not.toHaveBeenCalled()
-  })
-
-  it('不声明 csrf 时不校验 (由 proxy 负责)', async () => {
-    await kunRoute.post({ auth: 'public', handler: async () => ({}) })(req)
-
-    expect(verifyKunCsrfMock).not.toHaveBeenCalled()
   })
 })
 

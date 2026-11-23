@@ -138,9 +138,9 @@ POST /api/tag                                            user capability=tag.man
 PUT /api/tag                                             user capability=tag.manage
 DELETE /api/tag                                          user capability=tag.manage
 POST /api/tag/search                                     user
-POST /api/upload/complete                                user csrf=handler legacyDeny.unauthenticated=用户未认证
-POST /api/upload/init                                    user csrf=handler legacyDeny.unauthenticated=用户未认证
-POST /api/upload/resource                                public csrf=handler
+POST /api/upload/complete                                user legacyDeny.unauthenticated=用户未认证
+POST /api/upload/init                                    user legacyDeny.unauthenticated=用户未认证
+POST /api/upload/resource                                public
 GET /api/user/appeal                                     user
 POST /api/user/appeal                                    user
 POST /api/user/follow/follow                             user

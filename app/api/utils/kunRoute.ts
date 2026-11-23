@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { verifyHeaderCookie } from '~/middleware/_verifyHeaderCookie'
-import { verifyKunCsrf } from '~/middleware/_csrf'
 import {
   kunParseDeleteQuery,
   kunParseFormData,
@@ -78,8 +77,6 @@ interface KunRouteDefBase<A extends KunRouteAuth, I, P> {
   capability?: A extends 'user' ? KunCapability : never
   // 动态段, 最先解析; 返回 string 即校验失败的消息
   params?: (raw: KunRouteParams) => P | string
-  // proxy 的 matcher 不覆盖 /api/upload/* (避免缓冲大请求体), 这些写方法在这里补 CSRF
-  csrf?: 'handler'
   // 只给 user: 按账号 (及全站) 计的频率预算, 超限时回策略的文案。要按成本计费 (提及按人数)
   // 或只在部分分支计数 (moyu 只在缓存未命中时) 的, 在属主处调 reserveAbuseBudget
   abuse?: A extends 'user' ? readonly KunAbusePolicyName[] : never
@@ -241,13 +238,6 @@ const defineRoute =
   (method: KunRouteMethod) =>
   (def: KunRouteAnyDef): KunRouteHandler =>
   async (req, context) => {
-    if (def.csrf === 'handler') {
-      const csrfError = verifyKunCsrf(req)
-      if (csrfError) {
-        return NextResponse.json(csrfError, { status: 403 })
-      }
-    }
-
     let params: unknown
     if (def.params) {
       const raw = (await context?.params) as KunRouteParams | undefined

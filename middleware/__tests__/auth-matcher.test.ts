@@ -40,7 +40,7 @@ describe('toProtectedPrefix', () => {
   })
 
   it('只排除 /api 路由段, 不误伤同前缀路径', () => {
-    expect(toProtectedPrefix('/api/((?!upload/).*)')).toBe(null)
+    expect(toProtectedPrefix('/api/:path*')).toBe(null)
     expect(toProtectedPrefix('/api-docs/:path*')).toBe('/api-docs')
   })
 
