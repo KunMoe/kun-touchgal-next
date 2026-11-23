@@ -841,11 +841,9 @@ export const KUN_INVARIANTS = [
     reason:
       '这两个函数只做校验与消费, 不带尝试预算: 登录第二步有自己按 challenge 的预约, 所以直接用它们; 别的入口直接调, 等于又多一个可以无限次猜验证码或备份码的地方 (备份码的消费还要与它授权的变更同一个事务, 见 consumeStepUpBackupCode)',
     removeWhen: '登录第二步也改走带预算的统一入口, 这两个函数不再从模块导出',
-    // app/api/utils/twoFactorBackupCode.ts 是迁移期整模块转出的旧路径
     ignores: [
       'server/auth/**',
       'app/api/auth/verify-2fa/route.ts',
-      'app/api/utils/twoFactorBackupCode.ts',
       '**/__tests__/**'
     ],
     enforce: {
@@ -858,7 +856,6 @@ export const KUN_INVARIANTS = [
       bad: [
         "import { checkTotp } from '~/server/auth/secondFactor'",
         "import { consumeTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'",
-        "import { consumeTwoFactorBackupCode } from '~/app/api/utils/twoFactorBackupCode'",
         "import * as secondFactor from '../../server/auth/secondFactor'",
         "export * from '~/server/auth/twoFactorBackupCode'"
       ],
