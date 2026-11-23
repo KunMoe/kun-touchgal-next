@@ -245,8 +245,8 @@ export const wholeTableAggregates = (statements: RecordedStatement[]) =>
     .map(({ table }) => table)
 
 // Prisma 把 { equals, mode: 'insensitive' } 编译成不带 ESCAPE 子句的 ILIKE, 参数里的 _ 和 %
-// 是活的通配符, 所以调用方 (insensitiveEquals) 先转义。要求: 该列确实走 ILIKE, 绑定的
-// 参数恰是 bound (调用方转义后的串, 不多转一层也不少转一层)
+// 是活的通配符, 调用方要先转义。要求: 该列确实走 ILIKE, 绑定的参数恰是 bound
+// (调用方转义后的串, 不多转一层也不少转一层)
 export const expectEscapedIlike = (
   statements: RecordedStatement[],
   { column, bound }: { column: string; bound: string }
@@ -261,6 +261,36 @@ export const expectEscapedIlike = (
   for (const value of values) {
     expect(value).toBe(bound)
   }
+}
+
+// server/identity/lookup.ts 按用户名或邮箱找人的那条原生查询: lower(列) = lower(参数),
+// 走迁移 0018 的 lower() 唯一索引。要求: 这批语句里对 name / email 的匹配恰好是这一处
+// (没有 ILIKE, 那是用不上索引的写法), 列是 column, 绑定的参数恰是 bound (原样, 不转义也
+// 不预先小写)。返回那条语句
+export const expectLowerEquals = (
+  statements: RecordedStatement[],
+  { column, bound }: { column: 'name' | 'email'; bound: string }
+) => {
+  const matches = statements.flatMap((statement) =>
+    [
+      ...collapse(statement.sql).matchAll(
+        /lower\((name|email)\) = lower\(\$(\d+)::text\)/g
+      )
+    ].map(([, matched, index]) => ({
+      statement,
+      column: matched,
+      value: statement.values[Number(index) - 1]
+    }))
+  )
+  expect(
+    statements.filter(({ sql }) => /"(name|email)" ILIKE/.test(sql)),
+    '不应再有对 name / email 的 ILIKE'
+  ).toEqual([])
+  expect(
+    matches.map(({ column, value }) => ({ column, value })),
+    `应当恰好一处 lower(${column}) = lower($n::text)`
+  ).toEqual([{ column, value: bound }])
+  return matches[0].statement
 }
 
 // 事务级通告锁、行锁与条件更新要互相看得见, 必须与 BEGIN / COMMIT 发在同一条连接上。

@@ -1243,40 +1243,12 @@ export const KUN_INVARIANTS = [
     }
   },
   {
-    id: 'inv-identity-01',
-    aliases: ['T18'],
-    statement:
-      'insensitiveEquals 只许 server/identity/** 导入 (具名或整模块命名空间都算); 按用户名、邮箱找人与查重调 server/identity/lookup.ts 的 findUserForLogin / isUsernameTaken / isEmailTaken / findUserByEmailForReset',
-    reason:
-      '同一批 9 个路由 4 个月里被点修 5 次, 每次只修一份副本: 查重口径有大小写敏感与不敏感两种, 有的排除自身有的不排除 (#62), 登录用一条 OR 同时查两列且不排序 (P07-02)。lookup 里的查重要求调用方写明 exceptUid, 登录按种类分列查询。本条只认静态导入; 不经 helper、直接写 equals + mode 的查找由 inv-identity-02 管',
-    removeWhen:
-      'Prisma 自己转义 ILIKE 的通配符 (compile-contract 那条会先红), helper 随之删除',
-    ignores: ['server/identity/**'],
-    enforce: {
-      kind: 'import',
-      sources: [/(^|\/)server\/identity\/lookup(\.[cm]?[jt]sx?)?$/],
-      importNames: ['insensitiveEquals', '*']
-    },
-    examples: {
-      file: 'app/api/kunInvariantExample.ts',
-      bad: [
-        "import { insensitiveEquals } from '~/server/identity/lookup'",
-        "import { isEmailTaken, insensitiveEquals as ieq } from '../../server/identity/lookup.ts'",
-        "import * as lookup from '~/server/identity/lookup'"
-      ],
-      good: [
-        "import { findUserForLogin, isUsernameTaken } from '~/server/identity/lookup'",
-        "import { newUsernameError } from '~/server/identity/username'"
-      ]
-    }
-  },
-  {
     id: 'inv-identity-02',
     aliases: ['T18'],
     statement:
       'server/identity/** 之外, user 表的读查询 (findFirst / findUnique / findMany / count 等) 与按唯一键定位一行的 update / upsert / delete 不得按 name 或 email 精确匹配 (值不是 contains / startsWith / endsWith 的模糊搜索); 改调 server/identity/lookup.ts',
     reason:
-      '精确匹配找人或查重的口径 (大小写不敏感、转义通配符、排除自身、邮箱优先) 只写在 lookup 一处, 与库里的 lower() 唯一索引 (迁移 0018) 一致。路由里再写一条 findUnique({ where: { email } }) 就是第三种口径: 改邮箱与管理端改号曾用大小写敏感的精确匹配, 放行别人邮箱的大小写变体。模糊搜索 (@ 提及、后台按名搜索) 不在此列。只认 <x>.user.<method>(...) 的行内 where 顶层与 AND / OR / NOT 里的条件; 把 where 先放进变量、展开或解构 delegate 看不到; 动态 import() 拿 insensitiveEquals 也看不到 (inv-identity-01 只认静态导入)',
+      '同一批 9 个路由 4 个月里被点修 5 次, 每次只修一份副本。精确匹配找人或查重的口径 (lower(列) = lower(输入)、走 lower() 唯一索引、排除自身、按种类只查一列) 只写在 lookup 一处, 与库里的 lower() 唯一索引 (迁移 0018) 是同一个判定。路由里再写一条 findUnique({ where: { email } }) 就是第三种口径: 改邮箱与管理端改号曾用大小写敏感的精确匹配, 放行别人邮箱的大小写变体。模糊搜索 (@ 提及、后台按名搜索) 不在此列。只认 <x>.user.<method>(...) 的行内 where 顶层与 AND / OR / NOT 里的条件; 把 where 先放进变量、展开或解构 delegate 看不到; 原生 SQL 也看不到',
     removeWhen: 'user 表不再以 name / email 作登录标识符',
     // email-notice/disable 按退订令牌里存的原值回查, 不是用户输入; migrateReservedUsernames
     // 是人工执行的一次性改名脚本, 按存量原值精确定位
@@ -1288,7 +1260,7 @@ export const KUN_INVARIANTS = [
     ],
     enforce: {
       kind: 'syntax',
-      // 值不是对象 (字面量、变量、简写、insensitiveEquals(…) 这类调用) 即精确匹配; 是对象时看操作名
+      // 值不是对象 (字面量、变量、简写、函数调用) 即精确匹配; 是对象时看操作名
       selectors: USER_WHERE_IDENTIFIERS.flatMap((identifier) => [
         `${identifier}:not([value.type='ObjectExpression'])`,
         `${identifier} > ObjectExpression > Property${keyIs('/^(equals|in)$/')}`

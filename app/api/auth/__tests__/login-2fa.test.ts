@@ -1,24 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  answerLowerLookup,
+  parseLowerLookup
+} from '~/server/identity/__tests__/support/lowerLookup'
 
 const {
   checkCaptchaMock,
   cookieSetMock,
   createChallengeMock,
   establishSessionMock,
-  findFirstMock,
+  findUniqueMock,
   generateStatelessTokenMock,
   getUserStatusMock,
   kunParsePostBodyMock,
+  queryRawMock,
   verifyPasswordMock
 } = vi.hoisted(() => ({
   checkCaptchaMock: vi.fn(),
   cookieSetMock: vi.fn(),
   createChallengeMock: vi.fn(),
   establishSessionMock: vi.fn(),
-  findFirstMock: vi.fn(),
+  findUniqueMock: vi.fn(),
   generateStatelessTokenMock: vi.fn(),
   getUserStatusMock: vi.fn(),
   kunParsePostBodyMock: vi.fn(),
+  queryRawMock: vi.fn(),
   verifyPasswordMock: vi.fn()
 }))
 
@@ -59,7 +65,8 @@ vi.mock('~/server/auth/cookieOptions', () => ({
 
 vi.mock('~/prisma/index', () => ({
   prisma: {
-    user: { findFirst: findFirstMock, updateMany: vi.fn() }
+    $queryRaw: queryRawMock,
+    user: { findUnique: findUniqueMock, updateMany: vi.fn() }
   }
 }))
 
@@ -97,7 +104,9 @@ beforeEach(() => {
   })
   checkCaptchaMock.mockResolvedValue(true)
   verifyPasswordMock.mockResolvedValue(true)
-  findFirstMock.mockResolvedValue({
+  // server/identity/lookup.ts 先按 lower() 索引取 id, 再按主键取整行
+  queryRawMock.mockResolvedValue([{ id: 7 }])
+  findUniqueMock.mockResolvedValue({
     id: 7,
     name: 'tester',
     email: 'tester@example.com',
@@ -160,7 +169,7 @@ describe('POST /api/auth/login without 2FA', () => {
   }
 
   beforeEach(() => {
-    findFirstMock.mockResolvedValue(row)
+    findUniqueMock.mockResolvedValue(row)
     establishSessionMock.mockResolvedValue({ ok: true })
     getUserStatusMock.mockResolvedValue({ uid: 7, name: 'tester' })
   })
@@ -187,7 +196,7 @@ describe('POST /api/auth/login without 2FA', () => {
   })
 
   it('封禁的账号在建立会话之前就被拒绝', async () => {
-    findFirstMock.mockResolvedValue({ ...row, status: 2 })
+    findUniqueMock.mockResolvedValue({ ...row, status: 2 })
 
     const body = await (await POST(createRequest())).json()
 
@@ -197,8 +206,8 @@ describe('POST /api/auth/login without 2FA', () => {
 })
 
 // P07-02 / X07-03: 有人把用户名改成别人的邮箱之后, 登录以前用一条 OR 同时查两列且不排序,
-// 在两行里随机取一行, 邮箱的持有者可能一直登不进去。这里按 where 里的列分流模拟库;
-// OR 形状 (旧写法) 返回邮箱形态用户名那一行, 模拟顺扫先碰到它
+// 在两行里随机取一行, 邮箱的持有者可能一直登不进去。这里按 lookup 那条原生查询的列
+// 模拟库 (server/identity/__tests__/support/lowerLookup.ts), 再按主键取整行
 describe('POST /api/auth/login 按种类解析登录标识符', () => {
   const owner = {
     id: 1,
@@ -218,26 +227,22 @@ describe('POST /api/auth/login 按种类解析登录标识符', () => {
     password: 'squatter-hash'
   }
 
-  type Filter = { equals: string; mode: 'insensitive' }
-  type Where = { email?: Filter; name?: Filter; OR?: unknown[] }
-  const same = (a: string, filter: Filter) =>
-    a.toLowerCase() === filter.equals.toLowerCase()
+  const rows = [owner, squatter]
 
   beforeEach(() => {
-    findFirstMock.mockImplementation(async ({ where }: { where: Where }) => {
-      if (where.OR) {
-        return squatter
-      }
-      if (where.email) {
-        return (
-          [owner, squatter].find((r) => same(r.email, where.email!)) ?? null
-        )
-      }
-      return [owner, squatter].find((r) => same(r.name, where.name!)) ?? null
-    })
+    queryRawMock.mockImplementation(async (query: unknown) =>
+      answerLowerLookup(rows, query)
+    )
+    findUniqueMock.mockImplementation(
+      async ({ where }: { where: { id: number } }) =>
+        rows.find((row) => row.id === where.id) ?? null
+    )
     establishSessionMock.mockResolvedValue({ ok: true })
     getUserStatusMock.mockResolvedValue({ uid: 1, name: 'victim' })
   })
+
+  const queriedColumns = () =>
+    queryRawMock.mock.calls.map(([query]) => parseLowerLookup(query).column)
 
   const loginWith = async (name: string) => {
     kunParsePostBodyMock.mockResolvedValue({
@@ -253,19 +258,13 @@ describe('POST /api/auth/login 按种类解析登录标识符', () => {
 
     expect(verifyPasswordMock).toHaveBeenCalledWith('password1', 'owner-hash')
     expect(establishSessionMock).toHaveBeenCalledWith(owner, expect.anything())
-    for (const [args] of findFirstMock.mock.calls) {
-      expect(args.where).not.toHaveProperty('name')
-      expect(args.where).not.toHaveProperty('OR')
-    }
+    expect(queriedColumns()).toEqual(['email'])
   })
 
   it('用户名形态的输入只查 name 列', async () => {
     await loginWith('Victim')
 
     expect(establishSessionMock).toHaveBeenCalledWith(owner, expect.anything())
-    for (const [args] of findFirstMock.mock.calls) {
-      expect(args.where).not.toHaveProperty('email')
-      expect(args.where).not.toHaveProperty('OR')
-    }
+    expect(queriedColumns()).toEqual(['name'])
   })
 })

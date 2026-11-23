@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { reservedUsernameMessage } from '~/constants/reserved-usernames.server'
 import { emailShapedUsernameMessage } from '~/server/identity/username'
 import { Prisma } from '~/prisma/generated/prisma/client'
+import { parseLowerLookup } from '~/server/identity/__tests__/support/lowerLookup'
 
 const {
   findUserMock,
-  findFirstMock,
+  queryRawMock,
   transactionMock,
   updateUserMock,
   createLogMock,
@@ -13,7 +14,7 @@ const {
   hashPasswordMock
 } = vi.hoisted(() => ({
   findUserMock: vi.fn(),
-  findFirstMock: vi.fn(),
+  queryRawMock: vi.fn(),
   transactionMock: vi.fn(),
   updateUserMock: vi.fn(),
   createLogMock: vi.fn(),
@@ -29,8 +30,9 @@ const transactionClient = {
 
 vi.mock('~/prisma/index', () => ({
   prisma: {
-    // findFirst 是 server/identity/lookup.ts 的查重 (大小写不敏感, 排除目标用户自己)
-    user: { findUnique: findUserMock, findFirst: findFirstMock },
+    // $queryRaw 是 server/identity/lookup.ts 按 lower() 的查重 (排除目标用户自己)
+    $queryRaw: queryRawMock,
+    user: { findUnique: findUserMock },
     $transaction: transactionMock
   }
 }))
@@ -75,8 +77,8 @@ beforeEach(() => {
   findUserMock
     .mockResolvedValueOnce(reservedNameUser)
     .mockResolvedValueOnce({ role: 4, name: 'root-admin' })
-  findFirstMock.mockReset()
-  findFirstMock.mockResolvedValue(null)
+  queryRawMock.mockReset()
+  queryRawMock.mockResolvedValue([])
   updateUserMock.mockResolvedValue({ count: 1 })
   createLogMock.mockResolvedValue({})
   finishMock.mockResolvedValue({ revokedOthers: 0 })
@@ -130,13 +132,9 @@ describe('updateUser 保留用户名', () => {
       updateUser({ ...baseInput, name: 'kun-admin' }, 99)
     ).resolves.toEqual({})
 
-    expect(findFirstMock).toHaveBeenCalledWith({
-      where: {
-        name: { equals: 'kun-admin', mode: 'insensitive' },
-        id: { not: 7 }
-      },
-      select: { id: true }
-    })
+    expect(
+      queryRawMock.mock.calls.map(([query]) => parseLowerLookup(query))
+    ).toEqual([{ column: 'name', value: 'kun-admin', exceptUid: 7 }])
     expect(updateUserMock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ name: 'kun-admin' })
@@ -160,7 +158,7 @@ describe('updateUser 新名字的规则与查重 (T18)', () => {
       updateUser({ ...baseInput, name: 'victim@qq.com' }, 99)
     ).resolves.toBe(emailShapedUsernameMessage)
 
-    expect(findFirstMock).not.toHaveBeenCalled()
+    expect(queryRawMock).not.toHaveBeenCalled()
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
@@ -172,12 +170,12 @@ describe('updateUser 新名字的规则与查重 (T18)', () => {
       updateUser({ ...baseInput, name: 'legacy@qq.com', status: 1 }, 99)
     ).resolves.toEqual({})
 
-    expect(findFirstMock).not.toHaveBeenCalled()
+    expect(queryRawMock).not.toHaveBeenCalled()
   })
 
   it('别人已有只差大小写的名字时拒绝', async () => {
     setupTarget('kun')
-    findFirstMock.mockResolvedValue({ id: 9 })
+    queryRawMock.mockResolvedValue([{ id: 9 }])
 
     await expect(updateUser({ ...baseInput, name: 'Taken' }, 99)).resolves.toBe(
       '该用户名已被其他用户使用'
@@ -187,7 +185,7 @@ describe('updateUser 新名字的规则与查重 (T18)', () => {
   })
 
   it('别人已有只差大小写的邮箱时拒绝', async () => {
-    findFirstMock.mockResolvedValue({ id: 9 })
+    queryRawMock.mockResolvedValue([{ id: 9 }])
 
     await expect(
       updateUser({ ...baseInput, email: 'TAKEN@example.com' }, 99)
@@ -226,16 +224,13 @@ describe('updateUser 改了密码或邮箱 (账号恢复)', () => {
     )
 
     // 新邮箱的查重: 大小写不敏感, 排除目标用户自己; 没改邮箱就不查
-    expect(findFirstMock).toHaveBeenCalledTimes(checksEmail ? 1 : 0)
-    if (checksEmail) {
-      expect(findFirstMock).toHaveBeenCalledWith({
-        where: {
-          email: { equals: 'recovered@example.com', mode: 'insensitive' },
-          id: { not: 7 }
-        },
-        select: { id: true }
-      })
-    }
+    expect(
+      queryRawMock.mock.calls.map(([query]) => parseLowerLookup(query))
+    ).toEqual(
+      checksEmail
+        ? [{ column: 'email', value: 'recovered@example.com', exceptUid: 7 }]
+        : []
+    )
 
     expect(updateUserMock).toHaveBeenCalledWith(
       expect.objectContaining({

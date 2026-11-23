@@ -5,14 +5,14 @@ import { kunViolationCodeOf } from '~/server/db/violations'
 import { dbContractUrl, openDbContract } from '~/server/db/__tests__/dbContract'
 
 // 用户名与邮箱「只差大小写」的唯一性在真实 PostgreSQL 上的行为 (运行方式见
-// server/db/__tests__/dbContract.ts)。注册与改名先用 insensitiveEquals 编译出的 ILIKE 预检,
-// 预检与写入之间的并发窗口由迁移 0018 的 lower(name) / lower(email) 表达式唯一索引兜住。
-// 两者必须判同一组「同名」: 预检比索引严 (预检命中、索引放行) 只是多拦一些, 是安全的;
-// 索引比预检严 (预检放行、索引拒绝) 时请求在写入处拿到 P2002, 由写入方的 catch 或 kunRoute
-// 翻成冲突文案, 也写不出重复, 但用户看到的不再是预检那句可读的提示。下面的探针在
-// postgres:17-alpine (en_US.utf8, libc) 上两个方向都没有出现: UTF8 库上 ILIKE 的实现就是两侧
-// 先 lower() 再做 LIKE, 转义掉通配符之后与 lower() = lower() 是同一个判定。换排序规则
-// (ICU、C) 之后哪些字符折叠会变, 但两侧仍用同一个 lower(), 这里比的是两侧是否一致
+// server/db/__tests__/dbContract.ts)。注册与改名先经 server/identity/lookup.ts 预检
+// (lower(列) = lower(输入)), 预检与写入之间的并发窗口由迁移 0018 的 lower(name) /
+// lower(email) 表达式唯一索引兜住。两者必须判同一组「同名」: 预检比索引严 (预检命中、索引
+// 放行) 只是多拦一些, 是安全的; 索引比预检严 (预检放行、索引拒绝) 时请求在写入处拿到
+// P2002, 由写入方的 catch 或 kunRoute 翻成冲突文案, 也写不出重复, 但用户看到的不再是预检
+// 那句可读的提示。两侧用的是同一个库内 lower(), 下面的探针逐个核对; 换排序规则 (ICU、C)
+// 之后哪些字符折叠会变, 但两侧仍一致。预检的语句还必须真的走这条索引 (见「走 lower()
+// 唯一索引」那一例): 不走就是每次登录、查重都顺扫全表
 
 const INDEXES = ['user_email_lower_key', 'user_name_lower_key']
 
@@ -34,14 +34,14 @@ const STORED = [
 const PROBES = [
   'kungal',
   'KUNGAL',
-  // 不转义时 _ 与 % 是通配符, 会命中 abc 与其余三行
+  // _ 与 % 在 LIKE / ILIKE 里是通配符 (会命中 abc 与其余三行), 在等号比较里是字面
   'a_c',
   'A_C',
   'a%c',
   'A%C',
   '_',
   '%',
-  // 反斜杠是 LIKE 的默认转义符
+  // 反斜杠是 LIKE 的默认转义符, 在等号比较里同样是字面
   'a\\c',
   'A\\C',
   'émile',
@@ -263,9 +263,44 @@ describe.skipIf(!dbContractUrl)(
           await lookup.isEmailTaken('victim@qq.com', { exceptUid: squatter.id })
         ).toBe(true)
       })
+
+      // 小表上顺扫更便宜, 所以关掉顺扫, 看的是「能不能」走索引: 写成 Prisma 的
+      // { equals, mode: 'insensitive' } (ILIKE) 或与索引表达式对不上的 lower() 时这一例变红
+      it('找人与查重的语句走 lower() 唯一索引', async () => {
+        const plans = await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SET LOCAL enable_seqscan = off`
+          const explain = async (sql: Prisma.Sql) =>
+            (
+              await tx.$queryRaw<{ 'QUERY PLAN': string }[]>(
+                Prisma.sql`EXPLAIN ${sql}`
+              )
+            )
+              .map((row) => row['QUERY PLAN'])
+              .join('\n')
+          return {
+            name: await explain(lookup.userIdByLowerSql('name', 'Kun', null)),
+            email: await explain(
+              lookup.userIdByLowerSql('email', 'Kun@QQ.com', 7)
+            ),
+            // 负对照: ILIKE 用不上 btree 索引, 关了顺扫也只能顺扫
+            ilike: await explain(
+              Prisma.sql`SELECT id FROM "user" WHERE name ILIKE ${'Kun'} LIMIT 1`
+            )
+          }
+        })
+
+        const usesIndex = (index: string) =>
+          new RegExp(
+            `(Index (Only )?Scan using|Bitmap Index Scan on) ${index}\\b`
+          )
+        expect(plans.name).toMatch(usesIndex('user_name_lower_key'))
+        expect(plans.email).toMatch(usesIndex('user_email_lower_key'))
+        expect(plans.ilike).not.toMatch(usesIndex('user_name_lower_key'))
+        expect(plans.ilike).toMatch(/Seq Scan on "?user"?/)
+      })
     })
 
-    describe('预检的 ILIKE 与 lower() 索引判同一组同名', () => {
+    describe('预检与 lower() 索引判同一组同名', () => {
       const seed = async () => {
         const rows = new Map<number, string>()
         for (const name of STORED) {
@@ -273,84 +308,6 @@ describe.skipIf(!dbContractUrl)(
         }
         return rows
       }
-
-      const namesOf = (rows: Map<number, string>, ids: { id: number }[]) =>
-        ids.map(({ id }) => rows.get(id)).sort()
-
-      it('逐个探针: 预检命中的行与 lower(列) = lower(探针) 命中的行相同', async () => {
-        const rows = await seed()
-        const mismatches: unknown[] = []
-        let matched = 0
-
-        for (const probe of PROBES) {
-          const byName = {
-            precheck: namesOf(
-              rows,
-              await prisma.user.findMany({
-                where: { name: lookup.insensitiveEquals(probe) },
-                select: { id: true }
-              })
-            ),
-            lower: namesOf(
-              rows,
-              await prisma.$queryRaw<{ id: number }[]>`
-                SELECT id FROM "user" WHERE lower(name) = lower(${probe}::text)
-              `
-            )
-          }
-          const byEmail = {
-            precheck: namesOf(
-              rows,
-              await prisma.user.findMany({
-                where: { email: lookup.insensitiveEquals(emailOf(probe)) },
-                select: { id: true }
-              })
-            ),
-            lower: namesOf(
-              rows,
-              await prisma.$queryRaw<{ id: number }[]>`
-                SELECT id FROM "user" WHERE lower(email) = lower(${emailOf(probe)}::text)
-              `
-            )
-          }
-          for (const [column, result] of Object.entries({ byName, byEmail })) {
-            if (
-              JSON.stringify(result.precheck) !== JSON.stringify(result.lower)
-            ) {
-              mismatches.push({ probe, column, ...result })
-            }
-          }
-          matched += byName.lower.length
-        }
-
-        expect(mismatches).toEqual([])
-        // 两侧不是恒为空: 9 个纯 ASCII 的探针在任何排序规则下都折叠得到 (C 也一样);
-        // 非 ASCII 的命中数随排序规则变化, 不在这里定死
-        expect(matched).toBeGreaterThanOrEqual(9)
-      })
-
-      it('负对照: 不转义通配符时两侧不一致, 上面的比对能发现差异', async () => {
-        const rows = await seed()
-
-        const unescaped = namesOf(
-          rows,
-          await prisma.user.findMany({
-            where: { name: { equals: 'a_c', mode: 'insensitive' } },
-            select: { id: true }
-          })
-        )
-
-        expect(unescaped).toEqual(['a%c', 'a\\c', 'a_c', 'abc'])
-        expect(
-          namesOf(
-            rows,
-            await prisma.user.findMany({
-              where: { name: lookup.insensitiveEquals('a_c') },
-              select: { id: true }
-            })
-          )
-        ).toEqual(['a_c'])
-      })
 
       it('逐个探针: 预检判为已占用, 当且仅当写入撞上唯一索引', async () => {
         await seed()

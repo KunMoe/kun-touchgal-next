@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseLowerLookup } from '~/server/identity/__tests__/support/lowerLookup'
 
 const {
   checkCaptchaMock,
-  findFirstMock,
   getKvMock,
   kunParsePostBodyMock,
+  queryRawMock,
   sendVerificationCodeEmailMock
 } = vi.hoisted(() => ({
   checkCaptchaMock: vi.fn(),
-  findFirstMock: vi.fn(),
   getKvMock: vi.fn(),
   kunParsePostBodyMock: vi.fn(),
+  queryRawMock: vi.fn(),
   sendVerificationCodeEmailMock: vi.fn()
 }))
 
@@ -41,9 +42,8 @@ vi.mock('~/lib/redis', () => ({
 }))
 
 vi.mock('~/prisma/index', () => ({
-  prisma: {
-    user: { findFirst: findFirstMock }
-  }
+  // $queryRaw 是 server/identity/lookup.ts 按 lower() 的查重
+  prisma: { $queryRaw: queryRawMock }
 }))
 
 import { POST } from '~/app/api/auth/send-register-code/route'
@@ -64,7 +64,7 @@ beforeEach(() => {
     captcha: 'captcha-token'
   })
   checkCaptchaMock.mockResolvedValue(true)
-  findFirstMock.mockResolvedValue(null)
+  queryRawMock.mockResolvedValue([])
   sendVerificationCodeEmailMock.mockResolvedValue(undefined)
   getKvMock.mockResolvedValue(null)
 })
@@ -122,9 +122,10 @@ describe('POST /api/auth/send-register-code email dedup', () => {
     const response = await POST(createRequest())
 
     await expect(response.json()).resolves.toEqual({})
-    expect(findFirstMock).toHaveBeenNthCalledWith(2, {
-      where: { email: { equals: 'Tester@Example.com', mode: 'insensitive' } },
-      select: { id: true }
+    expect(parseLowerLookup(queryRawMock.mock.calls[1][0])).toEqual({
+      column: 'email',
+      value: 'Tester@Example.com',
+      exceptUid: null
     })
     expect(sendVerificationCodeEmailMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -133,7 +134,8 @@ describe('POST /api/auth/send-register-code email dedup', () => {
     )
   })
 
-  it('escapes LIKE wildcards so an underscore cannot match other names or addresses', async () => {
+  // 查重是 lower(列) = lower(参数) 的字面比较, _ 与 % 不是通配符, 不需要也不能转义
+  it('binds the name and email as typed, without escaping or lowercasing', async () => {
     kunParsePostBodyMock.mockResolvedValue({
       name: 'k_n',
       email: 'kun_chan@qq.com',
@@ -142,14 +144,12 @@ describe('POST /api/auth/send-register-code email dedup', () => {
 
     await POST(createRequest())
 
-    expect(findFirstMock).toHaveBeenNthCalledWith(1, {
-      where: { name: { equals: 'k\\_n', mode: 'insensitive' } },
-      select: { id: true }
-    })
-    expect(findFirstMock).toHaveBeenNthCalledWith(2, {
-      where: { email: { equals: 'kun\\_chan@qq.com', mode: 'insensitive' } },
-      select: { id: true }
-    })
+    expect(
+      queryRawMock.mock.calls.map(([query]) => parseLowerLookup(query))
+    ).toEqual([
+      { column: 'name', value: 'k_n', exceptUid: null },
+      { column: 'email', value: 'kun_chan@qq.com', exceptUid: null }
+    ])
     expect(sendVerificationCodeEmailMock).toHaveBeenCalledWith(
       expect.anything(),
       'kun_chan@qq.com',
@@ -158,9 +158,7 @@ describe('POST /api/auth/send-register-code email dedup', () => {
   })
 
   it('refuses to send a code when the email is already registered', async () => {
-    findFirstMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: 1, email: 'tester@example.com' })
+    queryRawMock.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 1 }])
 
     const response = await POST(createRequest())
 

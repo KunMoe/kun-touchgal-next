@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   dataStatements,
-  expectEscapedIlike
+  expectLowerEquals
 } from '~/prisma/__tests__/support/sqlShape'
 
-// 登录按用户名或邮箱找人依赖的编译器输出, 不连库: 条件走的是 ILIKE, 输入里的
-// _ 和 % 不转义的话, 带下划线的账号会解析到别人那一行。按种类分列查询
-// (server/identity/lookup.ts 的 findUserForLogin), 同一条语句里不再同时出现两列
+// 登录按用户名或邮箱找人发出的 SQL, 不连库: 按种类只查一列 (server/identity/lookup.ts 的
+// findUserForLogin), 条件是走 lower() 唯一索引的 lower(列) = lower($1::text), 输入原样绑定。
+// 这条语句确实走索引由 server/identity/__tests__/userIdentifier.db.test.ts 在真库上核对
 
 const { recorder, parsePostMock } = await vi.hoisted(async () => ({
   recorder: (
@@ -81,11 +81,8 @@ beforeEach(() => {
   recorder.reset()
 })
 
-const columnsOf = (sql: string) =>
-  ['email', 'name'].filter((column) => sql.includes(`"${column}" ILIKE`))
-
 describe('POST /api/auth/login 发出的 SQL', () => {
-  it('邮箱形态的输入只查 email 列, 查不到也不再查 name 列, 绑定转义过的输入', async () => {
+  it('邮箱形态的输入只查 email 列, 查不到也不再查 name 列, 输入原样绑定', async () => {
     parsePostMock.mockResolvedValue({
       name: 'kun_chan@qq.com',
       password: 'password1',
@@ -95,12 +92,10 @@ describe('POST /api/auth/login 发出的 SQL', () => {
     const res = await POST(createRequest())
     await expect(res.json()).resolves.toBe('用户名或密码错误')
 
+    // 没查到 id 就不再按主键取整行
     const statements = dataStatements(recorder.take())
-    expect(statements.map(({ sql }) => columnsOf(sql))).toEqual([['email']])
-    expectEscapedIlike(statements, {
-      column: 'email',
-      bound: 'kun\\_chan@qq.com'
-    })
+    expect(statements).toHaveLength(1)
+    expectLowerEquals(statements, { column: 'email', bound: 'kun_chan@qq.com' })
   })
 
   it('用户名形态的输入只查 name 列', async () => {
@@ -114,10 +109,7 @@ describe('POST /api/auth/login 发出的 SQL', () => {
     await expect(res.json()).resolves.toBe('用户名或密码错误')
 
     const statements = dataStatements(recorder.take())
-    expect(statements.map(({ sql }) => columnsOf(sql))).toEqual([['name']])
-    expectEscapedIlike(statements, {
-      column: 'name',
-      bound: 'kun\\_chan\\%'
-    })
+    expect(statements).toHaveLength(1)
+    expectLowerEquals(statements, { column: 'name', bound: 'kun_chan%' })
   })
 })

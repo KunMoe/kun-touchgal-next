@@ -3,17 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const {
   establishSessionMock,
   delKvMock,
-  findFirstMock,
   getKvMock,
   kunParsePostBodyMock,
+  queryRawMock,
   userCreateMock,
   verifyVerificationCodeMock
 } = vi.hoisted(() => ({
   establishSessionMock: vi.fn(),
   delKvMock: vi.fn(),
-  findFirstMock: vi.fn(),
   getKvMock: vi.fn(),
   kunParsePostBodyMock: vi.fn(),
+  queryRawMock: vi.fn(),
   userCreateMock: vi.fn(),
   verifyVerificationCodeMock: vi.fn()
 }))
@@ -51,7 +51,9 @@ vi.mock('~/lib/redis', () => ({
 
 vi.mock('~/prisma/index', () => ({
   prisma: {
-    user: { findFirst: findFirstMock, create: userCreateMock }
+    // $queryRaw 是 server/identity/lookup.ts 按 lower() 的查重
+    $queryRaw: queryRawMock,
+    user: { create: userCreateMock }
   }
 }))
 
@@ -79,7 +81,7 @@ beforeEach(() => {
     password: 'password1'
   })
   verifyVerificationCodeMock.mockResolvedValue(true)
-  findFirstMock.mockResolvedValue(null)
+  queryRawMock.mockResolvedValue([])
   userCreateMock.mockResolvedValue({
     id: 7,
     name: 'tester',
@@ -109,7 +111,7 @@ describe('POST /api/auth/register with register disabled', () => {
       '由于网站近日遭受大量攻击，当前时间段暂时不可注册，请明天下午再来，一定要来哦'
     )
     expect(userCreateMock).not.toHaveBeenCalled()
-    expect(findFirstMock).not.toHaveBeenCalled()
+    expect(queryRawMock).not.toHaveBeenCalled()
     expect(verifyVerificationCodeMock).not.toHaveBeenCalled()
     expect(establishSessionMock).not.toHaveBeenCalled()
   })
@@ -138,7 +140,7 @@ describe('POST /api/auth/register verification code consumption', () => {
   })
 
   it('keeps the code alive when registration fails before the user is created', async () => {
-    findFirstMock.mockResolvedValueOnce({ id: 1, name: 'tester' })
+    queryRawMock.mockResolvedValueOnce([{ id: 1 }])
 
     const response = await POST(createRequest())
 

@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { pgErrors } from '~/prisma/__tests__/support/pgErrorFixtures'
 import {
   dataStatements,
-  expectEscapedIlike,
-  expectFlatConditionalUpdate
+  expectFlatConditionalUpdate,
+  expectLowerEquals
 } from '~/prisma/__tests__/support/sqlShape'
 
 // 改名依赖的编译器输出与错误映射 (路由里那段注释的可执行版本), 不连库
@@ -54,20 +54,23 @@ beforeEach(() => {
 })
 
 describe('POST /api/user/setting/username 发出的 SQL', () => {
-  it('查重走 ILIKE 且通配符已转义; 扣费与改名是一条平铺 WHERE 的 UPDATE', async () => {
+  it('查重按 lower() 匹配、输入原样绑定; 扣费与改名是一条平铺 WHERE 的 UPDATE', async () => {
     const res = await POST(mockRequest)
     await expect(res.json()).resolves.toEqual({})
 
     const statements = recorder.take()
     expect(dataStatements(statements)).toHaveLength(2)
-    expectEscapedIlike(statements, { column: 'name', bound: 'k\\_n\\%' })
+    const precheck = expectLowerEquals(statements, {
+      column: 'name',
+      bound: 'k_n%'
+    })
+    // 自助改名排除自己: 只改自己名字的大小写不算被占用 (#62)
+    expect(precheck.values).toContain(42)
     const update = expectFlatConditionalUpdate(statements, {
       table: 'user',
       guards: ['id', 'moemoepoint', 'name']
     })
-    // 写进库的是原样的新名字, 转义只作用于查重的匹配串
     expect(update.values).toContain('k_n%')
-    expect(update.values).not.toContain('k\\_n\\%')
   })
 
   it('库报告 UPDATE 影响 0 行时报余额不足', async () => {

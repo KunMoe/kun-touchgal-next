@@ -1,17 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Prisma } from '~/prisma/generated/prisma/client'
+import {
+  answerLowerLookup,
+  parseLowerLookup
+} from '~/server/identity/__tests__/support/lowerLookup'
 
 const {
   parsePostMock,
   verifyHeaderCookieMock,
-  findFirstMock,
+  queryRawMock,
   updateMock,
   updateManyMock,
   invalidateUserSessionMock
 } = vi.hoisted(() => ({
   parsePostMock: vi.fn(),
   verifyHeaderCookieMock: vi.fn(),
-  findFirstMock: vi.fn(),
+  queryRawMock: vi.fn(),
   updateMock: vi.fn(),
   updateManyMock: vi.fn(),
   invalidateUserSessionMock: vi.fn()
@@ -40,8 +44,8 @@ vi.mock('~/app/api/user/session/cache', () => ({
 
 vi.mock('~/prisma/index', () => ({
   prisma: {
+    $queryRaw: queryRawMock,
     user: {
-      findFirst: findFirstMock,
       update: updateMock,
       updateMany: updateManyMock
     }
@@ -58,7 +62,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   parsePostMock.mockResolvedValue({ username: 'Kun' })
   verifyHeaderCookieMock.mockResolvedValue({ uid: 42, name: 'OldName' })
-  findFirstMock.mockResolvedValue(null)
+  // server/identity/lookup.ts 的查重: 没有命中的行
+  queryRawMock.mockResolvedValue([])
   updateManyMock.mockResolvedValue({ count: 1 })
   invalidateUserSessionMock.mockResolvedValue(undefined)
 })
@@ -127,7 +132,7 @@ describe('POST /api/user/setting/username', () => {
   })
 
   it('rejects a taken name without touching the balance', async () => {
-    findFirstMock.mockResolvedValue({ id: 7 })
+    queryRawMock.mockResolvedValue([{ id: 7 }])
 
     const res = await POST(mockRequest)
     await expect(res.json()).resolves.toBe('您的用户名已经有人注册了, 请修改')
@@ -136,24 +141,21 @@ describe('POST /api/user/setting/username', () => {
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
   })
 
-  // 预检不排除自身时, ILIKE 命中的是调用者本人那一行, 只改大小写的改名恒被判成
-  // 「已经有人注册」, 永远做不成. 这里按 where 是否带 id 过滤分流, 模拟库里除了
-  // 自己没有别的同名用户
+  // 预检不排除自身时, 命中的是调用者本人那一行, 只改大小写的改名恒被判成
+  // 「已经有人注册」, 永远做不成. 这里模拟库里除了自己没有别的同名用户
   it('lets a user change the case of their own name', async () => {
     parsePostMock.mockResolvedValue({ username: 'KUN' })
     verifyHeaderCookieMock.mockResolvedValue({ uid: 42, name: 'Kun' })
-    findFirstMock.mockImplementation(
-      (args: { where: { id?: { not: number } } }) =>
-        Promise.resolve(args.where.id?.not === 42 ? null : { id: 42 })
+    queryRawMock.mockImplementation(async (query: unknown) =>
+      answerLowerLookup([{ id: 42, name: 'Kun', email: 'kun@qq.com' }], query)
     )
 
     const res = await POST(mockRequest)
     await expect(res.json()).resolves.toEqual({})
 
-    expect(findFirstMock).toHaveBeenCalledWith({
-      where: { name: { equals: 'KUN', mode: 'insensitive' }, id: { not: 42 } },
-      select: { id: true }
-    })
+    expect(
+      queryRawMock.mock.calls.map(([query]) => parseLowerLookup(query))
+    ).toEqual([{ column: 'name', value: 'KUN', exceptUid: 42 }])
     expect(updateManyMock).toHaveBeenCalledWith({
       where: { id: 42, moemoepoint: { gte: 30 }, name: { not: 'KUN' } },
       data: { name: 'KUN', moemoepoint: { increment: -30 } }
@@ -167,7 +169,7 @@ describe('POST /api/user/setting/username', () => {
     const res = await POST(mockRequest)
     await expect(res.json()).resolves.toBe('新用户名与当前用户名相同')
 
-    expect(findFirstMock).not.toHaveBeenCalled()
+    expect(queryRawMock).not.toHaveBeenCalled()
     expect(updateManyMock).not.toHaveBeenCalled()
     expect(invalidateUserSessionMock).not.toHaveBeenCalled()
   })

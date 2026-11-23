@@ -1,5 +1,6 @@
 import { vi } from 'vitest'
 import { generateConfig, Hotp } from 'time2fa'
+import { answerLowerLookup } from '~/server/identity/__tests__/support/lowerLookup'
 
 // 凭证类路由 (改邮箱 / 改密码 / 2FA / 管理员关 2FA) 的边界假对象, 全部是内存状态:
 // user / admin_log / user_email_change 三张表、KV、尝试预算、会话、邮件投递。断言看最终状态,
@@ -83,18 +84,6 @@ const strict = <T extends object>(name: string, target: T): T =>
 
 const prismaError = (code: string, message: string) =>
   Object.assign(new Error(message), { code })
-
-const isInsensitiveEquals = (
-  value: unknown
-): value is { equals: string; mode: 'insensitive' } =>
-  typeof value === 'object' &&
-  value !== null &&
-  Object.keys(value).length === 2 &&
-  typeof (value as { equals?: unknown }).equals === 'string' &&
-  (value as { mode?: unknown }).mode === 'insensitive'
-
-// ILIKE 的反斜杠转义还原成字面值 (insensitiveEquals 的逆)
-const unescapeLike = (value: string) => value.replace(/\\([\\%_])/g, '$1')
 
 const isScalar = (value: unknown) =>
   value === null || ['string', 'number', 'boolean'].includes(typeof value)
@@ -235,36 +224,6 @@ const createFakeDb = () => {
       }) => {
         queries.push('user.findUnique')
         const row = findByUniqueWhere(args.where)
-        return row ? project(row, args.select) : null
-      },
-      // 只实现 server/identity/lookup.ts 的查重形状: 一列转义过的大小写不敏感精确匹配,
-      // 可带 id: { not } 排除自身
-      findFirst: async (args: {
-        where: Record<string, unknown>
-        select?: Record<string, unknown>
-      }) => {
-        queries.push('user.findFirst')
-        const { id, ...rest } = args.where ?? {}
-        const entries = Object.entries(rest)
-        const [column, filter] = entries[0] ?? []
-        const except = (id as { not?: unknown } | undefined)?.not
-        if (
-          entries.length !== 1 ||
-          (column !== 'email' && column !== 'name') ||
-          !isInsensitiveEquals(filter) ||
-          (id !== undefined &&
-            (Object.keys(id as object).length !== 1 ||
-              typeof except !== 'number'))
-        ) {
-          return unsupported('user.findFirst where', args.where)
-        }
-        const wanted = unescapeLike(filter.equals).toLowerCase()
-        const row = [...users.values()]
-          .sort((a, b) => a.id - b.id)
-          .find(
-            (user) =>
-              user.id !== except && user[column].toLowerCase() === wanted
-          )
         return row ? project(row, args.select) : null
       },
       update: async (args: {
@@ -438,6 +397,11 @@ const createFakeDb = () => {
         return { count: 1 }
       }
     }),
+    // 只认 server/identity/lookup.ts 按 lower() 找人 / 查重的那一条, 其它原生查询抛错
+    $queryRaw: async (query: unknown) => {
+      queries.push('$queryRaw')
+      return answerLowerLookup(users.values(), query)
+    },
     $executeRaw: async (
       strings: TemplateStringsArray,
       ...values: unknown[]

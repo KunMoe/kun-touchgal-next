@@ -18,7 +18,7 @@ export const isEmailShaped = (value: string) =>
 export type LoginIdentifier =
   { kind: 'email'; raw: string } | { kind: 'name'; raw: string }
 
-// raw 只 trim、不小写: 规范化只发生在数据库查询里 (大小写不敏感的 ILIKE)。
+// raw 只 trim、不小写: 规范化只发生在数据库查询里 (lower(列) = lower(输入))。
 // 邮箱验证码的 Redis 键是裸邮箱, 这里先小写会让键错位
 export const classifyLoginIdentifier = (input: string): LoginIdentifier => {
   const raw = input.trim()

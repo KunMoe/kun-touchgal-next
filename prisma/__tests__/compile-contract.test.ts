@@ -202,8 +202,9 @@ describe('删除', () => {
 })
 
 describe('大小写不敏感的精确匹配', () => {
-  // insensitiveEquals 存在的理由。Prisma 哪天自己转义了, 这条会红: 那时 helper 要删掉,
-  // 否则转义两层, 带 _ 或 % 的用户名与邮箱再也查不到
+  // 只作记录: 用户名与邮箱的精确匹配因此 (也因为 ILIKE 用不上索引) 不用这种写法, 改走
+  // server/identity/lookup.ts 的 lower(列) = lower(输入)。别处要做大小写不敏感的精确匹配时
+  // 先转义 _ % 与反斜杠; Prisma 哪天自己转义了这条会红, 那时转义的调用方要一并去掉
   it('equals + insensitive 被编译成不带 ESCAPE 的 ILIKE, 参数原样绑定, _ 和 % 是通配符', async () => {
     await prisma.user.findFirst({
       where: { name: { equals: 'a_b%c', mode: 'insensitive' } },
