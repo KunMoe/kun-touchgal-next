@@ -6,6 +6,7 @@ import { unified } from 'unified'
 import { convert } from 'html-to-text'
 import { kunListItemHandler } from '~/app/api/utils/render/listItemHandler'
 import type { Prisma } from '~/prisma/generated/prisma/client'
+import { sliceCodePoints } from '~/utils/text/unicode'
 
 export const SEARCH_INTRODUCTION_MAX_LENGTH = 2000
 
@@ -109,10 +110,12 @@ export const markdownToSearchText = async (markdown: string) => {
       { selector: 'a', options: { ignoreHref: true } }
     ]
   })
-  return text
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, SEARCH_INTRODUCTION_MAX_LENGTH)
+  // 按码点截断：按 UTF-16 码元截断会在代理对中间切开，带孤立代理的请求体被 Meilisearch
+  // 判为非法 JSON，这份文档的每一次写入都会失败
+  return sliceCodePoints(
+    text.replace(/\s+/g, ' ').trim(),
+    SEARCH_INTRODUCTION_MAX_LENGTH
+  )
 }
 
 // released 为字符串：'YYYY-MM-DD' | 'future' | 'unknown'；

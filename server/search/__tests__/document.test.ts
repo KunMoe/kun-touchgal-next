@@ -67,6 +67,16 @@ describe('markdownToSearchText', () => {
     const text = await markdownToSearchText('字'.repeat(5000))
     expect(text.length).toBe(SEARCH_INTRODUCTION_MAX_LENGTH)
   })
+
+  it('按码点截断: 上限落在代理对中间时不留下孤立代理', async () => {
+    // 1999 个 BMP 字符之后是 emoji: 按 UTF-16 码元截到 2000 会只留下它的高位代理
+    const text = await markdownToSearchText(
+      '字'.repeat(SEARCH_INTRODUCTION_MAX_LENGTH - 1) + '😀'.repeat(10)
+    )
+    expect(text.isWellFormed()).toBe(true)
+    expect([...text]).toHaveLength(SEARCH_INTRODUCTION_MAX_LENGTH)
+    expect(text.endsWith('字😀')).toBe(true)
+  })
 })
 
 describe('patchToSearchDoc', () => {
