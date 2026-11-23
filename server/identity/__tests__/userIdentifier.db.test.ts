@@ -202,19 +202,19 @@ describe.skipIf(!dbContractUrl)(
         owner: await createUser('victim', 'Victim@QQ.com'),
         // 把用户名改成了别人邮箱的账号 (改名规则收紧之前的存量): 与 owner 不在同一列, 不撞索引
         squatter: await createUser('victim@qq.com', 'attacker@qq.com'),
-        // 邮箱形态的用户名, 而这个邮箱没有人注册
+        // 邮箱形态的用户名, 而这个邮箱没有人注册 (生产统计为 0 的那类存量)
         lonely: await createUser('lonely@qq.com', 'lonely-real@qq.com')
       })
 
-      it('邮箱形态的输入取邮箱持有者, 没有持有者才回落到 name 列', async () => {
-        const { owner, lonely } = await seedAccounts()
+      it('邮箱形态的输入取邮箱持有者, 没有持有者时不回落到 name 列', async () => {
+        const { owner } = await seedAccounts()
 
         expect(
           await lookup.findUserForLogin({ kind: 'email', raw: 'VICTIM@qq.com' })
         ).toMatchObject({ id: owner.id })
         expect(
           await lookup.findUserForLogin({ kind: 'email', raw: 'Lonely@QQ.com' })
-        ).toMatchObject({ id: lonely.id })
+        ).toBeNull()
         expect(
           await lookup.findUserForLogin({ kind: 'email', raw: 'nobody@qq.com' })
         ).toBeNull()

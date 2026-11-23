@@ -248,11 +248,15 @@ describe('POST /api/auth/login 按种类解析登录标识符', () => {
     return (await POST(createRequest())).json()
   }
 
-  it('邮箱形态的输入先查 email 列, 邮箱的持有者登得进去', async () => {
+  it('邮箱形态的输入只查 email 列, 邮箱的持有者登得进去', async () => {
     await loginWith('victim@qq.com')
 
     expect(verifyPasswordMock).toHaveBeenCalledWith('password1', 'owner-hash')
     expect(establishSessionMock).toHaveBeenCalledWith(owner, expect.anything())
+    for (const [args] of findFirstMock.mock.calls) {
+      expect(args.where).not.toHaveProperty('name')
+      expect(args.where).not.toHaveProperty('OR')
+    }
   })
 
   it('用户名形态的输入只查 name 列', async () => {

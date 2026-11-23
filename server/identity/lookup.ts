@@ -17,26 +17,21 @@ export const insensitiveEquals = (value: string) => ({
   mode: 'insensitive' as const
 })
 
-// 登录按种类确定性解析。邮箱形态的输入先查 email 列: 有人把用户名改成别人的邮箱时,
-// 邮箱的持有者照样登得进去 (以前是一条 OR 加无序的 findFirst, 两行里随机取一行)。
-// 查不到才回落到 name 列, 照顾改名规则收紧之前 (server/identity/username.ts) 存量的
-// 邮箱形态用户名; 生产统计为 0 之后删掉回落 (统计查询见 docs 里 T18 的任务记录)。
-// 用户名形态的输入只查 name 列。每列至多命中一行由 lower() 唯一索引 (迁移 0018) 保证;
+// 登录按种类确定性解析, 每种只查一列: 邮箱形态的输入只查 email 列, 用户名形态的只查
+// name 列。有人把用户名改成别人的邮箱时, 邮箱的持有者照样登得进去 (以前是一条 OR 加
+// 无序的 findFirst, 两行里随机取一行)。邮箱形态的名字没法拿来登录, 所以取新名字时不许
+// 邮箱形态 (server/identity/username.ts)。以前查不到邮箱还会回落到 name 列, 照顾这类
+// 存量; 生产统计存量为 0 之后删了 (那次查询让每次输错邮箱多扫一遍全表)。
+// 每列至多命中一行由 lower() 唯一索引 (迁移 0018) 保证;
 // 不加 orderBy: ILIKE 用不上任何索引, 带 ORDER BY id 时 planner 改走主键索引逐行回表,
 // 本地生产副本上命中与未命中都慢 2~3 倍 (不带时顺扫命中即停)
-export const findUserForLogin = async (identifier: LoginIdentifier) => {
-  if (identifier.kind === 'email') {
-    const byEmail = await prisma.user.findFirst({
-      where: { email: insensitiveEquals(identifier.raw) }
-    })
-    if (byEmail) {
-      return byEmail
-    }
-  }
-  return prisma.user.findFirst({
-    where: { name: insensitiveEquals(identifier.raw) }
+export const findUserForLogin = (identifier: LoginIdentifier) =>
+  prisma.user.findFirst({
+    where:
+      identifier.kind === 'email'
+        ? { email: insensitiveEquals(identifier.raw) }
+        : { name: insensitiveEquals(identifier.raw) }
   })
-}
 
 // exceptUid 必填: 调用点要在类型上回答「这次有没有当前用户」。改自己名字的大小写
 // (Kun -> KUN) 时不排除自身, 预检就命中本人, 恒报「已经有人注册」(#62)

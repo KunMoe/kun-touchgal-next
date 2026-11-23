@@ -85,7 +85,7 @@ const columnsOf = (sql: string) =>
   ['email', 'name'].filter((column) => sql.includes(`"${column}" ILIKE`))
 
 describe('POST /api/auth/login 发出的 SQL', () => {
-  it('邮箱形态的输入先单独查 email 列, 查不到再单独查 name 列, 都绑定转义过的输入', async () => {
+  it('邮箱形态的输入只查 email 列, 查不到也不再查 name 列, 绑定转义过的输入', async () => {
     parsePostMock.mockResolvedValue({
       name: 'kun_chan@qq.com',
       password: 'password1',
@@ -96,16 +96,9 @@ describe('POST /api/auth/login 发出的 SQL', () => {
     await expect(res.json()).resolves.toBe('用户名或密码错误')
 
     const statements = dataStatements(recorder.take())
-    expect(statements.map(({ sql }) => columnsOf(sql))).toEqual([
-      ['email'],
-      ['name']
-    ])
-    expectEscapedIlike(statements.slice(0, 1), {
+    expect(statements.map(({ sql }) => columnsOf(sql))).toEqual([['email']])
+    expectEscapedIlike(statements, {
       column: 'email',
-      bound: 'kun\\_chan@qq.com'
-    })
-    expectEscapedIlike(statements.slice(1), {
-      column: 'name',
       bound: 'kun\\_chan@qq.com'
     })
   })

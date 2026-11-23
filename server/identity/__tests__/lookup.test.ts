@@ -27,7 +27,7 @@ const rows = [
   { id: 1, name: 'victim', email: 'Victim@QQ.com' },
   // 把用户名改成了别人邮箱的账号 (改名规则收紧之前的存量)
   { id: 2, name: 'victim@qq.com', email: 'attacker@qq.com' },
-  // 邮箱形态的用户名, 而这个邮箱没有人注册
+  // 邮箱形态的用户名, 而这个邮箱没有人注册 (生产统计为 0 的那类存量)
   { id: 3, name: 'lonely@qq.com', email: 'lonely-real@qq.com' }
 ]
 
@@ -81,10 +81,10 @@ describe('findUserForLogin', () => {
     expect(queriedColumns()).toEqual(['email'])
   })
 
-  it('没有人持有这个邮箱时回落到 name 列 (存量的邮箱形态用户名)', async () => {
+  it('没有人持有这个邮箱时不回落到 name 列, 邮箱形态的用户名登不进去', async () => {
     const user = await findUserForLogin({ kind: 'email', raw: 'lonely@qq.com' })
-    expect(user).toMatchObject({ id: 3 })
-    expect(queriedColumns()).toEqual(['email', 'name'])
+    expect(user).toBeNull()
+    expect(queriedColumns()).toEqual(['email'])
   })
 
   it('用户名形态的输入只查 name 列, 从不查 email', async () => {
@@ -104,12 +104,15 @@ describe('findUserForLogin', () => {
 
   it('查询是转义过的大小写不敏感精确匹配, 不带 orderBy (带了会改走主键索引逐行回表)', async () => {
     await findUserForLogin({ kind: 'email', raw: 'kun_chan@qq.com' })
-    expect(findFirstMock).toHaveBeenNthCalledWith(1, {
-      where: { email: { equals: 'kun\\_chan@qq.com', mode: 'insensitive' } }
-    })
-    expect(findFirstMock).toHaveBeenNthCalledWith(2, {
-      where: { name: { equals: 'kun\\_chan@qq.com', mode: 'insensitive' } }
-    })
+    await findUserForLogin({ kind: 'name', raw: 'kun_chan%' })
+    expect(findFirstMock.mock.calls).toEqual([
+      [
+        {
+          where: { email: { equals: 'kun\\_chan@qq.com', mode: 'insensitive' } }
+        }
+      ],
+      [{ where: { name: { equals: 'kun\\_chan\\%', mode: 'insensitive' } } }]
+    ])
   })
 })
 
