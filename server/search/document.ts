@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import rehypeStringify from 'rehype-stringify'
 import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
@@ -32,7 +33,6 @@ export const PATCH_SEARCH_SELECT = {
   resource_count: true,
   comment_count: true,
   created: true,
-  updated: true,
   resource_update_time: true,
   alias: { select: { name: true } },
   tag: { select: { tag: { select: { id: true, name: true } } } },
@@ -67,8 +67,6 @@ export interface GalgameSearchDoc {
   // 触发器维护的 YYYYMMDD 排序键，无法解析的日期为 null
   releasedSort: number | null
   created: number
-  // 对账脚本用于比对 PG 与索引差异的时间戳
-  updated: number
   resourceUpdateTime: number
   view: number
   download: number
@@ -77,18 +75,51 @@ export interface GalgameSearchDoc {
   commentCount: number
   ratingCount: number
   avgRating: number
+  // 文档摘要 (computeSearchDocHash)，对账拿它判断索引里这份文档是否过时；不检索、不过滤、不排序
+  docHash: string
 }
 
-// 计数快照的 partial 文档，经 updateDocuments（PUT）定时刷入，不触发实时同步
-export interface GalgameSearchCountsDoc {
-  id: number
-  view: number
-  download: number
-  favoriteCount: number
-  resourceCount: number
-  commentCount: number
-  ratingCount: number
-  avgRating: number
+// 计数字段：变化只影响排序 (以及 ratingCount 过滤)，不触发实时同步，由计数刷新任务
+// (searchCountsRefreshTask) 按快照差量定时写入。这张表同时定计数指纹的字段与顺序、计数
+// partial 文档的形状、文档摘要的剔除项
+export const SEARCH_COUNT_FIELDS = [
+  'view',
+  'download',
+  'favoriteCount',
+  'resourceCount',
+  'commentCount',
+  'ratingCount',
+  'avgRating'
+] as const satisfies readonly (keyof GalgameSearchDoc)[]
+
+// 计数快照的 partial 文档，经 updateDocuments（PUT）定时刷入
+export type GalgameSearchCountsDoc = Pick<
+  GalgameSearchDoc,
+  'id' | (typeof SEARCH_COUNT_FIELDS)[number]
+>
+
+const SEARCH_DOC_HASH_EXCLUDED = new Set<string>([
+  ...SEARCH_COUNT_FIELDS,
+  'docHash'
+])
+
+// 摘要取自构建出的文档而不是 PG 载荷：别名 / 标签 / 会社关联与改名、构建器自身或依赖
+// (remark、html-to-text) 输出的变化都会改变它，不用维护构建器版本号，也不用另抄一份 PG
+// 字段清单。计数字段由计数刷新任务单独写入，不进摘要。关联查询没有 orderBy，数组按元素
+// 排序后再算，返回顺序变了不算过时
+export const computeSearchDocHash = (
+  doc: Omit<GalgameSearchDoc, 'docHash'>
+) => {
+  const entries = Object.entries(doc)
+    .filter(([key]) => !SEARCH_DOC_HASH_EXCLUDED.has(key))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, value]) => [
+      key,
+      Array.isArray(value)
+        ? value.map((item) => JSON.stringify(item)).sort()
+        : value
+    ])
+  return createHash('sha1').update(JSON.stringify(entries)).digest('hex')
 }
 
 const markdownProcessor = unified()
@@ -135,7 +166,7 @@ export const patchToSearchDoc = async (
   patch: PatchSearchPayload
 ): Promise<GalgameSearchDoc> => {
   const { releasedYear, releasedMonth } = parseReleasedDate(patch.released)
-  return {
+  const doc: Omit<GalgameSearchDoc, 'docHash'> = {
     id: patch.id,
     uniqueId: patch.unique_id,
     name: patch.name,
@@ -157,7 +188,6 @@ export const patchToSearchDoc = async (
     releasedMonth,
     releasedSort: patch.released_sort,
     created: Math.floor(patch.created.getTime() / 1000),
-    updated: Math.floor(patch.updated.getTime() / 1000),
     resourceUpdateTime: Math.floor(patch.resource_update_time.getTime() / 1000),
     view: patch.view,
     download: patch.download,
@@ -167,4 +197,5 @@ export const patchToSearchDoc = async (
     ratingCount: patch.rating_stat?.count ?? 0,
     avgRating: patch.rating_stat?.avg_overall ?? 0
   }
+  return { ...doc, docHash: computeSearchDocHash(doc) }
 }

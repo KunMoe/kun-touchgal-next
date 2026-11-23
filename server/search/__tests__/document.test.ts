@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  SEARCH_COUNT_FIELDS,
   SEARCH_INTRODUCTION_MAX_LENGTH,
+  computeSearchDocHash,
   markdownToSearchText,
   parseReleasedDate,
   patchToSearchDoc
@@ -79,36 +81,35 @@ describe('markdownToSearchText', () => {
   })
 })
 
-describe('patchToSearchDoc', () => {
-  const basePayload: PatchSearchPayload = {
-    id: 1024,
-    unique_id: 'abcd1234',
-    name: 'サノバウィッチ',
-    banner: 'sano-banner.avif',
-    vndb_id: 'v16044',
-    vndb_relation_id: null,
-    dlsite_code: null,
-    introduction: '**魔女**的故事',
-    released: '2015-02-27',
-    released_sort: 20150227,
-    content_limit: 'sfw',
-    type: ['pc'],
-    language: ['zh-Hans', 'ja'],
-    platform: ['windows'],
-    view: 12000,
-    download: 3400,
-    favorite_count: 500,
-    resource_count: 8,
-    comment_count: 15,
-    created: new Date('2023-11-15T00:00:00Z'),
-    updated: new Date('2024-03-10T00:00:00Z'),
-    resource_update_time: new Date('2024-03-10T00:00:00Z'),
-    alias: [{ name: '魔女的夜宴' }, { name: 'sanoba witch' }],
-    tag: [{ tag: { id: 1, name: '恋爱' } }, { tag: { id: 2, name: '魔女' } }],
-    company: [{ company: { id: 3, name: 'Yuzusoft' } }],
-    rating_stat: { avg_overall: 8.6, count: 87 }
-  }
+const basePayload: PatchSearchPayload = {
+  id: 1024,
+  unique_id: 'abcd1234',
+  name: 'サノバウィッチ',
+  banner: 'sano-banner.avif',
+  vndb_id: 'v16044',
+  vndb_relation_id: null,
+  dlsite_code: null,
+  introduction: '**魔女**的故事',
+  released: '2015-02-27',
+  released_sort: 20150227,
+  content_limit: 'sfw',
+  type: ['pc'],
+  language: ['zh-Hans', 'ja'],
+  platform: ['windows'],
+  view: 12000,
+  download: 3400,
+  favorite_count: 500,
+  resource_count: 8,
+  comment_count: 15,
+  created: new Date('2023-11-15T00:00:00Z'),
+  resource_update_time: new Date('2024-03-10T00:00:00Z'),
+  alias: [{ name: '魔女的夜宴' }, { name: 'sanoba witch' }],
+  tag: [{ tag: { id: 1, name: '恋爱' } }, { tag: { id: 2, name: '魔女' } }],
+  company: [{ company: { id: 3, name: 'Yuzusoft' } }],
+  rating_stat: { avg_overall: 8.6, count: 87 }
+}
 
+describe('patchToSearchDoc', () => {
   it('完整字段映射', async () => {
     const doc = await patchToSearchDoc(basePayload)
     expect(doc).toEqual({
@@ -133,7 +134,6 @@ describe('patchToSearchDoc', () => {
       releasedMonth: '02',
       releasedSort: 20150227,
       created: Math.floor(basePayload.created.getTime() / 1000),
-      updated: Math.floor(basePayload.updated.getTime() / 1000),
       resourceUpdateTime: Math.floor(
         basePayload.resource_update_time.getTime() / 1000
       ),
@@ -143,7 +143,8 @@ describe('patchToSearchDoc', () => {
       resourceCount: 8,
       commentCount: 15,
       ratingCount: 87,
-      avgRating: 8.6
+      avgRating: 8.6,
+      docHash: expect.stringMatching(/^[0-9a-f]{40}$/)
     })
   })
 
@@ -167,5 +168,59 @@ describe('patchToSearchDoc', () => {
     expect(doc.releasedYear).toBe('unknown')
     expect(doc.releasedMonth).toBeNull()
     expect(doc.releasedSort).toBeNull()
+  })
+})
+
+describe('computeSearchDocHash 文档摘要', () => {
+  const hashOf = async (payload: PatchSearchPayload) =>
+    (await patchToSearchDoc(payload)).docHash
+
+  it('计数字段变化不改变摘要: 它们由计数刷新任务单独写入', async () => {
+    const base = await hashOf(basePayload)
+    const counted = await hashOf({
+      ...basePayload,
+      view: 1,
+      download: 2,
+      favorite_count: 3,
+      resource_count: 4,
+      comment_count: 5,
+      rating_stat: { avg_overall: 1, count: 1 }
+    })
+    expect(counted).toBe(base)
+  })
+
+  it('摘要剔除的恰好是全部计数字段', async () => {
+    const doc = await patchToSearchDoc(basePayload)
+    const { docHash, ...rest } = doc
+    for (const field of SEARCH_COUNT_FIELDS) {
+      expect(computeSearchDocHash({ ...rest, [field]: -1 })).toBe(docHash)
+    }
+    expect(computeSearchDocHash({ ...rest, releasedSort: 1 })).not.toBe(docHash)
+  })
+
+  it.each([
+    [
+      '标签改名',
+      { tag: [{ tag: { id: 1, name: '纯爱' } }, basePayload.tag[1]] }
+    ],
+    ['会社改指', { company: [{ company: { id: 4, name: 'Yuzusoft' } }] }],
+    ['别名变化', { alias: [{ name: '魔女的夜宴' }] }],
+    ['简介变化', { introduction: '**魔女**的故事续' }],
+    ['分级变化', { content_limit: 'nsfw' }],
+    ['资源更新时间变化', { resource_update_time: new Date('2025-01-01') }]
+  ])('%s 改变摘要', async (_name, overrides) => {
+    expect(await hashOf({ ...basePayload, ...overrides })).not.toBe(
+      await hashOf(basePayload)
+    )
+  })
+
+  it('关联的返回顺序不影响摘要 (关联查询没有 orderBy)', async () => {
+    const reordered = await hashOf({
+      ...basePayload,
+      alias: [...basePayload.alias].reverse(),
+      tag: [...basePayload.tag].reverse(),
+      language: [...basePayload.language].reverse()
+    })
+    expect(reordered).toBe(await hashOf(basePayload))
   })
 })

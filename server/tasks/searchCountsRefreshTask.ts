@@ -2,7 +2,10 @@ import cron from 'node-cron'
 import { prisma } from '~/prisma'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { getKvHashAll, setKvHashFields } from '~/lib/redis'
-import type { GalgameSearchCountsDoc } from '~/server/search/document'
+import {
+  SEARCH_COUNT_FIELDS,
+  type GalgameSearchCountsDoc
+} from '~/server/search/document'
 import { withSearchWriter, type SearchWriter } from '~/server/search/sync'
 
 const COUNTS_REFRESH_BATCH_SIZE = 2000
@@ -11,9 +14,10 @@ const COUNTS_SNAPSHOT_KEY = 'search:counts:fp'
 // 最后一行的任务等待还可能多出 30 秒)
 const COUNTS_REFRESH_LOCK_WAIT_MS = 90_000
 
-// 指纹覆盖全部会刷入 Meili 的数值字段：任一变化都会触发该行重推
+// 指纹覆盖全部会刷入 Meili 的数值字段：任一变化都会触发该行重推。字段与顺序取自
+// SEARCH_COUNT_FIELDS，拼出的串与改造前逐个手写的相同，Redis 里已有的快照照常可用
 export const countsFingerprint = (doc: GalgameSearchCountsDoc) =>
-  `${doc.view}|${doc.download}|${doc.favoriteCount}|${doc.resourceCount}|${doc.commentCount}|${doc.ratingCount}|${doc.avgRating}`
+  SEARCH_COUNT_FIELDS.map((field) => doc[field]).join('|')
 
 // view/download 等计数只影响排序 (以及 ratingCount 过滤)，变化不触发实时同步；本任务分批读全表，
 // 仅将指纹相较 Redis 快照发生变化的行以 partial update（PUT）刷入 Meili，

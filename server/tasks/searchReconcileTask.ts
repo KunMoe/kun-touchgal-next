@@ -18,9 +18,10 @@ export const searchReconcileTask = cron.createTask('0 5 * * *', async () => {
       taskName: 'searchReconcileTask'
     },
     async () => {
+      // 只检测、只入箱，写入由出箱的 drain 完成 (cron 每分钟一轮)
       const result = await reconcileSearchIndex()
       console.log(
-        `搜索索引对账完成: PG 共 ${result.total} 条，重新同步 ${result.synced} 条，删除 ${result.deleted} 条`
+        `搜索索引对账完成: PG 共 ${result.total} 条，入箱 缺失 ${result.missing} / 多余 ${result.extra} / 过时 ${result.stale} 条`
       )
     }
   ).catch((error) => {
