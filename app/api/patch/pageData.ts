@@ -84,6 +84,12 @@ const queryPatchPage = async (
   }
 }
 
+// 直读对照的开关: 'off' 时不读写这两个键、不走单飞, 每次直接查库 (结果记为 direct)。
+// 调用时读取, 改 pm2 的环境变量后 reload 即生效。失效调用点照常执行, 所以切回 'on' 时
+// 缓存里的旧条目最多再活一个 TTL, 切换是可回滚的
+const isPatchDetailCacheEnabled = () =>
+  process.env.KUN_PATCH_DETAIL_CACHE !== 'off'
+
 // 不含收藏状态: 它是另一个命名空间 (patch:favorite), 两种读法都要查
 const loadPatchPage = async (uniqueId: string) => {
   const startedAt = performance.now()
@@ -106,6 +112,10 @@ const loadPatchPage = async (uniqueId: string) => {
       sourceMs
     )
     return result
+  }
+
+  if (!isPatchDetailCacheEnabled()) {
+    return done(await query(), 'direct')
   }
 
   const cached = await readPatchPageCache(uniqueId)

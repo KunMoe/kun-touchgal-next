@@ -321,6 +321,52 @@ describe('getPatchPageData', () => {
   })
 })
 
+describe('详情缓存直读开关 KUN_PATCH_DETAIL_CACHE', () => {
+  const viewer = { uid: 42, role: 1 }
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('off 时不读写两个详情键、不加锁, 每次查库并记 direct', async () => {
+    vi.stubEnv('KUN_PATCH_DETAIL_CACHE', 'off')
+
+    await getPatchPageData(input, null)
+    await getPatchPageData(input, null)
+
+    expect(findUniqueMock).toHaveBeenCalledTimes(2)
+    expect(getKvMock).not.toHaveBeenCalled()
+    expect(acquireKvLockMock).not.toHaveBeenCalled()
+    expect(setKvMock).not.toHaveBeenCalled()
+    expect(setKvIfAbsentMock).not.toHaveBeenCalled()
+    expect(recordedOutcomes('patch:page')).toEqual([
+      ['direct', true],
+      ['direct', true]
+    ])
+  })
+
+  it('off 时查无此作品仍返回 null, 记 notFound', async () => {
+    vi.stubEnv('KUN_PATCH_DETAIL_CACHE', 'off')
+    findUniqueMock.mockResolvedValue(null)
+
+    await expect(getPatchPageData(input, null)).resolves.toBeNull()
+    expect(recordedOutcomes('patch:page')).toEqual([['notFound', true]])
+  })
+
+  // 撤除读路径时的黄金用例: 直读与缓存未命中时回源产出的页面数据逐字段相同
+  it('off 的结果与 on 未命中时回源的结果逐字段相同', async () => {
+    favoriteFindFirstMock.mockResolvedValue({ id: 3 })
+    const cachedResult = await getPatchPageData(input, viewer)
+
+    kvStore.clear()
+    vi.stubEnv('KUN_PATCH_DETAIL_CACHE', 'off')
+    const directResult = await getPatchPageData(input, viewer)
+
+    expect(directResult).toStrictEqual(cachedResult)
+    expect(directResult).toMatchObject({ patch: { isFavorite: true } })
+  })
+})
+
 // 关系 _count 会被 Prisma 编译成子表整表 GROUP BY (C3), 详情计数必须读计数列
 describe('详情计数读触发器计数列', () => {
   const expectedCount = { favorite_folder: 3, resource: 2, comment: 1 }

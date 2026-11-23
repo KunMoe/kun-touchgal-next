@@ -55,6 +55,8 @@ const rawEnvSchema = z.object({
   KUN_NEXTMOE_API_KEY: z.string(),
 
   KUN_ENABLE_CRON: z.enum(['true', 'false']).optional(),
+  // 作品详情页的 Redis 缓存, 缺省为 on; off 时每次直接查库 (见 app/api/patch/pageData.ts)
+  KUN_PATCH_DETAIL_CACHE: z.enum(['on', 'off']).optional(),
   KUN_VISUAL_NOVEL_TEST_SITE_LABEL: z.string().optional(),
 
   MODERATION_AI_BASE_URL: z.string().url().optional(),
