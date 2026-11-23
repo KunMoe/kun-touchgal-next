@@ -1,6 +1,6 @@
 import type { NextConfig } from 'next'
 
-type KunHeaderRoute = Awaited<
+export type KunHeaderRoute = Awaited<
   ReturnType<NonNullable<NextConfig['headers']>>
 >[number]
 

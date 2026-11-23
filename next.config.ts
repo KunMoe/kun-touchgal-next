@@ -1,6 +1,7 @@
 // import { fileURLToPath } from 'url'
 import { env } from './validations/dotenv-check'
 import { kunRscCacheHeaders } from './config/rsc-cache-headers'
+import { kunSecurityHeaders } from './config/security-headers'
 import createMDX from '@next/mdx'
 import type { NextConfig } from 'next'
 // import remarkGfm from 'remark-gfm'
@@ -53,7 +54,8 @@ const nextConfig: NextConfig = {
     '*': ['docs/**', 'migration/backup/**', '.playwright-mcp/**']
   },
   serverExternalPackages: ['oidc-provider', 'capjs-core'],
-  headers: async () => kunRscCacheHeaders,
+  headers: async () => [...kunRscCacheHeaders, ...kunSecurityHeaders],
+  poweredByHeader: false,
   experimental: {
     optimizePackageImports: ['@heroui/react', 'framer-motion']
     // turbotrace: {
