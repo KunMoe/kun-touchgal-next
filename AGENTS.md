@@ -125,6 +125,7 @@ pnpm prisma:generate
 - `server/viewer/context.ts`、`server/viewer/patchVisibility.ts`：请求视角与作品可见性的唯一定义。
 - `config/routePolicy.ts`、`utils/pageMetadata.ts`、`app/robots.ts`、`app/sitemap.ts`、`server/sitemap/`：抓取契约——路由策略表、页面 metadata 工厂、从策略表派生的 robots.txt 与运行期站点地图。
 - `proxy.ts`、`middleware/_csrf.ts`：路由保护与 CSRF 策略。
+- `decision-making/7.edge-security-contract.md`、`config/security-headers.ts`：应用与边缘（Cloudflare、nginx）的安全分工——应用自己保证的性质（静态安全头、OIDC 对外地址由 `OIDC_ISSUER` 推导、`/api` 全部写方法的 CSRF）与只能由边缘保证、待站长作答的义务（源站只接受 Cloudflare 回源、转发头覆盖写、HSTS、HTML 缓存与注入脚本）。新代码要依赖边缘行为（客户端 IP、转发头、缓存、安全头）之前先对照它，分工变了同步改它；CSP 不进 `next.config.ts` 的 `headers()`。
 - `prisma/index.ts`、`prisma/createClient.ts`、`prisma.config.ts`、`prisma/schema/schema.prisma`：数据库 client 单例与连接池、唯一构造 `PrismaClient` 的工厂、schema 路径和生成配置。
 - `lib/redis.ts`、`lib/s3.ts`、`lib/meilisearch.ts`：基础设施适配器。
 - `server/moderation/apply.ts`、`server/search/sync.ts`：审核事务和提交后搜索同步的代表实现。

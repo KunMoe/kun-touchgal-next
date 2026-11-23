@@ -33,7 +33,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 
 - Server Component（`app/**/page.tsx`）→ `app/**/actions.ts` → service → `prisma` / `redis`。`actions.ts` 是只在服务端被 await 的页面读取器，首行 `import 'server-only'`，不写 `'use server'`（会把导出登记成可被直接 POST 的 Server Function；lint 的 `kun/inv-server-01` 执法）。
 - Client Component → `utils/kunFetch.ts` → `app/api/**/route.ts`（`kunRoute`：Zod 校验 → 会话与能力门）→ service/cache → Prisma。
-- `proxy.ts`（Next 16 前身为 `middleware.ts`）：对 `/api/*` 的写方法做 CSRF（唯一豁免 `/api/user/setting/email/revert`，靠邮件里的一次性令牌）；对 `/admin`、`/user`、`/edit` 做登录保护。
+- `proxy.ts`（Next 16 前身为 `middleware.ts`）：对 `/api/*` 的写方法做 CSRF（唯一豁免 `/api/user/setting/email/revert`，靠邮件里的一次性令牌）；对 `/admin`、`/user`、`/edit` 做登录保护。应用与 Cloudflare / nginx 的安全分工（谁下发安全头、谁保证客户端 IP 可信）见 `decision-making/7.edge-security-contract.md`。
 - 认证：JWT cookie 名 `kun-galgame-patch-moe-token`；proxy 用 `app/api/utils/jwtEdge.ts`，服务端的签发与解析只在 `server/auth/session.ts`（`establishKunSession` / `resolveKunSiteSession`），路由从 `kunRoute` 的 `actor` 取身份。
 - 数据层入口：`prisma/index.ts`（Prisma 7 + pg pool）、`lib/redis.ts`、`lib/s3.ts`。Prisma model 拆分在 `prisma/schema/*.prisma`，生成到 `prisma/generated/prisma`。
 - 库的结构与数据变更只走 `db/migrations/`（线性、只追加，已合入的文件不可改）；改 `prisma/schema` 必须同时新增迁移并刷新 `db/objects.snapshot.sql`，CI 的 `db-replay` job 执法。
