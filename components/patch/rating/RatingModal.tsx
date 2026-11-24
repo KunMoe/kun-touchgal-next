@@ -84,8 +84,8 @@ export const RatingModal = ({
   }, [initial, isOpen])
 
   const handleSubmit = async () => {
-    if (!overall || overall < 1 || overall > 10) {
-      toast.error('评分范围只能为 1-10')
+    if (!Number.isInteger(overall) || overall < 1 || overall > 10) {
+      toast.error('评分须为 1～10 的整数')
       return
     }
     setLoading(true)
