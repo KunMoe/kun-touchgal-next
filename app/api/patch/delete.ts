@@ -7,6 +7,7 @@ import { recordKunChanges } from '~/server/cache/publish'
 import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { queueSearchRemove, enqueueSearchOutbox } from '~/server/search/sync'
 import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
+import { enqueuePatchBannerDeletion } from '~/server/storage/patchBanner'
 import type { ResourceStatus } from '~/constants/contentStatus'
 
 const patchIdSchema = z.object({
@@ -63,13 +64,17 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
       })
     ])
 
-    await prisma.patch.delete({
+    // delete 是单条 DELETE … RETURNING: 返回的 banner 就是删除那一刻的指针 (换封面在同一行锁下
+    // 改它, 不会漏掉并发换上的新版本)
+    const deleted = await prisma.patch.delete({
       where: { id: patchId }
     })
     // 事务性入队：与补丁变更原子提交，关闭崩溃丢失窗口
     await enqueueSearchOutbox(prisma, patchId)
     // 事务性入队 S3 删除：与行删除原子提交，取代提交后 Promise.all 的不可恢复删除
     await enqueueResourceLinkDeletions(prisma, s3Links)
+    // 封面随游戏立即回收 (X06-01): 不留宽限期, 下架即生效
+    await enqueuePatchBannerDeletion(prisma, patchId, deleted.banner)
 
     // 内容已级联删除, 删除后再清理其未决审核任务与未处理申诉 (content_id 无外键, 用删除前收集的 id);
     // 清理置于删除后, 与 submitAppeal 的内容行锁配合, 杜绝并发申诉提交造成的 TOCTOU 孤儿。

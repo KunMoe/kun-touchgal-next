@@ -3,7 +3,11 @@ import {
   getUserAvatarKeys,
   getUserAvatarModerationArchiveKey,
   getUserAvatarPendingKeys,
-  newContentImageKey
+  isPatchBannerPointerIn,
+  isUserAvatarPendingKey,
+  newContentImageKey,
+  parsePatchBannerKey,
+  patchBannerKeysFromPointer
 } from '~/server/storage/imageObjects'
 
 const BED = 'https://img.example.test'
@@ -86,5 +90,153 @@ describe('newContentImageKey', () => {
     expect(a.key).not.toBe(b.key)
     expect(a.key).toMatch(/^user\/image\/7\/7-1732500000000-[0-9a-f]{8}\.avif$/)
     expect(a.url).toBe(`${BED}/${a.key}`)
+  })
+})
+
+describe('isUserAvatarPendingKey', () => {
+  it('只认本人 pending/ 目录下直接的 avif', () => {
+    const { pendingKey, pendingMiniKey } = getUserAvatarPendingKeys(1, 'n')
+    expect(isUserAvatarPendingKey(1, pendingKey)).toBe(true)
+    expect(isUserAvatarPendingKey(1, pendingMiniKey)).toBe(true)
+  })
+
+  it('留档、正式头像、别人的暂存对象、子目录一律不认', () => {
+    expect(
+      isUserAvatarPendingKey(1, getUserAvatarModerationArchiveKey(1, 'n'))
+    ).toBe(false)
+    for (const key of Object.values(getUserAvatarKeys(1))) {
+      expect(isUserAvatarPendingKey(1, key)).toBe(false)
+    }
+    expect(
+      isUserAvatarPendingKey(1, getUserAvatarPendingKeys(10, 'n').pendingKey)
+    ).toBe(false)
+    expect(
+      isUserAvatarPendingKey(1, 'user/avatar/user_1/pending/a/b.avif')
+    ).toBe(false)
+    expect(isUserAvatarPendingKey(1, '')).toBe(false)
+  })
+})
+
+describe('patchBannerKeysFromPointer', () => {
+  const UUID = '0f8c8a8e-3a3b-4c5d-9e6f-1a2b3c4d5e6f'
+
+  it('存量形态: 推出固定目录下的三件套', () => {
+    vi.stubEnv('KUN_VISUAL_NOVEL_IMAGE_BED_URL', BED)
+    expect(
+      patchBannerKeysFromPointer(1, `${BED}/patch/1/banner/banner.avif`)
+    ).toEqual([
+      'patch/1/banner/banner.avif',
+      'patch/1/banner/banner-mini.avif',
+      'patch/1/banner/banner-full.avif'
+    ])
+  })
+
+  it('版本目录形态: 推出同一版本目录下的三件套', () => {
+    vi.stubEnv('KUN_VISUAL_NOVEL_IMAGE_BED_URL', BED)
+    expect(
+      patchBannerKeysFromPointer(
+        10,
+        `${BED}/patch/10/banner/${UUID}/banner.avif`
+      )
+    ).toEqual([
+      `patch/10/banner/${UUID}/banner.avif`,
+      `patch/10/banner/${UUID}/banner-mini.avif`,
+      `patch/10/banner/${UUID}/banner-full.avif`
+    ])
+  })
+
+  // 认错的代价是删掉别人的对象: 下面这些一律不认
+  it.each([
+    [
+      '别的游戏 (patch/1 不得匹配 patch/10)',
+      1,
+      `${BED}/patch/10/banner/banner.avif`
+    ],
+    [
+      '别的游戏 (patch/10 不得匹配 patch/1)',
+      10,
+      `${BED}/patch/1/banner/banner.avif`
+    ],
+    ['外站主机', 1, 'https://evil.example.test/patch/1/banner/banner.avif'],
+    ['前缀只是主机名的前缀', 1, `${BED}.evil.test/patch/1/banner/banner.avif`],
+    [
+      '外站地址把图床写在路径里',
+      1,
+      `https://evil.example.test/${BED}/patch/1/banner/banner.avif`
+    ],
+    ['.. 路径', 1, `${BED}/patch/1/banner/../../user/image/1/a.avif`],
+    ['.. 当作版本段', 1, `${BED}/patch/1/banner/../banner.avif`],
+    ['变体而不是主图', 1, `${BED}/patch/1/banner/banner-mini.avif`],
+    ['资源对象', 1, `${BED}/patch/1/resource/abc/banner.avif`],
+    ['版本段不是 uuid', 1, `${BED}/patch/1/banner/abc/banner.avif`],
+    ['大写 uuid', 1, `${BED}/patch/1/banner/${UUID.toUpperCase()}/banner.avif`],
+    ['带查询串', 1, `${BED}/patch/1/banner/banner.avif?v=1`],
+    ['前导零的 id', 1, `${BED}/patch/01/banner/banner.avif`],
+    ['空串', 1, '']
+  ])('%s → []', (_label, patchId, pointer) => {
+    vi.stubEnv('KUN_VISUAL_NOVEL_IMAGE_BED_URL', BED)
+    expect(
+      patchBannerKeysFromPointer(patchId as number, pointer as string)
+    ).toEqual([])
+  })
+
+  it('没有配置图床前缀时一律不认', () => {
+    vi.stubEnv('KUN_VISUAL_NOVEL_IMAGE_BED_URL', '')
+    expect(
+      patchBannerKeysFromPointer(1, '/patch/1/banner/banner.avif')
+    ).toEqual([])
+  })
+})
+
+describe('parsePatchBannerKey / isPatchBannerPointerIn', () => {
+  const UUID = '0f8c8a8e-3a3b-4c5d-9e6f-1a2b3c4d5e6f'
+
+  it('三种变体都归到同一个版本目录', () => {
+    for (const name of ['banner', 'banner-mini', 'banner-full']) {
+      expect(
+        parsePatchBannerKey(`patch/12/banner/${UUID}/${name}.avif`)
+      ).toEqual({ patchId: 12, dir: `patch/12/banner/${UUID}` })
+      expect(parsePatchBannerKey(`patch/12/banner/${name}.avif`)).toEqual({
+        patchId: 12,
+        dir: 'patch/12/banner'
+      })
+    }
+  })
+
+  it('不是封面对象的 key 返回 null', () => {
+    expect(parsePatchBannerKey('patch/12/resource/abc/banner.avif')).toBeNull()
+    expect(parsePatchBannerKey('patch/12/banner/abc/banner.avif')).toBeNull()
+    expect(parsePatchBannerKey('user/avatar/user_1/avatar.avif')).toBeNull()
+    expect(parsePatchBannerKey('x/patch/12/banner/banner.avif')).toBeNull()
+  })
+
+  it('指针指向同一版本目录才算在用; 不看主机与查询串', () => {
+    const versioned = `patch/12/banner/${UUID}`
+    expect(
+      isPatchBannerPointerIn(`${BED}/${versioned}/banner.avif`, versioned)
+    ).toBe(true)
+    expect(
+      isPatchBannerPointerIn(
+        `https://old.example.test/${versioned}/banner.avif?v=2`,
+        versioned
+      )
+    ).toBe(true)
+    // 换到版本目录之后, 固定目录的旧对象不再在用
+    expect(
+      isPatchBannerPointerIn(
+        `${BED}/${versioned}/banner.avif`,
+        'patch/12/banner'
+      )
+    ).toBe(false)
+    expect(
+      isPatchBannerPointerIn(`${BED}/patch/12/banner/banner.avif`, versioned)
+    ).toBe(false)
+    expect(
+      isPatchBannerPointerIn(
+        `${BED}/patch/112/banner/banner.avif`,
+        'patch/12/banner'
+      )
+    ).toBe(false)
+    expect(isPatchBannerPointerIn('', 'patch/12/banner')).toBe(false)
   })
 })

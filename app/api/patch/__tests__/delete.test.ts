@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   findPatchMock,
@@ -16,7 +16,8 @@ const {
   invalidateCacheMock,
   invalidateContentMock,
   invalidatePendingMock,
-  queueSearchRemoveMock
+  queueSearchRemoveMock,
+  enqueueS3DeletionMock
 } = vi.hoisted(() => ({
   findPatchMock: vi.fn(),
   findResourcesMock: vi.fn(),
@@ -33,7 +34,8 @@ const {
   invalidateCacheMock: vi.fn(),
   invalidateContentMock: vi.fn(),
   invalidatePendingMock: vi.fn(),
-  queueSearchRemoveMock: vi.fn()
+  queueSearchRemoveMock: vi.fn(),
+  enqueueS3DeletionMock: vi.fn()
 }))
 
 const transactionClient = {
@@ -57,7 +59,8 @@ vi.mock('~/app/api/patch/resource/_helper', () => ({
 }))
 
 vi.mock('~/server/storage/s3Outbox', () => ({
-  kickS3DeletionDrain: kickDrainMock
+  kickS3DeletionDrain: kickDrainMock,
+  enqueueS3Deletion: enqueueS3DeletionMock
 }))
 
 vi.mock('~/app/api/resource/cache', () => ({
@@ -86,6 +89,9 @@ vi.mock('~/server/search/sync', () => ({
 }))
 
 import { deletePatchById } from '~/app/api/patch/delete'
+
+const BED = 'https://img.example.test'
+const UUID = '0f8c8a8e-3a3b-4c5d-9e6f-1a2b3c4d5e6f'
 
 const resource = (id: number, status: number, section: string) => ({
   id,
@@ -119,7 +125,11 @@ beforeEach(() => {
   ])
   findCommentsMock.mockResolvedValue([{ id: 11 }])
   findRatingsMock.mockResolvedValue([{ id: 21 }])
-  patchDeleteMock.mockResolvedValue({})
+  vi.stubEnv('KUN_VISUAL_NOVEL_IMAGE_BED_URL', BED)
+  patchDeleteMock.mockResolvedValue({
+    id: 7,
+    banner: `${BED}/patch/7/banner/${UUID}/banner.avif`
+  })
   deleteTasksMock.mockResolvedValue(undefined)
   deleteAppealsMock.mockResolvedValue(undefined)
   enqueueDeletionsMock.mockResolvedValue(undefined)
@@ -129,6 +139,11 @@ beforeEach(() => {
     async (callback: (tx: typeof transactionClient) => Promise<unknown>) =>
       callback(transactionClient)
   )
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.restoreAllMocks()
 })
 
 describe('deletePatchById', () => {
@@ -164,6 +179,35 @@ describe('deletePatchById', () => {
     expect(invalidateContentMock).toHaveBeenCalledTimes(1)
     expect(invalidateContentMock).toHaveBeenCalledWith('abcd1234')
     expect(queueSearchRemoveMock).toHaveBeenCalledWith(7)
+  })
+
+  // 封面没有链接行, 只能按 delete 返回的指针推出那个版本的对象 (X06-01)
+  it('enqueues the banner version named by the pointer that delete() returned, without delay', async () => {
+    await expect(deletePatchById({ patchId: 7 })).resolves.toEqual({})
+
+    expect(enqueueS3DeletionMock).toHaveBeenCalledTimes(1)
+    expect(enqueueS3DeletionMock).toHaveBeenCalledWith(
+      transactionClient,
+      [
+        `patch/7/banner/${UUID}/banner.avif`,
+        `patch/7/banner/${UUID}/banner-mini.avif`,
+        `patch/7/banner/${UUID}/banner-full.avif`
+      ],
+      {}
+    )
+  })
+
+  it('does not enqueue anything for a pointer outside the configured image bed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    patchDeleteMock.mockResolvedValue({
+      id: 7,
+      banner: 'https://elsewhere.example.test/patch/7/banner/banner.avif'
+    })
+
+    await expect(deletePatchById({ patchId: 7 })).resolves.toEqual({})
+
+    expect(enqueueS3DeletionMock).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledTimes(1)
   })
 
   it('still resolves when patch content cache invalidation fails', async () => {

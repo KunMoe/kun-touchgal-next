@@ -176,6 +176,74 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
     })
   })
 
+  // 封面没有链接行, 持有者是 patch.banner 指针
+  describe('封面版本的引用判定', () => {
+    const version = () => `patch/${patchId}/banner/${randomUUID()}`
+    const objectsIn = (dir: string) => {
+      const keys = [
+        `${dir}/banner.avif`,
+        `${dir}/banner-mini.avif`,
+        `${dir}/banner-full.avif`
+      ]
+      createdKeys.push(...keys)
+      return keys
+    }
+    const pointTo = (banner: string) =>
+      prisma.patch.update({ where: { id: patchId }, data: { banner } })
+
+    afterEach(() => pointTo(''))
+
+    it('指针所在版本目录的对象算在用, 别的版本与固定目录不算', async () => {
+      const current = version()
+      const replaced = version()
+      await pointTo(`${STORAGE_URL}/${current}/banner.avif`)
+
+      for (const key of objectsIn(current)) {
+        expect(await isReferenced(key)).toBe(true)
+      }
+      for (const key of objectsIn(replaced)) {
+        expect(await isReferenced(key)).toBe(false)
+      }
+      for (const key of objectsIn(`patch/${patchId}/banner`)) {
+        expect(await isReferenced(key)).toBe(false)
+      }
+    })
+
+    it('存量的固定目录指针持有固定目录, 换过域名也算', async () => {
+      await pointTo(
+        `https://old-domain.example.test/patch/${patchId}/banner/banner.avif`
+      )
+
+      for (const key of objectsIn(`patch/${patchId}/banner`)) {
+        expect(await isReferenced(key)).toBe(true)
+      }
+    })
+
+    it('游戏不存在时不算在用', async () => {
+      const [key] = objectsIn(`patch/2147483000/banner/${randomUUID()}`)
+
+      expect(await isReferenced(key)).toBe(false)
+    })
+
+    it('drain 不删在用的版本, 只删换下来的版本', async () => {
+      const current = version()
+      const replaced = version()
+      await pointTo(`${STORAGE_URL}/${current}/banner.avif`)
+      const currentKeys = objectsIn(current)
+      const replacedKeys = objectsIn(replaced)
+
+      await outbox.enqueueS3Deletion(prisma, [...currentKeys, ...replacedKeys])
+
+      expect(await outbox.drainS3DeletionOutbox()).toEqual({
+        deleted: 3,
+        skippedReferenced: 3
+      })
+      expect(
+        deleteFileFromS3Mock.mock.calls.map(([key]) => key).sort()
+      ).toEqual([...replacedKeys].sort())
+    })
+  })
+
   describe('enqueueS3Deletion', () => {
     it('同一批里的重复 key 合并为一行, 不报 21000', async () => {
       const key = newKey()

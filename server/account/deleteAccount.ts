@@ -8,7 +8,11 @@ import {
   enqueueS3Deletion,
   kickS3DeletionDrain
 } from '~/server/storage/s3Outbox'
-import { getUserAvatarKeys } from '~/server/storage/imageObjects'
+import {
+  getUserAvatarKeys,
+  isUserAvatarPendingKey
+} from '~/server/storage/imageObjects'
+import { decodeModerationTask } from '~/server/moderation/taskCodec'
 import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 import { recordKunChanges } from '~/server/cache/publish'
@@ -213,9 +217,25 @@ const finalizeAccountDeletion = (user: DeletedUserSnapshot, actor: KunActor) =>
 
       // 正式头像 key 是 uid 的纯函数 (X06-04)。封禁之后不会再有新的上传, 但在途的写入 (开审核时
       // worker 在裁决事务之前就把暂存对象复制过去, 不开审核时上传直接写正式 key) 若落在出箱消费
-      // 之后, 对象会留下来; 两个小 avif, 接受。审核留档 (moderation/ 前缀) 按 _upload.ts 的永久
-      // 保留裁定不动
-      await enqueueS3Deletion(tx, Object.values(getUserAvatarKeys(user.id)))
+      // 之后, 对象会留下来; 两个小 avif, 接受。审核暂存对象 (pending/) 只记在头像审核任务的载荷里,
+      // 任务随 user 行级联删除, 所以在这之前读出来一并入队。审核留档 (moderation/ 前缀) 按
+      // imageObjects.ts 的永久保留裁定不动
+      const avatarTasks = await tx.moderation_task.findMany({
+        where: { user_id: user.id, content_type: 'avatar' },
+        select: { content_type: true, payload: true }
+      })
+      const pendingKeys = avatarTasks
+        .flatMap((task) => {
+          const body = decodeModerationTask(task)
+          return body?.contentType === 'avatar'
+            ? [body.payload.pendingKey, body.payload.pendingMiniKey]
+            : []
+        })
+        .filter((key) => isUserAvatarPendingKey(user.id, key))
+      await enqueueS3Deletion(tx, [
+        ...Object.values(getUserAvatarKeys(user.id)),
+        ...pendingKeys
+      ])
       await tx.user.delete({ where: { id: user.id } })
       await tx.admin_log.create({
         data: {

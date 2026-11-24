@@ -31,6 +31,11 @@ export const getUserAvatarPendingKeys = (uid: number, nonce: string) => {
 export const getUserAvatarModerationArchiveKey = (uid: number, nonce: string) =>
   `user/avatar/user_${uid}/moderation/${nonce}.avif`
 
+// 这个用户的审核暂存对象 (getUserAvatarPendingKeys 的形状)。删号时按任务载荷回收暂存对象, 载荷里的
+// key 先过这一关, 留档 (moderation/) 与别人的对象一律不认
+export const isUserAvatarPendingKey = (uid: number, key: string) =>
+  new RegExp(`^user/avatar/user_${uid}/pending/[^/]+\\.avif$`).test(key)
+
 const imageBedUrl = () => process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL
 
 // 编辑器图床的对象: key 带随机段, 同一用户的两次上传落在同一毫秒也不会互相覆盖 (X06-03)。
@@ -40,3 +45,52 @@ export const newContentImageKey = (uid: number) => {
   const key = `user/image/${uid}/${name}.avif`
   return { key, url: `${imageBedUrl()}/${key}` }
 }
+
+// 封面: 一个版本是同一目录下的一组对象 (主图、列表小图、可选的原图大图), patch.banner 存主图的公开
+// 地址, 是「当前是哪个版本」的唯一指针。存量指针没有版本段 (patch/{id}/banner/banner.avif), 下一次
+// 替换时自然迁走, 不回填
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+const PATCH_BANNER_DIR = `patch/(\\d+)/banner(?:/${UUID})?`
+const PATCH_BANNER_POINTER_PATH = new RegExp(
+  `^(${PATCH_BANNER_DIR})/banner\\.avif$`
+)
+const PATCH_BANNER_KEY = new RegExp(
+  `^(${PATCH_BANNER_DIR})/banner(?:-mini|-full)?\\.avif$`
+)
+
+const patchBannerKeysIn = (dir: string) => [
+  `${dir}/banner.avif`,
+  `${dir}/banner-mini.avif`,
+  `${dir}/banner-full.avif`
+]
+
+// 指针所指那个版本的全部对象 key, 用来回收。只认「配置的图床前缀 + /」开头、路径严格是本游戏封面
+// 的指针, 其余 (外站地址、别的游戏、换过域名的存量、空串) 一律返回 []: 认错的代价是删掉别人的对象,
+// 认不出只是留下孤儿。不用 new URL().pathname, 它会接受外站主机。full 不一定存在, 照样返回
+// (DeleteObject 删不存在的 key 也成功)
+export const patchBannerKeysFromPointer = (
+  patchId: number,
+  pointer: string
+): string[] => {
+  const bed = imageBedUrl()
+  if (!bed || !pointer.startsWith(`${bed}/`)) {
+    return []
+  }
+  const match = PATCH_BANNER_POINTER_PATH.exec(pointer.slice(bed.length + 1))
+  if (!match || match[2] !== String(patchId)) {
+    return []
+  }
+  return patchBannerKeysIn(match[1])
+}
+
+// 出箱里的 key 是不是某个封面版本的对象: 返回游戏 id 与版本目录, 供删除前的引用判定
+// (server/storage/references.ts) 点查 patch 行
+export const parsePatchBannerKey = (key: string) => {
+  const match = PATCH_BANNER_KEY.exec(key)
+  return match ? { patchId: Number(match[2]), dir: match[1] } : null
+}
+
+// 指针是否指向这个版本目录。这是判「仍在使用」的一侧, 宁宽勿严: 不看主机 (换过域名的存量指针照样
+// 算在用), 去掉查询串与片段
+export const isPatchBannerPointerIn = (pointer: string, dir: string) =>
+  pointer.split(/[?#]/)[0].endsWith(`/${dir}/banner.avif`)

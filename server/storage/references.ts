@@ -1,8 +1,9 @@
+import { isPatchBannerPointerIn, parsePatchBannerKey } from './imageObjects'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 
 type RefDb = Pick<Prisma.TransactionClient, '$queryRaw'>
 
-// S3 资源对象还有没有人在用, 只由这里向 PostgreSQL 确认。唯一调用方是删除写出箱的消费者
+// S3 对象还有没有人在用, 只由这里向 PostgreSQL 确认。唯一调用方是删除写出箱的消费者
 // (drainS3DeletionOutbox): 入队端各自推断「本行独占本对象」, 但直传迁移 (bcc2c48f) 之前
 // 的对象按「游戏 + 内容 BLAKE3 + 文件名」寻址, 同一游戏重复上传同一文件的几条链接共用一个
 // 对象, 入队端怎么写都会删掉别人的文件。
@@ -20,10 +21,22 @@ type RefDb = Pick<Prisma.TransactionClient, '$queryRaw'>
 // (bind 的 finalKey)。于是引用集合只会原子地「非空 → 非空」或「非空 → 空」, 「空 → 非空」
 // 只发生在没人入队过的新 key 上。今后写 S3 key 的地方 (差分更新、上传会话、版本化指针列)
 // 要守住这一条, 写 storage = 's3' 的行必须同时写 s3_key, 并在这里补上各自的持有者分支。
+//
+// 封面版本 (patch/{id}/banner/...) 的持有者是 patch.banner: 指针指向这个版本目录就算在用。新版本的
+// 目录带随机段 (newPatchBannerSet), 存量的固定目录不会再被写回指针, 所以同样只有「非空 → 空」。
+// 换封面在 patch 行锁下换指针、旧版本延迟入队, 删游戏随行删除入队, 这一支只是第二道守卫: commit 结果
+// 不确定时回收了新版本, 或者以后有谁把在用的版本入了队
 export const isS3ObjectReferenced = async (
   db: RefDb,
   key: string
 ): Promise<boolean> => {
+  const banner = parsePatchBannerKey(key)
+  if (banner) {
+    const [patch] = await db.$queryRaw<{ banner: string }[]>`
+      SELECT banner FROM patch WHERE id = ${banner.patchId}`
+    return patch ? isPatchBannerPointerIn(patch.banner, banner.dir) : false
+  }
+
   const [row] = await db.$queryRaw<{ referenced: boolean }[]>`
     SELECT EXISTS (
       SELECT 1 FROM patch_resource_link WHERE s3_key = ${key}::text

@@ -94,6 +94,7 @@ let onUserLocked: () => void
 let likedResourcePatches: number[]
 let likedCommentPatches: number[]
 let favoritePatches: number[]
+let avatarTasks: Array<{ content_type: string; payload: unknown }>
 
 const range = (from: number, count: number) =>
   Array.from({ length: count }, (_, index) => from + index)
@@ -136,6 +137,7 @@ const configureReads = () => {
   rec.on('user_patch_favorite_folder_relation.findMany', () =>
     favoritePatches.map((patch_id) => ({ patch_id }))
   )
+  rec.on('moderation_task.findMany', () => avatarTasks)
   rec.onRaw(/FROM "user" WHERE id = \? FOR UPDATE/, () => {
     events.push('finalize:lock')
     onUserLocked()
@@ -160,6 +162,7 @@ beforeEach(() => {
   likedResourcePatches = []
   likedCommentPatches = []
   favoritePatches = []
+  avatarTasks = []
   configureReads()
 
   mocks.applyKunCredentialChange.mockImplementation(async () => {
@@ -488,6 +491,55 @@ describe('deleteAccount', () => {
     expect(mocks.invalidatePatchContentCacheByPatchId).toHaveBeenCalledWith([5])
     expect(mocks.kickS3DeletionDrain).toHaveBeenCalledTimes(1)
     expect(events.at(-1)).toBe('session:account-deleted')
+  })
+
+  // 暂存对象只记在任务载荷里, 任务随 user 行级联删除: 收尾在删 user 行之前读出来一并入队。
+  // 留档 (moderation/) 永久保留; 载荷里不是本人暂存目录的 key 一律不认
+  it('收尾: 头像审核任务载荷里的暂存对象一并入队, 留档与别人的对象不入队', async () => {
+    const payload = (nonce: string, uid = TARGET) => ({
+      pendingKey: `user/avatar/user_${uid}/pending/${nonce}.avif`,
+      pendingMiniKey: `user/avatar/user_${uid}/pending/${nonce}-mini.avif`,
+      avatarKey: `user/avatar/user_${TARGET}/avatar.avif`,
+      avatarMiniKey: `user/avatar/user_${TARGET}/avatar-mini.avif`,
+      avatarLink: 'https://img.example.test/a.avif',
+      pendingLink: 'https://img.example.test/p.avif',
+      archiveLink: `https://img.example.test/user/avatar/user_${TARGET}/moderation/${nonce}.avif`
+    })
+    avatarTasks = [
+      { content_type: 'avatar', payload: payload('n1') },
+      // 不拦截时载荷里的「暂存」就是正式 key, 正式 key 本来就入队
+      {
+        content_type: 'avatar',
+        payload: {
+          ...payload('n2'),
+          pendingKey: `user/avatar/user_${TARGET}/avatar.avif`,
+          pendingMiniKey: `user/avatar/user_${TARGET}/avatar-mini.avif`
+        }
+      },
+      { content_type: 'avatar', payload: payload('n3', 99) },
+      { content_type: 'avatar', payload: { unreadable: true } }
+    ]
+
+    expect(await deleteAccount(TARGET, admin)).toEqual({ done: true })
+
+    expect(rec.argsOf('moderation_task.findMany')).toEqual([
+      {
+        where: { user_id: TARGET, content_type: 'avatar' },
+        select: { content_type: true, payload: true }
+      }
+    ])
+    expect(mocks.enqueueS3Deletion).toHaveBeenCalledTimes(1)
+    expect(mocks.enqueueS3Deletion).toHaveBeenCalledWith(expect.anything(), [
+      `user/avatar/user_${TARGET}/avatar.avif`,
+      `user/avatar/user_${TARGET}/avatar-mini.avif`,
+      `user/avatar/user_${TARGET}/pending/n1.avif`,
+      `user/avatar/user_${TARGET}/pending/n1-mini.avif`
+    ])
+    const [finalize] = finalizeAttempts()
+    const labels = labelsOf(finalize)
+    expect(labels.indexOf('moderation_task.findMany')).toBeLessThan(
+      labels.indexOf('user.delete')
+    )
   })
 
   it('没有受影响的投影: 不失效', async () => {
