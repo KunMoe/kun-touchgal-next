@@ -181,6 +181,31 @@ describe('PUT /api/admin/setting/redirect', () => {
     expect(setKvMock).not.toHaveBeenCalled()
   })
 
+  // value 是 jsonb: 孤立代理会让 PG 拒收整条写入; JSON 请求体的 \u 转义能带进来
+  it('writes lone surrogates as U+FFFD to the jsonb column and the cache', async () => {
+    kunParsePutBodyMock.mockResolvedValue({
+      ...savedConfig,
+      excludedDomains: ['a\udc00.example', 'b.example']
+    })
+
+    await PUT(putRequest)
+
+    const written = {
+      ...savedConfig,
+      excludedDomains: ['a\ufffd.example', 'b.example']
+    }
+    expect(upsertSettingMock).toHaveBeenCalledWith({
+      where: { key: 'redirect' },
+      create: { key: 'redirect', value: written },
+      update: { value: written }
+    })
+    expect(setKvMock).toHaveBeenCalledWith(
+      REDIS_KEY,
+      JSON.stringify(written),
+      86400
+    )
+  })
+
   it('rejects low-role users before persisting', async () => {
     verifyHeaderCookieMock.mockResolvedValue({ uid: 1, role: 3 })
 

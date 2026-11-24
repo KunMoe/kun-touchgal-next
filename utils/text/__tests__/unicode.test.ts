@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { isWellFormedText, sliceCodePoints, stripInvisible } from '../unicode'
+import {
+  isWellFormedText,
+  sliceCodePoints,
+  stripInvisible,
+  toWellFormedDeep
+} from '../unicode'
 
 describe('stripInvisible', () => {
   it.each([
@@ -97,5 +102,45 @@ describe('isWellFormedText', () => {
     ['只有 NUL', '\u0000']
   ])('%s: 不行', (_name, text) => {
     expect(isWellFormedText(text)).toBe(false)
+  })
+})
+
+describe('toWellFormedDeep', () => {
+  it('嵌套对象与数组里的孤立代理换成 U+FFFD, 成对的代理与 ZWJ 序列原样保留', () => {
+    const family = '👨‍👩‍👧'
+    const input = {
+      text: `a\ud800b`,
+      links: [{ code: '\udc00', size: '1 GB' }, `𠮷${family}`],
+      nested: { deeper: ['􏿿', 'x\ud83d'] }
+    }
+
+    const output = toWellFormedDeep(input)
+
+    expect(output).toEqual({
+      text: 'a�b',
+      links: [{ code: '�', size: '1 GB' }, `𠮷${family}`],
+      nested: { deeper: ['􏿿', 'x�'] }
+    })
+    expect(JSON.stringify(output)).not.toMatch(/\\ud[89a-f][0-9a-f]{2}/i)
+  })
+
+  it('非字符串叶子与非普通对象原样返回', () => {
+    const date = new Date(0)
+    const output = toWellFormedDeep({
+      n: 1,
+      b: true,
+      z: null,
+      u: undefined,
+      date
+    })
+
+    expect(output).toEqual({ n: 1, b: true, z: null, u: undefined, date })
+    expect(output.date).toBe(date)
+  })
+
+  it('不改动传入的值', () => {
+    const input = { text: '\ud800' }
+    toWellFormedDeep(input)
+    expect(input.text).toBe('\ud800')
   })
 })

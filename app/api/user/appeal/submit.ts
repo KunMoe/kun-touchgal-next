@@ -10,6 +10,7 @@ import {
   getAppealModelName
 } from '~/server/moderation/appeal'
 import { getAppealEditableLinkFields } from '~/utils/appealPayload'
+import { toWellFormedDeep } from '~/utils/text/unicode'
 import type {
   AppealLink,
   AppealPayload,
@@ -252,7 +253,7 @@ export const submitAppeal = async (input: SubmitAppealInput, uid: number) => {
         content_id: contentId,
         task_id: task.id,
         user_id: uid,
-        payload: payload as unknown as Prisma.InputJsonValue
+        payload: toWellFormedDeep(payload) as unknown as Prisma.InputJsonValue
       }
     })
   })

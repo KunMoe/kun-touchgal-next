@@ -451,3 +451,40 @@ describe('submitAppeal 渲染不出来的正文', () => {
     expect(transactionMock).not.toHaveBeenCalled()
   })
 })
+
+// 载荷是 jsonb: Prisma 先 JSON.stringify, 孤立代理被写成 "\ud800" 转义, PG 解析时拒收,
+// 整个事务失败。JSON 请求体里的 \u 转义能带进孤立代理, 所以在写入处替换成 U+FFFD,
+// 与写 varchar 时驱动的做法一致
+describe('submitAppeal 载荷里的孤立代理', () => {
+  const noLoneSurrogateEscape = (value: unknown) =>
+    expect(JSON.stringify(value)).not.toMatch(/\\ud[89a-f][0-9a-f]{2}/i)
+
+  it('评论正文', async () => {
+    findTaskMock.mockResolvedValue({ ...resourceTask, content_type: 'comment' })
+
+    await submitAppeal(
+      { contentType: 'comment', taskId: 3, content: '改过\ud800的评论😀' },
+      UID
+    )
+
+    expect(createdPayload()).toEqual({ text: '改过�的评论😀' })
+    noLoneSurrogateEscape(createdPayload())
+  })
+
+  it('资源标题与链接字段', async () => {
+    await submitAppeal(
+      {
+        ...resourceInput([
+          submittedLink(21),
+          submittedLink(22, { code: 'c\udc00' })
+        ]),
+        name: '标题\udbff'
+      },
+      UID
+    )
+
+    expect(createdPayload().name).toBe('标题�')
+    expect(createdPayload().links[1].code).toBe('c�')
+    noLoneSurrogateEscape(createdPayload())
+  })
+})
