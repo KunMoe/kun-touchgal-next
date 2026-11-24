@@ -7,6 +7,12 @@ import {
   resourceSubject
 } from '../subject'
 import { buildAuditView } from '../view'
+import {
+  patchCommentCreateSchema,
+  patchRatingCreateSchema,
+  patchResourceCreateSchema
+} from '~/validations/patch'
+import { bioSchema } from '~/validations/user'
 
 // 不配 Redis: 渲染走真实管线但不经缓存, 测试不触网
 beforeAll(() => {
@@ -243,5 +249,46 @@ describe('buildAuditView: 引入主体之前的旧任务', () => {
         segments: [{ label: '正文', kind: 'plain', value: text }]
       })
     ).toEqual([{ label: '正文', shown: text }])
+  })
+})
+
+// 送审预算不写成常量: 上限读自写入校验的 schema, 截断按码点。zod 的 .max 若改回按码元计
+// (或截断改回按码元), 平面外字符密集的合法内容就会被截掉一截再送审 (X17-01 的来源)
+describe('buildAuditView: 写入校验允许的最长输入整段送审', () => {
+  const longest = (schema: { maxLength: number | null }) => {
+    expect(schema.maxLength).not.toBeNull()
+    return '😀'.repeat(schema.maxLength!)
+  }
+
+  it.each([
+    [
+      '评论',
+      patchCommentCreateSchema.shape.content,
+      (text: string) => commentSubject(text)
+    ],
+    [
+      '评价',
+      patchRatingCreateSchema.shape.shortSummary,
+      (text: string) => ratingSubject(text)
+    ],
+    ['签名', bioSchema.shape.bio, (text: string) => bioSubject(text)]
+  ] as const)('%s: 全由平面外字符组成也不截断', async (_, schema, subject) => {
+    const text = longest(schema)
+    expect(schema.safeParse(text).success).toBe(true)
+
+    const [segment] = await buildAuditView(subject(text))
+    expect(segment.source ?? segment.shown).toBe(text)
+  })
+
+  it('资源标题: 全由平面外字符组成也不截断', async () => {
+    const name = longest(patchResourceCreateSchema.shape.name)
+    expect(patchResourceCreateSchema.shape.name.safeParse(name).success).toBe(
+      true
+    )
+
+    const view = await buildAuditView(
+      resourceSubject({ name, note: '', modelName: '', links: [] })
+    )
+    expect(view.find((segment) => segment.label === '标题')?.shown).toBe(name)
   })
 })
