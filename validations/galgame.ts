@@ -11,14 +11,15 @@ import {
   DEFAULT_GALGAME_MONTH_STRING,
   DEFAULT_GALGAME_YEAR_STRING,
   MAX_GALGAME_FILTER_VALUES,
+  MAX_GALGAME_MIN_RATING_COUNT,
   exceedsGalgameFilterLimit
 } from '~/utils/galgameFilter'
 
 // 作品列表四处入口 (/galgame、/tag、/company、/search) 共用, 各自给默认值
 export const minRatingCountSchema = kunInt(
   0,
-  999999,
-  '最低评分人数须为 0～999999 的整数'
+  MAX_GALGAME_MIN_RATING_COUNT,
+  `最低评分人数须为 0～${MAX_GALGAME_MIN_RATING_COUNT} 的整数`
 )
 
 const getSupportedValueSchema = (values: string[], message: string) =>

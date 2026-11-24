@@ -15,6 +15,7 @@ import {
   SUPPORTED_PLATFORM_MAP,
   SUPPORTED_TYPE_MAP
 } from '~/constants/resource'
+import { MAX_GALGAME_MIN_RATING_COUNT } from '~/utils/galgameFilter'
 import type { SortField } from './_sort'
 
 export interface AdvancedFilterPanelProps {
@@ -224,12 +225,19 @@ export const AdvancedFilterPanel = ({
                 size="sm"
                 value={String(minRatingCount)}
                 min={0}
+                max={MAX_GALGAME_MIN_RATING_COUNT}
                 onValueChange={(value) => {
                   const parsed = Number(value)
                   if (Number.isNaN(parsed)) {
                     return
                   }
-                  setMinRatingCount(Math.max(0, parsed))
+                  // 服务端只收 0～上限的整数, 小数或越界会让整个列表报错
+                  setMinRatingCount(
+                    Math.min(
+                      MAX_GALGAME_MIN_RATING_COUNT,
+                      Math.max(0, Math.trunc(parsed))
+                    )
+                  )
                 }}
                 isDisabled={sortField !== 'rating'}
               />

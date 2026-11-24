@@ -14,6 +14,7 @@ export const DEFAULT_GALGAME_MONTH_STRING = JSON.stringify(
 )
 export const DEFAULT_GALGAME_MIN_RATING_COUNT = 10
 export const DEFAULT_TAG_COMPANY_MIN_RATING_COUNT = 0
+export const MAX_GALGAME_MIN_RATING_COUNT = 999999
 
 export const getSearchParamValue = (
   value: string | string[] | null | undefined
