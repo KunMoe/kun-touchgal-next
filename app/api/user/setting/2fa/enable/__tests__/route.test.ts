@@ -80,8 +80,8 @@ describe('POST /api/user/setting/2fa/enable', () => {
   it.each([
     [{ token: '12345' }, '2FA 验证码必须为 6 位数字'],
     [{ token: 'abcdef' }, '2FA 验证码必须为 6 位数字'],
-    // 缺字段时是 zod 的默认英文文案
-    [{}, 'Invalid input: expected string, received undefined']
+    // 缺字段时是解析边界的兜底文案 (validations/errorMap.ts)
+    [{}, '缺少必填的参数']
   ])(
     'rejects %j with the zod message without reading the DB',
     async (body, message) => {

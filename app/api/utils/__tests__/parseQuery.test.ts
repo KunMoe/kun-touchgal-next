@@ -69,3 +69,33 @@ describe('kunParsePostBody', () => {
     expect(typeof result).toBe('string')
   })
 })
+
+describe('兜底文案与去重', () => {
+  it('没写文案的约束输出中文, 写了的原样保留', () => {
+    const loose = z.object({
+      name: z.string().min(1),
+      page: z.coerce.number().min(1, { message: '页数最小为 1' })
+    })
+    const result = kunParseGetQuery(createGetRequest('?name=&page=0'), loose)
+    expect(result).toBe('内容不能为空\n页数最小为 1')
+  })
+
+  it('畸形 JSON 请求体也是中文', async () => {
+    const req = new Request('http://localhost/api/test', {
+      method: 'POST',
+      body: '{'
+    }) as unknown as Parameters<typeof kunParsePostBody>[0]
+    await expect(kunParsePostBody(req, schema)).resolves.toBe('参数类型不正确')
+  })
+
+  it('同一句文案只出现一次', () => {
+    const ids = z.object({
+      id: z.coerce.number({ message: 'ID 无效' }).int().max(10)
+    })
+    const result = kunParseGetQuery(
+      createGetRequest('?id=9007199254740992'),
+      ids
+    )
+    expect(result).toBe('ID 无效')
+  })
+})

@@ -194,8 +194,8 @@ describe('PUT /api/edit 闸门 (galgame.rewrite)', () => {
     const res = await PUT(putRequest(legacy))
 
     const message: string = await res.json()
+    // 两个标签字段报的是同一句, 解析边界去重后只出现一次
     expect(message.split('\n')).toEqual([
-      '标签改动的格式不正确, 请刷新页面后重试',
       '标签改动的格式不正确, 请刷新页面后重试',
       '编辑基线无效, 请刷新页面后重试'
     ])

@@ -1,11 +1,16 @@
 import * as z from 'zod'
 import { NextRequest } from 'next/server'
 import type { ZodSchema } from 'zod'
+import { kunZodErrorMap, kunZodErrorText } from '~/validations/errorMap'
 
-// 错误串必须是人话而非 error.message 的 JSON: 裸 toast/setError 调用方直接展示,
-// kunErrorHandler 依赖对它 JSON.parse 抛异常落入 catch 分支原样展示
-const formatZodErrorMessage = (error: z.ZodError) =>
-  error.issues.map((issue) => issue.message).join('\n')
+// 没写文案的约束由 kunZodErrorMap 给中文兜底; 错误串的格式 (人话、每条一行、去重) 见 kunZodErrorText
+const parseWith = <T extends ZodSchema>(
+  schema: T,
+  data: unknown
+): z.infer<T> | string => {
+  const result = schema.safeParse(data, { error: kunZodErrorMap })
+  return result.success ? result.data : kunZodErrorText(result.error)
+}
 
 export const kunParseGetQuery = <T extends ZodSchema>(
   req: NextRequest,
@@ -14,12 +19,7 @@ export const kunParseGetQuery = <T extends ZodSchema>(
   const { searchParams } = new URL(req.url)
   const queryParams = Object.fromEntries(searchParams.entries())
 
-  const result = schema.safeParse(queryParams)
-  if (!result.success) {
-    return formatZodErrorMessage(result.error)
-  }
-
-  return result.data
+  return parseWith(schema, queryParams)
 }
 
 export const kunParsePostBody = async <T extends ZodSchema>(
@@ -28,12 +28,7 @@ export const kunParsePostBody = async <T extends ZodSchema>(
 ): Promise<z.infer<T> | string> => {
   const body = await req.json().catch(() => null)
 
-  const result = schema.safeParse(body)
-  if (!result.success) {
-    return formatZodErrorMessage(result.error)
-  }
-
-  return result.data
+  return parseWith(schema, body)
 }
 
 export const kunParsePutBody = async <T extends ZodSchema>(
@@ -42,12 +37,7 @@ export const kunParsePutBody = async <T extends ZodSchema>(
 ): Promise<z.infer<T> | string> => {
   const body = await req.json().catch(() => null)
 
-  const result = schema.safeParse(body)
-  if (!result.success) {
-    return formatZodErrorMessage(result.error)
-  }
-
-  return result.data
+  return parseWith(schema, body)
 }
 
 export const kunParseDeleteQuery = <T extends ZodSchema>(
@@ -57,12 +47,7 @@ export const kunParseDeleteQuery = <T extends ZodSchema>(
   const { searchParams } = new URL(req.url)
 
   const queryParams = Object.fromEntries(searchParams.entries())
-  const result = schema.safeParse(queryParams)
-  if (!result.success) {
-    return formatZodErrorMessage(result.error)
-  }
-
-  return result.data
+  return parseWith(schema, queryParams)
 }
 
 export const kunParseFormData = async <T extends ZodSchema>(
@@ -80,10 +65,5 @@ export const kunParseFormData = async <T extends ZodSchema>(
     }
   }
 
-  const result = schema.safeParse(rawData)
-  if (!result.success) {
-    return formatZodErrorMessage(result.error)
-  }
-
-  return result.data
+  return parseWith(schema, rawData)
 }
