@@ -18,6 +18,7 @@ import { Plus } from 'lucide-react'
 import { updateTagSchema } from '~/validations/tag'
 import { kunFetchPut } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
+import { aliasKey } from '~/utils/term/normalize'
 import toast from 'react-hot-toast'
 import type { TagDetail } from '~/types/api/tag'
 
@@ -63,7 +64,7 @@ export const EditTagModal = ({ tag, isOpen, onClose, onSuccess }: Props) => {
   }, [isOpen, tag, reset])
 
   const addTag = () => {
-    const lowerTag = input.trim().toLowerCase()
+    const lowerTag = aliasKey(input)
     if (!lowerTag) {
       return
     }

@@ -2,6 +2,7 @@ import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { viewerContextFromRequest } from '~/server/viewer/fromRequest'
+import { termAliasFilter } from '~/server/term/match'
 import { searchTagSchema } from '~/validations/search'
 
 const searchTag = async (
@@ -16,7 +17,7 @@ const searchTag = async (
       OR: query.map((q) => ({
         OR: [
           { name: { contains: q, mode: 'insensitive' } },
-          { alias: { has: q } }
+          { alias: termAliasFilter(q) }
         ]
       }))
     },

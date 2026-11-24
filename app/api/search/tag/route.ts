@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
+import { termAliasFilter } from '~/server/term/match'
 import { searchTagSchema } from '~/validations/search'
 
 const searchTag = async (input: z.infer<typeof searchTagSchema>) => {
@@ -11,7 +12,7 @@ const searchTag = async (input: z.infer<typeof searchTagSchema>) => {
       where: {
         OR: query.flatMap((q) => [
           { name: { contains: q, mode: 'insensitive' } },
-          { alias: { has: q } }
+          { alias: termAliasFilter(q) }
         ])
       },
       select: {
@@ -26,8 +27,8 @@ const searchTag = async (input: z.infer<typeof searchTagSchema>) => {
       where: {
         OR: query.flatMap((q) => [
           { name: { contains: q, mode: 'insensitive' } },
-          { alias: { has: q } },
-          { parent_brand: { has: q } }
+          { alias: termAliasFilter(q) },
+          { parent_brand: termAliasFilter(q) }
         ])
       },
       select: {

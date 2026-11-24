@@ -2,6 +2,7 @@ import * as z from 'zod'
 import { prisma } from '~/prisma'
 import { searchCompanySchema } from '~/validations/company'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { termAliasFilter } from '~/server/term/match'
 
 const searchCompany = async (input: z.infer<typeof searchCompanySchema>) => {
   const { query } = input
@@ -11,8 +12,8 @@ const searchCompany = async (input: z.infer<typeof searchCompanySchema>) => {
       AND: query.map((q) => ({
         OR: [
           { name: { contains: q, mode: 'insensitive' } },
-          { alias: { has: q } },
-          { parent_brand: { has: q } }
+          { alias: termAliasFilter(q) },
+          { parent_brand: termAliasFilter(q) }
         ]
       }))
     },

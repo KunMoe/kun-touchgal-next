@@ -1,6 +1,7 @@
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
+import { companyNameMatchWhere, tagNameMatchWhere } from '~/server/term/match'
 import {
   buildGalgameDateFilter,
   buildGalgameOrderBy,
@@ -96,7 +97,7 @@ const hasTag = (tag: GalgameSuggestionRef): Prisma.patchWhereInput => ({
     some:
       typeof tag.id === 'number'
         ? { tag_id: tag.id }
-        : { tag: { OR: [{ name: tag.name }, { alias: { has: tag.name } }] } }
+        : { tag: tagNameMatchWhere(tag.name) }
   }
 })
 
@@ -105,15 +106,7 @@ const hasCompany = (company: GalgameSuggestionRef): Prisma.patchWhereInput => ({
     some:
       typeof company.id === 'number'
         ? { company_id: company.id }
-        : {
-            company: {
-              OR: [
-                { name: company.name },
-                { alias: { has: company.name } },
-                { parent_brand: { has: company.name } }
-              ]
-            }
-          }
+        : { company: companyNameMatchWhere(company.name) }
   }
 })
 

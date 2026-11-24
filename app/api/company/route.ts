@@ -9,6 +9,8 @@ import {
   updateCompanySchema
 } from '~/validations/company'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { companyTerms, findTermConflict } from '~/server/term/identity'
+import { normalizeAliasList } from '~/utils/term/normalize'
 import { getCompanyById } from './service'
 import { invalidateCompanyListCache } from './cache'
 import {
@@ -33,21 +35,25 @@ const rewriteCompany = async (input: z.infer<typeof updateCompanySchema>) => {
     parent_brand = []
   } = input
 
-  const existingCompany = await prisma.patch_company.findFirst({
-    where: {
-      OR: [{ name }, { alias: { has: name } }]
-    }
+  const currentCompany = await prisma.patch_company.findUnique({
+    where: { id: companyId },
+    select: { name: true, alias: true }
   })
-  if (existingCompany && existingCompany.id !== companyId) {
-    return '这个会社已经存在了'
+  // 只查这次新加的别名: 存量里已经撞上别人的不拦, 否则只改简介也存不了
+  const currentAliases = new Set(
+    normalizeAliasList(currentCompany?.alias ?? [])
+  )
+  const conflict = await findTermConflict(prisma, companyTerms, {
+    name,
+    addedAliases: alias.filter((item) => !currentAliases.has(item)),
+    selfId: companyId
+  })
+  if (conflict) {
+    return conflict
   }
 
   // 索引文档内嵌会社名，改名须重建全部关联 patch 的文档；仅改简介/别名不入文档
   //（别名解析在查询期实时读库），无需入队
-  const currentCompany = await prisma.patch_company.findUnique({
-    where: { id: companyId },
-    select: { name: true }
-  })
   const shouldSyncSearch = !!currentCompany && currentCompany.name !== name
 
   // 事务性入队：会社变更与写出箱入队原子提交，关闭崩溃丢失窗口
@@ -126,13 +132,12 @@ const createCompany = async (
     parent_brand = []
   } = input
 
-  const existingCompany = await prisma.patch_company.findFirst({
-    where: {
-      OR: [{ name }, { alias: { has: name } }]
-    }
+  const conflict = await findTermConflict(prisma, companyTerms, {
+    name,
+    addedAliases: alias
   })
-  if (existingCompany) {
-    return '这个会社已经存在了'
+  if (conflict) {
+    return conflict
   }
 
   try {

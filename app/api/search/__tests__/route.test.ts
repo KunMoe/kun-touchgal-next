@@ -125,14 +125,19 @@ const keywordExclude = (keyword: string) => ({
   ]
 })
 
-// 无 id 的标签 / 会社建议项: 放在 some 里的按名匹配
-const tagByName = (name: string) => ({
-  tag: { OR: [{ name }, { alias: { has: name } }] }
+// 无 id 的标签 / 会社建议项: 放在 some 里的按名匹配。名字原样比较; 别名与母品牌按
+// aliasLookupForms 的形态比较 (trim 后的原串, 带大写时另加小写规范形), forms 写成字面量
+const tagByName = (name: string, forms: string[]) => ({
+  tag: { OR: [{ name }, { alias: { hasSome: forms } }] }
 })
 
-const companyByName = (name: string) => ({
+const companyByName = (name: string, forms: string[]) => ({
   company: {
-    OR: [{ name }, { alias: { has: name } }, { parent_brand: { has: name } }]
+    OR: [
+      { name },
+      { alias: { hasSome: forms } },
+      { parent_brand: { hasSome: forms } }
+    ]
   }
 })
 
@@ -327,10 +332,10 @@ describe('/api/search POST Prisma 降级路径: 关键词', () => {
         keywordInclude('星'),
         keywordInclude('galgame'),
         SFW,
-        { tag: { some: tagByName(' 纯爱 ') } },
-        { tag: { some: tagByName('') } },
+        { tag: { some: tagByName(' 纯爱 ', ['纯爱']) } },
+        { tag: { some: tagByName('', ['']) } },
         keywordExclude('nsfw'),
-        { NOT: { company: { some: companyByName('  ') } } }
+        { NOT: { company: { some: companyByName('  ', ['']) } } }
       ],
       ...SFW
     })
@@ -370,7 +375,7 @@ describe('/api/search POST Prisma 降级路径: 标签与会社', () => {
         {
           tag: {
             some: {
-              tag: { OR: [{ name: '纯爱' }, { alias: { has: '纯爱' } }] }
+              tag: { OR: [{ name: '纯爱' }, { alias: { hasSome: ['纯爱'] } }] }
             }
           }
         },
@@ -381,8 +386,8 @@ describe('/api/search POST Prisma 降级路径: 标签与会社', () => {
               company: {
                 OR: [
                   { name: 'Key' },
-                  { alias: { has: 'Key' } },
-                  { parent_brand: { has: 'Key' } }
+                  { alias: { hasSome: ['Key', 'key'] } },
+                  { parent_brand: { hasSome: ['Key', 'key'] } }
                 ]
               }
             }
@@ -411,7 +416,9 @@ describe('/api/search POST Prisma 降级路径: 标签与会社', () => {
           NOT: {
             tag: {
               some: {
-                tag: { OR: [{ name: '致郁' }, { alias: { has: '致郁' } }] }
+                tag: {
+                  OR: [{ name: '致郁' }, { alias: { hasSome: ['致郁'] } }]
+                }
               }
             }
           }
@@ -424,8 +431,8 @@ describe('/api/search POST Prisma 降级路径: 标签与会社', () => {
                 company: {
                   OR: [
                     { name: 'Leaf' },
-                    { alias: { has: 'Leaf' } },
-                    { parent_brand: { has: 'Leaf' } }
+                    { alias: { hasSome: ['Leaf', 'leaf'] } },
+                    { parent_brand: { hasSome: ['Leaf', 'leaf'] } }
                   ]
                 }
               }
@@ -457,11 +464,11 @@ describe('/api/search POST Prisma 降级路径: 标签与会社', () => {
         keywordInclude('galgame'),
         SFW,
         { tag: { some: { tag_id: 8 } } },
-        { tag: { some: tagByName('纯爱') } },
+        { tag: { some: tagByName('纯爱', ['纯爱']) } },
         { company: { some: { company_id: 5 } } },
         keywordExclude('nsfw'),
         { NOT: { tag: { some: { tag_id: 9 } } } },
-        { NOT: { company: { some: companyByName('Leaf') } } }
+        { NOT: { company: { some: companyByName('Leaf', ['Leaf', 'leaf']) } } }
       ],
       ...SFW
     })

@@ -71,6 +71,33 @@ describe('resolveTagIdsByNames', () => {
       OR: [{ name: { in: ['x'] } }, { alias: { hasSome: ['x'] } }]
     })
   })
+
+  // 别名的规范形是小写; 存量里没规范化的别名过渡期按原串仍能命中
+  it('maps a lowercase alias back to the mixed-case input that asked for it', async () => {
+    tagFindManyMock.mockResolvedValue([
+      { id: 3, name: '寝取られ', alias: ['ntr'] },
+      { id: 4, name: 'legacy', alias: ['NTR'] }
+    ])
+
+    const map = await resolveTagIdsByNames(['NTR', 'ntr'])
+
+    expect(tagFindManyMock.mock.calls[0][0].where).toEqual({
+      OR: [
+        { name: { in: ['NTR', 'ntr'] } },
+        { alias: { hasSome: ['NTR', 'ntr'] } }
+      ]
+    })
+    expect(map.get('NTR')).toEqual([3, 4])
+    expect(map.get('ntr')).toEqual([3])
+  })
+
+  it('keeps the name comparison case-sensitive', async () => {
+    tagFindManyMock.mockResolvedValue([{ id: 6, name: 'ADV', alias: [] }])
+
+    const map = await resolveTagIdsByNames(['adv'])
+
+    expect(map.get('adv')).toBeUndefined()
+  })
 })
 
 describe('resolveCompanyIdsByNames', () => {
@@ -93,5 +120,23 @@ describe('resolveCompanyIdsByNames', () => {
     const map = await resolveCompanyIdsByNames(['Key'])
 
     expect(map.get('Key')).toEqual([10, 11])
+  })
+
+  it('compares alias and parent_brand by the normalized form too', async () => {
+    companyFindManyMock.mockResolvedValue([
+      { id: 12, name: 'ビジュアルアーツ', alias: ['key'], parent_brand: [] },
+      { id: 13, name: 'Kinetic', alias: [], parent_brand: ['key'] }
+    ])
+
+    const map = await resolveCompanyIdsByNames(['Key'])
+
+    expect(companyFindManyMock.mock.calls[0][0].where).toEqual({
+      OR: [
+        { name: { in: ['Key'] } },
+        { alias: { hasSome: ['Key', 'key'] } },
+        { parent_brand: { hasSome: ['Key', 'key'] } }
+      ]
+    })
+    expect(map.get('Key')).toEqual([12, 13])
   })
 })

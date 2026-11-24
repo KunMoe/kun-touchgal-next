@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { galgameSchema } from './galgame'
 import { DEFAULT_TAG_COMPANY_MIN_RATING_COUNT } from '~/utils/galgameFilter'
+import { normalizeAliasList } from '~/utils/term/normalize'
 
 export const createCompanySchema = z.object({
   name: z
@@ -13,13 +14,16 @@ export const createCompanySchema = z.object({
     .trim()
     .max(10007, { message: '会社的介绍最大 10007 个字符' })
     .optional(),
-  alias: z.array(
-    z
-      .string()
-      .trim()
-      .min(1, { message: '会社别名不可为空' })
-      .max(17, { message: '单个会社的别名最大 17 个字符' })
-  ),
+  // 别名与母品牌只存规范形 (utils/term/normalize.ts), 按它们比较的地方都按规范形查
+  alias: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, { message: '会社别名不可为空' })
+        .max(17, { message: '单个会社的别名最大 17 个字符' })
+    )
+    .transform(normalizeAliasList),
   primary_language: z
     .array(
       z
@@ -36,13 +40,15 @@ export const createCompanySchema = z.object({
       .min(1, { message: '会社别名不可为空' })
       .max(10007, { message: '单个官方网站最大 10007 个字符' })
   ),
-  parent_brand: z.array(
-    z
-      .string()
-      .trim()
-      .min(1, { message: '会社别名不可为空' })
-      .max(17, { message: '单个母公司最大 17 个字符' })
-  )
+  parent_brand: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, { message: '会社别名不可为空' })
+        .max(17, { message: '单个母公司最大 17 个字符' })
+    )
+    .transform(normalizeAliasList)
 })
 
 export const updateCompanySchema = createCompanySchema.merge(

@@ -54,7 +54,7 @@ const KEYWORD_OR = [
   {
     OR: [
       { name: { contains: 'kun', mode: 'insensitive' } },
-      { alias: { has: 'kun' } }
+      { alias: { hasSome: ['kun'] } }
     ]
   }
 ]

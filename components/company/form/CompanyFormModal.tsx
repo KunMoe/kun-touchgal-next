@@ -22,6 +22,7 @@ import { ArrayAdder } from './ArrayAdder'
 import { SUPPORTED_LANGUAGE_MAP } from '~/constants/resource'
 import { kunFetchPost, kunFetchPut } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
+import { aliasKey } from '~/utils/term/normalize'
 import type { Company, CompanyDetail } from '~/types/api/company'
 import type { FC } from 'react'
 
@@ -101,7 +102,7 @@ export const CompanyFormModal: FC<Props> = ({
   }, [isOpen, company, reset, isEdit])
 
   const addAlias = () => {
-    const lowerCompany = aliasInput.trim().toLowerCase()
+    const lowerCompany = aliasKey(aliasInput)
     if (!lowerCompany) {
       return
     }
@@ -147,7 +148,7 @@ export const CompanyFormModal: FC<Props> = ({
   }
 
   const addParentBrand = () => {
-    const lowerBrand = brandInput.trim().toLowerCase()
+    const lowerBrand = aliasKey(brandInput)
     if (!lowerBrand) {
       return
     }

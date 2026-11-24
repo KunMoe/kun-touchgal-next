@@ -55,6 +55,7 @@ vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCacheByPatchId: patchContentMock
 }))
 
+import { Prisma } from '~/prisma/generated/prisma/client'
 import { updateTag } from '~/app/api/tag/update'
 
 const INPUT = { tagId: 1, name: 'ADV', introduction: '', alias: ['AVG'] }
@@ -106,5 +107,43 @@ describe('updateTag 搜索索引同步', () => {
     expect(updateMock).not.toHaveBeenCalled()
     expect(enqueueBatchMock).not.toHaveBeenCalled()
     expect(kickDrainMock).not.toHaveBeenCalled()
+  })
+
+  it('新加的别名撞上别人的名字时拒绝, 查重排除自己', async () => {
+    findUniqueMock.mockResolvedValue({ name: 'ADV', alias: [] })
+    findFirstMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 2, name: 'avg', alias: [] })
+
+    await expect(updateTag({ ...INPUT, alias: ['avg'] })).resolves.toBe(
+      '别名「avg」已是标签「avg」的名字或别名'
+    )
+
+    expect(findFirstMock.mock.calls[1][0].where).toEqual({
+      id: { not: 1 },
+      OR: [{ name: { in: ['avg'] } }, { alias: { hasSome: ['avg'] } }]
+    })
+    expect(updateMock).not.toHaveBeenCalled()
+  })
+
+  it('并发改名撞上 name 唯一索引时返回重名消息, 不失效缓存', async () => {
+    updateMock.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('unique', {
+        code: 'P2002',
+        clientVersion: 'test'
+      })
+    )
+
+    await expect(updateTag(INPUT)).resolves.toBe('这个标签已经存在了')
+    expect(invalidateMock).not.toHaveBeenCalled()
+  })
+
+  // 存量别名早已撞上别人时只改简介也要能存: 只查这次新加的别名
+  it('库里已有的别名不参与查重, 大小写不同也算已有', async () => {
+    findUniqueMock.mockResolvedValue({ name: 'ADV', alias: ['AVG'] })
+
+    await expect(updateTag({ ...INPUT, alias: ['avg'] })).resolves.toEqual(TAG)
+
+    expect(findFirstMock).toHaveBeenCalledTimes(1)
   })
 })
