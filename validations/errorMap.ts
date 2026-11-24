@@ -38,8 +38,9 @@ const tooSmall = (issue: Extract<KunIssue, { code: 'too_small' }>) => {
       ? `不能少于 ${n} 个字符`
       : `至少需要 ${n} ${unit}`
   }
-  if (issue.origin === 'date') {
-    return '日期超出允许的范围'
+  // .int() 的安全整数范围检查, 下界是 -(2^53 - 1), 与 tooBig 同理不写出来
+  if (issue.origin === 'int' || issue.origin === 'date') {
+    return '数值超出允许的范围'
   }
   return issue.inclusive === false ? `必须大于 ${n}` : `不能小于 ${n}`
 }
