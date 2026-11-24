@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { kunId, kunInt, kunLimit, kunNumber, kunPage } from './primitives'
+import { INT4_MAX } from '~/constants/db-limits'
 import {
   ADMIN_COMMENT_DELETE_LIMIT,
   ADMIN_RATING_DELETE_LIMIT,
@@ -55,7 +56,7 @@ const adminCommentIdsSchema = z
         }
 
         const commentId = Number.parseInt(trimmed, 10)
-        return commentId >= 1 && commentId <= 9999999
+        return commentId >= 1 && commentId <= INT4_MAX
       }),
     { message: '评论 ID 格式不正确' }
   )
@@ -64,7 +65,7 @@ const adminCommentIdsSchema = z
       value
         .split(',')
         .map((item) => Number.parseInt(item.trim(), 10))
-        .filter((commentId) => commentId >= 1 && commentId <= 9999999)
+        .filter((commentId) => commentId >= 1 && commentId <= INT4_MAX)
     )
   ])
   .refine((commentIds) => commentIds.length <= ADMIN_COMMENT_DELETE_LIMIT, {
@@ -124,7 +125,7 @@ const adminResourceIdListSchema = z
         }
 
         const resourceId = Number.parseInt(trimmed, 10)
-        return resourceId >= 1 && resourceId <= 9999999
+        return resourceId >= 1 && resourceId <= INT4_MAX
       }),
     { message: '资源 ID 格式不正确' }
   )
@@ -133,7 +134,7 @@ const adminResourceIdListSchema = z
       value
         .split(',')
         .map((item) => Number.parseInt(item.trim(), 10))
-        .filter((resourceId) => resourceId >= 1 && resourceId <= 9999999)
+        .filter((resourceId) => resourceId >= 1 && resourceId <= INT4_MAX)
     )
   ])
 
@@ -288,7 +289,7 @@ const adminRatingIdsSchema = z
         }
 
         const ratingId = Number.parseInt(trimmed, 10)
-        return ratingId >= 1 && ratingId <= 9999999
+        return ratingId >= 1 && ratingId <= INT4_MAX
       }),
     { message: '评价 ID 格式不正确' }
   )
@@ -297,7 +298,7 @@ const adminRatingIdsSchema = z
       value
         .split(',')
         .map((item) => Number.parseInt(item.trim(), 10))
-        .filter((ratingId) => ratingId >= 1 && ratingId <= 9999999)
+        .filter((ratingId) => ratingId >= 1 && ratingId <= INT4_MAX)
     )
   ])
   .refine((ratingIds) => ratingIds.length <= ADMIN_RATING_DELETE_LIMIT, {

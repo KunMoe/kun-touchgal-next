@@ -138,3 +138,19 @@ describe('adminDeleteResourceSchema 批量删除上限', () => {
     ).toBe(false)
   })
 })
+
+// 逗号串批量与单条用同一个上界 (int4 的类型边界, 见 validations/primitives.ts 的 kunId)
+describe('批量删除的 id 上界与单条一致', () => {
+  it.each([
+    ['评论', adminDeleteCommentSchema, 'commentId', 'commentIds'],
+    ['评价', adminDeleteRatingSchema, 'ratingId', 'ratingIds'],
+    ['资源', adminDeleteResourceSchema, 'resourceId', 'resourceIds']
+  ] as const)('%s', (_, schema, single, batch) => {
+    expect(schema.safeParse({ [single]: '2147483647' }).success).toBe(true)
+    expect(schema.safeParse({ [batch]: '10000000,2147483647' }).success).toBe(
+      true
+    )
+    expect(schema.safeParse({ [single]: '2147483648' }).success).toBe(false)
+    expect(schema.safeParse({ [batch]: '1,2147483648' }).success).toBe(false)
+  })
+})

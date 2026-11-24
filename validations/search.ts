@@ -3,6 +3,7 @@ import { kunLimit, kunPage } from './primitives'
 import { MAX_GALGAME_FILTER_VALUES } from '~/utils/galgameFilter'
 import { isWellFormedText } from '~/utils/text/unicode'
 import { minRatingCountSchema } from './galgame'
+import { INT4_MAX } from '~/constants/db-limits'
 import type { SearchSuggestionType } from '~/types/api/search'
 
 // 筛选值与建议项的名称会原样进 PG (basic 引擎) 与 Meilisearch 的请求体: NUL 让 PG 报
@@ -55,7 +56,7 @@ export const searchSuggestionArraySchema = z.array(
   z.object({
     type: z.enum(['keyword', 'tag', 'company']),
     mode: z.enum(['include', 'exclude']).default('include'),
-    id: z.number().int().min(1).max(2147483647).optional(),
+    id: z.number().int().min(1).max(INT4_MAX).optional(),
     name: z.string().refine(isWellFormedText)
   })
 )
