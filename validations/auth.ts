@@ -1,4 +1,6 @@
 import * as z from 'zod'
+import { INT4_MAX } from '~/constants/db-limits'
+import { kunInt } from './primitives'
 import {
   kunUsernameRegex,
   kunPasswordRegex,
@@ -63,11 +65,7 @@ const kunUnsubscribeLinkInvalidMessage =
 export const disableEmailNoticeSchema = z.union(
   [
     z.object({
-      uid: z.coerce
-        .number()
-        .int({ message: kunUnsubscribeLinkInvalidMessage })
-        .min(1, { message: kunUnsubscribeLinkInvalidMessage })
-        .max(2147483647, { message: kunUnsubscribeLinkInvalidMessage }),
+      uid: kunInt(1, INT4_MAX, kunUnsubscribeLinkInvalidMessage),
       token: z
         .string()
         .length(32, { message: kunUnsubscribeLinkInvalidMessage })

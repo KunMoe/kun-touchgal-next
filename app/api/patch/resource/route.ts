@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
@@ -14,14 +15,11 @@ import { acquireKvLock, releaseKvLock } from '~/lib/redis'
 import { can } from '~/constants/permission'
 
 const patchIdSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999)
+  patchId: kunId('游戏 ID')
 })
 
 const resourceIdSchema = z.object({
-  resourceId: z.coerce
-    .number({ message: '资源 ID 必须为数字' })
-    .min(1)
-    .max(9999999)
+  resourceId: kunId('资源 ID')
 })
 
 export const GET = kunRoute.get({

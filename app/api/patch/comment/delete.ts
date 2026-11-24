@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { COMMENT_STATUS } from '~/constants/contentStatus'
@@ -11,10 +12,7 @@ import type { CommentRemovalGuard } from '~/server/content/comment/remove'
 import type { KunActor } from '~/constants/role'
 
 const commentIdSchema = z.object({
-  commentId: z.coerce
-    .number({ message: '评论 ID 必须为数字' })
-    .min(1)
-    .max(9999999)
+  commentId: kunId('评论 ID')
 })
 
 export const deleteComment = async (

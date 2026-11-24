@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { gatherAndEnsurePatchCompanies } from '../_gatherCompanies'
@@ -8,7 +9,7 @@ import { invalidatePatchRelationCaches } from '~/app/api/patch/introduction/_rel
 import { queueSearchSync } from '~/server/search/sync'
 
 const fetchCompanySchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999)
+  patchId: kunId('游戏 ID')
 })
 
 export const POST = kunRoute.post({

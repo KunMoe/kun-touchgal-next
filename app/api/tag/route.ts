@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   createTagSchema,
@@ -11,7 +12,7 @@ import { getTagById } from './get'
 import { deleteTag } from './delete'
 
 const tagIdSchema = z.object({
-  tagId: z.coerce.number().min(1).max(9999999)
+  tagId: kunId('标签 ID')
 })
 
 export const GET = kunRoute.get({

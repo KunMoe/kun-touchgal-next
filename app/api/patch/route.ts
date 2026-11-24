@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { getPatchById } from './get'
 import { deletePatchById } from './delete'
@@ -8,7 +9,7 @@ const uniqueIdSchema = z.object({
 })
 
 const patchIdSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999)
+  patchId: kunId('游戏 ID')
 })
 
 export const GET = kunRoute.get({

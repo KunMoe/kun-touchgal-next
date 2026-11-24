@@ -94,16 +94,6 @@
       "count": 1
     }
   },
-  "app/api/user/profile/favorite/folder/delete.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "app/api/user/profile/favorite/folder/get.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "app/api/user/setting/_upload.ts": {
     "no-console": {
       "count": 1

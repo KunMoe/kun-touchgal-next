@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
@@ -9,7 +10,7 @@ import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { PatchRefSelectField } from '~/constants/api/select'
 
 const ratingIdSchema = z.object({
-  ratingId: z.coerce.number({ message: 'ID 不正确' }).min(1).max(9999999)
+  ratingId: kunId('评价 ID')
 })
 
 // 通告锁命名空间 (pg_advisory_xact_lock 首参): 与 patch type (481001) / 评分统计

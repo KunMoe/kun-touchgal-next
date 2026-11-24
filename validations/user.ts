@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { kunId } from './primitives'
+import { kunId, kunLimit, kunPage } from './primitives'
 import {
   kunPasswordRegex,
   kunValidMailConfirmCodeRegex
@@ -72,13 +72,13 @@ export const userUidSchema = z.object({
 })
 
 export const getUserProfileSchema = z.object({
-  id: z.coerce.number().min(1).max(9999999)
+  id: kunId('用户 ID')
 })
 
 export const getUserInfoSchema = z.object({
-  uid: z.coerce.number().min(1).max(9999999),
-  page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(20)
+  uid: kunId('用户 ID'),
+  page: kunPage(),
+  limit: kunLimit(20)
 })
 
 export const searchUserSchema = z.object({
@@ -91,23 +91,34 @@ export const createFavoriteFolderSchema = z.object({
   isPublic: z.boolean().default(false)
 })
 
+export const favoriteFolderIdSchema = z.object({
+  folderId: kunId('收藏文件夹 ID')
+})
+
+// 带 patchId 时附上每个收藏夹是否已收藏该作品; page 与 limit 同时给才分页
+export const getFavoriteFoldersSchema = z.object({
+  patchId: kunId('游戏 ID').optional(),
+  page: kunPage().optional(),
+  limit: kunLimit(100).optional()
+})
+
 export const updateFavoriteFolderSchema = z.object({
-  folderId: z.coerce.number().min(1).max(9999999),
+  folderId: kunId('收藏文件夹 ID'),
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   isPublic: z.boolean().default(false)
 })
 
 export const getFavoriteFolderPatchSchema = z.object({
-  folderId: z.coerce.number().min(1).max(9999999),
-  page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(100)
+  folderId: kunId('收藏文件夹 ID'),
+  page: kunPage(),
+  limit: kunLimit(100)
 })
 
 export const getUserFollowStatusSchema = z.object({
-  uid: z.coerce.number({ message: '请输入合法的用户 ID' }).min(1).max(9999999),
-  page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(100)
+  uid: kunId('用户 ID'),
+  page: kunPage(),
+  limit: kunLimit(100)
 })
 
 export const enableUser2FASchema = z.object({
@@ -126,7 +137,7 @@ export const beginTwoFactorEnrollmentSchema = z.object(
 )
 
 export const blockedTagSchema = z.object({
-  tagId: z.coerce.number().min(1).max(9999999)
+  tagId: kunId('标签 ID')
 })
 
 export const revokeLoginSessionSchema = z.object({

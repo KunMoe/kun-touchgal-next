@@ -1,6 +1,7 @@
-import * as z from 'zod'
 import {
   createFavoriteFolderSchema,
+  favoriteFolderIdSchema,
+  getFavoriteFoldersSchema,
   updateFavoriteFolderSchema
 } from '~/validations/user'
 import { kunRoute } from '~/app/api/utils/kunRoute'
@@ -9,19 +10,9 @@ import { updateFolder } from './update'
 import { createFolder } from './create'
 import { deleteFolder } from './delete'
 
-const folderIdSchema = z.object({
-  folderId: z.coerce.number().min(1).max(9999999)
-})
-
-const patchIdSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999).optional(),
-  page: z.coerce.number().min(1).max(9999999).optional(),
-  limit: z.coerce.number().min(1).max(100).optional()
-})
-
 export const GET = kunRoute.get({
   auth: 'user',
-  input: patchIdSchema,
+  input: getFavoriteFoldersSchema,
   handler: async ({ input, actor: payload }) =>
     getFolders(input, payload.uid, payload.uid)
 })
@@ -40,6 +31,6 @@ export const PUT = kunRoute.put({
 
 export const DELETE = kunRoute.delete({
   auth: 'user',
-  input: folderIdSchema,
+  input: favoriteFolderIdSchema,
   handler: async ({ input, actor: payload }) => deleteFolder(input, payload.uid)
 })

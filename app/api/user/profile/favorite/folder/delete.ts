@@ -6,15 +6,12 @@ import {
   bumpPatchFavoriteCacheVersion,
   invalidatePatchFavoriteCaches
 } from '~/app/api/patch/cache'
-
-const folderIdSchema = z.object({
-  folderId: z.coerce.number().min(1).max(9999999)
-})
+import type { favoriteFolderIdSchema } from '~/validations/user'
 
 const PATCH_FAVORITE_EXACT_INVALIDATE_LIMIT = 500
 
 export const deleteFolder = async (
-  input: z.infer<typeof folderIdSchema>,
+  input: z.infer<typeof favoriteFolderIdSchema>,
   uid: number
 ) => {
   const folder = await prisma.user_patch_favorite_folder.findUnique({

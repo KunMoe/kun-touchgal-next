@@ -49,7 +49,7 @@ describe('kunGetResourceDetailActions', () => {
     )
   })
 
-  it.each([0, Number.NaN, 10000000])(
+  it.each([0, Number.NaN, 1.5, 2147483648])(
     'id 越界 (%s) 时以 notFound 结束, 不读会话不查库',
     async (resourceId) => {
       await expect(

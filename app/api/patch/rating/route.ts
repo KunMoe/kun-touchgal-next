@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   patchRatingCreateSchema,
@@ -10,10 +11,7 @@ import { updatePatchRating } from './update'
 import { deletePatchRating } from './delete'
 
 const ratingIdSchema = z.object({
-  ratingId: z.coerce
-    .number({ message: 'patch rating ID 不正确' })
-    .min(1)
-    .max(9999999)
+  ratingId: kunId('评价 ID')
 })
 
 export const GET = kunRoute.get({

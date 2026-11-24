@@ -39,7 +39,7 @@ describe('DELETE /api/patch 闸门 (galgame.delete)', () => {
     verifyHeaderCookieMock.mockResolvedValue(null)
     const res = await DELETE(deleteRequest('patchId=0'))
 
-    expect(await res.json()).toBe('Too small: expected number to be >=1')
+    expect(await res.json()).toBe('游戏 ID 无效')
     expect(verifyHeaderCookieMock).not.toHaveBeenCalled()
     expect(deletePatchByIdMock).not.toHaveBeenCalled()
   })

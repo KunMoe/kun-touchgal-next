@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from './primitives'
 import { nonEmptyFileSchema } from './file'
 import { MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES } from '~/config/cache'
 import { INT4_MAX } from '~/constants/db-limits'
@@ -112,7 +113,7 @@ export const patchCreateSchema = z.object({
 })
 
 export const patchUpdateSchema = z.object({
-  id: z.coerce.number().min(1).max(9999999),
+  id: kunId('游戏 ID'),
   name: z
     .string()
     .trim()

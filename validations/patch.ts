@@ -1,7 +1,7 @@
 import * as z from 'zod'
+import { kunId, kunInt, kunLimit, kunPage } from './primitives'
 import { ResourceSizeRegex } from '~/utils/validate'
 import { nonEmptyFileSchema } from './file'
-import { kunId } from './primitives'
 import {
   RESOURCE_SECTION_TYPE_MAP,
   SUPPORTED_TYPE,
@@ -18,32 +18,25 @@ import {
 } from '~/constants/galgame'
 
 export const patchTagChangeSchema = z.object({
-  patchId: z.coerce.number({ message: 'ID 必须为数字' }).min(1).max(9999999),
+  patchId: kunId('游戏 ID'),
   tagId: z
-    .array(
-      z.coerce.number({ message: '标签 ID 必须为数字' }).min(1).max(9999999)
-    )
+    .array(kunId('标签 ID'))
     .min(1)
     .max(107, { message: '一个 Galgame 最多有 107 个标签' })
 })
 
 export const patchCompanyChangeSchema = z.object({
-  patchId: z.coerce
-    .number({ message: 'Galgame ID 必须为数字' })
-    .min(1)
-    .max(9999999),
+  patchId: kunId('游戏 ID'),
   companyId: z
-    .array(
-      z.coerce.number({ message: '会社 ID 必须为数字' }).min(1).max(9999999)
-    )
+    .array(kunId('会社 ID'))
     .min(1)
     .max(107, { message: '一个 Galgame 最多有 107 个会社' })
 })
 
 export const patchCommentCreateSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999),
-  parentId: z.coerce.number().min(1).max(9999999).nullable(),
-  resourceId: z.coerce.number().min(1).max(9999999).optional(),
+  patchId: kunId('游戏 ID'),
+  parentId: kunId('评论 ID').nullable(),
+  resourceId: kunId('资源 ID').optional(),
   content: z
     .string()
     .trim()
@@ -53,7 +46,7 @@ export const patchCommentCreateSchema = z.object({
 })
 
 export const patchCommentUpdateSchema = z.object({
-  commentId: z.coerce.number().min(1).max(9999999),
+  commentId: kunId('评论 ID'),
   content: z
     .string()
     .trim()
@@ -63,11 +56,11 @@ export const patchCommentUpdateSchema = z.object({
 })
 
 export const getPatchCommentSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999),
-  resourceId: z.coerce.number().min(1).max(9999999).optional(),
-  page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(50),
-  commentId: z.coerce.number().min(1).max(9999999).optional()
+  patchId: kunId('游戏 ID'),
+  resourceId: kunId('资源 ID').optional(),
+  page: kunPage(),
+  limit: kunLimit(50),
+  commentId: kunId('评论 ID').optional()
 })
 
 // section 与 type 的联动约束: 所选类型必须属于对应资源类别下允许的类型;
@@ -108,7 +101,7 @@ const refineResourceSectionType = (
 
 const patchResourceBaseSchema = z.object({
   // <number> 仅标注 input 类型, 使表单 (zodResolver) 与 API 复用同一 schema 时类型对齐
-  patchId: z.coerce.number<number>().min(1).max(9999999),
+  patchId: kunId('游戏 ID'),
   section: z
     .string()
     .refine((type) => SUPPORTED_RESOURCE_SECTION.includes(type), {
@@ -120,7 +113,7 @@ const patchResourceBaseSchema = z.object({
     .array(
       z
         .object({
-          id: z.coerce.number<number>().min(1).max(9999999).optional(),
+          id: kunId('链接 ID').optional(),
           storage: z
             .string()
             .refine((type) => SUPPORTED_RESOURCE_LINK.includes(type), {
@@ -220,13 +213,13 @@ export const patchResourceCreateSchema = patchResourceBaseSchema.superRefine(
 export const patchResourceUpdateSchema = patchResourceBaseSchema
   .merge(
     z.object({
-      resourceId: z.coerce.number().min(1).max(9999999)
+      resourceId: kunId('资源 ID')
     })
   )
   .superRefine(refineResourceSectionType)
 
 export const updatePatchBannerSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999),
+  patchId: kunId('游戏 ID'),
   image: nonEmptyFileSchema,
   imageOriginal: nonEmptyFileSchema.optional()
 })
@@ -239,13 +232,13 @@ export const getMoyuPatchResourceSchema = z.object({
 })
 
 export const updatePatchResourceStatsSchema = z.object({
-  patchId: z.coerce.number({ message: 'ID 必须为数字' }).min(1).max(9999999),
-  resourceId: z.coerce.number({ message: 'ID 必须为数字' }).min(1).max(9999999),
-  linkId: z.coerce.number({ message: 'ID 必须为数字' }).min(1).max(9999999)
+  patchId: kunId('游戏 ID'),
+  resourceId: kunId('资源 ID'),
+  linkId: kunId('链接 ID')
 })
 
 export const createPatchFeedbackSchema = z.object({
-  patchId: z.coerce.number({ message: 'ID 必须为数字' }).min(1).max(9999999),
+  patchId: kunId('游戏 ID'),
   content: z
     .string({ message: '反馈内容为必填字段' })
     .min(10, { message: '反馈信息最少 10 个字符' })
@@ -253,14 +246,8 @@ export const createPatchFeedbackSchema = z.object({
 })
 
 export const createPatchCommentReportSchema = z.object({
-  commentId: z.coerce
-    .number({ message: '评论 ID 必须为数字' })
-    .min(1)
-    .max(9999999),
-  patchId: z.coerce
-    .number({ message: '游戏 ID 必须为数字' })
-    .min(1)
-    .max(9999999),
+  commentId: kunId('评论 ID'),
+  patchId: kunId('游戏 ID'),
   content: z
     .string({ message: '举报原因为必填字段' })
     .min(2, { message: '举报原因最少 2 个字符' })
@@ -268,14 +255,8 @@ export const createPatchCommentReportSchema = z.object({
 })
 
 export const createPatchRatingReportSchema = z.object({
-  ratingId: z.coerce
-    .number({ message: '评价 ID 必须为数字' })
-    .min(1)
-    .max(9999999),
-  patchId: z.coerce
-    .number({ message: '游戏 ID 必须为数字' })
-    .min(1)
-    .max(9999999),
+  ratingId: kunId('评价 ID'),
+  patchId: kunId('游戏 ID'),
   content: z
     .string({ message: '举报原因为必填字段' })
     .min(2, { message: '举报原因最少 2 个字符' })
@@ -288,19 +269,13 @@ export const togglePatchFavoriteSchema = z.object({
 })
 
 export const patchRatingCreateSchema = z.object({
-  patchId: z.coerce
-    .number({ message: 'patch rating ID 格式不正确' })
-    .min(1)
-    .max(9999999),
+  patchId: kunId('游戏 ID'),
   recommend: z
     .string({ message: '推荐程度不正确' })
     .refine((v) => KUN_GALGAME_RATING_RECOMMEND_CONST.includes(v as any), {
       message: '推荐程度不正确'
     }),
-  overall: z.coerce
-    .number({ message: '评分不正确' })
-    .min(1, { message: '评分最小为 1' })
-    .max(10, { message: '评分最大为 10' }),
+  overall: kunInt(1, 10, '评分须为 1～10 的整数'),
   playStatus: z
     .string({ message: '游玩状态不正确' })
     .refine((v) => KUN_GALGAME_RATING_PLAY_STATUS_CONST.includes(v as any), {
@@ -318,19 +293,13 @@ export const patchRatingCreateSchema = z.object({
 })
 
 export const patchRatingUpdateSchema = z.object({
-  ratingId: z.coerce
-    .number({ message: 'patch rating ID 格式不正确' })
-    .min(1)
-    .max(9999999),
+  ratingId: kunId('评价 ID'),
   recommend: z
     .string({ message: '推荐程度不正确' })
     .refine((v) => KUN_GALGAME_RATING_RECOMMEND_CONST.includes(v as any), {
       message: '推荐程度不正确'
     }),
-  overall: z.coerce
-    .number({ message: '评分不正确' })
-    .min(1, { message: '评分最小为 1' })
-    .max(10, { message: '评分最大为 10' }),
+  overall: kunInt(1, 10, '评分须为 1～10 的整数'),
   playStatus: z
     .string({ message: '游玩状态不正确' })
     .refine((v) => KUN_GALGAME_RATING_PLAY_STATUS_CONST.includes(v as any), {

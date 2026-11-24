@@ -1,13 +1,11 @@
 import * as z from 'zod'
+import { kunInt } from '~/validations/primitives'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import type { OverviewData } from '~/types/api/admin'
 
 const daysSchema = z.object({
-  days: z.coerce
-    .number({ message: '天数必须为数字' })
-    .min(1)
-    .max(60, { message: '最多展示 60 天的数据' })
+  days: kunInt(1, 60, '统计天数须为 1～60 的整数')
 })
 
 const getOverviewData = async (days: number): Promise<OverviewData> => {

@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunLimit, kunPage } from './primitives'
 import { MAX_GALGAME_FILTER_VALUES } from '~/utils/galgameFilter'
 import { isWellFormedText } from '~/utils/text/unicode'
 import { minRatingCountSchema } from './galgame'
@@ -14,14 +15,14 @@ export const searchSchema = z.object({
     .string()
     .min(1)
     .max(1007, { message: '您的搜素字符串最大为 1007 个字符' }),
-  limit: z.coerce.number().int().min(1).max(24),
+  limit: kunLimit(24),
   searchOption: z.object({
     searchInIntroduction: z.boolean().default(false),
     searchInAlias: z.boolean().default(false),
     searchInTag: z.boolean().default(false)
   }),
 
-  page: z.coerce.number().int().min(1).max(9999999),
+  page: kunPage(),
   selectedType: filterText(z.string().min(1).max(107)),
   selectedLanguage: filterText(z.string().min(1).max(107)),
   selectedPlatform: filterText(z.string().min(1).max(107)),

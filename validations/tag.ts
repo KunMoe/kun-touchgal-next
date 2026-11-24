@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId, kunLimit, kunPage } from './primitives'
 import { galgameSchema, minRatingCountSchema } from './galgame'
 import { DEFAULT_TAG_COMPANY_MIN_RATING_COUNT } from '~/utils/galgameFilter'
 import { normalizeAliasList } from '~/utils/term/normalize'
@@ -29,17 +30,17 @@ export const createTagSchema = z.object({
 export const updateTagSchema = createTagSchema.merge(
   z.object({
     // <number> 仅标注 input 类型, 使表单 (zodResolver) 与 API 复用同一 schema 时类型对齐
-    tagId: z.coerce.number<number>().min(1).max(9999999)
+    tagId: kunId('标签 ID')
   })
 )
 
 export const getTagSchema = z.object({
-  page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(100)
+  page: kunPage(),
+  limit: kunLimit(100)
 })
 
 export const getTagByIdSchema = z.object({
-  tagId: z.coerce.number().min(1).max(9999999)
+  tagId: kunId('标签 ID')
 })
 
 const galgameListQuerySchema = galgameSchema
@@ -63,6 +64,6 @@ const galgameListQuerySchema = galgameSchema
 
 export const getPatchByTagSchema = z
   .object({
-    tagId: z.coerce.number().min(1).max(9999999)
+    tagId: kunId('标签 ID')
   })
   .merge(galgameListQuerySchema)

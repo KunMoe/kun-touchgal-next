@@ -180,7 +180,7 @@ describe('DELETE /api/company 闸门 (company.manage)', () => {
     verifyHeaderCookieMock.mockResolvedValue(null)
     const res = await DELETE(deleteRequest('companyId=0'))
 
-    expect(await res.json()).toBe('Too small: expected number to be >=1')
+    expect(await res.json()).toBe('会社 ID 无效')
     expect(verifyHeaderCookieMock).not.toHaveBeenCalled()
     expect(transactionMock).not.toHaveBeenCalled()
   })

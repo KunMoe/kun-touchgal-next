@@ -425,7 +425,7 @@ describe('DELETE /api/patch/resource 闸门', () => {
     verifyHeaderCookieMock.mockResolvedValue(null)
     const res = await DELETE(deleteRequest('resourceId=abc'))
 
-    expect(await res.json()).toBe('资源 ID 必须为数字')
+    expect(await res.json()).toBe('资源 ID 无效')
     expect(verifyHeaderCookieMock).not.toHaveBeenCalled()
     expect(deleteResourceMock).not.toHaveBeenCalled()
   })

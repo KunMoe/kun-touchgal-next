@@ -9,12 +9,10 @@ import { createPatchComment } from './create'
 import { updateComment } from './update'
 import { deleteComment } from './delete'
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 
 const commentIdSchema = z.object({
-  commentId: z.coerce
-    .number({ message: '评论 ID 必须为数字' })
-    .min(1)
-    .max(9999999)
+  commentId: kunId('评论 ID')
 })
 
 export const GET = kunRoute.get({

@@ -66,10 +66,10 @@ afterEach(() => {
 
 describe('POST /api/admin/user/2fa/disable', () => {
   it.each([
-    [{ uid: 'abc' }, '用户 ID 必须为数字'],
-    [{}, '用户 ID 必须为数字'],
+    [{ uid: 'abc' }, '用户 ID 无效'],
+    [{}, '用户 ID 无效'],
     // zod 4 的 schema 级 message 也盖住 min / max 的文案
-    [{ uid: 0 }, '用户 ID 必须为数字']
+    [{ uid: 0 }, '用户 ID 无效']
   ])(
     'rejects %j with the zod message without reading the DB',
     async (body, message) => {
@@ -86,7 +86,7 @@ describe('POST /api/admin/user/2fa/disable', () => {
     const invalid = await post({ uid: 'abc' })
     const valid = await post({ uid: TARGET_UID })
 
-    expect(await read(invalid)).toBe('用户 ID 必须为数字')
+    expect(await read(invalid)).toBe('用户 ID 无效')
     expect(await read(valid)).toBe('用户未登录')
     expect(db.queries).toEqual([])
   })

@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
@@ -11,10 +12,7 @@ import type { ResourceRemovalGuard } from '~/server/content/resource/remove'
 import type { KunActor } from '~/constants/role'
 
 const resourceIdSchema = z.object({
-  resourceId: z.coerce
-    .number({ message: '资源 ID 必须为数字' })
-    .min(1)
-    .max(9999999)
+  resourceId: kunId('资源 ID')
 })
 
 export const deleteResource = async (

@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId, kunLimit, kunPage } from '~/validations/primitives'
 import { prisma } from '~/prisma/index'
 import {
   getCommentRatingVisibilityWhere,
@@ -8,10 +9,10 @@ import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { KunPatchRating } from '~/types/api/galgame'
 
 export const getPatchRatingSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999),
-  page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(50),
-  targetRatingId: z.coerce.number().min(1).max(9999999).optional(),
+  patchId: kunId('游戏 ID'),
+  page: kunPage(),
+  limit: kunLimit(50),
+  targetRatingId: kunId('评价 ID').optional(),
   onlyWithShortSummary: z
     .enum(['false', 'true'])
     .optional()

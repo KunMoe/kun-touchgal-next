@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { prisma } from '~/prisma/index'
 import {
   getResourceVisibilityWhere,
@@ -16,7 +17,7 @@ import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { PatchResource } from '~/types/api/patch'
 
 const patchIdSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999)
+  patchId: kunId('游戏 ID')
 })
 
 export const resourceInclude = {

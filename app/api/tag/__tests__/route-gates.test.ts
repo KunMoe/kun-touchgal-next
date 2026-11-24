@@ -139,7 +139,7 @@ describe('DELETE /api/tag 闸门 (tag.manage)', () => {
     verifyHeaderCookieMock.mockResolvedValue(null)
     const res = await DELETE(deleteRequest('tagId=0'))
 
-    expect(await res.json()).toBe('Too small: expected number to be >=1')
+    expect(await res.json()).toBe('标签 ID 无效')
     expect(verifyHeaderCookieMock).not.toHaveBeenCalled()
     expect(deleteTagMock).not.toHaveBeenCalled()
   })

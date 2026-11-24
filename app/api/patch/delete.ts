@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { enqueueResourceLinkDeletions } from './resource/_helper'
@@ -9,7 +10,7 @@ import { kickS3DeletionDrain } from '~/server/storage/s3Outbox'
 import type { ResourceStatus } from '~/constants/contentStatus'
 
 const patchIdSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999)
+  patchId: kunId('游戏 ID')
 })
 
 export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {

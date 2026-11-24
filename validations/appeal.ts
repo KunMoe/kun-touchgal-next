@@ -1,9 +1,10 @@
 import * as z from 'zod'
+import { kunId, kunLimit, kunPage } from './primitives'
 import { patchResourceCreateSchema } from './patch'
 
 export const getUserAppealSchema = z.object({
-  page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(30),
+  page: kunPage(),
+  limit: kunLimit(30),
   // 各取值见 UserAppealState; 申诉页默认只列出还能申诉的内容
   state: z
     .enum([
@@ -17,10 +18,7 @@ export const getUserAppealSchema = z.object({
     .default('appealable')
 })
 
-const appealTaskIdSchema = z.coerce
-  .number({ message: '审核任务 ID 必须为数字' })
-  .min(1)
-  .max(9999999)
+const appealTaskIdSchema = kunId('审核任务 ID')
 
 const resourceShape = patchResourceCreateSchema.shape
 const resourceLinkShape = resourceShape.links.element.shape
@@ -31,7 +29,7 @@ const resourceLinkShape = resourceShape.links.element.shape
 // 四个字段在这里都是可选的: 哪些必须带、链接地址是否必填, 由服务端对着库中的行判断。
 // 不可改的字段不提交也就不校验 —— 库里不合现行格式的旧值不会卡住申诉
 const appealResourceLinkSchema = z.object({
-  id: z.coerce.number({ message: '链接 ID 必须为数字' }).min(1).max(9999999),
+  id: kunId('链接 ID'),
   content: resourceLinkShape.content.optional(),
   size: resourceLinkShape.size.optional(),
   code: resourceLinkShape.code.optional(),

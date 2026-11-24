@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import {
@@ -7,10 +8,7 @@ import {
 } from '~/app/api/utils/contentVisibility'
 
 const commentIdSchema = z.object({
-  commentId: z.coerce
-    .number({ message: '评论 ID 必须为数字' })
-    .min(1)
-    .max(9999999)
+  commentId: kunId('评论 ID')
 })
 
 const getCommentMarkdown = async (

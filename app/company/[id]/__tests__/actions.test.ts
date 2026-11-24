@@ -130,7 +130,7 @@ describe('kunGetCompanyByIdActions', () => {
     ).rejects.toMatchObject(NOT_FOUND)
   })
 
-  it.each([0, Number.NaN, 10000000])(
+  it.each([0, Number.NaN, 1.5, 2147483648])(
     'answers an invalid company id (%s) with notFound without querying',
     async (companyId) => {
       await expect(
@@ -186,7 +186,7 @@ describe('kunGetCompanyPageDataActions', () => {
     ).rejects.toMatchObject(NOT_FOUND)
   })
 
-  it.each([0, Number.NaN, 10000000])(
+  it.each([0, Number.NaN, 1.5, 2147483648])(
     'answers an invalid company id (%s) with notFound without querying',
     async (companyId) => {
       await expect(

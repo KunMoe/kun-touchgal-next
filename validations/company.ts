@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId, kunLimit, kunPage } from './primitives'
 import { galgameSchema, minRatingCountSchema } from './galgame'
 import { DEFAULT_TAG_COMPANY_MIN_RATING_COUNT } from '~/utils/galgameFilter'
 import { normalizeAliasList } from '~/utils/term/normalize'
@@ -53,17 +54,17 @@ export const createCompanySchema = z.object({
 
 export const updateCompanySchema = createCompanySchema.merge(
   z.object({
-    companyId: z.coerce.number().min(1).max(9999999)
+    companyId: kunId('会社 ID')
   })
 )
 
 export const getCompanySchema = z.object({
-  page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(100)
+  page: kunPage(),
+  limit: kunLimit(100)
 })
 
 export const getCompanyByIdSchema = z.object({
-  companyId: z.coerce.number().min(1).max(9999999)
+  companyId: kunId('会社 ID')
 })
 
 const galgameListQuerySchema = galgameSchema
@@ -87,7 +88,7 @@ const galgameListQuerySchema = galgameSchema
 
 export const getPatchByCompanySchema = z
   .object({
-    companyId: z.coerce.number().min(1).max(9999999)
+    companyId: kunId('会社 ID')
   })
   .merge(galgameListQuerySchema)
 

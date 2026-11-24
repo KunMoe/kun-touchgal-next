@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { RATING_STATUS } from '~/constants/contentStatus'
@@ -11,7 +12,7 @@ import type { RatingRemovalGuard } from '~/server/content/rating/remove'
 import type { KunActor } from '~/constants/role'
 
 const ratingIdSchema = z.object({
-  ratingId: z.coerce.number({ message: 'ID 不正确' }).min(1).max(9999999)
+  ratingId: kunId('评价 ID')
 })
 
 export const deletePatchRating = async (

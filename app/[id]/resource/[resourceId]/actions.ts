@@ -3,12 +3,13 @@ import 'server-only'
 import { cache } from 'react'
 import { notFound } from 'next/navigation'
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { verifyHeaderCookie } from '~/utils/actions/verifyHeaderCookie'
 import { safeParseSchema } from '~/utils/actions/safeParseSchema'
 import { getPatchResourceDetail } from '~/app/api/patch/resource/detail'
 
 const resourceIdSchema = z.object({
-  resourceId: z.coerce.number().min(1).max(9999999)
+  resourceId: kunId('资源 ID')
 })
 
 // 资源不存在、对当前视角不可见或 id 越界时调 notFound(), 页面与 generateMetadata 共用。这个路由段

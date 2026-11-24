@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId, kunInt, kunLimit, kunNumber, kunPage } from './primitives'
 import {
   ADMIN_COMMENT_DELETE_LIMIT,
   ADMIN_RATING_DELETE_LIMIT,
@@ -18,8 +19,8 @@ import { KUN_ROLE } from '~/constants/role'
 export const adminReportTargetTypeSchema = z.enum(['comment', 'rating'])
 
 export const adminPaginationSchema = z.object({
-  page: z.coerce.number().min(1).max(9999999),
-  limit: z.coerce.number().min(1).max(100),
+  page: kunPage(),
+  limit: kunLimit(100),
   search: z
     .string()
     .max(300, { message: '搜索关键词不能超过 300 个字符' })
@@ -29,16 +30,16 @@ export const adminPaginationSchema = z.object({
 export const adminUserSearchTypeSchema = z.enum(['name', 'email', 'id'])
 
 export const adminUserPaginationSchema = adminPaginationSchema.extend({
-  limit: z.coerce.number().min(1).max(500),
+  limit: kunLimit(500),
   searchType: adminUserSearchTypeSchema.default('name')
 })
 
 export const adminCommentSearchTypeSchema = z.enum(['content', 'user'])
 
 export const adminCommentPaginationSchema = adminPaginationSchema.extend({
-  limit: z.coerce.number().min(1).max(500),
+  limit: kunLimit(500),
   searchType: adminCommentSearchTypeSchema.default('content'),
-  userId: z.coerce.number().min(1).max(9999999).optional()
+  userId: kunId('用户 ID').optional()
 })
 
 const adminCommentIdsSchema = z
@@ -73,10 +74,7 @@ const adminCommentIdsSchema = z
 export const adminDeleteCommentSchema = z.union([
   z
     .object({
-      commentId: z.coerce
-        .number({ message: '评论 ID 必须为数字' })
-        .min(1)
-        .max(9999999)
+      commentId: kunId('评论 ID')
     })
     .transform(({ commentId }) => ({
       commentIds: [commentId]
@@ -91,23 +89,23 @@ export const adminDeleteCommentSchema = z.union([
 ])
 
 export const adminGalgamePaginationSchema = adminPaginationSchema.extend({
-  limit: z.coerce.number().min(1).max(500)
+  limit: kunLimit(500)
 })
 
 export const adminFeedbackPaginationSchema = adminPaginationSchema.extend({
-  limit: z.coerce.number().min(1).max(500)
+  limit: kunLimit(500)
 })
 
 export const adminResourceApplyPaginationSchema = adminPaginationSchema.extend({
-  limit: z.coerce.number().min(1).max(500)
+  limit: kunLimit(500)
 })
 
 export const adminResourceSearchTypeSchema = z.enum(['content', 'info'])
 
 export const adminResourcePaginationSchema = adminPaginationSchema.extend({
-  limit: z.coerce.number().min(1).max(500),
+  limit: kunLimit(500),
   searchType: adminResourceSearchTypeSchema.default('content'),
-  userId: z.coerce.number().min(1).max(9999999).optional()
+  userId: kunId('用户 ID').optional()
 })
 
 const adminResourceHiddenLimit = 500
@@ -153,11 +151,7 @@ const adminDeleteResourceIdsSchema = adminResourceIdListSchema.refine(
 export const adminDeleteResourceSchema = z.union([
   z
     .object({
-      resourceId: z.coerce
-        .number({ message: '资源 ID 必须为数字' })
-        .int()
-        .min(1)
-        .max(9999999)
+      resourceId: kunId('资源 ID')
     })
     .transform(({ resourceId }) => ({
       resourceIds: [resourceId]
@@ -184,7 +178,7 @@ export const adminReportPaginationSchema = adminPaginationSchema.extend({
 })
 
 export const adminUpdateUserSchema = z.object({
-  uid: z.coerce.number().min(1).max(9999999),
+  uid: kunId('用户 ID'),
   name: z
     .string()
     .trim()
@@ -193,14 +187,10 @@ export const adminUpdateUserSchema = z.object({
   email: z.string().trim().email({ message: '请输入合法的邮箱格式' }),
   // 只校验取值域。表单整体提交, role 恒定携带: 在这里卡「可授予」的上限会让超级管理员账号
   // 连别的字段都保存不了; 能不能改成这个角色由服务按新旧角色判定 (canAssignRole)
-  role: z.coerce.number().min(KUN_ROLE.USER).max(KUN_ROLE.SUPER_ADMIN),
-  status: z.coerce.number().min(0).max(2),
-  dailyImageCount: z.coerce.number().min(0).max(50),
-  moemoepoint: z.coerce
-    .number()
-    .int({ message: '萌萌点必须为整数' })
-    .min(0)
-    .max(9999999),
+  role: kunInt(KUN_ROLE.USER, KUN_ROLE.SUPER_ADMIN, '用户角色无效'),
+  status: kunInt(0, 2, '用户状态无效'),
+  dailyImageCount: kunInt(0, 50, '每日图片上传数须为 0～50 的整数'),
+  moemoepoint: kunInt(0, 9999999, '萌萌点须为 0～9999999 的整数'),
   password: z.preprocess(
     (value) => {
       if (typeof value !== 'string') {
@@ -222,16 +212,16 @@ export const adminUpdateUserSchema = z.object({
 })
 
 export const adminDisableUser2FASchema = z.object({
-  uid: z.coerce.number({ message: '用户 ID 必须为数字' }).min(1).max(9999999)
+  uid: kunId('用户 ID')
 })
 
 export const approveCreatorSchema = z.object({
-  messageId: z.coerce.number().min(1).max(9999999),
-  uid: z.coerce.number().min(1).max(9999999)
+  messageId: kunId('消息 ID'),
+  uid: kunId('用户 ID')
 })
 
 export const declineCreatorSchema = z.object({
-  messageId: z.coerce.number().min(1).max(9999999),
+  messageId: kunId('消息 ID'),
   reason: z
     .string()
     .trim()
@@ -265,12 +255,12 @@ export const adminSendEmailSchema = z.object({
 })
 
 export const adminMailCampaignActionSchema = z.object({
-  campaignId: z.coerce.number().int().min(1).max(2147483647),
+  campaignId: kunId('群发任务 ID'),
   action: z.enum(['cancel', 'resume'])
 })
 
 export const adminHandleFeedbackSchema = z.object({
-  messageId: z.coerce.number().min(1).max(9999999),
+  messageId: kunId('消息 ID'),
   content: z
     .string()
     .trim()
@@ -280,9 +270,9 @@ export const adminHandleFeedbackSchema = z.object({
 export const adminRatingSearchTypeSchema = z.enum(['content', 'user'])
 
 export const adminRatingPaginationSchema = adminPaginationSchema.extend({
-  limit: z.coerce.number().min(1).max(500),
+  limit: kunLimit(500),
   searchType: adminRatingSearchTypeSchema.default('content'),
-  userId: z.coerce.number().min(1).max(9999999).optional()
+  userId: kunId('用户 ID').optional()
 })
 
 const adminRatingIdsSchema = z
@@ -317,10 +307,7 @@ const adminRatingIdsSchema = z
 export const adminDeleteRatingSchema = z.union([
   z
     .object({
-      ratingId: z.coerce
-        .number({ message: '评价 ID 必须为数字' })
-        .min(1)
-        .max(9999999)
+      ratingId: kunId('评价 ID')
     })
     .transform(({ ratingId }) => ({
       ratingIds: [ratingId]
@@ -335,7 +322,7 @@ export const adminDeleteRatingSchema = z.union([
 ])
 
 export const patchRatingUpdateSchema = z.object({
-  ratingId: z.coerce.number().min(1).max(9999999),
+  ratingId: kunId('评价 ID'),
   shortSummary: z
     .string()
     .trim()
@@ -344,7 +331,7 @@ export const patchRatingUpdateSchema = z.object({
 })
 
 export const adminHandleReportSchema = z.object({
-  reportId: z.coerce.number().min(1).max(9999999),
+  reportId: kunId('举报 ID'),
   action: z.enum(['delete', 'reject']),
   content: z
     .string()
@@ -354,7 +341,7 @@ export const adminHandleReportSchema = z.object({
 
 // 上限与列表每页最大条数一致 (100): 全选当前页即为单次批量的最大规模
 export const adminBatchHandleReportSchema = z.object({
-  reportIds: z.array(z.coerce.number().min(1).max(9999999)).min(1).max(100),
+  reportIds: z.array(kunId('举报 ID')).min(1).max(100),
   action: z.enum(['delete', 'reject']),
   content: z
     .string()
@@ -363,11 +350,11 @@ export const adminBatchHandleReportSchema = z.object({
 })
 
 export const approvePatchResourceSchema = z.object({
-  resourceId: z.coerce.number().min(1).max(9999999)
+  resourceId: kunId('资源 ID')
 })
 
 export const declinePatchResourceSchema = z.object({
-  resourceId: z.coerce.number().min(1).max(9999999),
+  resourceId: kunId('资源 ID'),
   reason: z
     .string()
     .trim()
@@ -380,10 +367,7 @@ export const adminUpdateRedirectSchema = z.object({
   excludedDomains: z.array(
     z.string().max(500, { message: '单个域名不能超过 500 个字符' })
   ),
-  delaySeconds: z.coerce
-    .number()
-    .min(0, { message: '跳转延时不能为负数' })
-    .max(60, { message: '跳转延时不能超过 60 秒' })
+  delaySeconds: kunNumber(0, 60, '跳转延时须为 0～60 秒')
 })
 
 export const adminUpdateDisableRegisterSchema = z.object({
@@ -404,17 +388,17 @@ export const adminModerationPaginationSchema = adminPaginationSchema.extend({
 })
 
 export const adminModerationReviewSchema = z.object({
-  taskId: z.coerce.number().min(1).max(9999999),
+  taskId: kunId('审核任务 ID'),
   approve: z.boolean()
 })
 
 export const adminModerationRetrySchema = z.object({
-  taskId: z.coerce.number().min(1).max(9999999)
+  taskId: kunId('审核任务 ID')
 })
 
 // 上限与列表每页条数一致: 全选当前页即为单次批量的最大规模
 export const adminModerationBatchSchema = z.object({
-  taskIds: z.array(z.coerce.number().min(1).max(9999999)).min(1).max(30),
+  taskIds: z.array(kunId('审核任务 ID')).min(1).max(30),
   action: z.enum(['approve', 'reject', 'retry'])
 })
 
@@ -432,7 +416,7 @@ export const adminModerationBlacklistCreateSchema = z.object({
 })
 
 export const adminModerationBlacklistDeleteSchema = z.object({
-  blacklistId: z.coerce.number().min(1).max(9999999)
+  blacklistId: kunId('黑名单 ID')
 })
 
 export const adminAppealPaginationSchema = adminPaginationSchema.extend({
@@ -440,25 +424,25 @@ export const adminAppealPaginationSchema = adminPaginationSchema.extend({
 })
 
 export const adminHandleAppealSchema = z.object({
-  appealId: z.coerce.number().min(1).max(9999999),
+  appealId: kunId('申诉 ID'),
   approve: z.boolean()
 })
 
 // admin 仅在正常 (0) 与隐藏 (2) 间切换; 待审核 (1) 为系统态, 不手动设置
 export const adminUpdateCommentShadowBanSchema = z.object({
-  commentId: z.coerce.number().min(1).max(9999999),
+  commentId: kunId('评论 ID'),
   status: z.union([z.literal(0), z.literal(2)])
 })
 
 export const adminUpdateRatingShadowBanSchema = z.object({
-  ratingId: z.coerce.number().min(1).max(9999999),
+  ratingId: kunId('评价 ID'),
   status: z.union([z.literal(0), z.literal(2)])
 })
 
 export const adminGetFullCommentSchema = z.object({
-  commentId: z.coerce.number().min(1).max(9999999)
+  commentId: kunId('评论 ID')
 })
 
 export const adminGetFullRatingSchema = z.object({
-  ratingId: z.coerce.number().min(1).max(9999999)
+  ratingId: kunId('评价 ID')
 })

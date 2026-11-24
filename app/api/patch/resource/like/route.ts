@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from '~/validations/primitives'
 import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
@@ -9,10 +10,7 @@ import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 
 const resourceIdSchema = z.object({
-  resourceId: z.coerce
-    .number({ message: '资源 ID 必须为数字' })
-    .min(1)
-    .max(9999999)
+  resourceId: kunId('资源 ID')
 })
 
 // 通告锁命名空间: 见 app/api/patch/rating/like/route.ts 的说明, 三条点赞路由共用

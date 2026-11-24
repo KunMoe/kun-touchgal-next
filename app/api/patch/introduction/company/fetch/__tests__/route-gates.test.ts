@@ -79,7 +79,7 @@ describe('POST /api/patch/introduction/company/fetch 闸门 (company.manage)', (
     verifyHeaderCookieMock.mockResolvedValue(null)
     const res = await POST(postRequest({ patchId: 0 }))
 
-    expect(await res.json()).toBe('Too small: expected number to be >=1')
+    expect(await res.json()).toBe('游戏 ID 无效')
     expect(verifyHeaderCookieMock).not.toHaveBeenCalled()
     expect(patchFindUniqueMock).not.toHaveBeenCalled()
   })

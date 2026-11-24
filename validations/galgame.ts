@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { kunInt } from './primitives'
+import { kunInt, kunLimit, kunPage } from './primitives'
 import {
   ALL_SUPPORTED_LANGUAGE,
   ALL_SUPPORTED_PLATFORM,
@@ -57,8 +57,8 @@ export const galgameSchema = z.object({
     z.literal('released')
   ]),
   sortOrder: z.union([z.literal('asc'), z.literal('desc')]),
-  page: z.coerce.number().int().min(1).max(9999999),
-  limit: z.coerce.number().int().min(1).max(24),
+  page: kunPage(),
+  limit: kunLimit(24),
   yearString: getBoundedFilterStringSchema(
     `您最多选择 ${MAX_GALGAME_FILTER_VALUES} 组年份`
   ).default(DEFAULT_GALGAME_YEAR_STRING),

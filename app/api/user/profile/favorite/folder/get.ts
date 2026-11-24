@@ -1,15 +1,10 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import type { UserFavoritePatchFolder } from '~/types/api/user'
-
-const patchIdSchema = z.object({
-  patchId: z.coerce.number().min(1).max(9999999).optional(),
-  page: z.coerce.number().min(1).max(9999999).optional(),
-  limit: z.coerce.number().min(1).max(100).optional()
-})
+import type { getFavoriteFoldersSchema } from '~/validations/user'
 
 export const getFolders = async (
-  input: z.infer<typeof patchIdSchema>,
+  input: z.infer<typeof getFavoriteFoldersSchema>,
   pageUid: number,
   currentUserUid: number
 ) => {
