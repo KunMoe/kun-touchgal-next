@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as cacheConfig from '~/config/cache'
 import {
+  IMAGE_VERSION_DELETION_GRACE_MS,
   getUserAvatarKeys,
   getUserAvatarModerationArchiveKey,
   getUserAvatarPendingKeys,
   isPatchBannerPointerIn,
   isUserAvatarPendingKey,
   newContentImageKey,
+  newPatchBannerSet,
   parsePatchBannerKey,
   patchBannerKeysFromPointer
 } from '~/server/storage/imageObjects'
@@ -238,5 +241,41 @@ describe('parsePatchBannerKey / isPatchBannerPointerIn', () => {
       )
     ).toBe(false)
     expect(isPatchBannerPointerIn('', 'patch/12/banner')).toBe(false)
+  })
+})
+
+describe('newPatchBannerSet', () => {
+  it('每次一个新的随机版本目录, 指针是主图的公开地址, 解析回来就是这一组', () => {
+    vi.stubEnv('KUN_VISUAL_NOVEL_IMAGE_BED_URL', BED)
+
+    const a = newPatchBannerSet(12)
+    const b = newPatchBannerSet(12)
+
+    expect(a.keys.main).toMatch(
+      /^patch\/12\/banner\/[0-9a-f-]{36}\/banner\.avif$/
+    )
+    expect(a.keys.main).not.toBe(b.keys.main)
+    expect(a.pointer).toBe(`${BED}/${a.keys.main}`)
+    expect(patchBannerKeysFromPointer(12, a.pointer)).toEqual(
+      Object.values(a.keys)
+    )
+  })
+})
+
+// 换下来的封面版本要等共享读缓存里内嵌的旧地址全部过期才删。这里按 config/cache.ts 里全部 *_DURATION
+// 核对 (秒): 有的缓存并不内嵌封面或头像地址, 宁严勿漏; 以后加了更长的、确实不内嵌图片地址的缓存,
+// 在这里写明理由再排除
+describe('IMAGE_VERSION_DELETION_GRACE_MS', () => {
+  it('不短于任何一个缓存 TTL', () => {
+    const durations = Object.entries(cacheConfig).filter(([name]) =>
+      name.endsWith('_DURATION')
+    )
+    expect(durations.length).toBeGreaterThan(10)
+    for (const [name, seconds] of durations) {
+      expect(
+        IMAGE_VERSION_DELETION_GRACE_MS,
+        `${name} = ${seconds} 秒`
+      ).toBeGreaterThanOrEqual((seconds as number) * 1000)
+    }
   })
 })

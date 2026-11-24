@@ -221,7 +221,9 @@ export const patchResourceUpdateSchema = patchResourceBaseSchema
 export const updatePatchBannerSchema = z.object({
   patchId: kunId('游戏 ID'),
   image: nonEmptyFileSchema,
-  imageOriginal: nonEmptyFileSchema.optional()
+  imageOriginal: nonEmptyFileSchema.optional(),
+  // 撤下违规图片: 旧版本不留宽限期、立即删除
+  discardOld: z.enum(['true', 'false']).optional()
 })
 
 export const getMoyuPatchResourceSchema = z.object({

@@ -4,13 +4,13 @@ import { NextRequest } from 'next/server'
 const {
   verifyHeaderCookieMock,
   patchFindUniqueMock,
-  uploadPatchBannerMock,
-  purgeCloudflareCacheMock
+  encodePatchBannerMock,
+  replacePatchBannerMock
 } = vi.hoisted(() => ({
   verifyHeaderCookieMock: vi.fn(),
   patchFindUniqueMock: vi.fn(),
-  uploadPatchBannerMock: vi.fn(),
-  purgeCloudflareCacheMock: vi.fn()
+  encodePatchBannerMock: vi.fn(),
+  replacePatchBannerMock: vi.fn()
 }))
 
 vi.mock('~/middleware/_verifyHeaderCookie', () => ({
@@ -21,19 +21,21 @@ vi.mock('~/prisma/index', () => ({
   prisma: { patch: { findUnique: patchFindUniqueMock } }
 }))
 
-// 横幅编码 (sharp) 与 S3 写入都在 helper 里, 路由测试只覆盖闸门与编排
+// 横幅编码 (sharp) 与版本目录的写入、换指针各有自己的测试 (_upload.test.ts、patchBanner.test.ts),
+// 路由测试只覆盖闸门与编排
 vi.mock('~/app/api/edit/_upload', () => ({
-  uploadPatchBanner: uploadPatchBannerMock
+  encodePatchBanner: encodePatchBannerMock
 }))
 
-vi.mock('~/app/api/utils/purgeCloudflareCache', () => ({
-  purgeCloudflareCache: purgeCloudflareCacheMock
+vi.mock('~/server/storage/patchBanner', () => ({
+  replacePatchBanner: replacePatchBannerMock
 }))
 
 import { POST } from '~/app/api/patch/banner/route'
 
-const IMAGE_BED_URL = 'https://img.example.com'
 const PATCH_ID = 42
+const NEW_BANNER = 'https://img.example.com/patch/42/banner/v/banner.avif'
+const ENCODED = { banner: Buffer.from('b'), miniBanner: Buffer.from('m') }
 const IMAGE_BYTES = [1, 2, 3]
 const ORIGINAL_BYTES = [4, 5, 6, 7]
 
@@ -63,15 +65,13 @@ const asPayload = (role: number) => ({ uid: 7, name: 'kun', role })
 
 beforeEach(() => {
   vi.resetAllMocks()
-  vi.stubEnv('KUN_VISUAL_NOVEL_IMAGE_BED_URL', IMAGE_BED_URL)
   verifyHeaderCookieMock.mockResolvedValue(asPayload(3))
   patchFindUniqueMock.mockResolvedValue({ id: PATCH_ID })
-  uploadPatchBannerMock.mockResolvedValue({})
-  purgeCloudflareCacheMock.mockResolvedValue(undefined)
+  encodePatchBannerMock.mockResolvedValue(ENCODED)
+  replacePatchBannerMock.mockResolvedValue({ banner: NEW_BANNER })
 })
 
 afterEach(() => {
-  vi.unstubAllEnvs()
   vi.restoreAllMocks()
 })
 
@@ -85,7 +85,8 @@ describe('POST /api/patch/banner 解析与鉴权顺序', () => {
     expect(await res.json()).toBe('请上传文件')
     expect(verifyHeaderCookieMock).not.toHaveBeenCalled()
     expect(patchFindUniqueMock).not.toHaveBeenCalled()
-    expect(uploadPatchBannerMock).not.toHaveBeenCalled()
+    expect(encodePatchBannerMock).not.toHaveBeenCalled()
+    expect(replacePatchBannerMock).not.toHaveBeenCalled()
   })
 
   it('空图片在鉴权前被拒', async () => {
@@ -105,7 +106,8 @@ describe('POST /api/patch/banner 解析与鉴权顺序', () => {
 
     expect(await res.json()).toBe('用户未登录')
     expect(patchFindUniqueMock).not.toHaveBeenCalled()
-    expect(uploadPatchBannerMock).not.toHaveBeenCalled()
+    expect(encodePatchBannerMock).not.toHaveBeenCalled()
+    expect(replacePatchBannerMock).not.toHaveBeenCalled()
   })
 })
 
@@ -118,8 +120,8 @@ describe('POST /api/patch/banner 角色矩阵 (按会话 payload.role)', () => {
 
       expect(await res.json()).toBe('本页面仅管理员可访问')
       expect(patchFindUniqueMock).not.toHaveBeenCalled()
-      expect(uploadPatchBannerMock).not.toHaveBeenCalled()
-      expect(purgeCloudflareCacheMock).not.toHaveBeenCalled()
+      expect(encodePatchBannerMock).not.toHaveBeenCalled()
+      expect(replacePatchBannerMock).not.toHaveBeenCalled()
     }
   )
 
@@ -127,13 +129,13 @@ describe('POST /api/patch/banner 角色矩阵 (按会话 payload.role)', () => {
     verifyHeaderCookieMock.mockResolvedValue(asPayload(role))
     const res = await POST(postRequest(buildFormData(validFields())))
 
-    expect(await res.json()).toEqual({})
-    expect(uploadPatchBannerMock).toHaveBeenCalledTimes(1)
+    expect(await res.json()).toEqual({ banner: NEW_BANNER })
+    expect(replacePatchBannerMock).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('POST /api/patch/banner 通过闸门后的编排', () => {
-  it('Galgame 不存在返回 这个 Galgame 不存在, 不上传不清缓存', async () => {
+  it('Galgame 不存在返回 这个 Galgame 不存在, 不编码不写入', async () => {
     patchFindUniqueMock.mockResolvedValue(null)
     const res = await POST(postRequest(buildFormData(validFields())))
 
@@ -142,19 +144,19 @@ describe('POST /api/patch/banner 通过闸门后的编排', () => {
       where: { id: PATCH_ID },
       select: { id: true }
     })
-    expect(uploadPatchBannerMock).not.toHaveBeenCalled()
-    expect(purgeCloudflareCacheMock).not.toHaveBeenCalled()
+    expect(encodePatchBannerMock).not.toHaveBeenCalled()
+    expect(replacePatchBannerMock).not.toHaveBeenCalled()
   })
 
-  it('上传 helper 返回错误串时原样返回, 不清 CDN 缓存', async () => {
-    uploadPatchBannerMock.mockResolvedValue('图片处理失败')
+  it('编码返回错误串时原样返回, 不写入', async () => {
+    encodePatchBannerMock.mockResolvedValue('图片尺寸过大')
     const res = await POST(postRequest(buildFormData(validFields())))
 
-    expect(await res.json()).toBe('图片处理失败')
-    expect(purgeCloudflareCacheMock).not.toHaveBeenCalled()
+    expect(await res.json()).toBe('图片尺寸过大')
+    expect(replacePatchBannerMock).not.toHaveBeenCalled()
   })
 
-  it('带原图时把两份字节与 patchId 交给 helper, 并清三条横幅 CDN 地址', async () => {
+  it('带原图时两份字节都交给编码, 编码结果与 patchId 交给 replacePatchBanner, 回出新地址', async () => {
     const res = await POST(
       postRequest(
         buildFormData({
@@ -164,31 +166,35 @@ describe('POST /api/patch/banner 通过闸门后的编排', () => {
       )
     )
 
-    expect(await res.json()).toEqual({})
-    expect(uploadPatchBannerMock).toHaveBeenCalledTimes(1)
-    const [image, patchId, original] = uploadPatchBannerMock.mock.calls[0]
+    expect(await res.json()).toEqual({ banner: NEW_BANNER })
+    const [image, original] = encodePatchBannerMock.mock.calls[0]
     expect(new Uint8Array(image)).toEqual(new Uint8Array(IMAGE_BYTES))
-    expect(patchId).toBe(PATCH_ID)
     expect(new Uint8Array(original)).toEqual(new Uint8Array(ORIGINAL_BYTES))
-    expect(purgeCloudflareCacheMock).toHaveBeenCalledWith([
-      `${IMAGE_BED_URL}/patch/${PATCH_ID}/banner/banner.avif`,
-      `${IMAGE_BED_URL}/patch/${PATCH_ID}/banner/banner-mini.avif`,
-      `${IMAGE_BED_URL}/patch/${PATCH_ID}/banner/banner-full.avif`
-    ])
+    expect(replacePatchBannerMock).toHaveBeenCalledWith(PATCH_ID, ENCODED, {
+      discardOld: false
+    })
   })
 
-  it('未带原图时 helper 第三参为 undefined', async () => {
+  it('未带原图时编码第二参为 undefined', async () => {
     await POST(postRequest(buildFormData(validFields())))
 
-    expect(uploadPatchBannerMock.mock.calls[0][2]).toBeUndefined()
+    expect(encodePatchBannerMock.mock.calls[0][1]).toBeUndefined()
   })
 
-  it('CDN 清理失败只记日志, 仍返回 {}', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    purgeCloudflareCacheMock.mockRejectedValue(new Error('cloudflare down'))
+  it('discardOld=true 时要求立即删除旧版本', async () => {
+    await POST(
+      postRequest(buildFormData({ ...validFields(), discardOld: 'true' }))
+    )
+
+    expect(replacePatchBannerMock).toHaveBeenCalledWith(PATCH_ID, ENCODED, {
+      discardOld: true
+    })
+  })
+
+  it('replacePatchBanner 返回错误串时原样返回', async () => {
+    replacePatchBannerMock.mockResolvedValue('这个 Galgame 不存在')
     const res = await POST(postRequest(buildFormData(validFields())))
 
-    expect(await res.json()).toEqual({})
-    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(await res.json()).toBe('这个 Galgame 不存在')
   })
 })

@@ -127,6 +127,18 @@ const makeInput = (banner: ArrayBuffer) => ({
   contentLimit: 'nsfw'
 })
 
+// 封面写进随机版本目录 patch/42/banner/{uuid}/ (newPatchBannerSet): 从实际写入的主图 key 取目录
+const VERSION_DIR = /^patch\/42\/banner\/[0-9a-f-]{36}$/
+const bannerDir = () => {
+  const [mainKey] = uploadImageToS3Mock.mock.calls[0] as [string]
+  return mainKey.replace(/\/banner\.avif$/, '')
+}
+const bannerKeys = () => [
+  `${bannerDir()}/banner.avif`,
+  `${bannerDir()}/banner-mini.avif`,
+  `${bannerDir()}/banner-full.avif`
+]
+
 // 忠实模拟 Prisma 交互式事务的提交语义: 回调 resolve 即提交(哪怕 resolve 的是表示
 // 业务错误的字符串), 只有抛出才回滚. 断言 committed 才能区分"回滚"与"提交了半成品",
 // 只断言返回值的话两者长得一模一样 —— 而那正是本文件守护的缺陷类
@@ -170,8 +182,11 @@ describe('createGalgame', () => {
     expect(committed).toBe(false)
     expect(patchUpdateMock).not.toHaveBeenCalled()
     expect(enqueueSearchOutboxMock).not.toHaveBeenCalled()
-    // keys 赋值早于上传: PUT 的 Promise.all 部分成功也会被补偿清理 (删除幂等)
-    expect(deleteFileFromS3Mock).toHaveBeenCalledTimes(2)
+    // 清理登记早于上传: 部分写入成功也会被补偿清理; 三个 key 全删 (删除幂等)
+    expect(bannerDir()).toMatch(VERSION_DIR)
+    expect(deleteFileFromS3Mock.mock.calls.map(([key]) => key)).toEqual(
+      bannerKeys()
+    )
   }, 30000)
 
   it('bangumi_id 预检命中时返回重复提示, 不开启事务', async () => {
@@ -260,13 +275,10 @@ describe('createGalgame', () => {
       'db glitch'
     )
     expect(committed).toBe(false)
-    expect(deleteFileFromS3Mock).toHaveBeenCalledWith(
-      'patch/42/banner/banner.avif'
+    expect(bannerDir()).toMatch(VERSION_DIR)
+    expect(deleteFileFromS3Mock.mock.calls.map(([key]) => key)).toEqual(
+      bannerKeys()
     )
-    expect(deleteFileFromS3Mock).toHaveBeenCalledWith(
-      'patch/42/banner/banner-mini.avif'
-    )
-    expect(deleteFileFromS3Mock).toHaveBeenCalledTimes(2)
     expect(enqueueS3DeletionMock).not.toHaveBeenCalled()
   }, 30000)
 
@@ -280,10 +292,7 @@ describe('createGalgame', () => {
     )
     const { prisma } = await import('~/prisma/index')
     // 入箱必须用全局 client (事务已回滚, tx client 不可用)
-    expect(enqueueS3DeletionMock).toHaveBeenCalledWith(prisma, [
-      'patch/42/banner/banner.avif',
-      'patch/42/banner/banner-mini.avif'
-    ])
+    expect(enqueueS3DeletionMock).toHaveBeenCalledWith(prisma, bannerKeys())
     expect(kickS3DeletionDrainMock).toHaveBeenCalledTimes(1)
   }, 30000)
 
@@ -321,7 +330,17 @@ describe('createGalgame', () => {
     })
     expect(patchCreateMock).toHaveBeenCalledTimes(1)
     expect(uploadImageToS3Mock).toHaveBeenCalledTimes(2)
-    expect(patchUpdateMock).toHaveBeenCalledTimes(1)
+    expect(bannerDir()).toMatch(VERSION_DIR)
+    expect(uploadImageToS3Mock.mock.calls.map(([key]) => key)).toEqual(
+      bannerKeys().slice(0, 2)
+    )
+    // 指针就是写入的主图地址
+    expect(patchUpdateMock).toHaveBeenCalledWith({
+      where: { id: 42 },
+      data: {
+        banner: `${process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL}/${bannerDir()}/banner.avif`
+      }
+    })
     expect(ratingStatCreateMock).toHaveBeenCalledTimes(1)
     expect(aliasCreateManyMock).toHaveBeenCalledTimes(1)
     expect(userUpdateMock).toHaveBeenCalledTimes(1)

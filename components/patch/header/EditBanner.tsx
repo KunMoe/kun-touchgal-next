@@ -2,6 +2,7 @@
 
 import { lazy, Suspense, useState } from 'react'
 import { Button } from '@heroui/button'
+import { Checkbox } from '@heroui/checkbox'
 import { Upload } from 'lucide-react'
 import {
   Modal,
@@ -37,7 +38,10 @@ const EditBannerContentFallback = ({ onClose }: { onClose: () => void }) => {
           </div>
         </div>
 
-        <p>更改图片后立即生效, 使用 Ctrl + F5 刷新页面即可</p>
+        <p>更改后刷新页面即可看到新图片</p>
+        <Checkbox isDisabled>
+          立即删除旧图片 (撤下违规图片时勾选, 否则旧图片保留 24 小时)
+        </Checkbox>
       </ModalBody>
       <ModalFooter>
         <Button variant="light" onPress={onClose}>

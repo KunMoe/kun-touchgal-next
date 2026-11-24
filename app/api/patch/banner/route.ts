@@ -1,27 +1,16 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { updatePatchBannerSchema } from '~/validations/patch'
-import { uploadPatchBanner } from '~/app/api/edit/_upload'
-import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
-
-const purgeCache = async (patchId: number) => {
-  const imageBedUrl = process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL
-  const patchBannerUrl = `${imageBedUrl}/patch/${patchId}/banner/banner.avif`
-  const patchBannerMiniUrl = `${imageBedUrl}/patch/${patchId}/banner/banner-mini.avif`
-  const patchBannerFullUrl = `${imageBedUrl}/patch/${patchId}/banner/banner-full.avif`
-
-  return purgeCloudflareCache([
-    patchBannerUrl,
-    patchBannerMiniUrl,
-    patchBannerFullUrl
-  ])
-}
+import { encodePatchBanner } from '~/app/api/edit/_upload'
+import { replacePatchBanner } from '~/server/storage/patchBanner'
 
 const updatePatchBanner = async (
   image: ArrayBuffer,
   patchId: number,
-  originalImage?: ArrayBuffer
+  originalImage: ArrayBuffer | undefined,
+  discardOld: boolean
 ) => {
+  // 编码要几秒, 不存在的游戏先挡掉; 是否存在以换指针时行锁下的读为准
   const patch = await prisma.patch.findUnique({
     where: { id: patchId },
     select: { id: true }
@@ -30,17 +19,12 @@ const updatePatchBanner = async (
     return '这个 Galgame 不存在'
   }
 
-  const res = await uploadPatchBanner(image, patchId, originalImage)
-  if (typeof res === 'string') {
-    return res
+  const encoded = await encodePatchBanner(image, originalImage)
+  if (typeof encoded === 'string') {
+    return encoded
   }
 
-  // best-effort: banner 已上传成功, purge 失败不应使请求整体报错
-  await purgeCache(patchId).catch((error) =>
-    console.error('Failed to purge banner CDN cache:', error)
-  )
-
-  return {}
+  return replacePatchBanner(patchId, encoded, { discardOld })
 }
 
 export const POST = kunRoute.post({
@@ -54,6 +38,11 @@ export const POST = kunRoute.post({
       ? await new Response(input.imageOriginal)?.arrayBuffer()
       : undefined
 
-    return updatePatchBanner(image, input.patchId, originalImage)
+    return updatePatchBanner(
+      image,
+      input.patchId,
+      originalImage,
+      input.discardOld === 'true'
+    )
   }
 })

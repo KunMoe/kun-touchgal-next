@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 
 // 图片对象 (头像、封面、编辑器图床) 的 S3 key 布局只在这里定义。资源文件不归这里: 它的 key 落在
 // patch_resource_link.s3_key, 由 server/storage/stagedUpload.ts 生成
@@ -63,6 +63,25 @@ const patchBannerKeysIn = (dir: string) => [
   `${dir}/banner-mini.avif`,
   `${dir}/banner-full.avif`
 ]
+
+// 新版本的对象 key 与指针。目录带随机段: 每次写都是没人引用过、也没人入过删除队列的新 key
+// (server/storage/references.ts 的写入不变量)
+export const newPatchBannerSet = (patchId: number) => {
+  const [main, mini, full] = patchBannerKeysIn(
+    `patch/${patchId}/banner/${randomUUID()}`
+  )
+  return {
+    keys: { main, mini, full },
+    pointer: `${imageBedUrl()}/${main}`
+  }
+}
+
+export type PatchBannerSet = ReturnType<typeof newPatchBannerSet>
+
+// 换下来的封面版本留多久再删。共享读缓存里内嵌着封面地址的条目 (详情、列表卡片、资源页, TTL 见
+// config/cache.ts) 在过期之前还会把旧地址发给页面, 已经打开的页面也还拿着它; 宽限期必须不短于这些
+// TTL (imageObjects.test.ts 核对)。删游戏与「立即删除旧图」不用宽限期
+export const IMAGE_VERSION_DELETION_GRACE_MS = 24 * 60 * 60 * 1000
 
 // 指针所指那个版本的全部对象 key, 用来回收。只认「配置的图床前缀 + /」开头、路径严格是本游戏封面
 // 的指针, 其余 (外站地址、别的游戏、换过域名的存量、空串) 一律返回 []: 认错的代价是删掉别人的对象,

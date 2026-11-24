@@ -29,11 +29,6 @@
       "count": 1
     }
   },
-  "app/api/patch/banner/route.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "app/api/patch/comment/create.ts": {
     "kun/inv-content-01": {
       "count": 1

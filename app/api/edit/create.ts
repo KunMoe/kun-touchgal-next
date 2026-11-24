@@ -2,11 +2,9 @@ import crypto from 'crypto'
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
-import {
-  buildPatchBannerKeys,
-  encodePatchBanner,
-  putPatchBannerToS3
-} from './_upload'
+import { encodePatchBanner } from './_upload'
+import { putPatchBannerSet } from '~/server/storage/patchBanner'
+import { newPatchBannerSet } from '~/server/storage/imageObjects'
 import { deleteFileFromS3 } from '~/lib/s3'
 import {
   enqueueS3Deletion,
@@ -179,23 +177,20 @@ export const createGalgame = async (input: CreateGalgameInput, uid: number) => {
       })
 
       const newId = patch.id
+      // 封面的第一个版本, 目录与指针取自 newPatchBannerSet (换封面时写的也是这种版本目录)
+      const bannerSet = newPatchBannerSet(newId)
 
       // 没有提交 (或 commit 结果不确定) 时补偿清理已上传的 banner 对象。登记在上传之前:
-      // putPatchBannerToS3 内部 Promise.all 部分成功后抛错时已有对象落盘, DeleteObject
-      // 幂等, 宁多删不漏删
+      // putPatchBannerSet 部分成功后抛错时已有对象落盘; 三个 key 全删 (没写的 full 删了也成功),
+      // 宁多删不漏删
       onRollback('banner', () =>
-        cleanupRolledBackBanner(
-          newId,
-          buildPatchBannerKeys(newId, Boolean(encodedBanner.fullBanner))
-        )
+        cleanupRolledBackBanner(newId, Object.values(bannerSet.keys))
       )
-      await putPatchBannerToS3(encodedBanner, newId)
-
-      const imageLink = `${process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL}/patch/${newId}/banner/banner.avif`
+      await putPatchBannerSet(encodedBanner, bannerSet)
 
       await prisma.patch.update({
         where: { id: newId },
-        data: { banner: imageLink }
+        data: { banner: bannerSet.pointer }
       })
 
       // Ensure rating_stat row exists for this patch

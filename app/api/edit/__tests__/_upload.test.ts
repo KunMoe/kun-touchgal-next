@@ -1,15 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import sharp from 'sharp'
 
-const { uploadImageToS3Mock } = vi.hoisted(() => ({
-  uploadImageToS3Mock: vi.fn()
-}))
-
-vi.mock('~/lib/s3', () => ({
-  uploadImageToS3: uploadImageToS3Mock
-}))
-
-import { uploadPatchBanner } from '../_upload'
+import { encodePatchBanner } from '../_upload'
 
 const createPng = async (
   width: number,
@@ -31,36 +23,31 @@ const createPng = async (
   ) as ArrayBuffer
 }
 
-describe('uploadPatchBanner', () => {
-  beforeEach(() => {
-    uploadImageToS3Mock.mockReset()
-    uploadImageToS3Mock.mockResolvedValue(undefined)
-  })
-
-  it('原图像素数超过上限时前置拒绝, 不触发编码与上传', async () => {
+// 写入 (版本目录与 S3 PUT) 见 server/storage/__tests__/patchBanner.test.ts
+describe('encodePatchBanner', () => {
+  it('原图像素数超过上限时前置拒绝, 不触发编码', async () => {
     const bomb = await createPng(8000, 7000) // 56M > 50M 上限
-    const res = await uploadPatchBanner(bomb, 1)
-    expect(res).toBe('图片尺寸过大')
-    expect(uploadImageToS3Mock).not.toHaveBeenCalled()
+    expect(await encodePatchBanner(bomb)).toBe('图片尺寸过大')
   }, 30000)
 
   it('空文件返回错误', async () => {
-    const res = await uploadPatchBanner(new ArrayBuffer(0), 1)
-    expect(res).toBe('上传文件不能为空')
-    expect(uploadImageToS3Mock).not.toHaveBeenCalled()
+    expect(await encodePatchBanner(new ArrayBuffer(0))).toBe('上传文件不能为空')
   })
 
-  it('正常图片上传三个变体, full 变体被限制在 3840 宽以内', async () => {
+  it('正常图片编出三个变体, full 变体被限制在 3840 宽以内', async () => {
     const image = await createPng(3900, 100)
-    const res = await uploadPatchBanner(image, 42, image)
-    expect(res).toBeUndefined()
-    expect(uploadImageToS3Mock).toHaveBeenCalledTimes(3)
-
-    const fullCall = uploadImageToS3Mock.mock.calls.find(([key]) =>
-      String(key).endsWith('banner-full.avif')
-    )
-    expect(fullCall).toBeDefined()
-    const fullMeta = await sharp(fullCall?.[1] as Buffer).metadata()
+    const res = await encodePatchBanner(image, image)
+    if (typeof res === 'string') {
+      throw new Error(res)
+    }
+    expect(res.banner.length).toBeGreaterThan(0)
+    expect(res.miniBanner.length).toBeGreaterThan(0)
+    const fullMeta = await sharp(res.fullBanner).metadata()
     expect(fullMeta.width).toBeLessThanOrEqual(3840)
+  }, 30000)
+
+  it('不带原图时没有 full 变体', async () => {
+    const res = await encodePatchBanner(await createPng(400, 300))
+    expect(typeof res === 'object' && res.fullBanner).toBeUndefined()
   }, 30000)
 })

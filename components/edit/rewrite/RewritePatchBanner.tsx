@@ -3,6 +3,7 @@
 import toast from 'react-hot-toast'
 import { useEffect, useState } from 'react'
 import { Button } from '@heroui/button'
+import { Checkbox } from '@heroui/checkbox'
 import { ModalBody, ModalFooter } from '@heroui/modal'
 import { kunFetchFormData } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
@@ -21,6 +22,7 @@ export const RewritePatchBanner = ({ patchId, onClose }: Props) => {
   const [banner, setBanner] = useState<Blob | null>(null)
   const [bannerOriginal, setBannerOriginal] = useState<Blob | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string>('')
+  const [discardOld, setDiscardOld] = useState(false)
 
   useEffect(() => {
     return () => {
@@ -49,18 +51,21 @@ export const RewritePatchBanner = ({ patchId, onClose }: Props) => {
     if (bannerOriginal) {
       formData.append('imageOriginal', bannerOriginal)
     }
+    if (discardOld) {
+      formData.append('discardOld', 'true')
+    }
 
     setUpdating(true)
 
     try {
-      const res = await kunFetchFormData<KunResponse<{}>>(
+      const res = await kunFetchFormData<KunResponse<{ banner: string }>>(
         '/patch/banner',
         formData
       )
       kunErrorHandler(res, () => {
         setBanner(null)
         setPreviewUrl('')
-        toast.success('更新图片成功')
+        toast.success('更新图片成功, 刷新页面即可看到新图片')
         onClose()
       })
     } catch (error) {
@@ -100,7 +105,10 @@ export const RewritePatchBanner = ({ patchId, onClose }: Props) => {
           removeImage={removeBanner}
         />
 
-        <p>更改图片后立即生效, 使用 Ctrl + F5 刷新页面即可</p>
+        <p>更改后刷新页面即可看到新图片</p>
+        <Checkbox isSelected={discardOld} onValueChange={setDiscardOld}>
+          立即删除旧图片 (撤下违规图片时勾选, 否则旧图片保留 24 小时)
+        </Checkbox>
       </ModalBody>
 
       <ModalFooter>
