@@ -14,22 +14,33 @@ const OUTBOX_LOCK_TTL_SECONDS = 300
 // 同 key 重复入队合并为一行，并从 seq 列的全局序列取新值 (新插入由列默认值取)：消费者按
 // (s3_key, seq) 删行，处理期间到达的入队不会被这一轮的删行带走 (见 drain 的注释)。updated
 // 是 @updatedAt (应用层维护，原生 SQL 必须显式赋值)，时间写 UTC 墙钟与 Prisma 一致；
-// 形状照抄 enqueueSearchOutboxBatch
+// 形状照抄 enqueueSearchOutboxBatch。
+// delayMs: 这么久之后才可以删 (not_before), 不传即立即。同一 key 重复入队取更早的时刻、立即优先:
+// 合并只会让删除提前, 不会推迟一个已经要求立即删除的对象。时刻在库里按 UTC 墙钟算 (不传 JS Date,
+// 原生 SQL 的 Date 参数与无时区列的换算见 prisma-pg-timestamptz 的坑)
 export const enqueueS3Deletion = async (
   client: Prisma.TransactionClient,
-  keys: string[]
+  keys: string[],
+  options: { delayMs?: number } = {}
 ) => {
   if (keys.length === 0) {
     return
   }
   // 去重防同语句二次命中同行（21000 直接炸事务）；排序统一锁序，与并发入队互不死锁
   const uniqueKeys = [...new Set(keys)].sort()
+  const delayMs = options.delayMs ?? null
   await client.$executeRaw`
-    INSERT INTO s3_deletion_outbox (s3_key, created, updated)
+    INSERT INTO s3_deletion_outbox (s3_key, not_before, created, updated)
     SELECT unnest(${uniqueKeys}::text[]),
+      (now() AT TIME ZONE 'UTC') + ${delayMs}::bigint * interval '1 millisecond',
       now() AT TIME ZONE 'UTC', now() AT TIME ZONE 'UTC'
     ON CONFLICT (s3_key) DO UPDATE
       SET seq = nextval(pg_get_serial_sequence('s3_deletion_outbox', 'seq')),
+        not_before = CASE
+          WHEN s3_deletion_outbox.not_before IS NULL
+            OR EXCLUDED.not_before IS NULL THEN NULL
+          ELSE LEAST(s3_deletion_outbox.not_before, EXCLUDED.not_before)
+        END,
         updated = now() AT TIME ZONE 'UTC'`
 }
 
@@ -51,7 +62,10 @@ export const drainS3DeletionOutbox = async () =>
       taskName: 's3DeletionOutboxDrain'
     },
     async (renew) => {
+      // 还没到时刻的行 (宽限期里的旧封面版本) 留在出箱里, 不占这一轮的名额
+      const now = new Date()
       const rows = await prisma.s3_deletion_outbox.findMany({
+        where: { OR: [{ not_before: null }, { not_before: { lte: now } }] },
         orderBy: { updated: 'asc' },
         take: OUTBOX_DRAIN_BATCH_SIZE,
         select: { s3_key: true, seq: true }

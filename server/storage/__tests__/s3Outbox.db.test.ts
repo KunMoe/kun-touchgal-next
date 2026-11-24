@@ -226,6 +226,89 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
     })
   })
 
+  // 宽限期的时刻在库里按 UTC 墙钟算, drain 用 Prisma 的 Date 比: 两边的时基必须相同, 差 8 小时的话
+  // 旧封面要么永远不删, 要么提前删
+  describe('not_before 宽限期', () => {
+    const HOUR = 60 * 60 * 1000
+
+    const notBeforeOf = async (key: string) =>
+      (await outboxRow(key))?.not_before ?? null
+
+    it('入队写下的时刻与 Prisma 读回的 Date 同一时基; 不传 delayMs 是 NULL', async () => {
+      const delayed = newKey()
+      const immediate = newKey()
+
+      // 会话时区不是 UTC 时 (本机的开发库是 Asia/Hong_Kong) 裸 now() 写进无时区列会差出 8 小时;
+      // 回放库默认 UTC, 测不出来, 所以在事务里把会话时区改掉
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SET LOCAL TIME ZONE 'Asia/Hong_Kong'`
+        await outbox.enqueueS3Deletion(tx, [delayed], { delayMs: HOUR })
+      })
+      await outbox.enqueueS3Deletion(prisma, [immediate])
+
+      const notBefore = await notBeforeOf(delayed)
+      expect(Math.abs(notBefore!.getTime() - (Date.now() + HOUR))).toBeLessThan(
+        60_000
+      )
+      expect(await notBeforeOf(immediate)).toBeNull()
+    })
+
+    it('drain 跳过还没到时刻的行, 处理 NULL 与已到时刻的行', async () => {
+      const waiting = newKey()
+      const immediate = newKey()
+      const due = newKey()
+      await outbox.enqueueS3Deletion(prisma, [waiting, due], {
+        delayMs: 24 * HOUR
+      })
+      await outbox.enqueueS3Deletion(prisma, [immediate])
+      await prisma.s3_deletion_outbox.update({
+        where: { s3_key: due },
+        data: { not_before: new Date(Date.now() - 1000) }
+      })
+
+      expect(await outbox.drainS3DeletionOutbox()).toEqual({
+        deleted: 2,
+        skippedReferenced: 0
+      })
+      expect(
+        deleteFileFromS3Mock.mock.calls.map(([key]) => key).sort()
+      ).toEqual([immediate, due].sort())
+      expect(await outboxRow(waiting)).not.toBeNull()
+      expect(await outboxRow(immediate)).toBeNull()
+      expect(await outboxRow(due)).toBeNull()
+    })
+
+    it('重复入队取更早的时刻, 立即优先', async () => {
+      const shorterLater = newKey()
+      const longerLater = newKey()
+      const immediateLater = newKey()
+      const delayedLater = newKey()
+
+      await outbox.enqueueS3Deletion(prisma, [shorterLater], {
+        delayMs: 24 * HOUR
+      })
+      await outbox.enqueueS3Deletion(prisma, [shorterLater], { delayMs: HOUR })
+      await outbox.enqueueS3Deletion(prisma, [longerLater], { delayMs: HOUR })
+      await outbox.enqueueS3Deletion(prisma, [longerLater], {
+        delayMs: 24 * HOUR
+      })
+      await outbox.enqueueS3Deletion(prisma, [immediateLater], {
+        delayMs: HOUR
+      })
+      await outbox.enqueueS3Deletion(prisma, [immediateLater])
+      await outbox.enqueueS3Deletion(prisma, [delayedLater])
+      await outbox.enqueueS3Deletion(prisma, [delayedLater], { delayMs: HOUR })
+
+      const inOneHour = Date.now() + HOUR
+      for (const key of [shorterLater, longerLater]) {
+        const notBefore = await notBeforeOf(key)
+        expect(Math.abs(notBefore!.getTime() - inOneHour)).toBeLessThan(60_000)
+      }
+      expect(await notBeforeOf(immediateLater)).toBeNull()
+      expect(await notBeforeOf(delayedLater)).toBeNull()
+    })
+  })
+
   describe('drainS3DeletionOutbox', () => {
     it('共享对象删掉一条链接: 对象不删, 出箱行移除; 删掉最后一条才删对象', async () => {
       const key = newKey()

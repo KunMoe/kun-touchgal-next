@@ -90,6 +90,24 @@ describe('enqueueS3Deletion 事务性入队', () => {
     expect(executeRawMock).not.toHaveBeenCalled()
   })
 
+  it('不传 delayMs 时时刻参数为 NULL (立即); 传了就按毫秒交给库算, 合并取更早、立即优先', async () => {
+    const txExecuteRaw = vi.fn().mockResolvedValue(1)
+    const tx = { $executeRaw: txExecuteRaw } as never
+
+    await enqueueS3Deletion(tx, ['a'])
+    await enqueueS3Deletion(tx, ['a'], { delayMs: 86_400_000 })
+
+    expect(txExecuteRaw.mock.calls[0][2]).toBeNull()
+    expect(txExecuteRaw.mock.calls[1][2]).toBe(86_400_000)
+    const sql = (txExecuteRaw.mock.calls[1][0] as string[]).join('?')
+    expect(sql).toContain(
+      "(now() AT TIME ZONE 'UTC') + ?::bigint * interval '1 millisecond'"
+    )
+    expect(sql).toContain(
+      'ELSE LEAST(s3_deletion_outbox.not_before, EXCLUDED.not_before)'
+    )
+  })
+
   it('空 keys 时不触库', async () => {
     const txExecuteRaw = vi.fn()
     const tx = { $executeRaw: txExecuteRaw } as never
@@ -101,6 +119,15 @@ describe('enqueueS3Deletion 事务性入队', () => {
 })
 
 describe('drainS3DeletionOutbox 单消费者 + 引用判定 + CAS 删行', () => {
+  it('只取立即或已到时刻的行 (not_before 为 NULL 或不晚于本轮开始的时刻)', async () => {
+    await drainS3DeletionOutbox()
+
+    const [args] = outboxFindManyMock.mock.calls[0]
+    expect(args.where).toEqual({
+      OR: [{ not_before: null }, { not_before: { lte: expect.any(Date) } }]
+    })
+  })
+
   it('无引用：删除对象后按 (s3_key, seq) 移除出箱行', async () => {
     outboxFindManyMock.mockResolvedValue([{ s3_key: 'k1', seq: 3 }])
 

@@ -13,6 +13,10 @@ model s3_deletion_outbox {
   // 下一轮重判；否则删除意图被合并吞掉，对象成为永久孤儿。不从 0 起计：删行后重新插入的行若又是
   // 0，并发的第二个 drain 会按旧读数把它删掉
   seq      BigInt @default(autoincrement())
+  // 最早可以处理的时刻 (UTC 墙钟), NULL 即立即。替换下来的旧封面版本要留一段宽限期, 让缓存里还
+  // 拿着旧地址的页面在过期之前照常显示 (server/storage/patchBanner.ts)。同一 key 重复入队取更早的
+  // 那个, NULL 优先
+  not_before DateTime?
 
   created DateTime @default(now())
   updated DateTime @updatedAt
