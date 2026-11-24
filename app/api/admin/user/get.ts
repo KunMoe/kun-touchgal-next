@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { INT4_MAX } from '~/constants/db-limits'
 import { adminUserPaginationSchema } from '~/validations/admin'
 import type { AdminUser } from '~/types/api/admin'
 
@@ -29,9 +30,9 @@ export const getUserInfo = async (
         return { id: 0 }
       }
 
-      return {
-        id: Number.parseInt(normalizedSearch, 10)
-      }
+      // 超出 int4 的值发给库会被拒 (P2020, 冒泡成 500), 它也不可能是任何人的 id
+      const id = Number.parseInt(normalizedSearch, 10)
+      return { id: id <= INT4_MAX ? id : 0 }
     }
 
     return {
