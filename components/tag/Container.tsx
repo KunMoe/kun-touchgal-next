@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import { useDebounce } from 'use-debounce'
+import toast from 'react-hot-toast'
 import { TagHeader } from './TagHeader'
 import { SearchTags } from './SearchTag'
 import { TagList } from './TagList'
 import { kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useMounted } from '~/hooks/useMounted'
+import { parseSearchTerms } from '~/utils/term/parseSearchTerms'
 import { KunPagination } from '~/components/kun/Pagination'
 import { KunNull } from '~/components/kun/Null'
 import type { Tag as TagType } from '~/types/api/tag'
@@ -76,7 +78,15 @@ export const Container = ({ initialTags, initialTotal, uid }: Props) => {
   }, [debouncedQuery])
 
   const handleSearch = async () => {
-    if (!uid || !query.trim()) {
+    if (!uid) {
+      return
+    }
+    const terms = parseSearchTerms(query)
+    if (typeof terms === 'string') {
+      toast.error(terms)
+      return
+    }
+    if (!terms.length) {
       return
     }
 
@@ -84,9 +94,7 @@ export const Container = ({ initialTags, initialTotal, uid }: Props) => {
     try {
       const response = await kunFetchPost<KunResponse<TagType[]>>(
         '/tag/search',
-        {
-          query: query.split(' ').filter((term) => term.length > 0)
-        }
+        { query: terms }
       )
       kunErrorHandler(response, setTags)
     } catch (error) {
