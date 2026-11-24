@@ -8,7 +8,7 @@ import {
   enqueueS3Deletion,
   kickS3DeletionDrain
 } from '~/server/storage/s3Outbox'
-import { getUserAvatarKeys } from '~/app/api/user/setting/_upload'
+import { getUserAvatarKeys } from '~/server/storage/imageObjects'
 import { invalidatePatchContentCacheByPatchId } from '~/app/api/patch/cache'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 import { recordKunChanges } from '~/server/cache/publish'

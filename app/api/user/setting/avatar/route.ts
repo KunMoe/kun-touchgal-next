@@ -4,12 +4,11 @@ import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { avatarSchema } from '~/validations/user'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
+import { archiveAvatarForModeration, uploadUserAvatar } from '../_upload'
 import {
-  archiveAvatarForModeration,
   getUserAvatarKeys,
-  getUserAvatarPendingKeys,
-  uploadUserAvatar
-} from '../_upload'
+  getUserAvatarPendingKeys
+} from '~/server/storage/imageObjects'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import {
   createModerationTask,

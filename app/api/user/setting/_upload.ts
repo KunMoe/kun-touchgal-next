@@ -5,34 +5,10 @@ import { checkBufferSize } from '~/app/api/utils/checkBufferSize'
 import { withEncodeSlotOrBusy } from '~/server/image/encodeLimit'
 import { ensureWithinPixelLimit } from '~/server/image/pixelGuard'
 import { MODERATION_S3_TIMEOUT_MS } from '~/constants/moderation'
-
-// 头像正式 S3 key 的唯一定义处 (发布位置, 每用户固定); 审核暂存 key 见
-// getUserAvatarPendingKeys —— 刻意分离, 不让暂存对象再共用一个固定 key
-export const getUserAvatarKeys = (uid: number) => {
-  const dir = `user/avatar/user_${uid}`
-  return {
-    avatarKey: `${dir}/avatar.avif`,
-    avatarMiniKey: `${dir}/avatar-mini.avif`
-  }
-}
-
-// 每次上传生成唯一、不可变的暂存 key: worker 送审读取、AI 裁决、apply 复制全程绑定
-// 同一对象, 并发上传各写各的 key, 杜绝"送审字节 ≠ 落地字节"的审核绕过竞态. pending/
-// 前缀便于对暂存对象单独配 S3 lifecycle 过期, 兜底被 supersede 而 apply 不会清理的孤儿
-export const getUserAvatarPendingKeys = (uid: number, nonce: string) => {
-  const dir = `user/avatar/user_${uid}/pending`
-  return {
-    pendingKey: `${dir}/${nonce}.avif`,
-    pendingMiniKey: `${dir}/${nonce}-mini.avif`
-  }
-}
-
-// 审核留档 key: 任务创建时把送审对象复制到此处永久保存, 使审核记录在 pending 暂存
-// 对象被裁决清理、或正式 key 被后续上传覆盖后仍可回看; 刻意避开 pending/ 前缀,
-// 不受暂存对象的 S3 lifecycle 过期影响. 留档站内无任何清理路径、永久累积——这是
-// 已知的存储成本取舍 (小 avif 对象、上传受 50 张/日配额约束), 勿给此前缀配过期规则
-export const getUserAvatarModerationArchiveKey = (uid: number, nonce: string) =>
-  `user/avatar/user_${uid}/moderation/${nonce}.avif`
+import {
+  getUserAvatarKeys,
+  getUserAvatarModerationArchiveKey
+} from '~/server/storage/imageObjects'
 
 // 审核留档: 把送审对象复制到每次上传唯一的永久 key. 裁决后 pending 暂存对象会被
 // apply.ts 清理、正式 key 会被后续上传覆盖, 留档使管理队列的审核记录始终可回看;
