@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { nonEmptyFileSchema } from './file'
 import { MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES } from '~/config/cache'
+import { INT4_MAX } from '~/constants/db-limits'
 
 const introductionTextEncoder = new TextEncoder()
 
@@ -30,9 +31,6 @@ const optionalVndbRelationId = z
 // patch.bangumi_id / steam_id 是 Int 列 (int4). 仅靠 max(10) 会放行 2147483648 ~
 // 9999999999, 这些值一旦进入 Prisma 查询或写入就抛 P2020 而非返回业务错误消息,
 // 冒泡到路由即 500. 真实 Bangumi ID / Steam AppID 都远小于此, 在 schema 层挡掉
-export const INT4_MAX = 2147483647
-export const INT4_MIN = -2147483648
-
 const isWithinInt4 = (value: string) => !value || Number(value) <= INT4_MAX
 
 const optionalBangumiId = z

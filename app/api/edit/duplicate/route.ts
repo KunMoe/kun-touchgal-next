@@ -1,7 +1,8 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import { duplicateSchema, INT4_MAX, INT4_MIN } from '~/validations/edit'
+import { duplicateSchema } from '~/validations/edit'
+import { INT4_MAX, INT4_MIN } from '~/constants/db-limits'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 
 // 超出 int4 的值在 patch 表里必然不存在, 原样传给 Prisma 会抛 P2020 冒泡成 500,
