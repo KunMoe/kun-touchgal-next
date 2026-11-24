@@ -8,6 +8,7 @@ import { Image } from '@heroui/image'
 import { SUPPORTED_TYPE_MAP } from '~/constants/resource'
 import { cn } from '~/utils/cn'
 import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
+import { bannerVariantUrl } from '~/utils/imageVariant'
 
 // 分类 chip 最多两行, 溢出时去掉第二行末位 chip 腾位, 以省略号 chip 收尾;
 // 隐藏测量层渲染全部 chip, 显示层按测量结果截断, 宽度变化时经 ResizeObserver 重算;
@@ -109,7 +110,7 @@ export const GalgameSummaryCard = ({ galgame }: Props) => {
             className="absolute inset-0 size-full object-cover opacity-100"
             src={
               galgame.banner && !bannerFailed
-                ? galgame.banner.replace(/\.avif$/, '-mini.avif')
+                ? bannerVariantUrl(galgame.banner, 'mini')
                 : '/touchgal.avif'
             }
             onError={() => setBannerFailed(true)}

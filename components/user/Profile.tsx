@@ -12,6 +12,7 @@ import { SelfButton } from './SelfButton'
 import { StartChatButton } from './StartChatButton'
 import { USER_STATUS_COLOR_MAP } from '~/constants/user'
 import { KUN_ROLE_LABEL, toKunRole } from '~/constants/role'
+import { avatarLargeUrl } from '~/utils/imageVariant'
 import type { UserInfo } from '~/types/api/user'
 
 export const UserProfile = ({ user }: { user: UserInfo }) => {
@@ -21,7 +22,7 @@ export const UserProfile = ({ user }: { user: UserInfo }) => {
         <CardHeader className="justify-center pt-8">
           <div className="flex flex-col items-center gap-3">
             <Avatar
-              src={user.avatar.replace('-mini', '')}
+              src={avatarLargeUrl(user.avatar)}
               className="w-32 h-32"
               isBordered
               color="primary"

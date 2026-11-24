@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Image from 'next/image'
+import { bannerVariantUrl } from '~/utils/imageVariant'
 
 const KunImageLightbox = dynamic(
   () =>
@@ -25,7 +26,7 @@ export const BannerImage = ({ banner, name }: Props) => {
     setIsOpen(true)
     setSlides([{ src: banner }])
 
-    const fullBannerUrl = banner.replace('banner.avif', 'banner-full.avif')
+    const fullBannerUrl = bannerVariantUrl(banner, 'full')
     if (fullBannerUrl === banner) {
       return
     }

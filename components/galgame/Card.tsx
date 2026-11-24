@@ -8,6 +8,7 @@ import { Eye, Star, StarOff } from 'lucide-react'
 import { formatNumber } from '~/utils/formatNumber'
 import { cn } from '~/utils/cn'
 import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
+import { bannerVariantUrl } from '~/utils/imageVariant'
 
 const CARD_ATTRIBUTE_STYLE_MAP: Record<string, string> = {
   PC: 'bg-sky-100 text-sky-700 dark:bg-sky-400/15 dark:text-sky-200',
@@ -85,7 +86,7 @@ export const GalgameCard = memo(function GalgameCard({
           removeWrapper={true}
           src={
             patch.banner && !bannerFailed
-              ? patch.banner.replace(/\.avif$/, '-mini.avif')
+              ? bannerVariantUrl(patch.banner, 'mini')
               : '/touchgal.avif'
           }
           style={{ aspectRatio: '16/9' }}

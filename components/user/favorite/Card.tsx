@@ -18,6 +18,7 @@ import { Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { kunFetchPut } from '~/utils/kunFetch'
+import { bannerVariantUrl } from '~/utils/imageVariant'
 import toast from 'react-hot-toast'
 
 interface Props {
@@ -96,7 +97,7 @@ export const UserGalgameCard = ({
               removeWrapper={true}
               src={
                 galgame.banner && !bannerFailed
-                  ? galgame.banner.replace(/\.avif$/, '-mini.avif')
+                  ? bannerVariantUrl(galgame.banner, 'mini')
                   : '/touchgal.avif'
               }
               style={{ aspectRatio: '16/9' }}

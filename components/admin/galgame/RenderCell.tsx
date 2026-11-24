@@ -5,6 +5,7 @@ import { Image } from '@heroui/image'
 import Link from 'next/link'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { KunUser } from '~/components/kun/floating-card/KunUser'
+import { bannerVariantUrl } from '~/utils/imageVariant'
 import type { AdminGalgame } from '~/types/api/admin'
 
 export const RenderCell = (galgame: AdminGalgame, columnKey: string) => {
@@ -17,7 +18,7 @@ export const RenderCell = (galgame: AdminGalgame, columnKey: string) => {
           width={128}
           src={
             galgame.banner
-              ? galgame.banner.replace(/\.avif$/, '-mini.avif')
+              ? bannerVariantUrl(galgame.banner, 'mini')
               : '/touchgal.avif'
           }
           style={{ aspectRatio: '16/9' }}

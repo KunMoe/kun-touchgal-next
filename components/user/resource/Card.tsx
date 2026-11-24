@@ -7,6 +7,7 @@ import { Image } from '@heroui/image'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import Link from 'next/link'
 import { KunPatchAttribute } from '~/components/kun/PatchAttribute'
+import { bannerVariantUrl } from '~/utils/imageVariant'
 
 import type { UserResource as UserResourceType } from '~/types/api/user'
 
@@ -18,7 +19,7 @@ export const UserResourceCard = ({ resource }: Props) => {
   const [bannerFailed, setBannerFailed] = useState(false)
   const bannerImageSrc =
     resource.patchBanner && !bannerFailed
-      ? resource.patchBanner.replace(/\.avif$/, '-mini.avif')
+      ? bannerVariantUrl(resource.patchBanner, 'mini')
       : '/touchgal.avif'
 
   return (
