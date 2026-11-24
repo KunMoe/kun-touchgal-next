@@ -9,8 +9,8 @@ import { useUserStore } from '~/store/userStore'
 import { can } from '~/constants/permission'
 import type { Tag } from '~/types/api/tag'
 
-const PatchTagSelector = dynamic(
-  () => import('./PatchTagSelector').then((mod) => mod.PatchTagSelector),
+const PatchTermEditor = dynamic(
+  () => import('./term/PatchTermEditor').then((mod) => mod.PatchTermEditor),
   { ssr: false }
 )
 
@@ -55,10 +55,12 @@ export const PatchTag = ({ patchId, initialTags }: Props) => {
       </div>
 
       {canEditTags && (
-        <PatchTagSelector
+        <PatchTermEditor
           patchId={patchId}
-          initialTags={selectedTags}
-          onTagChange={setSelectedTags}
+          kind="tag"
+          items={selectedTags}
+          onChange={setSelectedTags}
+          hiddenIds={blockedTagIds}
         />
       )}
     </div>

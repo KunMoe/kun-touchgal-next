@@ -13,9 +13,8 @@ import { can } from '~/constants/permission'
 import { kunFetchPost } from '~/utils/kunFetch'
 import toast from 'react-hot-toast'
 
-const PatchCompanySelector = dynamic(
-  () =>
-    import('./PatchCompanySelector').then((mod) => mod.PatchCompanySelector),
+const PatchTermEditor = dynamic(
+  () => import('./term/PatchTermEditor').then((mod) => mod.PatchTermEditor),
   { ssr: false }
 )
 
@@ -113,10 +112,11 @@ export const PatchCompany: FC<Props> = ({
       </div>
 
       {can(user, 'company.manage') && (
-        <PatchCompanySelector
+        <PatchTermEditor
           patchId={patchId}
-          initialCompanies={selectedCompanies}
-          onCompanyChange={setSelectedCompanies}
+          kind="company"
+          items={selectedCompanies}
+          onChange={setSelectedCompanies}
         />
       )}
     </div>

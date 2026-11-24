@@ -15,7 +15,6 @@ const FILES = [
   'tag/CreateTagModal.tsx',
   'tag/detail/EditTagModal.tsx',
   'tag/SearchTag.tsx',
-  'patch/introduction/SearchTag.tsx',
   'search/Input.tsx'
 ]
 

@@ -14,6 +14,7 @@ const {
   queueSearchSyncMock,
   invalidateListCacheMock,
   invalidateContentCacheMock,
+  readItemsMock,
   tx
 } = vi.hoisted(() => {
   const relationFindManyMock = vi.fn()
@@ -32,6 +33,7 @@ const {
     queueSearchSyncMock: vi.fn(),
     invalidateListCacheMock: vi.fn(),
     invalidateContentCacheMock: vi.fn(),
+    readItemsMock: vi.fn(),
     tx: {
       patch_tag_relation: {
         findMany: relationFindManyMock,
@@ -80,10 +82,18 @@ vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCache: invalidateContentCacheMock
 }))
 
+vi.mock('~/app/api/patch/_queries', () => ({
+  getPatchTagItems: readItemsMock
+}))
+
 import { POST, PUT } from '~/app/api/patch/introduction/tag/route'
 
 const INPUT = { patchId: 42, tagId: [7, 8] }
 const UNIQUE_ID = 'abcd1234'
+const ITEMS = [
+  { id: 7, name: 'A', count: 3, alias: [] },
+  { id: 9, name: 'B', count: 1, alias: [] }
+]
 const request = new Request('http://localhost') as unknown as Parameters<
   typeof POST
 >[0]
@@ -105,6 +115,7 @@ beforeEach(() => {
   enqueueOutboxMock.mockResolvedValue(undefined)
   invalidateListCacheMock.mockResolvedValue(undefined)
   invalidateContentCacheMock.mockResolvedValue(undefined)
+  readItemsMock.mockResolvedValue(ITEMS)
 })
 
 // 与 company 侧同一套编排契约: 抽 helper 后两边共用一份实现,
@@ -145,12 +156,15 @@ const describeOrchestrationContract = (
       const res = await handler(request)
       expect(await res.json()).toBe('未找到 Galgame')
       expect(transactionMock).not.toHaveBeenCalled()
+      expect(readItemsMock).not.toHaveBeenCalled()
     })
 
     it('有变更时失效两处缓存并触发搜索同步', async () => {
       makeChanged()
       const res = await handler(request)
-      expect(await res.json()).toEqual({})
+      // 回传当前完整的关联列表, 不是本次请求涉及的那几项
+      expect(await res.json()).toEqual({ items: ITEMS })
+      expect(readItemsMock).toHaveBeenCalledWith(INPUT.patchId)
       expect(patchFindUniqueMock).toHaveBeenCalledWith({
         where: { id: INPUT.patchId },
         select: { unique_id: true }
@@ -163,7 +177,9 @@ const describeOrchestrationContract = (
     it('无变更时三处缓存均不失效, 也不入搜索出箱', async () => {
       makeUnchanged()
       const res = await handler(request)
-      expect(await res.json()).toEqual({})
+      // 没有变化也回传列表: 客户端据此校准草稿 (例如对方已先一步删掉)
+      expect(await res.json()).toEqual({ items: ITEMS })
+      expect(readItemsMock).toHaveBeenCalledWith(INPUT.patchId)
       expect(invalidateListCacheMock).not.toHaveBeenCalled()
       expect(queueSearchSyncMock).not.toHaveBeenCalled()
       expect(invalidateContentCacheMock).not.toHaveBeenCalled()
@@ -174,7 +190,7 @@ const describeOrchestrationContract = (
       makeChanged()
       invalidateContentCacheMock.mockRejectedValue(new Error('redis down'))
       const res = await handler(request)
-      expect(await res.json()).toEqual({})
+      expect(await res.json()).toEqual({ items: ITEMS })
     })
   })
 }

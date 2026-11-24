@@ -5,6 +5,7 @@ import { patchCompanyChangeSchema } from '~/validations/patch'
 import { enqueueSearchOutbox } from '~/server/search/sync'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
 import { patchRelationHandler } from '~/app/api/patch/introduction/_relationRoute'
+import { getPatchCompanyItems } from '~/app/api/patch/_queries'
 
 const handlePatchCompanyAction = (type: 'add' | 'delete') => {
   const isAdd = type === 'add'
@@ -55,7 +56,8 @@ export const POST = kunRoute.post({
   input: patchCompanyChangeSchema,
   handler: patchRelationHandler({
     mutate: handlePatchCompanyAction('add'),
-    invalidateListCache: invalidateCompanyListCache
+    invalidateListCache: invalidateCompanyListCache,
+    readItems: getPatchCompanyItems
   })
 })
 
@@ -65,6 +67,7 @@ export const PUT = kunRoute.put({
   input: patchCompanyChangeSchema,
   handler: patchRelationHandler({
     mutate: handlePatchCompanyAction('delete'),
-    invalidateListCache: invalidateCompanyListCache
+    invalidateListCache: invalidateCompanyListCache,
+    readItems: getPatchCompanyItems
   })
 })

@@ -92,3 +92,20 @@ export const getPatchPageContentByUniqueId = async (uniqueId: string) =>
       rating_stat: true
     }
   })
+
+// 关联编辑写入后回传的权威列表: 与详情页的 intro.tag / intro.company 同一份字段
+export const getPatchTagItems = async (patchId: number) =>
+  (
+    await prisma.patch_tag_relation.findMany({
+      where: { patch_id: patchId },
+      select: patchTagDetailSelect
+    })
+  ).map((relation) => relation.tag)
+
+export const getPatchCompanyItems = async (patchId: number) =>
+  (
+    await prisma.patch_company_relation.findMany({
+      where: { patch_id: patchId },
+      select: patchCompanyDetailSelect
+    })
+  ).map((relation) => relation.company)

@@ -20,10 +20,16 @@ export const invalidatePatchRelationCaches = async (
 
 // tag / company 各自 POST(增) 与 PUT(删) 共四个 handler 的公共编排, 作为 kunRoute 的 handler:
 // 解析与能力门在各路由文件的 kunRoute 声明里 (先解析后鉴权, #52), 这里接着做
-// 补丁存在性 -> 变更事务 -> 失效。mutate 返回关系是否真的发生变化, 无变化则一处缓存都不动
-export const patchRelationHandler = <T extends { patchId: number }>(options: {
+// 补丁存在性 -> 变更事务 -> 失效 -> 回读。mutate 返回关系是否真的发生变化, 无变化则一处缓存都不动。
+// 不论有无变化都回传这个 Galgame 当前完整的关联列表 { items }: 客户端用它替换 chips、
+// 校准编辑草稿, 不再从候选页拼出写结果
+export const patchRelationHandler = <
+  T extends { patchId: number },
+  Item
+>(options: {
   mutate: (input: T) => Promise<boolean | string>
   invalidateListCache: () => Promise<void>
+  readItems: (patchId: number) => Promise<Item[]>
 }) => {
   return async ({ input }: { input: T }) => {
     const { patchId } = input
@@ -51,6 +57,6 @@ export const patchRelationHandler = <T extends { patchId: number }>(options: {
       // 未入队、必须 queueSearchSync, 故这一步留在调用点而非失效函数里
       queueSearchSync(patchId)
     }
-    return {}
+    return { items: await options.readItems(patchId) }
   }
 }

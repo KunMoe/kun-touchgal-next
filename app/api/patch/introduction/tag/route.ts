@@ -5,6 +5,7 @@ import { patchTagChangeSchema } from '~/validations/patch'
 import { enqueueSearchOutbox } from '~/server/search/sync'
 import { invalidateTagListCache } from '~/app/api/tag/cache'
 import { patchRelationHandler } from '~/app/api/patch/introduction/_relationRoute'
+import { getPatchTagItems } from '~/app/api/patch/_queries'
 
 const handlePatchTagAction = (type: 'add' | 'delete') => {
   const isAdd = type === 'add'
@@ -52,7 +53,8 @@ export const POST = kunRoute.post({
   input: patchTagChangeSchema,
   handler: patchRelationHandler({
     mutate: handlePatchTagAction('add'),
-    invalidateListCache: invalidateTagListCache
+    invalidateListCache: invalidateTagListCache,
+    readItems: getPatchTagItems
   })
 })
 
@@ -62,6 +64,7 @@ export const PUT = kunRoute.put({
   input: patchTagChangeSchema,
   handler: patchRelationHandler({
     mutate: handlePatchTagAction('delete'),
-    invalidateListCache: invalidateTagListCache
+    invalidateListCache: invalidateTagListCache,
+    readItems: getPatchTagItems
   })
 })

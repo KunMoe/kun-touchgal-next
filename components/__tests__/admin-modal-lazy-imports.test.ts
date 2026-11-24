@@ -5,14 +5,14 @@ import { describe, expect, it } from 'vitest'
 // 标签 / 会社的创建与编辑弹窗只有管理员用得到, 却连带 zod 全量 / RHF / Select.
 // 静态导入时 Turbopack 把整组块挂进页面入口, 每位访客首屏多下 14-131KB gz
 // (/company -27%, /tag/[id] 与 /company/[id] -22%). 任何一处退回静态导入都会复发.
-// /[id] 的标签 / 会社选择器同理 (Input / Checkbox / ScrollShadow, -18.9KB gz)
+// /[id] 的标签 / 会社关联编辑器同理 (Input / Checkbox / ScrollShadow, -18.9KB gz)
 const cases = [
   ['../tag/TagHeader.tsx', '~/components/tag/CreateTagModal'],
   ['../tag/detail/Container.tsx', './EditTagModal'],
   ['../company/CompanyHeader.tsx', './form/CompanyFormModal'],
   ['../company/detail/Container.tsx', '../form/CompanyFormModal'],
-  ['../patch/introduction/Tag.tsx', './PatchTagSelector'],
-  ['../patch/introduction/Company.tsx', './PatchCompanySelector']
+  ['../patch/introduction/Tag.tsx', './term/PatchTermEditor'],
+  ['../patch/introduction/Company.tsx', './term/PatchTermEditor']
 ]
 
 const readSource = (file: string) =>
