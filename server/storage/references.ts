@@ -3,8 +3,8 @@ import type { Prisma } from '~/prisma/generated/prisma/client'
 
 type RefDb = Pick<Prisma.TransactionClient, '$queryRaw'>
 
-// S3 对象还有没有人在用, 只由这里向 PostgreSQL 确认。唯一调用方是删除写出箱的消费者
-// (drainS3DeletionOutbox): 入队端各自推断「本行独占本对象」, 但直传迁移 (bcc2c48f) 之前
+// S3 对象还有没有人在用, 只由这里向 PostgreSQL 确认。调用方是删除写出箱的消费者
+// (drainS3DeletionOutbox) 与撤图时提交后的立即删除 (patchBanner.ts 的 discardNow): 入队端各自推断「本行独占本对象」, 但直传迁移 (bcc2c48f) 之前
 // 的对象按「游戏 + 内容 BLAKE3 + 文件名」寻址, 同一游戏重复上传同一文件的几条链接共用一个
 // 对象, 入队端怎么写都会删掉别人的文件。
 //

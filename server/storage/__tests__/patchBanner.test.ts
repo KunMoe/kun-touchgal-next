@@ -12,6 +12,8 @@ const rec = await vi.hoisted(async () =>
 
 const mocks = vi.hoisted(() => ({
   uploadImageToS3: vi.fn(),
+  deleteFileFromS3: vi.fn(),
+  isS3ObjectReferenced: vi.fn(),
   enqueueS3Deletion: vi.fn(),
   kickS3DeletionDrain: vi.fn(),
   enqueueSearchOutbox: vi.fn(),
@@ -21,7 +23,13 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('~/prisma/index', () => rec.module)
-vi.mock('~/lib/s3', () => ({ uploadImageToS3: mocks.uploadImageToS3 }))
+vi.mock('~/lib/s3', () => ({
+  uploadImageToS3: mocks.uploadImageToS3,
+  deleteFileFromS3: mocks.deleteFileFromS3
+}))
+vi.mock('~/server/storage/references', () => ({
+  isS3ObjectReferenced: mocks.isS3ObjectReferenced
+}))
 vi.mock('~/server/storage/s3Outbox', () => ({
   enqueueS3Deletion: mocks.enqueueS3Deletion,
   kickS3DeletionDrain: mocks.kickS3DeletionDrain
@@ -64,7 +72,8 @@ const encoded = {
   miniBanner: Buffer.from('mini')
 }
 
-const LOCK = /SELECT banner, unique_id FROM patch WHERE id = \? FOR UPDATE/
+const LOCK =
+  /SELECT banner, unique_id FROM patch WHERE id = \? FOR NO KEY UPDATE/
 
 // 事务外写入的那组 key (从实际 PUT 的主图 key 推出)
 const newKeys = () => {
@@ -83,6 +92,14 @@ const callsWith = (keys: string[]) =>
 
 let events: string[]
 
+// 入队函数是 mock: 让它在收到的 client 上记一条语句, 用的是事务 tx 的话这条语句落在那次尝试里,
+// 用的是事务外的 prisma 就落在 rec.outside 里
+const markOn =
+  (name: string) =>
+  async (client: { $executeRaw: (strings: string[]) => unknown }) => {
+    await client.$executeRaw([`-- ${name}`])
+  }
+
 beforeEach(() => {
   vi.resetAllMocks()
   rec.reset()
@@ -96,6 +113,15 @@ beforeEach(() => {
     return [{ banner: OLD_POINTER, unique_id: 'u42' }]
   })
   rec.on('patch.findUnique', { banner: OLD_POINTER })
+  mocks.enqueueS3Deletion.mockImplementation(markOn('enqueueS3Deletion'))
+  mocks.enqueueSearchOutbox.mockImplementation(markOn('enqueueSearchOutbox'))
+  mocks.isS3ObjectReferenced.mockResolvedValue(false)
+  mocks.deleteFileFromS3.mockImplementation(async (key: string) => {
+    events.push(`delete:${key}`)
+  })
+  mocks.purgeCloudflareCache.mockImplementation(async () => {
+    events.push('purge')
+  })
 })
 
 afterEach(() => {
@@ -150,9 +176,12 @@ describe('replacePatchBanner', () => {
 
     const [attempt] = rec.attempts
     expect(attempt.committed).toBe(true)
+    // 两次入队都在事务里 (用的是 tx), 与换指针一起提交
     expect(attempt.statements.map((s) => s.label)).toEqual([
       expect.stringMatching(LOCK),
-      'patch.update'
+      'patch.update',
+      '$executeRaw: -- enqueueSearchOutbox',
+      '$executeRaw: -- enqueueS3Deletion'
     ])
     expect(rec.argsOf('patch.update')).toEqual([
       { where: { id: PATCH_ID }, data: { banner: pointer } }
@@ -175,6 +204,7 @@ describe('replacePatchBanner', () => {
     expect(mocks.kickSearchOutboxDrain).toHaveBeenCalledTimes(1)
     // 地址每次都是新的: 不再清 CDN, 旧版本留到宽限期过后才删
     expect(mocks.purgeCloudflareCache).not.toHaveBeenCalled()
+    expect(mocks.deleteFileFromS3).not.toHaveBeenCalled()
     expect(mocks.kickS3DeletionDrain).not.toHaveBeenCalled()
   })
 
@@ -199,18 +229,73 @@ describe('replacePatchBanner', () => {
     )
   })
 
-  it('discardOld: 旧版本立即入队并踢消费, 清掉 CDN 上的旧地址', async () => {
+  it('discardOld: 旧版本在事务里立即入队; 提交后先删源对象、再清 CDN', async () => {
+    await replacePatchBanner(PATCH_ID, encoded, { discardOld: true })
+
+    expect(mocks.enqueueS3Deletion).toHaveBeenCalledTimes(1)
+    expect(mocks.enqueueS3Deletion).toHaveBeenCalledWith(
+      expect.anything(),
+      OLD_KEYS
+    )
+    expect(rec.attempts[0].statements.map((s) => s.label)).toContain(
+      '$executeRaw: -- enqueueS3Deletion'
+    )
+    // 反过来的话, 清完到删掉之间回源的请求会把旧图重新缓存到边缘
+    expect(events.slice(-4)).toEqual([
+      ...OLD_KEYS.map((key) => `delete:${key}`),
+      'purge'
+    ])
+    expect(mocks.purgeCloudflareCache).toHaveBeenCalledWith(
+      OLD_KEYS.map((key) => `${BED}/${key}`)
+    )
+  })
+
+  // 改成版本目录之前, 换封面每次都覆盖本游戏的固定目录, 撤图对换过域名的存量照旧生效
+  it('discardOld 而旧指针不在配置的图床下: 退回本游戏固定目录的三件套', async () => {
+    rec.onRaw(LOCK, [
+      {
+        banner: `https://old-domain.example.test/patch/${PATCH_ID}/banner/banner.avif`,
+        unique_id: 'u42'
+      }
+    ])
+    const legacyKeys = [
+      `patch/${PATCH_ID}/banner/banner.avif`,
+      `patch/${PATCH_ID}/banner/banner-mini.avif`,
+      `patch/${PATCH_ID}/banner/banner-full.avif`
+    ]
+
     await replacePatchBanner(PATCH_ID, encoded, { discardOld: true })
 
     expect(mocks.enqueueS3Deletion).toHaveBeenCalledWith(
       expect.anything(),
-      OLD_KEYS,
-      {}
+      legacyKeys
     )
-    expect(mocks.kickS3DeletionDrain).toHaveBeenCalledTimes(1)
+    expect(mocks.deleteFileFromS3.mock.calls.map(([key]) => key)).toEqual(
+      legacyKeys
+    )
     expect(mocks.purgeCloudflareCache).toHaveBeenCalledWith(
-      OLD_KEYS.map((key) => `${BED}/${key}`)
+      legacyKeys.map((key) => `${BED}/${key}`)
     )
+  })
+
+  it('discardOld: 仍被引用的不删; 删失败的留给出箱, CDN 照样清', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.isS3ObjectReferenced.mockImplementation(
+      async (_db: unknown, key: string) => key === OLD_KEYS[0]
+    )
+    mocks.deleteFileFromS3.mockImplementation(async (key: string) => {
+      if (key === OLD_KEYS[1]) {
+        throw new Error('S3 flaky')
+      }
+      events.push(`delete:${key}`)
+    })
+
+    await replacePatchBanner(PATCH_ID, encoded, { discardOld: true })
+
+    expect(mocks.deleteFileFromS3.mock.calls.map(([key]) => key)).toEqual(
+      OLD_KEYS.slice(1)
+    )
+    expect(events.slice(-2)).toEqual([`delete:${OLD_KEYS[2]}`, 'purge'])
   })
 
   it('行锁下读不到行 (被并发删掉): 回不存在, 不提交, 回收新版本', async () => {
@@ -230,6 +315,10 @@ describe('replacePatchBanner', () => {
     expect(mocks.enqueueS3Deletion).toHaveBeenCalledWith(
       rec.module.prisma,
       newKeys()
+    )
+    // 事务已回滚, 回收用事务外的 client
+    expect(rec.outside.map((s) => s.label)).toContain(
+      '$executeRaw: -- enqueueS3Deletion'
     )
     expect(mocks.kickS3DeletionDrain).toHaveBeenCalledTimes(1)
     expect(mocks.kickSearchOutboxDrain).not.toHaveBeenCalled()

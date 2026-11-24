@@ -1,5 +1,5 @@
 import { prisma } from '~/prisma/index'
-import { uploadImageToS3 } from '~/lib/s3'
+import { deleteFileFromS3, uploadImageToS3 } from '~/lib/s3'
 import { kunTx } from '~/server/db/tx'
 import { recordKunChanges } from '~/server/cache/publish'
 import {
@@ -8,10 +8,13 @@ import {
 } from '~/server/search/sync'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
 import { enqueueS3Deletion, kickS3DeletionDrain } from './s3Outbox'
+import { isS3ObjectReferenced } from './references'
 import {
   IMAGE_VERSION_DELETION_GRACE_MS,
+  imageUrlOfKey,
   newPatchBannerSet,
-  patchBannerKeysFromPointer
+  patchBannerKeysFromPointer,
+  patchBannerLegacyKeys
 } from './imageObjects'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { PatchBannerSet } from './imageObjects'
@@ -74,8 +77,32 @@ const recycleSet = async (set: PatchBannerSet) => {
   kickS3DeletionDrain()
 }
 
-// discardOld: 换封面是为了撤下违规图片时, 旧版本不留宽限期、立即删, 并清掉 CDN 上的旧地址。代价是
-// 缓存里还拿着旧地址的页面 (最多几分钟) 显示裂图
+// 撤图时要删的旧对象。指针认不出 (存量换过域名、不在配置的图床下) 时退回本游戏固定目录的三件套:
+// 改成版本目录之前, 换封面每次都原地覆盖这三个 key, 撤图对这类行照旧生效。key 只落在本游戏自己的
+// 封面目录下, 删之前仍逐个判一次在不在用
+const discardedKeys = (patchId: number, pointer: string) => {
+  const keys = patchBannerKeysFromPointer(patchId, pointer)
+  return keys.length ? keys : patchBannerLegacyKeys(patchId)
+}
+
+// 先删源对象、再清 CDN: 反过来的话, 清完到删掉之间回源的请求 (列表缓存里的旧地址还要发几十秒)
+// 会把旧图重新缓存到边缘, 源对象删了边缘照样回它。删失败的留给出箱重试, CDN 照样清
+const discardNow = async (keys: string[]) => {
+  for (const key of keys) {
+    try {
+      if (!(await isS3ObjectReferenced(prisma, key))) {
+        await deleteFileFromS3(key)
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error(`撤图时删除 ${key} 失败, 留给删除写出箱重试:`, error)
+    }
+  }
+  await purgeCloudflareCache(keys.map(imageUrlOfKey))
+}
+
+// discardOld: 换封面是为了撤下违规图片时, 旧版本不留宽限期、提交后立即删, 并清掉 CDN 上的旧地址。
+// 代价是缓存里还拿着旧地址的页面 (最多几分钟) 显示裂图
 export const replacePatchBanner = async (
   patchId: number,
   encoded: EncodedPatchBanner,
@@ -99,10 +126,12 @@ export const replacePatchBanner = async (
     async (ctx) => {
       const { tx } = ctx
       // 只取这一把 patch 行锁, 与删游戏 (先锁资源行、再删 patch 行) 不成环。删游戏先拿到锁的话这里读
-      // 不到行, 新版本由 onRollback 回收; 这里先拿到的话, 删游戏的 RETURNING 读到的就是新指针
+      // 不到行, 新版本由 onRollback 回收; 这里先拿到的话, 删游戏的 RETURNING 读到的就是新指针。
+      // banner 不是键列: FOR NO KEY UPDATE 与并发换封面、删游戏、编辑互斥, 不挡评论、收藏这类经外键
+      // 对 patch 行取 KEY SHARE 的插入 (server/content/patchLock.ts 同一约定)
       const [patch] = await tx.$queryRaw<
         Array<{ banner: string; unique_id: string }>
-      >`SELECT banner, unique_id FROM patch WHERE id = ${patchId} FOR UPDATE`
+      >`SELECT banner, unique_id FROM patch WHERE id = ${patchId} FOR NO KEY UPDATE`
       if (!patch) {
         ctx.fail('这个 Galgame 不存在')
       }
@@ -112,25 +141,20 @@ export const replacePatchBanner = async (
         data: { banner: set.pointer }
       })
       await enqueueSearchOutbox(tx, patchId)
-      await enqueuePatchBannerDeletion(
-        tx,
-        patchId,
-        patch.banner,
-        options.discardOld ? {} : { delayMs: IMAGE_VERSION_DELETION_GRACE_MS }
-      )
+      if (options.discardOld) {
+        const oldKeys = discardedKeys(patchId, patch.banner)
+        // 立即入队是兜底: 提交之后马上删, 删失败的由 drain 重试
+        await enqueueS3Deletion(tx, oldKeys)
+        ctx.afterCommit('discardOld', () => discardNow(oldKeys))
+      } else {
+        await enqueuePatchBannerDeletion(tx, patchId, patch.banner, {
+          delayMs: IMAGE_VERSION_DELETION_GRACE_MS
+        })
+      }
       recordKunChanges(ctx, [
         { kind: 'patch', patchId, uniqueId: patch.unique_id }
       ])
       ctx.afterCommit('searchKick', () => kickSearchOutboxDrain())
-      if (options.discardOld) {
-        ctx.afterCommit('s3Kick', () => kickS3DeletionDrain())
-        const oldUrls = patchBannerKeysFromPointer(patchId, patch.banner).map(
-          (key) => `${process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL}/${key}`
-        )
-        if (oldUrls.length) {
-          ctx.afterCommit('purgeOld', () => purgeCloudflareCache(oldUrls))
-        }
-      }
       return { banner: set.pointer }
     },
     {

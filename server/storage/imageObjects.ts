@@ -38,12 +38,15 @@ export const isUserAvatarPendingKey = (uid: number, key: string) =>
 
 const imageBedUrl = () => process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL
 
+// 对象在配置的图床下的公开地址
+export const imageUrlOfKey = (key: string) => `${imageBedUrl()}/${key}`
+
 // 编辑器图床的对象: key 带随机段, 同一用户的两次上传落在同一毫秒也不会互相覆盖 (X06-03)。
 // 这些图片可能被别人的内容引用, 站内没有回收路径, 删号也不清
 export const newContentImageKey = (uid: number) => {
   const name = `${uid}-${Date.now()}-${randomBytes(4).toString('hex')}`
   const key = `user/image/${uid}/${name}.avif`
-  return { key, url: `${imageBedUrl()}/${key}` }
+  return { key, url: imageUrlOfKey(key) }
 }
 
 // 封面: 一个版本是同一目录下的一组对象 (主图、列表小图、可选的原图大图), patch.banner 存主图的公开
@@ -72,11 +75,15 @@ export const newPatchBannerSet = (patchId: number) => {
   )
   return {
     keys: { main, mini, full },
-    pointer: `${imageBedUrl()}/${main}`
+    pointer: imageUrlOfKey(main)
   }
 }
 
 export type PatchBannerSet = ReturnType<typeof newPatchBannerSet>
+
+// 改成版本目录之前的固定目录 (存量指针都指向这里)
+export const patchBannerLegacyKeys = (patchId: number) =>
+  patchBannerKeysIn(`patch/${patchId}/banner`)
 
 // 换下来的封面版本留多久再删。共享读缓存里内嵌着封面地址的条目 (详情、列表卡片、资源页, TTL 见
 // config/cache.ts) 在过期之前还会把旧地址发给页面, 已经打开的页面也还拿着它; 宽限期必须不短于这些
