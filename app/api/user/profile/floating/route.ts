@@ -1,15 +1,12 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
+import { userUidSchema } from '~/validations/user'
 import type { KunViewer } from '~/app/api/utils/contentVisibility'
 import type { FloatingCardUser } from '~/types/api/user'
 
-const uidSchema = z.object({
-  uid: z.coerce.number().min(1).max(9999999)
-})
-
 const getUserFloatingProfile = async (
-  input: z.infer<typeof uidSchema>,
+  input: z.infer<typeof userUidSchema>,
   viewer: KunViewer | null
 ) => {
   const currentUserUid = viewer?.uid ?? 0
@@ -69,7 +66,7 @@ const getUserFloatingProfile = async (
 
 export const GET = kunRoute.get({
   auth: 'optional',
-  input: uidSchema,
+  input: userUidSchema,
   handler: async ({ input, actor: payload }) =>
     getUserFloatingProfile(input, payload)
 })

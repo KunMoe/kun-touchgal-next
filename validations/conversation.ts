@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from './primitives'
 
 const conversationIdSchema = z.coerce.number().int().min(1).max(9999999)
 
@@ -11,7 +12,7 @@ export const parseConversationId = (id: string | number): number | string => {
 }
 
 export const createConversationSchema = z.object({
-  targetUserId: z.coerce.number().min(1).max(9999999)
+  targetUserId: kunId('用户 ID')
 })
 
 export const getConversationsSchema = z.object({

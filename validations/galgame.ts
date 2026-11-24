@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunInt } from './primitives'
 import {
   ALL_SUPPORTED_LANGUAGE,
   ALL_SUPPORTED_PLATFORM,
@@ -12,6 +13,13 @@ import {
   MAX_GALGAME_FILTER_VALUES,
   exceedsGalgameFilterLimit
 } from '~/utils/galgameFilter'
+
+// 作品列表四处入口 (/galgame、/tag、/company、/search) 共用, 各自给默认值
+export const minRatingCountSchema = kunInt(
+  0,
+  999999,
+  '最低评分人数须为 0～999999 的整数'
+)
 
 const getSupportedValueSchema = (values: string[], message: string) =>
   z
@@ -57,10 +65,5 @@ export const galgameSchema = z.object({
   monthString: getBoundedFilterStringSchema(
     `您最多选择 ${MAX_GALGAME_FILTER_VALUES} 组月份`
   ).default(DEFAULT_GALGAME_MONTH_STRING),
-  minRatingCount: z.coerce
-    .number()
-    .int()
-    .min(0)
-    .max(999999)
-    .default(DEFAULT_GALGAME_MIN_RATING_COUNT)
+  minRatingCount: minRatingCountSchema.default(DEFAULT_GALGAME_MIN_RATING_COUNT)
 })

@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { galgameSchema } from './galgame'
+import { galgameSchema, minRatingCountSchema } from './galgame'
 import { DEFAULT_TAG_COMPANY_MIN_RATING_COUNT } from '~/utils/galgameFilter'
 import { normalizeAliasList } from '~/utils/term/normalize'
 
@@ -80,12 +80,9 @@ const galgameListQuerySchema = galgameSchema
     minRatingCount: true
   })
   .extend({
-    minRatingCount: z.coerce
-      .number()
-      .int()
-      .min(0)
-      .max(999999)
-      .default(DEFAULT_TAG_COMPANY_MIN_RATING_COUNT)
+    minRatingCount: minRatingCountSchema.default(
+      DEFAULT_TAG_COMPANY_MIN_RATING_COUNT
+    )
   })
 
 export const getPatchByCompanySchema = z

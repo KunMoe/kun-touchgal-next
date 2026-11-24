@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from './primitives'
 
 const authMethods = [
   'client_secret_basic',
@@ -22,10 +23,10 @@ export const oidcClientCreateSchema = z.object({
 })
 
 export const oidcClientUpdateSchema = oidcClientCreateSchema.extend({
-  id: z.number().int().positive(),
+  id: kunId('OIDC 客户端 ID'),
   disabled: z.boolean().default(false)
 })
 
 export const oidcClientDeleteSchema = z.object({
-  id: z.coerce.number().int().positive()
+  id: kunId('OIDC 客户端 ID')
 })

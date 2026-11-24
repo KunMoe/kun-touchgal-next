@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   patchResourceCreateSchema,
-  patchResourceUpdateSchema
+  patchResourceUpdateSchema,
+  togglePatchFavoriteSchema
 } from '~/validations/patch'
 
 const baseInput = {
@@ -187,5 +188,16 @@ describe('资源链接的 id 不可重复', () => {
       ]
     })
     expect(result.success).toBe(false)
+  })
+})
+
+// 收藏切换拿 folderId 拼 advisory lock 的 ::int 参数: 小数进去 PG 报 22P02 (500)
+describe('togglePatchFavoriteSchema 的 id 必须是整数', () => {
+  it.each([
+    [{ patchId: 1, folderId: 1.5 }, '收藏文件夹 ID 无效'],
+    [{ patchId: 1.5, folderId: 1 }, '游戏 ID 无效']
+  ])('%j 被拒', (input, message) => {
+    const result = togglePatchFavoriteSchema.safeParse(input)
+    expect(result.success ? '' : result.error.issues[0].message).toBe(message)
   })
 })

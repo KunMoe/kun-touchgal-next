@@ -3,6 +3,7 @@ import type { z } from 'zod'
 import { galgameSchema } from '~/validations/galgame'
 import { getPatchByTagSchema } from '~/validations/tag'
 import { getPatchByCompanySchema } from '~/validations/company'
+import { searchSchema } from '~/validations/search'
 import { MAX_GALGAME_FILTER_VALUES } from '~/utils/galgameFilter'
 
 const makeYearString = (length: number) =>
@@ -137,5 +138,68 @@ describe('sortField 发售时间排序', () => {
     expect(
       getPatchByCompanySchema.safeParse({ ...input, companyId: 1 }).success
     ).toBe(true)
+  })
+})
+
+// 「最低评分人数」落进 Int 比较: 四处入口一致拒小数与越界, 文案是中文 (P29-02 的服务端一侧;
+// 原先 /search 放行小数, 另外三处回出 zod 的英文默认消息)
+describe('minRatingCount 必须是 0～999999 的整数', () => {
+  const searchInput = {
+    queryString: JSON.stringify(['测试']),
+    limit: 12,
+    searchOption: {
+      searchInIntroduction: false,
+      searchInAlias: false,
+      searchInTag: false
+    },
+    page: 1,
+    selectedType: 'all',
+    selectedLanguage: 'all',
+    selectedPlatform: 'all',
+    sortField: 'resource_update_time',
+    sortOrder: 'desc',
+    selectedYears: ['all'],
+    selectedMonths: ['all']
+  }
+
+  it.each([
+    [
+      '/search',
+      (v: unknown) =>
+        searchSchema.safeParse({ ...searchInput, minRatingCount: v })
+    ],
+    [
+      '/galgame',
+      (v: unknown) =>
+        galgameSchema.safeParse({ ...baseInput, minRatingCount: v })
+    ],
+    [
+      '/tag',
+      (v: unknown) =>
+        getPatchByTagSchema.safeParse({
+          ...baseInput,
+          tagId: 1,
+          minRatingCount: v
+        })
+    ],
+    [
+      '/company',
+      (v: unknown) =>
+        getPatchByCompanySchema.safeParse({
+          ...baseInput,
+          companyId: 1,
+          minRatingCount: v
+        })
+    ]
+  ])('%s', (_, parse) => {
+    for (const value of [1.5, '2.5', 1000000, -1]) {
+      expect(firstMessage(parse(value))).toBe(
+        '最低评分人数须为 0～999999 的整数'
+      )
+    }
+    const ok = parse('10')
+    expect(
+      ok.success && (ok.data as { minRatingCount: number }).minRatingCount
+    ).toBe(10)
   })
 })

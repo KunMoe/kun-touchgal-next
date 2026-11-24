@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { MAX_GALGAME_FILTER_VALUES } from '~/utils/galgameFilter'
 import { isWellFormedText } from '~/utils/text/unicode'
+import { minRatingCountSchema } from './galgame'
 import type { SearchSuggestionType } from '~/types/api/search'
 
 // 筛选值与建议项的名称会原样进 PG (basic 引擎) 与 Meilisearch 的请求体: NUL 让 PG 报
@@ -45,7 +46,7 @@ export const searchSchema = z.object({
     .array(filterText(z.string().trim().min(1).max(50)))
     .min(1, { message: '请至少选择一组月份' })
     .max(13, { message: '您最多选择 13 组月份' }),
-  minRatingCount: z.coerce.number().min(0).max(999999).default(10)
+  minRatingCount: minRatingCountSchema.default(10)
 })
 
 // mode 带 default：历史 payload 可不带 mode，缺省归一化为 include

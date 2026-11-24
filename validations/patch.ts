@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { ResourceSizeRegex } from '~/utils/validate'
 import { nonEmptyFileSchema } from './file'
+import { kunId } from './primitives'
 import {
   RESOURCE_SECTION_TYPE_MAP,
   SUPPORTED_TYPE,
@@ -282,14 +283,8 @@ export const createPatchRatingReportSchema = z.object({
 })
 
 export const togglePatchFavoriteSchema = z.object({
-  patchId: z.coerce
-    .number({ message: '游戏 ID 必须为数字' })
-    .min(1)
-    .max(9999999),
-  folderId: z.coerce
-    .number({ message: '收藏文件夹 ID 必须为数字' })
-    .min(1)
-    .max(9999999)
+  patchId: kunId('游戏 ID'),
+  folderId: kunId('收藏文件夹 ID')
 })
 
 export const patchRatingCreateSchema = z.object({

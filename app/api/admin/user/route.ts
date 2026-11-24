@@ -1,16 +1,12 @@
-import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
   adminUpdateUserSchema,
   adminUserPaginationSchema
 } from '~/validations/admin'
+import { userUidSchema } from '~/validations/user'
 import { getUserInfo } from './get'
 import { updateUser } from './update'
 import { deleteAccount } from '~/server/account/deleteAccount'
-
-const userIdSchema = z.object({
-  uid: z.coerce.number({ message: '用户 ID 必须为数字' }).min(1).max(9999999)
-})
 
 export const GET = kunRoute.get({
   auth: 'user',
@@ -29,6 +25,6 @@ export const PUT = kunRoute.put({
 export const DELETE = kunRoute.delete({
   auth: 'user',
   capability: 'admin.access',
-  input: userIdSchema,
+  input: userUidSchema,
   handler: ({ input, actor }) => deleteAccount(input.uid, actor)
 })

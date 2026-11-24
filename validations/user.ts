@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { kunId } from './primitives'
 import {
   kunPasswordRegex,
   kunValidMailConfirmCodeRegex
@@ -63,6 +64,11 @@ export const passwordSchema = z.object({
     message:
       '新密码格式非法, 密码的长度为 6 到 1007 位，必须包含至少一个英文字符和一个数字，可以选择性的包含 @!#$%^&*()_-+=\\/ 等特殊字符'
   })
+})
+
+// 只有一个 uid 的入参 (关注、取消关注、悬浮卡片、后台删号) 共用这一份
+export const userUidSchema = z.object({
+  uid: kunId('用户 ID')
 })
 
 export const getUserProfileSchema = z.object({

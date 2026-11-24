@@ -1,12 +1,8 @@
-import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { kunTx } from '~/server/db/tx'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
-
-const uidSchema = z.object({
-  uid: z.coerce.number({ message: '请输入合法的用户 ID' }).min(1).max(9999999)
-})
+import { userUidSchema } from '~/validations/user'
 
 const followUser = async (uid: number, currentUserUid: number) => {
   if (uid === currentUserUid) {
@@ -59,7 +55,7 @@ const followUser = async (uid: number, currentUserUid: number) => {
 
 export const POST = kunRoute.post({
   auth: 'user',
-  input: uidSchema,
+  input: userUidSchema,
   handler: async ({ input, actor: payload }) =>
     followUser(input.uid, payload?.uid)
 })
