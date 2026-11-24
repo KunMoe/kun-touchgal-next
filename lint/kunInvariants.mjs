@@ -176,6 +176,12 @@ const USE_STATE_CALL =
   "CallExpression:matches([callee.name='useState'], [callee.property.name='useState'])"
 const LIKE_FIELD = '/^(isLike|likeCount)$/'
 
+// inv-value-01: 成员访问的对象是 <任意命名空间>.coerce (计算键也算), 或从 zod 具名导入 / 解构出的 coerce
+const COERCE_OBJECT =
+  "[object.type='Identifier'][object.name='coerce'], [object.type='MemberExpression'][object.computed=false][object.property.name='coerce'], [object.type='MemberExpression'][object.property.value='coerce']"
+const COERCE_INIT =
+  "[init.type='MemberExpression'][init.computed=false][init.property.name='coerce'], [init.type='MemberExpression'][init.property.value='coerce']"
+
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
   {
@@ -1386,13 +1392,14 @@ export const KUN_INVARIANTS = [
     statement:
       '数值入参不直接写 z.coerce.number, 改用 validations/primitives.ts 的 kunId / kunPage / kunLimit / kunInt, 确实要小数的用 kunNumber',
     reason:
-      'z.coerce.number 默认放行小数, 而 Prisma 把 Int 字段上的 5.5 静默截成 5: 守卫、Redis 键与 raw SQL 的 ::int 拿的是原值, 落库的是截断值 (小数 uid 绕过「不能关注自己」「请勿删除自己」)。158 条手写链里只有 9 条带 .int(), 每次点修都没有传播到同文件的下一行。原语把整数性、int4 上界与中文文案放在一处; 只认 z.coerce.number 这个成员 (调用或取出来都算), 解构出 coerce 再用看不到',
+      'z.coerce.number 默认放行小数, 而 Prisma 把 Int 字段上的 5.5 静默截成 5: 守卫、Redis 键与 raw SQL 的 ::int 拿的是原值, 落库的是截断值 (小数 uid 绕过「不能关注自己」「请勿删除自己」)。158 条手写链里只有 9 条带 .int(), 每次点修都没有传播到同文件的下一行。原语把整数性、int4 上界与中文文案放在一处。认 <任意命名空间>.coerce.number 与 coerce.number (调用或取出来都算, 计算键也算) 以及从 coerce 里解构出 number; 先把 z.coerce 存进别名变量再取 .number 看不到',
     removeWhen: 'zod 的 coerce.number 默认拒绝小数, 或入参不再经 zod 校验',
     ignores: ['validations/primitives.ts', '**/__tests__/**'],
     enforce: {
       kind: 'syntax',
       selectors: [
-        "MemberExpression[property.name='number'][object.type='MemberExpression'][object.property.name='coerce'][object.object.name='z']"
+        `MemberExpression:matches([computed=false][property.name='number'], [property.value='number']):matches(${COERCE_OBJECT})`,
+        `VariableDeclarator:matches(${COERCE_INIT}) > ObjectPattern > Property${keyIs("'number'")}`
       ]
     },
     examples: {
@@ -1400,12 +1407,19 @@ export const KUN_INVARIANTS = [
       bad: [
         "import * as z from 'zod'\nexport const s = z.object({ id: z.coerce.number().min(1).max(9999999) })",
         "import * as z from 'zod'\nexport const s = z.coerce.number<number>({ message: 'x' }).int()",
-        "import * as z from 'zod'\nconst make = z.coerce.number\nexport const s = make()"
+        "import * as z from 'zod'\nconst make = z.coerce.number\nexport const s = make()",
+        "import * as zod from 'zod'\nexport const s = zod.coerce.number()",
+        "import * as z from 'zod'\nexport const s = z.coerce['number']()",
+        "import * as z from 'zod'\nexport const s = z['coerce'].number()",
+        "import { coerce } from 'zod'\nexport const s = coerce.number()",
+        "import * as z from 'zod'\nconst { number } = z.coerce\nexport const s = number()"
       ],
       good: [
         "import * as z from 'zod'\nimport { kunId } from './primitives'\nexport const s = z.object({ id: kunId('评论 ID') })",
         "import * as z from 'zod'\nexport const s = z.coerce.boolean()",
-        "import * as z from 'zod'\nexport const s = z.number().int()"
+        "import * as z from 'zod'\nexport const s = z.number().int()",
+        "import * as z from 'zod'\nconst { boolean } = z.coerce\nexport const s = boolean()",
+        'export const n = (x: { coerce: { numbers: () => number } }) => x.coerce.numbers()'
       ]
     }
   }
