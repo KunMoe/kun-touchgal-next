@@ -9,7 +9,8 @@ export const normalizeAliasList = (raw: readonly string[]): string[] => [
 ]
 
 // 按别名比较时拿去比的形态。存量别名里还有没规范化的大小写混合写法, 过渡期同时比 trim 后的
-// 原串与规范形; 存量回填之后收紧为只返回规范形
+// 原串与规范形。存量由 post 迁移 0020 回填; 它在生产执行完之后的下一个版本才收紧为只返回规范形
+// (同一个版本里收紧, 切换到 post 迁移执行完之间会有一段按原大小写搜不到存量别名)
 export const aliasLookupForms = (raw: string): string[] => {
   const trimmed = raw.trim()
   const key = trimmed.toLowerCase()
