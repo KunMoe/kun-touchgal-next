@@ -1,6 +1,7 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { uploadIntroductionImage } from './_upload'
+import { newContentImageKey } from '~/server/storage/imageObjects'
 import { imageSchema } from '~/validations/edit'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import {
@@ -21,12 +22,12 @@ const uploadImage = async (uid: number, image: ArrayBuffer) => {
     return '您今日上传的图片已达到 50 张限额'
   }
 
-  const newFileName = `${uid}-${Date.now()}`
+  const { key, url } = newContentImageKey(uid)
 
   // 抢占后编码 / 上传失败则退还额度; 上传成功则额度落定 (S3 资源已消耗)
   let res: string | undefined
   try {
-    res = await uploadIntroductionImage(newFileName, image, uid)
+    res = await uploadIntroductionImage(key, image)
   } catch (error) {
     await refundDailyImageQuota(uid)
     throw error
@@ -38,8 +39,7 @@ const uploadImage = async (uid: number, image: ArrayBuffer) => {
 
   await invalidateUserSession(uid)
 
-  const imageLink = `${process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL}/user/image/${uid}/${newFileName}.avif`
-  return { imageLink }
+  return { imageLink: url }
 }
 
 export const POST = kunRoute.post({

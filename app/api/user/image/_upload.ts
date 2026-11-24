@@ -5,10 +5,10 @@ import { checkBufferSize } from '~/app/api/utils/checkBufferSize'
 import { withEncodeSlotOrBusy } from '~/server/image/encodeLimit'
 import { ensureWithinPixelLimit } from '~/server/image/pixelGuard'
 
+// key 由调用方经 newContentImageKey 取得 (server/storage/imageObjects.ts)
 export const uploadIntroductionImage = async (
-  name: string,
-  image: ArrayBuffer,
-  uid: number
+  key: string,
+  image: ArrayBuffer
 ) => {
   if (image.byteLength === 0) {
     return '上传文件不能为空'
@@ -37,7 +37,5 @@ export const uploadIntroductionImage = async (
     return '图片体积过大'
   }
 
-  const s3Key = `user/image/${uid}/${name}.avif`
-
-  await uploadImageToS3(s3Key, minImage)
+  await uploadImageToS3(key, minImage)
 }

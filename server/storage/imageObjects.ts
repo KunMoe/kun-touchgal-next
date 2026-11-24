@@ -1,3 +1,5 @@
+import { randomBytes } from 'crypto'
+
 // 图片对象 (头像、封面、编辑器图床) 的 S3 key 布局只在这里定义。资源文件不归这里: 它的 key 落在
 // patch_resource_link.s3_key, 由 server/storage/stagedUpload.ts 生成
 
@@ -28,3 +30,13 @@ export const getUserAvatarPendingKeys = (uid: number, nonce: string) => {
 // 已知的存储成本取舍 (小 avif 对象、上传受 50 张/日配额约束), 勿给此前缀配过期规则
 export const getUserAvatarModerationArchiveKey = (uid: number, nonce: string) =>
   `user/avatar/user_${uid}/moderation/${nonce}.avif`
+
+const imageBedUrl = () => process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL
+
+// 编辑器图床的对象: key 带随机段, 同一用户的两次上传落在同一毫秒也不会互相覆盖 (X06-03)。
+// 这些图片可能被别人的内容引用, 站内没有回收路径, 删号也不清
+export const newContentImageKey = (uid: number) => {
+  const name = `${uid}-${Date.now()}-${randomBytes(4).toString('hex')}`
+  const key = `user/image/${uid}/${name}.avif`
+  return { key, url: `${imageBedUrl()}/${key}` }
+}

@@ -1,9 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   getUserAvatarKeys,
   getUserAvatarModerationArchiveKey,
-  getUserAvatarPendingKeys
+  getUserAvatarPendingKeys,
+  newContentImageKey
 } from '~/server/storage/imageObjects'
+
+const BED = 'https://img.example.test'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.restoreAllMocks()
+})
 
 describe('getUserAvatarKeys', () => {
   it('每用户固定, 只暴露正式发布 key, 不再含可变共享的暂存 key', () => {
@@ -64,5 +72,19 @@ describe('getUserAvatarModerationArchiveKey', () => {
     expect(
       otherKeys.has(getUserAvatarModerationArchiveKey(42, 'nonce-x'))
     ).toBe(false)
+  })
+})
+
+describe('newContentImageKey', () => {
+  it('同一用户同一毫秒取两次, key 不同 (随机段由构造保证)', () => {
+    vi.stubEnv('KUN_VISUAL_NOVEL_IMAGE_BED_URL', BED)
+    vi.spyOn(Date, 'now').mockReturnValue(1_732_500_000_000)
+
+    const a = newContentImageKey(7)
+    const b = newContentImageKey(7)
+
+    expect(a.key).not.toBe(b.key)
+    expect(a.key).toMatch(/^user\/image\/7\/7-1732500000000-[0-9a-f]{8}\.avif$/)
+    expect(a.url).toBe(`${BED}/${a.key}`)
   })
 })
