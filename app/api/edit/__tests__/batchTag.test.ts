@@ -49,18 +49,19 @@ const seed = (tags: FakeTag[], relatedIds: number[]) => {
   rec.on('patch_tag.findMany', (args: FindTagsArgs) => {
     if (args.where.OR) {
       const names = args.where.OR[0].name.in
+      const aliasForms = args.where.OR[1].alias.hasSome
       return state.tags
         .filter(
           (tag) =>
             names.includes(tag.name) ||
-            tag.alias.some((alias) => names.includes(alias))
+            tag.alias.some((alias) => aliasForms.includes(alias))
         )
         .sort((a, b) => a.id - b.id)
     }
     const names = args.where.name?.in ?? []
     return state.tags
       .filter((tag) => names.includes(tag.name))
-      .map((tag) => ({ id: tag.id }))
+      .map((tag) => ({ id: tag.id, name: tag.name }))
   })
   rec.on('patch_tag_relation.findMany', (args: RelationFilterArgs) =>
     args.where.tag_id.in
@@ -291,6 +292,44 @@ describe('applyManualTagChange 的新增名解析', () => {
       { data: [{ patch_id: PATCH_ID, tag_id: 20 }], skipDuplicates: true }
     ])
     expect(db.relatedNames()).toEqual(['寝取られ'])
+  })
+
+  // 别名的规范形是小写 (管理端录入即如此): 带大写的输入同样命中, 命中的行照常进预锁集
+  it('带大写的输入命中小写别名, 只关联规范标签并对它预加锁', async () => {
+    const db = seed([{ id: 20, name: '寝取られ', alias: ['ntr'] }], [])
+
+    await saveManualTagChange(
+      PATCH_ID,
+      { removeTagIds: [], addTagNames: ['NTR'] },
+      UID
+    )
+
+    expect(rec.argsOf('patch_tag.findMany')[0]).toMatchObject({
+      where: {
+        OR: [{ name: { in: ['NTR'] } }, { alias: { hasSome: ['NTR', 'ntr'] } }]
+      }
+    })
+    expect(rec.argsOf('patch_tag.createMany')).toEqual([])
+    expect(rec.argsOf(LOCK_SQL)).toEqual([[[20]]])
+    expect(db.relatedNames()).toEqual(['寝取られ'])
+  })
+
+  it('多个标签带同一个别名时取 id 最小的一条', async () => {
+    const db = seed(
+      [
+        { id: 40, name: 'later', alias: ['dup'] },
+        { id: 12, name: 'earlier', alias: ['dup'] }
+      ],
+      []
+    )
+
+    await saveManualTagChange(
+      PATCH_ID,
+      { removeTagIds: [], addTagNames: ['dup'] },
+      UID
+    )
+
+    expect(db.relatedNames()).toEqual(['earlier'])
   })
 })
 

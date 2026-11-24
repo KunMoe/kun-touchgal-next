@@ -3,6 +3,13 @@ import { saveManualTagChange } from './batchTag'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
 import { invalidateTagListCache } from '~/app/api/tag/cache'
 import { enqueueSearchOutbox } from '~/server/search/sync'
+import {
+  companyTerms,
+  createTerms,
+  readTermIds,
+  resolveExistingTerms,
+  tagTerms
+} from '~/server/term/identity'
 import type { ManualTagChange } from './batchTag'
 
 interface SubmittedExternalData {
@@ -42,30 +49,21 @@ const ensureTagsWithSources = async (
   const validTags = [...tagSourceByName.keys()].filter((n) => n.length <= 107)
   if (!validTags.length) return false
 
-  const existingTags = await prisma.patch_tag.findMany({
-    where: { name: { in: validTags } },
-    select: { id: true, name: true }
+  // 外部来源的标签只按名字精确匹配、不按别名归并 (dlsite-tags-external-source 的裁定)
+  const existing = await resolveExistingTerms(prisma, tagTerms, validTags, {
+    matchAlias: false
   })
-  const existingNameSet = new Set(existingTags.map((t) => t.name))
-
-  const tagsToCreate = validTags.filter((n) => !existingNameSet.has(n))
+  const tagsToCreate = validTags.filter((n) => !existing.has(n))
   if (tagsToCreate.length) {
-    await prisma.patch_tag.createMany({
-      data: tagsToCreate.map((name) => ({
-        name,
-        user_id: uid,
-        source: tagSourceByName.get(name) ?? 'self'
-      })),
-      skipDuplicates: true
-    })
+    await createTerms(prisma, tagTerms, tagsToCreate, (name) => ({
+      name,
+      user_id: uid,
+      source: tagSourceByName.get(name) ?? 'self'
+    }))
     mutationState.tagChanged = true
   }
-
-  const allTags = await prisma.patch_tag.findMany({
-    where: { name: { in: validTags } },
-    select: { id: true }
-  })
-  const tagIds = allTags.map((t) => t.id)
+  const created = await readTermIds(prisma, tagTerms, tagsToCreate)
+  const tagIds = [...new Set([...existing.values(), ...created.values()])]
 
   if (!tagIds.length) return tagsToCreate.length > 0
 
@@ -101,40 +99,37 @@ export const ensureCompanies = async (
   ].filter((n) => n.length <= 107)
   if (!validNames.length) return false
 
-  const existing = await prisma.patch_company.findMany({
-    where: { name: { in: validNames } },
-    select: { name: true }
-  })
-  const existingNameSet = new Set(existing.map((c) => c.name))
-
-  const toCreate = validNames.filter((n) => !existingNameSet.has(n))
-  let createdCount = 0
-  if (toCreate.length) {
-    // skipDuplicates 依赖 patch_company_name_key 唯一索引兜底并发创建
-    const created = await prisma.patch_company.createMany({
-      data: toCreate.map((name) => ({
-        name,
-        introduction: '',
-        count: 0,
-        primary_language: [],
-        official_website: officialWebsiteByName.get(name) ?? [],
-        parent_brand: [],
-        alias: [],
-        user_id: uid
-      })),
-      skipDuplicates: true
+  // 来源给的名字可能是存量会社的别名 (例如 Bangumi 的原文名): 名字优先、再按别名归并,
+  // 命中就只关联、不新建重复会社。母品牌是检索的召回语义, 这里不认
+  const existing = await resolveExistingTerms(
+    prisma,
+    companyTerms,
+    validNames,
+    { matchAlias: true }
+  )
+  const toCreate = validNames.filter((n) => !existing.has(n))
+  // skipDuplicates 依赖 patch_company_name_key 唯一索引兜底并发创建
+  const createdCount = await createTerms(
+    prisma,
+    companyTerms,
+    toCreate,
+    (name) => ({
+      name,
+      introduction: '',
+      count: 0,
+      primary_language: [],
+      official_website: officialWebsiteByName.get(name) ?? [],
+      parent_brand: [],
+      alias: [],
+      user_id: uid
     })
-    createdCount = created.count
-    if (createdCount) {
-      mutationState.companyChanged = true
-    }
+  )
+  if (createdCount) {
+    mutationState.companyChanged = true
   }
 
-  const allCompanies = await prisma.patch_company.findMany({
-    where: { name: { in: validNames } },
-    select: { id: true }
-  })
-  const companyIds = allCompanies.map((c) => c.id)
+  const created = await readTermIds(prisma, companyTerms, toCreate)
+  const companyIds = [...new Set([...existing.values(), ...created.values()])]
 
   if (!companyIds.length) return createdCount > 0
 

@@ -282,9 +282,9 @@ describe('processSubmittedExternalData company dedup', () => {
   })
 
   it('marks company changed only for relations actually inserted', async () => {
-    companyFindManyMock
-      .mockResolvedValueOnce([{ name: 'Key' }])
-      .mockResolvedValueOnce([{ id: 5 }])
+    companyFindManyMock.mockResolvedValueOnce([
+      { id: 5, name: 'Key', alias: [] }
+    ])
     companyRelationCreateManyMock.mockResolvedValueOnce({ count: 1 })
 
     await processSubmittedExternalData(
@@ -299,9 +299,9 @@ describe('processSubmittedExternalData company dedup', () => {
   })
 
   it('skips invalidation when nothing changed', async () => {
-    companyFindManyMock
-      .mockResolvedValueOnce([{ name: 'Key' }])
-      .mockResolvedValueOnce([{ id: 5 }])
+    companyFindManyMock.mockResolvedValueOnce([
+      { id: 5, name: 'Key', alias: [] }
+    ])
     companyRelationCreateManyMock.mockResolvedValueOnce({ count: 0 })
 
     await processSubmittedExternalData(
@@ -313,6 +313,98 @@ describe('processSubmittedExternalData company dedup', () => {
 
     expect(companyCreateManyMock).not.toHaveBeenCalled()
     expect(invalidateCompanyCacheMock).not.toHaveBeenCalled()
+  })
+})
+
+// 名字解析走 server/term: 会社名字优先、再按别名归并; 外部标签只认名字 (dlsite 的裁定)
+describe('processSubmittedExternalData term identity', () => {
+  it('links a source name that is an existing company alias instead of creating a duplicate', async () => {
+    companyFindManyMock.mockResolvedValueOnce([
+      { id: 9, name: 'ビジュアルアーツ', alias: ['key'] }
+    ])
+
+    await processSubmittedExternalData(
+      1,
+      { ...EMPTY_DATA, bangumiDevelopers: ['Key'] },
+      NO_TAG_CHANGE,
+      7
+    )
+
+    expect(companyFindManyMock.mock.calls[0][0].where).toEqual({
+      OR: [{ name: { in: ['Key'] } }, { alias: { hasSome: ['Key', 'key'] } }]
+    })
+    expect(companyCreateManyMock).not.toHaveBeenCalled()
+    expect(companyFindManyMock).toHaveBeenCalledTimes(1)
+    expect(companyRelationCreateManyMock).toHaveBeenCalledWith({
+      data: [{ patch_id: 1, company_id: 9 }],
+      skipDuplicates: true
+    })
+  })
+
+  it('prefers the company whose name matches over one that only has it as an alias', async () => {
+    companyFindManyMock.mockResolvedValueOnce([
+      { id: 3, name: 'Other', alias: ['Key'] },
+      { id: 8, name: 'Key', alias: [] }
+    ])
+
+    await processSubmittedExternalData(
+      1,
+      { ...EMPTY_DATA, vndbDevelopers: ['Key'] },
+      NO_TAG_CHANGE,
+      7
+    )
+
+    expect(companyRelationCreateManyMock).toHaveBeenCalledWith({
+      data: [{ patch_id: 1, company_id: 8 }],
+      skipDuplicates: true
+    })
+  })
+
+  it('creates only the names that resolve to nothing and relates both kinds', async () => {
+    companyFindManyMock
+      .mockResolvedValueOnce([
+        { id: 9, name: 'ビジュアルアーツ', alias: ['key'] }
+      ])
+      .mockResolvedValueOnce([{ id: 21, name: 'Navel' }])
+
+    await processSubmittedExternalData(
+      1,
+      { ...EMPTY_DATA, vndbDevelopers: ['Key', 'Navel'] },
+      NO_TAG_CHANGE,
+      7
+    )
+
+    expect(
+      companyCreateManyMock.mock.calls[0][0].data.map(
+        (row: { name: string }) => row.name
+      )
+    ).toEqual(['Navel'])
+    expect(companyFindManyMock.mock.calls[1][0].where).toEqual({
+      name: { in: ['Navel'] }
+    })
+    expect(companyRelationCreateManyMock).toHaveBeenCalledWith({
+      data: [
+        { patch_id: 1, company_id: 9 },
+        { patch_id: 1, company_id: 21 }
+      ],
+      skipDuplicates: true
+    })
+  })
+
+  it('matches external tags by name only, never by alias', async () => {
+    await processSubmittedExternalData(
+      1,
+      { ...EMPTY_DATA, vndbTags: ['NTR'] },
+      NO_TAG_CHANGE,
+      7
+    )
+
+    expect(tagFindManyMock.mock.calls[0][0].where).toEqual({
+      name: { in: ['NTR'] }
+    })
+    expect(tagCreateManyMock.mock.calls[0][0].data).toEqual([
+      { name: 'NTR', user_id: 7, source: 'vndb' }
+    ])
   })
 })
 
@@ -430,10 +522,12 @@ describe('processSubmittedExternalData aliases', () => {
 // (drain 恰在两者之间消费, 之后写入的标签与会社就进不了索引, 对账只比 updated 修不回来)
 describe('processSubmittedExternalData search outbox', () => {
   it('enqueues the patch once, after every write has settled', async () => {
-    tagFindManyMock.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 3 }])
+    tagFindManyMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 3, name: 'ADV' }])
     companyFindManyMock
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ id: 4 }])
+      .mockResolvedValueOnce([{ id: 4, name: 'Key' }])
 
     await processSubmittedExternalData(
       1,

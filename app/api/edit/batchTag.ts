@@ -1,4 +1,10 @@
 import { kunTx } from '~/server/db/tx'
+import {
+  createTerms,
+  readTermIds,
+  resolveExistingTerms,
+  tagTerms
+} from '~/server/term/identity'
 import { normalizeStringArray } from '~/utils/normalizeStringArray'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 
@@ -9,9 +15,6 @@ export interface ManualTagChange {
   removeTagIds: number[]
   addTagNames: string[]
 }
-
-// 按码元比较: 不随运行环境的 locale 变, 任何进程排出来的顺序都一样
-const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
 // 首参是事务客户端: 现在由下面的 saveManualTagChange 单独开事务调用, 以后要并进
 // 「一次保存一个事务」只需改调用点
@@ -27,31 +30,13 @@ export const applyManualTagChange = async (
     return { changed: false }
   }
 
-  const candidateTags = addNames.length
-    ? await tx.patch_tag.findMany({
-        where: {
-          OR: [{ name: { in: addNames } }, { alias: { hasSome: addNames } }]
-        },
-        select: { id: true, name: true, alias: true },
-        orderBy: { id: 'asc' }
-      })
-    : []
-
-  // 输入串解析到规范标签: name 精确匹配优先, 未命中再按 alias 补 (同一串可能既是 A 的
-  // 别名又是 B 的名字), 输入别名时只关联规范标签而不新建重复标签
-  const tagByName = new Map(candidateTags.map((tag) => [tag.name, tag]))
-  const resolvedTagIds = new Set<number>()
-  const namesToCreate: string[] = []
-  for (const name of addNames) {
-    const resolved =
-      tagByName.get(name) ??
-      candidateTags.find((tag) => tag.alias.includes(name))
-    if (resolved) {
-      resolvedTagIds.add(resolved.id)
-    } else {
-      namesToCreate.push(name)
-    }
-  }
+  // 输入串解析到规范标签 (名字优先, 再按别名, 规则在 server/term/identity.ts): 输入别名时
+  // 只关联规范标签而不新建重复标签
+  const resolved = await resolveExistingTerms(tx, tagTerms, addNames, {
+    matchAlias: true
+  })
+  const resolvedTagIds = new Set(resolved.values())
+  const namesToCreate = addNames.filter((name) => !resolved.has(name))
 
   // 只移除这个 Galgame 确实关联着的: 表单基线陈旧时带来的 id (已被别人解除、标签已删)
   // 落空即可
@@ -78,30 +63,21 @@ export const applyManualTagChange = async (
     await tx.$queryRaw`SELECT id FROM patch_tag WHERE id = ANY(${lockIds}::int4[]) ORDER BY id FOR NO KEY UPDATE`
   }
 
-  // 按名排序后一条语句插入: 两个并发事务引入同一批新名字时, 以相同的顺序去等对方在
-  // patch_tag.name 唯一索引上的条目, 不会互等。skipDuplicates 让后到者跳过已被对方建好
-  // 的名字 (否则撞唯一索引, 而这时 patch 的主事务已经提交), 再按名回读拿到那一行
-  const sortedNames = [...namesToCreate].sort(byCodeUnit)
-  const created =
-    sortedNames.length > 0
-      ? await tx.patch_tag.createMany({
-          data: sortedNames.map((name) => ({
-            user_id: uid,
-            name,
-            source: 'self'
-          })),
-          skipDuplicates: true
-        })
-      : { count: 0 }
-  const newTags =
-    sortedNames.length > 0
-      ? await tx.patch_tag.findMany({
-          where: { name: { in: sortedNames } },
-          select: { id: true }
-        })
-      : []
+  // 新标签按名排序后一条语句插入、skipDuplicates 跳过并发方刚建好的同名行 (否则撞唯一索引,
+  // 而这时 patch 的主事务已经提交), 再按名回读拿到那一行; 见 createTerms
+  const createdCount = await createTerms(
+    tx,
+    tagTerms,
+    namesToCreate,
+    (name) => ({
+      user_id: uid,
+      name,
+      source: 'self'
+    })
+  )
+  const newTagIds = await readTermIds(tx, tagTerms, namesToCreate)
 
-  const tagIdsToRelate = [...resolvedTagIds, ...newTags.map((tag) => tag.id)]
+  const tagIdsToRelate = [...resolvedTagIds, ...newTagIds.values()]
   const inserted =
     tagIdsToRelate.length > 0
       ? await tx.patch_tag_relation.createMany({
@@ -121,7 +97,7 @@ export const applyManualTagChange = async (
       : { count: 0 }
 
   return {
-    changed: created.count > 0 || inserted.count > 0 || deleted.count > 0
+    changed: createdCount > 0 || inserted.count > 0 || deleted.count > 0
   }
 }
 
