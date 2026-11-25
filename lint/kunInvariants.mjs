@@ -1624,6 +1624,74 @@ export const KUN_INVARIANTS = [
         "import { type Metadata } from 'sharp'"
       ]
     }
+  },
+  {
+    id: 'inv-session-01',
+    aliases: ['T37'],
+    statement:
+      'userStore 与 messageStore 的原始 store (kunUserStore / kunUnreadStore) 只许 store/session.ts 导入: 组件读身份与未读用 useUserStore / useMessageStore, 写只调 store/session.ts 的命令 (登入 signInKunSession、登出 useKunSignOut / endKunClientSession、改动 patchKunUser、未读 applyUnreadSnapshot)',
+    reason:
+      '两个 store 镜像的是服务端状态, 曾经谁都能整值写入: 登出清理有 4 份 (改密那份漏清未读与分级设置, 两处跳裸 /login), 9 处在 await 之后用点击那一帧的快照整对象回写 (请求交错时互相回滚), 首屏未读快照排在懒块之后无条件写入、盖掉已读接口刚写的新值, 私聊列表用本页数据推导全局未读。这些不变量现在只在 store/session.ts 写一次并有 node 下的行为测试, 拿到原始 store 就能绕开它们。本条只认静态导入',
+    removeWhen:
+      '客户端会话镜像换成别的机制 (例如改由服务端组件下发、不再有客户端 store)',
+    ignores: ['store/session.ts', '**/__tests__/**'],
+    enforce: {
+      kind: 'import',
+      sources: [
+        /(^|\/)store\/(userStore|messageStore)(\.[cm]?[jt]sx?)?$/,
+        /^\.{1,2}\/(.*\/)?(userStore|messageStore)(\.[cm]?[jt]sx?)?$/
+      ],
+      importNames: ['kunUserStore', 'kunUnreadStore', '*']
+    },
+    examples: {
+      file: 'components/kun/KunInvariantExample.tsx',
+      bad: [
+        "import { kunUserStore } from '~/store/userStore'",
+        "import { kunUnreadStore as unread } from '../../store/messageStore'",
+        "import * as userStore from '~/store/userStore'",
+        "import { useUserStore, kunUserStore } from './userStore'",
+        "export { kunUnreadStore } from '~/store/messageStore'"
+      ],
+      good: [
+        "import { useUserStore, getKunUserSnapshot } from '~/store/userStore'",
+        "import { useMessageStore } from '~/store/messageStore'",
+        "import { patchKunUser, signInKunSession } from '~/store/session'",
+        "import type { KunSessionStatus } from '~/store/userStore'"
+      ]
+    }
+  },
+  {
+    id: 'inv-session-02',
+    aliases: ['T37'],
+    statement:
+      'patchKunUser 的参数只写行内对象字面量, 只放这次改了的字段, 不得带展开 (萌萌点只写增量 moemoepointDelta)',
+    reason:
+      '合并发生在 store 的 set 里、基于当前状态, 两个在途的保存请求先后落地才不会互相回滚。把组件里拿到的 user (点击那一帧的快照) 展开进参数, 等于又把整份旧值写回去 (P31-01 的写法)。参数类型里 uid / role / moemoepoint 是 never, 整份 UserState 的展开编译不过; 但 TS 不对展开进来的其余属性做多余属性检查, 去掉这三个键再展开、或者先拼好对象再传进来, 类型系统都拦不住',
+    removeWhen: 'patchKunUser 被删除, 或改成按字段的具名命令',
+    ignores: ['**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        "CallExpression[callee.name='patchKunUser'] > ObjectExpression > SpreadElement",
+        "CallExpression[callee.name='patchKunUser'] > :not(ObjectExpression).arguments"
+      ]
+    },
+    examples: {
+      file: 'components/kun/KunInvariantExample.tsx',
+      bad: [
+        "export const run = (user: any) => patchKunUser({ ...user, bio: 'x' })",
+        "export const run = (rest: any) => patchKunUser({ bio: 'x', ...rest })",
+        'export const run = (rest: any) => patchKunUser(rest)',
+        'export const run = (draft: any) => patchKunUser({ ...draft } as any)',
+        "export const run = (on: boolean) => patchKunUser(on ? { bio: 'a' } : { bio: 'b' })"
+      ],
+      good: [
+        "export const run = () => patchKunUser({ bio: 'x' })",
+        'export const run = (name: string) => patchKunUser({ name, moemoepointDelta: -30 })',
+        'export const run = (res: { blockedTagIds: number[] }) => patchKunUser({ blockedTagIds: res.blockedTagIds })',
+        "export const run = (user: any) => setDraft({ ...user, bio: 'x' })"
+      ]
+    }
   }
 ]
 
