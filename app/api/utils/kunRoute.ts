@@ -97,12 +97,16 @@ interface KunRouteInputDef<
 }
 
 // 请求体的字节预算 (lib/http/readBody.ts, 取值在 constants/bodyBudget.ts), 只管 input 的解析。
-// JSON 不写时取 KUN_BODY_BUDGET.json; multipart (form, 经 kunParseFormData) 没有默认值, 不写编译不过
+// JSON 不写时取 KUN_BODY_BUDGET.json; multipart (form, 经 kunParseFormData) 没有默认值, 不写编译不过。
+// 不写 input 的入口 kunRoute 不读请求体, 写了预算也不生效, 所以类型上不收: 它们在 handler 里
+// 把预算传给自己调的解析函数
 type KunRouteBodyBudget =
   { form?: undefined; maxBytes?: number } | { form: true; maxBytes: number }
 
 type KunRouteBodyDef<A extends KunRouteAuth, S, P> = KunRouteInputDef<A, S, P> &
-  KunRouteBodyBudget
+  ([S] extends [undefined]
+    ? { form?: never; maxBytes?: never }
+    : KunRouteBodyBudget)
 
 // 第二个参数按 Next 的路由类型校验放宽为 unknown (通配段的 params 是 string[])
 export type KunRouteHandler = (

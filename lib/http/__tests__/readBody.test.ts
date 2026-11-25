@@ -120,7 +120,7 @@ describe('kunReadBody', () => {
     expect(bytes[60]).toBe(2)
   })
 
-  it('没有 Content-Length 时照常读完, 不当成声明了 0', async () => {
+  it('没有 Content-Length 时照常读完', async () => {
     const result = await kunReadBody(fakeRequest(streamOf([bytesOf(10)])), 100)
 
     expect(result).toMatchObject({ ok: true })
@@ -195,7 +195,9 @@ describe('kunBodyFailureMessage', () => {
     [KUN_BODY_BUDGET.tiny, '请求内容超过 16 KB, 请缩小后重试'],
     [KUN_BODY_BUDGET.json, '请求内容超过 1 MB, 请缩小后重试'],
     [KUN_BODY_BUDGET.jsonLarge, '请求内容超过 2 MB, 请缩小后重试'],
-    [KUN_BODY_BUDGET.image, '请求内容超过 10.1 MB, 请缩小后重试']
+    // 图片入口的预算大于 proxy 克隆上限: 按较小的那个说, 不说一个达不到的数
+    [KUN_BODY_BUDGET.image, '请求内容超过 10 MB, 请缩小后重试'],
+    [KUN_BODY_BUDGET.imagePair, '请求内容超过 10 MB, 请缩小后重试']
   ])('超过 %d 字节的预算', (maxBytes, message) => {
     expect(kunBodyFailureMessage(failure('too-large', maxBytes))).toBe(message)
   })

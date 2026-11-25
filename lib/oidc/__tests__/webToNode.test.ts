@@ -297,6 +297,16 @@ describe('请求体预算 (/oidc 不经 proxy, 桥自己限)', () => {
     expect(callback).not.toHaveBeenCalled()
   })
 
+  it('别的错误照旧 reject, 不伪装成请求体的问题', async () => {
+    callbackRef.current = () => {
+      throw new Error('provider exploded')
+    }
+
+    await expect(handleOidcCallback(tokenRequest(tokenBody()))).rejects.toThrow(
+      'provider exploded'
+    )
+  })
+
   it('skipBody 不读请求体', async () => {
     const request = tokenRequest(tokenBody(65 * KIB))
 

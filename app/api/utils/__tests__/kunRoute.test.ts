@@ -287,13 +287,22 @@ describe('解析与鉴权的顺序', () => {
     expect(formDataMock).toHaveBeenCalledWith(req, schema, { maxBytes: 300 })
   })
 
-  it('multipart 不写预算、读 query 的方法写了预算, 都编译不过 (由 tsc 检查)', () => {
+  it('multipart 不写预算、不读请求体的入口写了预算, 都编译不过 (由 tsc 检查)', () => {
     const def = { auth: 'public' as const, input: schema, handler: vi.fn() }
+    const bare = { auth: 'public' as const, handler: vi.fn() }
 
     // @ts-expect-error multipart 没有默认预算
     expect(() => kunRoute.post({ ...def, form: true })).not.toThrow()
     // @ts-expect-error GET 不读请求体
     expect(() => kunRoute.get({ ...def, maxBytes: 100 })).not.toThrow()
+    // @ts-expect-error DELETE 不读请求体
+    expect(() => kunRoute.delete({ ...def, maxBytes: 100 })).not.toThrow()
+    // @ts-expect-error 不写 input 时 kunRoute 不读请求体, 预算写了也不生效
+    expect(() => kunRoute.post({ ...bare, maxBytes: 100 })).not.toThrow()
+    expect(() =>
+      // @ts-expect-error 同上, multipart 也一样
+      kunRoute.put({ ...bare, form: true, maxBytes: 100 })
+    ).not.toThrow()
   })
 })
 

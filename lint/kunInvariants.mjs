@@ -192,12 +192,13 @@ const POINT_KEY = `Property${keyOrTemplateIs("'moemoepoint'")}`
 const SET_POINTS = String.raw`SET\b(?:'[^']*'|(?!\b(?:WHERE|RETURNING)\b)[^'])*?\bmoemoepoint\b`
 const INSERT_POINTS = String.raw`\bINSERT\s+INTO\s+[\w".]+\s*\([^)]*\bmoemoepoint\b`
 
-/** @type {KunInvariant[]} */
 // inv-body-01。Request 上会把整段请求体收进内存的成员; 按变量名认 req / request (仓库里
-// Request 参数只有这两种写法)
+// Request 参数只有这两种写法), 外面包一层 as / 非空断言也算, 以及 kunRoute 上下文里的 ctx.req
 const BODY_READER = '/^(req|request)$/'
 const BODY_MEMBERS = '/^(body|json|formData|arrayBuffer|text|blob)$/'
+const BODY_OWNER = `:matches([object.name=${BODY_READER}], [object.type=/^TS(As|NonNull)Expression$/][object.expression.name=${BODY_READER}], [object.type='MemberExpression'][object.computed=false][object.property.name='req'])`
 
+/** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
   {
     id: 'inv-bundle-01',
@@ -1541,16 +1542,16 @@ export const KUN_INVARIANTS = [
     id: 'inv-body-01',
     aliases: ['T32'],
     statement:
-      '请求体只经 lib/http/readBody.ts 的 kunReadBody 按预算读: Route Handler 在 kunRoute 的 input 旁写 maxBytes (取值在 constants/bodyBudget.ts, JSON 不写取默认 1 MiB), 不写 input、自己读的入口直接调 kunReadBody。不在别处调 req / request 的 json() / formData() / arrayBuffer() / text() / blob(), 也不读或解构它们的 body',
+      '请求体只经 lib/http/readBody.ts 的 kunReadBody 按预算读: Route Handler 在 kunRoute 的 input 旁写 maxBytes (取值在 constants/bodyBudget.ts, JSON 不写取默认 1 MiB); 不写 input、在 handler 里自己解析的入口给 kunParsePostBody / kunParsePutBody 传 { maxBytes } (不传取默认), 要原始字节的直接调 kunReadBody。不在别处调 req / request 的 json() / formData() / arrayBuffer() / text() / blob(), 也不读或解构它们的 body',
     reason:
-      '这几个成员都要把整段请求体收进内存才返回, 不设上限。仓库里原先唯一起作用的上限是 Next 运行 proxy 前克隆请求体时的 10 MiB 截断: 它只管命中 matcher 的路由, 而且是截断不是拒绝 (两张封面合计超过 10 MiB 时 formData() 抛 TypeError 成 500); matcher 之外的 OIDC 桥在 oidc-provider 自己的 56 KiB 上限之前就整段读完。上限由此成了「CSRF 放在哪里」的副产品, 98d2c7d6 的点修同时种下了两边的缺陷。按变量名认, 换了名字的 Request、先 clone() 再读的看不到',
+      '这几个成员都要把整段请求体收进内存才返回, 不设上限。仓库里原先唯一起作用的上限是 Next 为 proxy 克隆请求体时的 10 MiB 截断 (handler 运行之前整段已经收完): 它只管命中 matcher 的路由, 而且是截断不是拒绝 (两张封面合计超过 10 MiB 时 formData() 抛 TypeError 成 500); matcher 之外的 OIDC 桥在 oidc-provider 自己的 56 KiB 上限之前就整段读完。上限由此成了「CSRF 放在哪里」的副产品, 98d2c7d6 的点修同时种下了两边的缺陷。按变量名认 (外加 as / 非空断言与 ctx.req): 换了名字的 Request、先 clone() 再读、在参数里直接解构 ({ body }: Request)、赋值解构的看不到',
     removeWhen:
       'Next 对 Route Handler 的请求体提供按入口声明、超限即拒绝的上限, 或入口不再自己读请求体',
     ignores: ['lib/http/readBody.ts', '**/__tests__/**'],
     enforce: {
       kind: 'syntax',
       selectors: [
-        `MemberExpression[object.name=${BODY_READER}]:matches([computed=false][property.name=${BODY_MEMBERS}], [property.value=${BODY_MEMBERS}])`,
+        `MemberExpression${BODY_OWNER}:matches([computed=false][property.name=${BODY_MEMBERS}], [property.value=${BODY_MEMBERS}])`,
         `VariableDeclarator[init.name=${BODY_READER}] > ObjectPattern > Property${keyIs(BODY_MEMBERS)}`
       ]
     },
@@ -1564,7 +1565,10 @@ export const KUN_INVARIANTS = [
         "export const run = (req: Request) => req['blob']()",
         'export const run = (req: Request) => req.body?.getReader()',
         'export const run = (req: Request) => { const { body } = req; return body }',
-        'export const run = (req: Request) => req.json.bind(req)'
+        'export const run = (req: Request) => req.json.bind(req)',
+        'export const run = (req: unknown) => (req as Request).json()',
+        'export const run = (req?: Request) => req!.formData()',
+        'export const run = (ctx: { req: Request }) => ctx.req.json()'
       ],
       good: [
         "import { kunReadBody } from '~/lib/http/readBody'\nexport const run = (req: Request) => kunReadBody(req, 16 * 1024)",
@@ -1573,7 +1577,8 @@ export const KUN_INVARIANTS = [
         "export const run = (req: Request) => req.headers.get('content-length')",
         'export const run = (req: Request) => req.bodyUsed',
         'export const run = (ctx: { request: { body: unknown } }) => ctx.request.body',
-        'export const run = (req: Request) => { const { headers } = req; return headers }'
+        'export const run = (req: Request) => { const { headers } = req; return headers }',
+        'export const run = (bridge: { req: { push: (v: null) => void } }) => bridge.req.push(null)'
       ]
     }
   }

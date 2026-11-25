@@ -76,7 +76,7 @@ export const PUT = kunRoute.put({
   auth: 'user',
   capability: 'galgame.rewrite',
   input: patchUpdateSchema,
-  // 1000 个移除的标签 ID、100 个新标签、100 个别名加 128 KiB 的简介, 合法的最坏载荷超过 1 MiB
+  // 有上限的字段合起来最坏约 0.95 MiB, 7 个外部标签 / 会社数组没有条数上限
   maxBytes: KUN_BODY_BUDGET.jsonLarge,
   handler: ({ input, actor }) => updateGalgame(input, actor.uid)
 })

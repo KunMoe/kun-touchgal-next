@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { buildCustomRoute } from 'next/dist/lib/build-custom-route'
+import { defaultConfig } from 'next/dist/server/config-shared'
+import { KUN_PROXY_BODY_CLONE_LIMIT } from '~/constants/bodyBudget'
 import { unstable_getResponseFromNextConfig } from 'next/experimental/testing/server'
 import { kunRscCacheHeaders } from '~/config/rsc-cache-headers'
 import { kunSecurityHeaders } from '~/config/security-headers'
@@ -69,6 +71,10 @@ describe('next.config.ts 的接线', () => {
     expect(
       limit && ts.isPropertyAssignment(limit) && limit.initializer.getText()
     ).toBe('KUN_PROXY_BODY_CLONE_LIMIT')
+    // 显式写出只是让这个数归仓库, 行为不变: 升级 Next 后默认值变了, 先判断要不要跟
+    expect(KUN_PROXY_BODY_CLONE_LIMIT).toBe(
+      defaultConfig.experimental?.proxyClientMaxBodySize
+    )
   })
 })
 

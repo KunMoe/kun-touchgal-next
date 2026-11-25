@@ -100,11 +100,13 @@ const formatBytes = (bytes: number) =>
     ? `${Number((bytes / MIB).toFixed(1))} MB`
     : `${Math.ceil(bytes / 1024)} KB`
 
-// 走 T | string 通道的入口回给用户的文案。超限可能由合法提交触发, 不能落进 schema 的兜底消息
+// 走 T | string 通道的入口回给用户的文案。超限可能由合法提交触发, 不能落进 schema 的兜底消息。
+// 用它的都是 /api 的入口, 都在 proxy 之后, 收得下的不超过克隆上限: 超预算时按预算与克隆上限中
+// 较小的说 (超出预算就一定超出较小者, 这句恒为真), 照着缩小就能过, 不会说出一个达不到的数
 export const kunBodyFailureMessage = (failure: KunBodyFailure) => {
   switch (failure.reason) {
     case 'too-large':
-      return `请求内容超过 ${formatBytes(failure.maxBytes)}, 请缩小后重试`
+      return `请求内容超过 ${formatBytes(Math.min(failure.maxBytes, KUN_PROXY_BODY_CLONE_LIMIT))}, 请缩小后重试`
     case 'truncated':
       return `请求内容超过 ${formatBytes(KUN_PROXY_BODY_CLONE_LIMIT)}, 请缩小后重试`
     case 'aborted':
