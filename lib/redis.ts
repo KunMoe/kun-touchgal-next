@@ -418,15 +418,16 @@ export const releaseKvLock = async (key: string, token: string) => {
   )
 }
 
-// 仅当仍持有锁（token 匹配）时续期 TTL：供长任务在处理过程中保活租约，防止 TTL
-// 过期后被第二个 worker 抢占。token CAS 避免误续他人的锁（与 releaseKvLock 对称）
+// 仅当仍持有锁（token 匹配）时续期 TTL：供作业租约的心跳保活 (server/jobs/lease.ts)。
+// token CAS 避免误续他人的锁（与 releaseKvLock 对称）。返回 false 即锁已不是自己的
+// (键过期、被驱逐或已被别人持有)
 export const renewKvLock = async (
   key: string,
   token: string,
   ttlSeconds: number
 ) => {
   const keyString = `${KUN_PATCH_REDIS_PREFIX}:${key}`
-  await runRedisCommand(() =>
+  const renewed = await runRedisCommand(() =>
     redis.eval(
       `
         if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -440,4 +441,5 @@ export const renewKvLock = async (
       String(ttlSeconds)
     )
   )
+  return renewed === 1
 }

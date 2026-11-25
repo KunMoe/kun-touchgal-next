@@ -4,7 +4,6 @@ import type { GalgameSearchCountsDoc } from '~/server/search/document'
 const {
   patchFindManyMock,
   applyCountsMock,
-  renewMock,
   withSearchWriterMock,
   getMeiliClientMock,
   getKvHashAllMock,
@@ -12,7 +11,6 @@ const {
 } = vi.hoisted(() => ({
   patchFindManyMock: vi.fn(),
   applyCountsMock: vi.fn(),
-  renewMock: vi.fn(),
   withSearchWriterMock: vi.fn(),
   getMeiliClientMock: vi.fn(),
   getKvHashAllMock: vi.fn(),
@@ -43,7 +41,14 @@ import {
   searchCountsRefreshJob
 } from '~/server/tasks/searchCountsRefreshTask'
 
-const writer = { renew: renewMock, applyCounts: applyCountsMock }
+// 写锁的 signal: 用例中止它模拟租约丢失或关停
+let writerSignal: AbortController
+const writer = {
+  get signal() {
+    return writerSignal.signal
+  },
+  applyCounts: applyCountsMock
+}
 
 interface PatchCountsRow {
   id: number
@@ -96,7 +101,7 @@ beforeEach(() => {
   applyCountsMock
     .mockReset()
     .mockImplementation(async (docs: GalgameSearchCountsDoc[]) => docs)
-  renewMock.mockReset().mockResolvedValue(undefined)
+  writerSignal = new AbortController()
   withSearchWriterMock
     .mockReset()
     .mockImplementation(
@@ -131,7 +136,7 @@ describe('searchCountsRefreshJob 与出箱共用写锁', () => {
     expect(withSearchWriterMock).toHaveBeenCalledWith(
       'searchCountsRefreshTask',
       expect.any(Function),
-      { waitMs: 90_000 }
+      { waitMs: 90_000, signal: expect.any(AbortSignal) }
     )
     expect(applyCountsMock).toHaveBeenCalledTimes(1)
   })
@@ -255,9 +260,8 @@ describe('refreshSearchCounts 快照 diff', () => {
 
     await refreshSearchCounts(writer)
 
-    // 每批各推一次，r2 未变被剔除；每批之后续锁
+    // 每批各推一次，r2 未变被剔除
     expect(applyCountsMock).toHaveBeenCalledTimes(2)
-    expect(renewMock).toHaveBeenCalledTimes(2)
     expect(pushedDocs(0).map((d) => d.id)).toEqual([1])
     expect(pushedDocs(1).map((d) => d.id)).toEqual([3])
     // 游标随批推进：即便 r2 未变，lastId 也推进到 2，第三批查 id>3
@@ -270,5 +274,24 @@ describe('refreshSearchCounts 快照 diff', () => {
     expect(setKvHashFieldsMock).toHaveBeenNthCalledWith(2, 'search:counts:fp', {
       '3': fpOf(r3)
     })
+  })
+
+  it('写锁丢失或关停 (writer.signal 中止) 时停在两批之间, 抛出中止原因', async () => {
+    const reason = new Error('lease lost')
+    patchFindManyMock
+      .mockResolvedValueOnce([makeRow(1)])
+      .mockResolvedValueOnce([makeRow(2)])
+    applyCountsMock.mockImplementationOnce(
+      async (docs: GalgameSearchCountsDoc[]) => {
+        writerSignal.abort(reason)
+        return docs
+      }
+    )
+
+    await expect(refreshSearchCounts(writer)).rejects.toBe(reason)
+
+    expect(patchFindManyMock).toHaveBeenCalledTimes(1)
+    // 已写入的那一批照常写回快照
+    expect(setKvHashFieldsMock).toHaveBeenCalledOnce()
   })
 })

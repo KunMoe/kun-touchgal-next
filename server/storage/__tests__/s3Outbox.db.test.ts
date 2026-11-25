@@ -22,11 +22,14 @@ const { deleteFileFromS3Mock } = vi.hoisted(() => ({
 vi.mock('~/lib/s3', () => ({ deleteFileFromS3: deleteFileFromS3Mock }))
 
 // 单消费者锁在 Redis 上, 与这里测的库语义无关: 直接执行任务体
-vi.mock('~/server/tasks/withTaskLock', () => ({
-  withTaskLock: (
-    _options: unknown,
-    task: (renew: () => Promise<void>) => Promise<unknown>
-  ) => task(async () => {})
+vi.mock('~/server/jobs/lease', () => ({
+  withJobLease: async (
+    _spec: unknown,
+    fn: (lease: { signal: AbortSignal }) => Promise<unknown>
+  ) => ({
+    ran: true,
+    value: await fn({ signal: new AbortController().signal })
+  })
 }))
 
 const STORAGE_URL = 'https://cloud.example.test'

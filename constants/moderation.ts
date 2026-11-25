@@ -197,24 +197,19 @@ export const MODERATION_CONCURRENCY = 5
 // 而那种情况会先撞上超时
 export const MODERATION_AI_MAX_TOKENS = 10000
 
-// worker 抢占锁 TTL: 单个 cron 进程独占一批审核的最长时间. 批次超此值时锁自然过期,
-// 可能与下一 tick 并发 —— 由认领协议 (picked_at) 兜底正确性. 下面三个时间常量构成
-// 不变式链, 集中于此以免跨文件漂移
-export const MODERATION_LOCK_TTL_SECONDS = 600
-
 // 认领租约时长: 处理前给任务行盖时间戳, 期内其它 worker 不重复处理该行; 超过此窗口
-// 视为 worker 崩溃, 该行可被回收重跑. 须 > MODERATION_LOCK_TTL_SECONDS: 若二者相等,
-// 锁刚过期时下一批次算出的 leaseStaleBefore 恰好越过在途行的 picked_at, 会把仍在处理
-// 的行误判为崩溃并回收, 与原批次并发跑出一次重复 AI 调用. 代价是崩溃 worker 遗留的
-// 任务最长隔这么久才被回收重跑, 审核延迟以此为上界
+// 视为 worker 崩溃, 该行可被回收重跑. 须大于单条任务的最坏处理耗时 (下面两个超时: 文本是
+// AI 的 360s, 头像是 540s): 否则仍在处理的行会被另一个 worker (锁键丢失后接手的进程) 判为
+// 崩溃并回收, 并发跑出一次重复的 AI 调用. 代价是崩溃 worker 遗留的任务最长隔这么久才被回收
+// 重跑, 审核延迟以此为上界. worker 之间的互斥租约 (moderationJob 的 lease) 心跳续租、与
+// 处理耗时无关, 不参与这条关系
 export const MODERATION_LEASE_SECONDS = 1200
 
-// 单次 AI 调用超时: 必须 < MODERATION_LOCK_TTL_SECONDS, 把任务中 AI 调用的耗时经这一
-// 网络调用上限约束在锁 TTL 内, 否则挂起的 provider 调用会拖到锁自然过期、触发另一批次
-// 并发重跑. 慢推理模型约 15-20 token/s, 360s 可容纳 5000-7000 token 的思考 —— 审核一段
-// 站内文本远用不到这个量, 合法慢响应不会被误杀; 真正吃满的是陷入循环的病态响应, 由此
-// 超时止损 (超时属依赖类失败, 止损的次数上界是 MODERATION_MAX_DEFERRALS).
-// 不变式链: AI 超时 (360s) < 锁 TTL (600s) < 认领租约 (1200s)
+// 单次 AI 调用超时: 把一条任务里 AI 调用的耗时约束在认领租约内 (见上). 慢推理模型约
+// 15-20 token/s, 360s 可容纳 5000-7000 token 的思考 —— 审核一段站内文本远用不到这个量,
+// 合法慢响应不会被误杀; 真正吃满的是陷入循环的病态响应, 由此超时止损 (超时属依赖类失败,
+// 止损的次数上界是 MODERATION_MAX_DEFERRALS).
+// 不变式: 单条任务最坏耗时 (头像 540s) < 认领租约 (1200s)
 export const MODERATION_AI_TIMEOUT_MS = 360 * 1000
 
 // avatar 任务在「认领→结算」窗口内除 AI 调用外还有阻塞式 S3 操作 (取 pending 图、copy

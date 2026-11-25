@@ -1,12 +1,11 @@
 import { prisma } from '~/prisma/index'
 import type { KunTx } from '~/prisma/index'
 import { deleteFileFromS3 } from '~/lib/s3'
-import { withTaskLock } from '~/server/tasks/withTaskLock'
+import { withJobLease } from '~/server/jobs/lease'
 import { isS3ObjectReferenced } from './references'
 
 const OUTBOX_DRAIN_BATCH_SIZE = 200
 const OUTBOX_LOCK_KEY = 's3:deletion:outbox:lock'
-const OUTBOX_LOCK_TTL_SECONDS = 300
 
 // 删除写出箱入队：把待删除的 S3 key 持久化到出箱。client 传业务行删除所在事务的 tx，
 // 使入队与删除原子提交——提交后即便进程崩溃，删除意图也已落库，由 worker 兜底删除，
@@ -51,17 +50,17 @@ export const enqueueS3Deletion = async (
 // 那次入队被合并吞掉，对象再无引用也再无出箱行，成为永久孤儿。删行若撞上那个事务未提交的
 // 行锁，会等它提交后按新 seq 重新判定，同样不命中。
 // 点查不加锁：引用集合只会原子地「非空 → 非空」或「非空 → 空」(写入不变量见 references.ts)。
-// 两个 drain 并发 (续锁失败、锁键被逐出) 时各自点查、幂等删除、CAS 删行：seq 取自全局序列、
+// 两个 drain 并发 (锁键被逐出、心跳发现之前) 时各自点查、幂等删除、CAS 删行：seq 取自全局序列、
 // 永不重复，一个 drain 删掉行之后重新插入的行不会被另一个按旧读数删掉。
 // 删除失败累加 attempts 并滞留，等下一轮重试——至少一次投递。
-export const drainS3DeletionOutbox = async () =>
-  withTaskLock(
-    {
-      key: OUTBOX_LOCK_KEY,
-      ttlSeconds: OUTBOX_LOCK_TTL_SECONDS,
-      taskName: 's3DeletionOutboxDrain'
-    },
-    async (renew) => {
+// 租约丢失或 signal 中止 (cron 进程关停) 时在下一行之前停下，剩下的行等下一轮。
+// 抢不到锁 (另一个 drain 正在跑) 返回 undefined
+export const drainS3DeletionOutbox = async ({
+  signal
+}: { signal?: AbortSignal } = {}) => {
+  const result = await withJobLease(
+    { name: 's3DeletionOutboxDrain', key: OUTBOX_LOCK_KEY, signal },
+    async (lease) => {
       // 还没到时刻的行 (宽限期里的旧封面版本) 留在出箱里, 不占这一轮的名额
       const now = new Date()
       const rows = await prisma.s3_deletion_outbox.findMany({
@@ -74,6 +73,9 @@ export const drainS3DeletionOutbox = async () =>
       let deleted = 0
       let skippedReferenced = 0
       for (const row of rows) {
+        if (lease.signal.aborted) {
+          break
+        }
         try {
           if (await isS3ObjectReferenced(prisma, row.s3_key)) {
             // 历史共享对象 (重复提交留下的同 key 资源)、重复提交的同一 link id、提交响应
@@ -106,12 +108,12 @@ export const drainS3DeletionOutbox = async () =>
             error
           )
         }
-        // 每处理一行续锁：drain 活跃期间租约不过期，杜绝锁 TTL 过期后第二个 drain 并发
-        await renew()
       }
       return { deleted, skippedReferenced }
     }
   )
+  return result.ran ? result.value : undefined
+}
 
 // 即时消费：入队后立刻尝试 drain 一次，保持近实时删除；抢不到锁则由定时任务兜底。
 export const kickS3DeletionDrain = () => {

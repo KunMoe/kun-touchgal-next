@@ -13,8 +13,7 @@ const {
   updateDocumentsMock,
   waitTaskMock,
   patchToSearchDocMock,
-  withTaskLockMock,
-  renewMock,
+  withJobLeaseMock,
   outboxCountMock
 } = vi.hoisted(() => ({
   getMeiliClientMock: vi.fn(),
@@ -28,8 +27,7 @@ const {
   updateDocumentsMock: vi.fn(),
   waitTaskMock: vi.fn(),
   patchToSearchDocMock: vi.fn(),
-  withTaskLockMock: vi.fn(),
-  renewMock: vi.fn(),
+  withJobLeaseMock: vi.fn(),
   outboxCountMock: vi.fn()
 }))
 
@@ -55,9 +53,9 @@ vi.mock('~/server/search/document', () => ({
   patchToSearchDoc: patchToSearchDocMock
 }))
 
-// withTaskLock 直接执行传入的任务体，聚焦 drain 逻辑本身
-vi.mock('~/server/tasks/withTaskLock', () => ({
-  withTaskLock: withTaskLockMock
+// 租约直接执行传入的任务体，聚焦 drain 逻辑本身; 用例可以中止 lease 模拟租约丢失
+vi.mock('~/server/jobs/lease', () => ({
+  withJobLease: withJobLeaseMock
 }))
 
 import {
@@ -93,6 +91,7 @@ const rejectedTask = {
 }
 
 let errorSpy: ReturnType<typeof vi.spyOn>
+let lease: AbortController
 
 beforeEach(() => {
   getMeiliClientMock.mockReset().mockReturnValue({
@@ -112,13 +111,15 @@ beforeEach(() => {
   updateDocumentsMock.mockReset().mockReturnValue({ waitTask: waitTaskMock })
   waitTaskMock.mockReset().mockResolvedValue({ status: 'succeeded' })
   patchToSearchDocMock.mockReset().mockResolvedValue({ id: 1 })
-  renewMock.mockReset().mockResolvedValue(undefined)
   outboxCountMock.mockReset().mockResolvedValue(0)
-  withTaskLockMock
+  lease = new AbortController()
+  withJobLeaseMock
     .mockReset()
     .mockImplementation(
-      (_opts, task: (renew: () => Promise<void>) => Promise<unknown>) =>
-        task(renewMock)
+      async (
+        _spec,
+        fn: (held: { signal: AbortSignal }) => Promise<unknown>
+      ) => ({ ran: true, value: await fn({ signal: lease.signal }) })
     )
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -192,7 +193,7 @@ describe('drainSearchOutbox 单消费者 + CAS 删除', () => {
     expect(orderBy).toEqual({ updated: 'asc' })
   })
 
-  it('一行被拒不阻断其余行处理，每行续锁', async () => {
+  it('一行被拒不阻断其余行处理', async () => {
     outboxFindManyMock.mockResolvedValueOnce([row(5), row(6)])
     waitTaskMock
       .mockResolvedValueOnce(rejectedTask)
@@ -204,8 +205,38 @@ describe('drainSearchOutbox 单消费者 + CAS 删除', () => {
     expect(outboxDeleteManyMock).toHaveBeenCalledWith({
       where: { patch_id: 6, seq: 1 }
     })
-    expect(renewMock).toHaveBeenCalledTimes(2)
     expect(result).toEqual({ outcome: 'drained', synced: 1, failed: 1 })
+  })
+
+  // 租约丢了还接着写, 另一个写者可能已经开始, 两边按任务入队的先后写乱
+  it('写锁丢失 (租约 signal 中止) 时在下一行之前停下, 手上这一行写完', async () => {
+    outboxFindManyMock.mockResolvedValueOnce([row(1), row(2), row(3)])
+    waitTaskMock.mockImplementationOnce(async () => {
+      lease.abort(new Error('lease lost'))
+      return { status: 'succeeded' }
+    })
+
+    const result = await drainSearchOutbox({ budgetMs: 50_000 })
+
+    expect(result).toEqual({ outcome: 'paused', synced: 1, failed: 0 })
+    expect(addDocumentsMock).toHaveBeenCalledTimes(1)
+    expect(outboxDeleteManyMock).toHaveBeenCalledExactlyOnceWith({
+      where: { patch_id: 1, seq: 1 }
+    })
+  })
+
+  it('调用方的 signal 交给租约: cron 进程关停时不再等锁、已在写的停在下一行之前', async () => {
+    const controller = new AbortController()
+
+    await drainSearchOutbox({ budgetMs: 50_000, signal: controller.signal })
+
+    expect(withJobLeaseMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        key: 'search:outbox:lock',
+        signal: controller.signal
+      }),
+      expect.any(Function)
+    )
   })
 
   it('不传预算只跑一批: 满批之后不再取下一批', async () => {
@@ -246,7 +277,7 @@ describe('drainSearchOutbox 单消费者 + CAS 删除', () => {
   })
 
   it('写锁在别的写者手里时什么都不做', async () => {
-    withTaskLockMock.mockResolvedValue(undefined)
+    withJobLeaseMock.mockResolvedValue({ ran: false })
 
     expect(await drainSearchOutbox()).toEqual({
       outcome: 'locked',
@@ -260,7 +291,7 @@ describe('drainSearchOutbox 单消费者 + CAS 删除', () => {
     getMeiliClientMock.mockReturnValue(null)
 
     expect((await drainSearchOutbox()).outcome).toBe('disabled')
-    expect(withTaskLockMock).not.toHaveBeenCalled()
+    expect(withJobLeaseMock).not.toHaveBeenCalled()
     expect(outboxFindManyMock).not.toHaveBeenCalled()
   })
 })
@@ -417,7 +448,7 @@ describe('queueSearchSync/Remove 入写出箱并即时消费', () => {
     expect(executeRawMock).toHaveBeenCalledTimes(1)
     expect(executeRawMock.mock.calls[0][1]).toEqual([9])
     // kick 触发了一次 drain（无行可处理）
-    expect(withTaskLockMock).toHaveBeenCalledTimes(1)
+    expect(withJobLeaseMock).toHaveBeenCalledTimes(1)
   })
 
   it('即时 kick 只连续消费约 2 秒: 积压时不在请求进程里跑整批', async () => {
@@ -543,7 +574,7 @@ describe('withSearchWriter 的 applyCounts', () => {
     await withSearchWriter('t', async () => {})
     await drainSearchOutbox()
 
-    const keys = withTaskLockMock.mock.calls.map(([opts]) => opts.key)
+    const keys = withJobLeaseMock.mock.calls.map(([spec]) => spec.key)
     expect(keys).toEqual(['search:outbox:lock', 'search:outbox:lock'])
   })
 
@@ -576,21 +607,22 @@ describe('withSearchWriter 的 applyCounts', () => {
     await withSearchWriter('t', async () => {})
     await withSearchWriter('t', async () => {}, { waitMs: 90_000 })
 
-    expect(withTaskLockMock.mock.calls.map(([opts]) => opts.waitMs)).toEqual([
+    expect(withJobLeaseMock.mock.calls.map(([spec]) => spec.waitMs)).toEqual([
       0, 90_000
     ])
   })
 
-  it('等任务终态的上限 (单文档、计数批次) 都小于写锁的 TTL: 等待期间租约不会过期', async () => {
+  // 写锁丢失或关停时写者停在下一段之前: 手上这一段 (单文档、计数批次) 等任务终态的时间要有界
+  it('等任务终态都带上限, 不超过一分钟', async () => {
     outboxFindManyMock.mockResolvedValueOnce([row(1)])
     await drainSearchOutbox()
     await withSearchWriter('t', ({ applyCounts }) => applyCounts([counts(1)]))
 
-    const ttlMs = withTaskLockMock.mock.calls[0][0].ttlSeconds * 1000
     const timeouts = waitTaskMock.mock.calls.map(([opts]) => opts.timeout)
     expect(timeouts).toHaveLength(2)
     for (const timeout of timeouts) {
-      expect(timeout).toBeLessThan(ttlMs)
+      expect(timeout).toBeGreaterThan(0)
+      expect(timeout).toBeLessThanOrEqual(60_000)
     }
   })
 
@@ -638,15 +670,15 @@ describe('drainSearchOutboxUntilEmpty 对账命令的排空循环', () => {
 
     await drainSearchOutboxUntilEmpty({ roundMs: 1000, waitMs: 0 })
 
-    expect(withTaskLockMock).toHaveBeenCalledTimes(2)
+    expect(withJobLeaseMock).toHaveBeenCalledTimes(2)
   })
 
   it('写锁在 cron 的 drain 手里时等它, 可取的在减少就算有进展', async () => {
     let now = 1_000_000
     vi.spyOn(Date, 'now').mockImplementation(() => now)
-    withTaskLockMock.mockImplementation(async () => {
+    withJobLeaseMock.mockImplementation(async () => {
       now += 30_000
-      return undefined
+      return { ran: false }
     })
     readyAfterRounds(5, 4, 3, 2, 0)
     const rounds: string[] = []
@@ -664,16 +696,16 @@ describe('drainSearchOutboxUntilEmpty 对账命令的排空循环', () => {
   it('既没写入、可取的也没减少 (锁一直拿不到或引擎收不了写入), 到时限就报错', async () => {
     let now = 1_000_000
     vi.spyOn(Date, 'now').mockImplementation(() => now)
-    withTaskLockMock.mockImplementation(async () => {
+    withJobLeaseMock.mockImplementation(async () => {
       now += 60_000
-      return undefined
+      return { ran: false }
     })
     outboxCountMock.mockResolvedValue(7)
 
     await expect(
       drainSearchOutboxUntilEmpty({ waitMs: 0, stallMs: 5 * 60_000 })
     ).rejects.toThrow('剩余可取 7 条交给 cron 进程排空')
-    expect(withTaskLockMock.mock.calls.length).toBeLessThanOrEqual(6)
+    expect(withJobLeaseMock.mock.calls.length).toBeLessThanOrEqual(6)
   })
 
   it('未配置 Meilisearch 时直接返回', async () => {

@@ -30,10 +30,11 @@ vi.mock('~/app/api/patch/views/buffer', () => ({
   acknowledgePatchViewBufferEntries: ackEntriesMock
 }))
 
-// flushPatchViewsTask 经 withTaskLock 间接 import ~/lib/redis，mock 掉避免真实连接
+// flushPatchViewsTask 经作业层 (server/jobs/lease.ts) 间接 import ~/lib/redis，mock 掉避免真实连接
 vi.mock('~/lib/redis', () => ({
   acquireKvLock: vi.fn(),
-  releaseKvLock: vi.fn()
+  releaseKvLock: vi.fn(),
+  renewKvLock: vi.fn()
 }))
 
 import { flushPatchViews } from '~/server/tasks/flushPatchViewsTask'
@@ -122,6 +123,27 @@ describe('flushPatchViews 逐批 autocommit + 逐批 ack', () => {
     expect(ackEntriesMock).toHaveBeenCalledTimes(1)
     expect(ackEntriesMock.mock.calls[0][1]).toHaveLength(1000)
     // 整键清理未执行 → pending 保留失败批，下一 tick 重试
+    expect(ackMock).not.toHaveBeenCalled()
+  })
+
+  // 租约丢了还接着落, 接手的进程会把同一批再计一次
+  it('signal 中止 (关停、租约丢失) 时停在两批之间: 没落的批留在 pending, 抛出中止原因', async () => {
+    const entries: Record<string, string> = {}
+    for (let i = 0; i < 1001; i++) {
+      entries[`id${i}`] = '1'
+    }
+    checkoutMock.mockResolvedValue(bufferOf(entries))
+    const controller = new AbortController()
+    const reason = new Error('lease lost')
+    executeRawMock.mockImplementationOnce(async () => {
+      controller.abort(reason)
+      return 1
+    })
+
+    await expect(flushPatchViews(controller.signal)).rejects.toBe(reason)
+
+    expect(executeRawMock).toHaveBeenCalledTimes(1)
+    expect(ackEntriesMock).toHaveBeenCalledTimes(1)
     expect(ackMock).not.toHaveBeenCalled()
   })
 })

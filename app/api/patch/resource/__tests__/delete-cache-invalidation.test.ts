@@ -28,7 +28,9 @@ vi.mock('~/prisma/index', () => rec.module)
 vi.mock('~/lib/s3', () => ({}))
 vi.mock('~/lib/redis', () => ({}))
 vi.mock('~/lib/meilisearch', () => ({ getMeiliClient: () => null }))
-vi.mock('~/server/tasks/withTaskLock', () => ({ withTaskLock: vi.fn() }))
+vi.mock('~/server/jobs/lease', () => ({
+  withJobLease: vi.fn(async () => ({ ran: false }))
+}))
 vi.mock('~/server/moderation/config', () => ({ getModerationConfig: vi.fn() }))
 vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCache: patchContentMock,

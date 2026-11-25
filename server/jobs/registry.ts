@@ -1,11 +1,12 @@
 import cron from 'node-cron'
+import { claimJobSlot, withJobLease } from './lease'
 
 // 进程内的最小作业层: 定时任务只声明 spec (惰性数据, import 时不建定时器), 由 startJobRuntime
 // 统一建节拍、在进程内防重叠、按作业名记错误、优雅关停。node-cron 只当节拍器用
 
 export interface JobContext {
-  // 运行时开始关停时中止: 不要再开始新的工作单元 (下一行、下一批、下一条任务), 手上这一个
-  // 做完即返回
+  // 运行时开始关停、或作业的租约丢失时中止: 不要再开始新的工作单元 (下一行、下一批、下一条
+  // 任务), 手上这一个做完即返回
   signal: AbortSignal
   // 关停的宽限期满时中止: 在途的外部调用应当放弃, 进程随即退出
   cancelSignal: AbortSignal
@@ -16,6 +17,10 @@ export interface ScheduledJobSpec {
   name: string
   // node-cron 表达式, 按进程所在时区
   schedule: string
+  // 跨进程互斥: 持租约执行 (心跳续租, 见 lease.ts), 抢不到这一拍就跳过
+  lease?: { key: string; ttlSeconds?: number }
+  // 每个时间槽跨进程只执行一次: 执行前占一个不释放的标记键, 已被占就跳过
+  slotMarker?: { key: string; ttlSeconds: number }
   run: (ctx: JobContext) => Promise<unknown>
 }
 
@@ -83,11 +88,30 @@ export const startJobRuntime = async (
       return
     }
     const execution = (async () => {
+      let { signal } = ctx
       try {
-        await spec.run(ctx)
+        if (
+          spec.slotMarker &&
+          !(await claimJobSlot(spec.name, spec.slotMarker))
+        ) {
+          return
+        }
+        if (!spec.lease) {
+          await spec.run(ctx)
+          return
+        }
+        const { lease } = spec
+        await withJobLease(
+          { name: spec.name, ...lease, signal: ctx.signal },
+          (held) => {
+            signal = held.signal
+            return spec.run({ ...ctx, signal })
+          }
+        )
       } catch (error) {
-        // 作业按 signal 的要求中止时抛出的就是 signal 的 reason, 不算失败
-        if (!(ctx.signal.aborted && error === ctx.signal.reason)) {
+        // 作业按 signal 的要求中止时抛出的就是 signal 的 reason (关停, 或已由 lease.ts 记过的
+        // 租约丢失), 不算失败
+        if (!(signal.aborted && error === signal.reason)) {
           // eslint-disable-next-line no-console
           console.error(`[kun-jobs] ${spec.name} 执行失败:`, error)
         }

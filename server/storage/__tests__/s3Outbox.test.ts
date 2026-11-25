@@ -7,7 +7,7 @@ const {
   executeRawMock,
   deleteFileFromS3Mock,
   isS3ObjectReferencedMock,
-  withTaskLockMock
+  withJobLeaseMock
 } = vi.hoisted(() => ({
   outboxFindManyMock: vi.fn(),
   outboxDeleteManyMock: vi.fn(),
@@ -15,7 +15,7 @@ const {
   executeRawMock: vi.fn(),
   deleteFileFromS3Mock: vi.fn(),
   isS3ObjectReferencedMock: vi.fn(),
-  withTaskLockMock: vi.fn()
+  withJobLeaseMock: vi.fn()
 }))
 
 vi.mock('~/prisma/index', () => ({
@@ -39,9 +39,9 @@ vi.mock('~/lib/s3', () => ({
   deleteFileFromS3: deleteFileFromS3Mock
 }))
 
-// withTaskLock 直接执行传入的任务体，聚焦 drain 逻辑本身
-vi.mock('~/server/tasks/withTaskLock', () => ({
-  withTaskLock: withTaskLockMock
+// 租约直接执行传入的任务体，聚焦 drain 逻辑本身; 用例可以中止 lease 模拟租约丢失
+vi.mock('~/server/jobs/lease', () => ({
+  withJobLease: withJobLeaseMock
 }))
 
 import {
@@ -53,6 +53,8 @@ import {
 // setImmediate 在微任务队列排空后触发，足以让 kick 的 fire-and-forget drain 结算
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
+let lease: AbortController
+
 beforeEach(() => {
   outboxFindManyMock.mockReset().mockResolvedValue([])
   outboxDeleteManyMock.mockReset().mockResolvedValue({ count: 1 })
@@ -60,11 +62,14 @@ beforeEach(() => {
   executeRawMock.mockReset().mockResolvedValue(0)
   deleteFileFromS3Mock.mockReset().mockResolvedValue(undefined)
   isS3ObjectReferencedMock.mockReset().mockResolvedValue(false)
-  withTaskLockMock
+  lease = new AbortController()
+  withJobLeaseMock
     .mockReset()
     .mockImplementation(
-      (_opts, task: (renew: () => Promise<void>) => Promise<unknown>) =>
-        task(async () => {})
+      async (
+        _spec,
+        fn: (held: { signal: AbortSignal }) => Promise<unknown>
+      ) => ({ ran: true, value: await fn({ signal: lease.signal }) })
     )
 })
 
@@ -210,6 +215,41 @@ describe('drainS3DeletionOutbox 单消费者 + 引用判定 + CAS 删行', () =>
     })
     error.mockRestore()
   })
+
+  it('租约丢失或关停 (lease.signal 中止) 时在下一行之前停下, 剩下的行留在出箱', async () => {
+    outboxFindManyMock.mockResolvedValue([
+      { s3_key: 'k1', seq: 0 },
+      { s3_key: 'k2', seq: 1 }
+    ])
+    deleteFileFromS3Mock.mockImplementationOnce(async () => {
+      lease.abort(new Error('lease lost'))
+    })
+
+    const result = await drainS3DeletionOutbox()
+
+    expect(deleteFileFromS3Mock).toHaveBeenCalledExactlyOnceWith('k1')
+    expect(outboxDeleteManyMock).toHaveBeenCalledExactlyOnceWith({
+      where: { s3_key: 'k1', seq: 0 }
+    })
+    expect(result).toEqual({ deleted: 1, skippedReferenced: 0 })
+  })
+
+  it('调用方的 signal 交给租约; 抢不到锁时返回 undefined', async () => {
+    const controller = new AbortController()
+    withJobLeaseMock.mockResolvedValueOnce({ ran: false })
+
+    await expect(
+      drainS3DeletionOutbox({ signal: controller.signal })
+    ).resolves.toBeUndefined()
+    expect(withJobLeaseMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        key: 's3:deletion:outbox:lock',
+        signal: controller.signal
+      }),
+      expect.any(Function)
+    )
+    expect(outboxFindManyMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('kickS3DeletionDrain 即时消费', () => {
@@ -217,6 +257,6 @@ describe('kickS3DeletionDrain 即时消费', () => {
     kickS3DeletionDrain()
     await flush()
 
-    expect(withTaskLockMock).toHaveBeenCalledTimes(1)
+    expect(withJobLeaseMock).toHaveBeenCalledTimes(1)
   })
 })

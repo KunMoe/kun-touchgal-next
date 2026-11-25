@@ -10,5 +10,6 @@ const OUTBOX_TASK_BUDGET_MS = 50_000
 export const searchOutboxJob = defineScheduledJob({
   name: 'search_outbox',
   schedule: '* * * * *',
-  run: () => drainSearchOutbox({ budgetMs: OUTBOX_TASK_BUDGET_MS })
+  run: ({ signal }) =>
+    drainSearchOutbox({ budgetMs: OUTBOX_TASK_BUDGET_MS, signal })
 })

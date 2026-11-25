@@ -9,7 +9,7 @@ vi.mock('~/prisma', () => ({
   prisma: { user: { updateMany: updateManyMock } }
 }))
 
-// resetDailyTask 经 withTaskLock 间接 import ~/lib/redis，mock 掉避免真实连接
+// resetDailyTask 经作业层 (server/jobs/lease.ts) 间接 import ~/lib/redis，mock 掉避免真实连接
 vi.mock('~/lib/redis', () => ({
   acquireKvLock: vi.fn(),
   releaseKvLock: vi.fn(),

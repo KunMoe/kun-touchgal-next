@@ -15,7 +15,6 @@ import {
   MODERATION_CONCURRENCY,
   MODERATION_LANE,
   MODERATION_LEASE_SECONDS,
-  MODERATION_LOCK_TTL_SECONDS,
   MODERATION_MAX_RETRY,
   MODERATION_S3_TIMEOUT_MS,
   MODERATION_SYSTEMATIC_DETECTION,
@@ -62,9 +61,6 @@ import {
 } from '~/server/moderation/taskCodec'
 import { buildAuditView } from '~/server/moderation/view'
 import { defineScheduledJob } from '~/server/jobs/registry'
-import { withTaskLock } from './withTaskLock'
-
-const MODERATION_LOCK_KEY = 'moderation:worker:lock'
 
 // verdicts are cached per content_type: each type has a distinct system prompt,
 // so a verdict from one type must never be replayed onto another. 策略身份同样入 key
@@ -643,7 +639,7 @@ export const runModerationBatch = async (
       }
     }
     // allSettled 而非 all: 即便某 worker 因记账写库失败而 reject, 也必须等其余 worker
-    // 全部结束再返回——否则 withTaskLock 会在后台 worker 仍运行时释放锁, 与下批重叠
+    // 全部结束再返回——否则作业层会在后台 worker 仍运行时释放租约, 与下批重叠
     const workerCount = Math.min(MODERATION_CONCURRENCY, groupList.length)
     const results = await Promise.allSettled(
       Array.from({ length: workerCount }, runWorker)
@@ -671,14 +667,7 @@ export const runModerationBatch = async (
 export const moderationJob = defineScheduledJob({
   name: 'moderation',
   schedule: '*/15 * * * * *',
-  run: () =>
-    withTaskLock(
-      {
-        key: MODERATION_LOCK_KEY,
-        ttlSeconds: MODERATION_LOCK_TTL_SECONDS,
-        taskName: 'moderationTask'
-      },
-      // 不直接传 runModerationBatch: withTaskLock 会把续租函数作为第一个参数传进来
-      () => runModerationBatch()
-    )
+  lease: { key: 'moderation:worker:lock' },
+  // 不直接传 runModerationBatch: 作业层会把 ctx 作为第一个参数传进来
+  run: () => runModerationBatch()
 })

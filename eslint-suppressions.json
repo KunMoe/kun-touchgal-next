@@ -450,11 +450,6 @@
       "count": 1
     }
   },
-  "server/tasks/withTaskLock.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
   "utils/cookies.ts": {
     "@typescript-eslint/no-unused-expressions": {
       "count": 1

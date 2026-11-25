@@ -1,16 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { runCampaignStepMock, withTaskLockMock } = vi.hoisted(() => ({
-  runCampaignStepMock: vi.fn(),
-  withTaskLockMock: vi.fn()
+const { runCampaignStepMock } = vi.hoisted(() => ({
+  runCampaignStepMock: vi.fn()
 }))
 
 vi.mock('~/server/mail/campaign', () => ({
   runCampaignStep: runCampaignStepMock
-}))
-
-vi.mock('~/server/tasks/withTaskLock', () => ({
-  withTaskLock: withTaskLockMock
 }))
 
 import { mailCampaignJob } from '~/server/tasks/mailCampaignTask'
@@ -20,15 +15,17 @@ import {
 } from '~/constants/admin'
 import { SEND_EMAIL_TIMEOUT_MS } from '~/app/api/utils/sendKunEmail'
 
+// 作业层交给 run 的 signal: 关停或租约丢失时中止
+let stop: AbortController
 const tick = () =>
   mailCampaignJob.run({
-    signal: new AbortController().signal,
+    signal: stop.signal,
     cancelSignal: new AbortController().signal
   })
 
 beforeEach(() => {
   vi.resetAllMocks()
-  withTaskLockMock.mockImplementation(async (_options, task) => task())
+  stop = new AbortController()
   runCampaignStepMock.mockResolvedValue({ kind: 'idle' })
 })
 
@@ -47,43 +44,42 @@ describe('mailCampaignTask', () => {
     ).toBeLessThan(60 * 1000)
   })
 
-  it('在任务锁里推进一步, 锁的寿命比一拍长', async () => {
-    await tick()
-
-    expect(withTaskLockMock).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ key: 'mail:campaign:lock' }),
-      expect.any(Function)
-    )
-    const [{ ttlSeconds }] = withTaskLockMock.mock.calls[0]
-    expect(ttlSeconds * 1000).toBeGreaterThan(60 * 1000)
-    expect(runCampaignStepMock).toHaveBeenCalledExactlyOnceWith({
-      signal: expect.any(AbortSignal)
-    })
+  // 跨进程互斥与「没拿到就不做」由作业层按 spec.lease 执行 (server/jobs/__tests__/registry.test.ts)
+  it('持群发任务的租约推进一步', () => {
+    expect(mailCampaignJob.lease).toEqual({ key: 'mail:campaign:lock' })
   })
 
-  // AbortSignal.timeout 的计时不受假时钟控制, 所以看它是用哪个时长建的
+  // AbortSignal.timeout 的计时不受假时钟控制: 换成一个手动中止的 signal, 看它是用哪个时长建的、
+  // 到点时这一步的 signal 是否随之中止
   it('交给这一步的 signal 按一拍的时间预算定时中止', async () => {
-    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    const budget = new AbortController()
+    const timeout = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockReturnValue(budget.signal)
     try {
       await tick()
 
       expect(timeout).toHaveBeenCalledExactlyOnceWith(
         MAIL_CAMPAIGN_STEP_BUDGET_MS
       )
-      expect(runCampaignStepMock).toHaveBeenCalledExactlyOnceWith({
-        signal: timeout.mock.results[0].value
-      })
+      const [[{ signal }]] = runCampaignStepMock.mock.calls
+      expect(signal.aborted).toBe(false)
+      budget.abort()
+      expect(signal.aborted).toBe(true)
     } finally {
       timeout.mockRestore()
     }
   })
 
-  it('没拿到锁时这一拍什么都不做', async () => {
-    withTaskLockMock.mockResolvedValue(undefined)
-
+  it('关停或租约丢失 (作业层的 signal 中止) 时, 交给这一步的 signal 随之中止', async () => {
     await tick()
+    const [[{ signal }]] = runCampaignStepMock.mock.calls
 
-    expect(runCampaignStepMock).not.toHaveBeenCalled()
+    const reason = new Error('stopping')
+    stop.abort(reason)
+
+    expect(signal.aborted).toBe(true)
+    expect(signal.reason).toBe(reason)
   })
 
   // 作业层按作业名记下它 (server/jobs/registry.ts), 不逃出定时器

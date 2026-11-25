@@ -26,14 +26,16 @@ export const countsFingerprint = (doc: GalgameSearchCountsDoc) =>
 // 出箱里还挂着行的 id 由 applyCounts 剔除，不写快照，下一轮照旧比对。
 // 已删除 patch 会在快照里残留死字段：不被任何现存行的 diff 命中、无正确性影响，
 // 仅极缓慢占用内存（每条数十字节）；确需回收时整键删除 COUNTS_SNAPSHOT_KEY 即可。
+// 写锁丢失或关停 (writer.signal 中止) 时停在两批之间, 剩下的行等下一轮
 export const refreshSearchCounts = async ({
-  renew,
+  signal,
   applyCounts
 }: SearchWriter) => {
   const snapshot = await getKvHashAll(COUNTS_SNAPSHOT_KEY)
 
   let lastId = 0
   for (;;) {
+    signal.throwIfAborted()
     const rows = await prisma.patch.findMany({
       where: { id: { gt: lastId } },
       orderBy: { id: 'asc' },
@@ -80,7 +82,6 @@ export const refreshSearchCounts = async ({
         )
       )
     }
-    await renew()
   }
 }
 
@@ -89,7 +90,7 @@ export const refreshSearchCounts = async ({
 export const searchCountsRefreshJob = defineScheduledJob({
   name: 'search_counts_refresh',
   schedule: '*/30 * * * *',
-  run: async () => {
+  run: async ({ signal }) => {
     if (!getMeiliClient()) {
       return
     }
@@ -99,7 +100,7 @@ export const searchCountsRefreshJob = defineScheduledJob({
         await refreshSearchCounts(writer)
         return true
       },
-      { waitMs: COUNTS_REFRESH_LOCK_WAIT_MS }
+      { waitMs: COUNTS_REFRESH_LOCK_WAIT_MS, signal }
     )
     if (!ran) {
       // eslint-disable-next-line no-console

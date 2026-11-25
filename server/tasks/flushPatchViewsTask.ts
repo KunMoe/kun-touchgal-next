@@ -6,13 +6,12 @@ import {
   checkoutPatchViewBuffer
 } from '~/app/api/patch/views/buffer'
 import { defineScheduledJob } from '~/server/jobs/registry'
-import { withTaskLock } from './withTaskLock'
 
 const FLUSH_BATCH_SIZE = 1000
-const FLUSH_LOCK_KEY = 'patch:views:flush:lock'
-const FLUSH_LOCK_TTL_SECONDS = 600
 
-export const flushPatchViews = async () => {
+// signal 中止 (关停、租约丢失) 时停在两批之间: 已落库的批已确认, 没落的留在缓冲里等下一轮。
+// 租约丢失后不再落下一批, 是为了不与接手的进程重复计入同一批
+export const flushPatchViews = async (signal?: AbortSignal) => {
   const buffer = await checkoutPatchViewBuffer()
   if (!buffer) {
     return
@@ -28,6 +27,7 @@ export const flushPatchViews = async () => {
   }
 
   for (let i = 0; i < validEntries.length; i += FLUSH_BATCH_SIZE) {
+    signal?.throwIfAborted()
     const batch = validEntries.slice(i, i + FLUSH_BATCH_SIZE)
     const caseFragments = batch.map(
       ([uniqueId, count]) => Prisma.sql`WHEN ${uniqueId} THEN ${count}`
@@ -52,13 +52,6 @@ export const flushPatchViews = async () => {
 export const flushPatchViewsJob = defineScheduledJob({
   name: 'flush_patch_views',
   schedule: '*/2 * * * *',
-  run: () =>
-    withTaskLock(
-      {
-        key: FLUSH_LOCK_KEY,
-        ttlSeconds: FLUSH_LOCK_TTL_SECONDS,
-        taskName: 'flushPatchViewsTask'
-      },
-      flushPatchViews
-    )
+  lease: { key: 'patch:views:flush:lock' },
+  run: ({ signal }) => flushPatchViews(signal)
 })

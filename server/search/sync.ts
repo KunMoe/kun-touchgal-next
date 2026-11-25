@@ -2,7 +2,7 @@ import { prisma } from '~/prisma/index'
 import type { KunTx } from '~/prisma/index'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { classifyHttpStatus } from '~/lib/resilience/failure'
-import { withTaskLock } from '~/server/tasks/withTaskLock'
+import { withJobLease } from '~/server/jobs/lease'
 import { sliceCodePoints } from '~/utils/text/unicode'
 import { MeiliProtocolError } from './failure'
 import { GALGAME_INDEX } from './settings'
@@ -18,12 +18,11 @@ import {
 
 // 单文档实时同步的任务等待上限；超时按引擎不可用处理，该行留在出箱等下一轮
 const SEARCH_SYNC_TASK_TIMEOUT_MS = 30_000
-// 计数批次的任务等待上限，须小于写锁的 TTL
+// 计数批次的任务等待上限
 const SEARCH_COUNTS_TASK_TIMEOUT_MS = 60_000
 const OUTBOX_DRAIN_BATCH_SIZE = 200
 // 沿用旧的键名：发布期间新旧进程并存时仍然只有一把锁
 const SEARCH_WRITER_LOCK_KEY = 'search:outbox:lock'
-const SEARCH_WRITER_LOCK_TTL_SECONDS = 300
 // 同一版内容被拒绝这么多次之后不再取 (隔离)，等应用写入再次入队或人工重试
 export const SEARCH_OUTBOX_MAX_ATTEMPTS = 10
 const OUTBOX_BACKOFF_BASE_MS = 60_000
@@ -172,8 +171,10 @@ const backoffMs = (attempts: number) =>
   Math.min(OUTBOX_BACKOFF_BASE_MS * 2 ** (attempts - 1), OUTBOX_BACKOFF_MAX_MS)
 
 export interface SearchWriter {
-  // 续租写锁；长任务每处理一段就调一次，worker 崩溃则停止续租、锁在 TTL 后自动释放
-  renew: () => Promise<void>
+  // 写锁 (心跳续租的租约, server/jobs/lease.ts) 丢失、或调用方要求停下时中止。长任务每处理
+  // 一段先看它: 租约丢了还接着写, 另一个写者可能已经开始, 两边按 Meilisearch 任务入队的先后
+  // 写乱 (旧文档覆盖新文档)
+  signal: AbortSignal
   // 把计数 partial 文档写进索引，返回实际写入的那些。出箱里还挂着行 (待同步或已隔离) 的 id
   // 先剔除：它们可能还不在索引里 (新建的 patch、写入一直失败的)，PUT 会为不存在的 id 建出
   // 只有计数的残缺文档；它们的计数随后由 drain 写全量文档时一并带上。漏了入箱、又不在索引里
@@ -211,21 +212,18 @@ const applyCounts = async (docs: GalgameSearchCountsDoc[]) => {
 }
 
 // 持写锁执行 fn。抢不到锁 (另一个写者正在写) 返回 undefined，调用方本轮跳过；waitMs 是锁被
-// 占着时最多等多久
-export const withSearchWriter = <T>(
+// 占着时最多等多久，signal 中止时不再等、已在写的经 writer.signal 停下
+export const withSearchWriter = async <T>(
   taskName: string,
   fn: (writer: SearchWriter) => Promise<T>,
-  { waitMs = 0 }: { waitMs?: number } = {}
-) =>
-  withTaskLock(
-    {
-      key: SEARCH_WRITER_LOCK_KEY,
-      ttlSeconds: SEARCH_WRITER_LOCK_TTL_SECONDS,
-      taskName,
-      waitMs
-    },
-    (renew) => fn({ renew, applyCounts })
+  { waitMs = 0, signal }: { waitMs?: number; signal?: AbortSignal } = {}
+) => {
+  const result = await withJobLease(
+    { name: taskName, key: SEARCH_WRITER_LOCK_KEY, waitMs, signal },
+    (lease) => fn({ signal: lease.signal, applyCounts })
   )
+  return result.ran ? result.value : undefined
+}
 
 type EnqueueMode = 'write' | 'reconcile'
 
@@ -355,10 +353,16 @@ export interface SearchDrainResult {
 
 // 单一消费者：持写锁逐行读取最新状态后应用，成功才删行，被拒的行退避、到上限后隔离。
 // 不传 budgetMs 只跑一批；传了就在预算内连续取批直到取完 (cron 约 50 秒，请求进程里的 kick
-// 2 秒)，预算在每行之后检查。取行只取没隔离、退避已到期的，按最后一次入队或记账的先后
+// 2 秒)，预算在每行之后检查。取行只取没隔离、退避已到期的，按最后一次入队或记账的先后。
+// 写锁丢失或 signal 中止 (cron 进程关停) 时在下一行之前停下 (paused)：单行的写入有上界
+// (lib/meilisearch.ts 的请求超时与 waitTask 的 30 秒)，停下之前至多再写完手上这一行
 export const drainSearchOutbox = async ({
-  budgetMs
-}: { budgetMs?: number } = {}): Promise<SearchDrainResult> => {
+  budgetMs,
+  signal
+}: {
+  budgetMs?: number
+  signal?: AbortSignal
+} = {}): Promise<SearchDrainResult> => {
   if (!getMeiliClient()) {
     return { outcome: 'disabled', synced: 0, failed: 0 }
   }
@@ -366,7 +370,7 @@ export const drainSearchOutbox = async ({
 
   const result = await withSearchWriter(
     'searchOutboxDrain',
-    async ({ renew }): Promise<SearchDrainResult> => {
+    async (writer): Promise<SearchDrainResult> => {
       let synced = 0
       let failed = 0
       for (;;) {
@@ -384,11 +388,10 @@ export const drainSearchOutbox = async ({
         })
 
         for (const row of rows) {
+          if (writer.signal.aborted) {
+            return { outcome: 'paused', synced, failed }
+          }
           const outcome = await applyOutboxRow(row)
-          // 每处理一行续锁：只要 drain 活跃（单行 waitTask ≤30s ≪ 300s TTL）租约不
-          // 过期，杜绝「锁 TTL 过期 → 第二个 drain 并发 → 按 Meili 任务入队序写乱 →
-          // 旧文档覆盖新文档」；worker 崩溃则停止续锁、锁 300s 后自动释放交予下一轮
-          await renew()
           if (outcome === 'engine-unavailable') {
             return { outcome, synced, failed }
           }
@@ -409,7 +412,8 @@ export const drainSearchOutbox = async ({
           return { outcome: 'paused', synced, failed }
         }
       }
-    }
+    },
+    { signal }
   )
   return result ?? { outcome: 'locked', synced: 0, failed: 0 }
 }

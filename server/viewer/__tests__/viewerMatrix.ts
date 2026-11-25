@@ -392,6 +392,7 @@ export const redisModule = {
   },
   renewKvLock: async (key: string) => {
     pushRedis('renewKvLock', key)
+    return true
   },
   evalKvScript: async (...args: unknown[]) => {
     pushRedis('evalKvScript', ...args)

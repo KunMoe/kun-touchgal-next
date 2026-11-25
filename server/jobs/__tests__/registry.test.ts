@@ -40,6 +40,15 @@ vi.mock('node-cron', () => ({
   }
 }))
 
+const { withJobLeaseMock, claimJobSlotMock } = vi.hoisted(() => ({
+  withJobLeaseMock: vi.fn(),
+  claimJobSlotMock: vi.fn()
+}))
+vi.mock('~/server/jobs/lease', () => ({
+  withJobLease: withJobLeaseMock,
+  claimJobSlot: claimJobSlotMock
+}))
+
 import {
   JOB_CANCEL_SETTLE_MS,
   JobRuntimeCancelledError,
@@ -54,6 +63,8 @@ let warnSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
   createdTasks.length = 0
+  withJobLeaseMock.mockReset()
+  claimJobSlotMock.mockReset()
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -175,6 +186,100 @@ describe('每一拍', () => {
         '[kun-jobs] reset 错过了 2026-11-26T00:00:00.000Z'
       )
     )
+  })
+})
+
+describe('租约与时间槽', () => {
+  it('声明了 lease: 持租约执行, ctx.signal 换成租约的 signal (它也接着运行时的关停)', async () => {
+    const leaseSignal = new AbortController().signal
+    withJobLeaseMock.mockImplementation(async (_spec, fn) => ({
+      ran: true,
+      value: await fn({ signal: leaseSignal })
+    }))
+    const run = vi.fn(async () => {})
+    await startJobRuntime([
+      defineScheduledJob({
+        name: 'flush',
+        schedule: '* * * * *',
+        lease: { key: 'patch:views:flush:lock' },
+        run
+      })
+    ])
+
+    await taskOf('flush').tick()
+
+    const [[leaseSpec]] = withJobLeaseMock.mock.calls
+    expect(leaseSpec).toEqual({
+      name: 'flush',
+      key: 'patch:views:flush:lock',
+      signal: expect.any(AbortSignal)
+    })
+    expect(run).toHaveBeenCalledExactlyOnceWith({
+      signal: leaseSignal,
+      cancelSignal: expect.any(AbortSignal)
+    })
+  })
+
+  it('抢不到租约: 这一拍不执行, 不记日志', async () => {
+    withJobLeaseMock.mockResolvedValue({ ran: false })
+    const run = vi.fn()
+    await startJobRuntime([
+      defineScheduledJob({
+        name: 'flush',
+        schedule: '* * * * *',
+        lease: { key: 'k' },
+        run
+      })
+    ])
+
+    await taskOf('flush').tick()
+
+    expect(run).not.toHaveBeenCalled()
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('租约丢失后作业抛出租约 signal 的 reason: 已由租约记过, 这里不再记成失败', async () => {
+    const lost = new AbortController()
+    withJobLeaseMock.mockImplementation(async (_spec, fn) => ({
+      ran: true,
+      value: await fn({ signal: lost.signal })
+    }))
+    await startJobRuntime([
+      defineScheduledJob({
+        name: 'flush',
+        schedule: '* * * * *',
+        lease: { key: 'k' },
+        run: async ({ signal }) => {
+          lost.abort(new Error('lease lost'))
+          signal.throwIfAborted()
+        }
+      })
+    ])
+
+    await taskOf('flush').tick()
+
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('声明了 slotMarker: 先占标记, 已被占就跳过', async () => {
+    claimJobSlotMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    const run = vi.fn(async () => {})
+    const slotMarker = { key: 'cron:reset-daily:lock', ttlSeconds: 3600 }
+    await startJobRuntime([
+      defineScheduledJob({
+        name: 'reset',
+        schedule: '0 0 * * *',
+        slotMarker,
+        run
+      })
+    ])
+
+    await taskOf('reset').tick()
+    await taskOf('reset').tick()
+
+    expect(claimJobSlotMock).toHaveBeenCalledWith('reset', slotMarker)
+    expect(run).toHaveBeenCalledOnce()
+    expect(withJobLeaseMock).not.toHaveBeenCalled()
   })
 })
 

@@ -27,14 +27,12 @@ const {
   markTaskManualMock: vi.fn()
 }))
 
-vi.mock('node-cron', () => ({ default: { createTask: vi.fn() } }))
 vi.mock('~/prisma', () => ({ prisma: {} }))
 vi.mock('~/lib/redis', () => ({ getKv: getKvMock, setKv: setKvMock }))
 vi.mock('~/lib/s3', () => ({ getFileFromS3: getFileFromS3Mock }))
 vi.mock('~/server/image/transcode', () => ({
   transcodeTrustedAvifToJpeg: transcodeMock
 }))
-vi.mock('~/server/tasks/withTaskLock', () => ({ withTaskLock: vi.fn() }))
 vi.mock('~/server/moderation/apply', () => ({
   applyModerationVerdict: applyModerationVerdictMock,
   markTaskManual: markTaskManualMock

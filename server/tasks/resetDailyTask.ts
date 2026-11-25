@@ -1,10 +1,6 @@
 import { prisma } from '~/prisma'
 import { defineScheduledJob } from '~/server/jobs/registry'
-import { withTaskLock } from './withTaskLock'
 import { invalidateAllUserSessions } from '~/app/api/user/session/cache'
-
-const RESET_DAILY_LOCK_KEY = 'cron:reset-daily:lock'
-const RESET_DAILY_LOCK_TTL_SECONDS = 60 * 60
 
 export const resetDailyStats = async () => {
   // 只重写三列任一非 0 的行: 无 where 会把全表 (数十万行, 绝大多数本就为 0) 逐行重写,
@@ -27,17 +23,12 @@ export const resetDailyStats = async () => {
   await invalidateAllUserSessions()
 }
 
+// 每天的 0 点只重置一次: 部署时新旧两个 cron 进程短暂并存也只有一个执行。标记键沿用原来那把
+// 不释放的锁的键名, 与还没升级的进程照样互斥。没抢到 (Redis 连续出错) 这一天就不重置, 与
+// 原来相同
 export const resetDailyJob = defineScheduledJob({
   name: 'reset_daily',
   schedule: '0 0 * * *',
-  run: () =>
-    withTaskLock(
-      {
-        key: RESET_DAILY_LOCK_KEY,
-        ttlSeconds: RESET_DAILY_LOCK_TTL_SECONDS,
-        taskName: 'resetDailyTask',
-        releaseOnComplete: false
-      },
-      resetDailyStats
-    )
+  slotMarker: { key: 'cron:reset-daily:lock', ttlSeconds: 60 * 60 },
+  run: () => resetDailyStats()
 })

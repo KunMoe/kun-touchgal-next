@@ -31,11 +31,14 @@ vi.mock('~/lib/meilisearch', () => ({
 }))
 
 // 单测连不上 Redis (vitest.config.ts 的 test.env), 写锁直接放行
-vi.mock('~/server/tasks/withTaskLock', () => ({
-  withTaskLock: (
-    _options: unknown,
-    task: (renew: () => Promise<void>) => Promise<unknown>
-  ) => task(async () => {})
+vi.mock('~/server/jobs/lease', () => ({
+  withJobLease: async (
+    _spec: unknown,
+    fn: (lease: { signal: AbortSignal }) => Promise<unknown>
+  ) => ({
+    ran: true,
+    value: await fn({ signal: new AbortController().signal })
+  })
 }))
 
 describe.skipIf(!dbContractUrl)('search outbox on real PostgreSQL', () => {

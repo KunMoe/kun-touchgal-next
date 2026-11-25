@@ -24,11 +24,14 @@ vi.mock('~/lib/meilisearch', () => ({
   })
 }))
 
-vi.mock('~/server/tasks/withTaskLock', () => ({
-  withTaskLock: (
-    _options: unknown,
-    task: (renew: () => Promise<void>) => Promise<unknown>
-  ) => task(async () => {})
+vi.mock('~/server/jobs/lease', () => ({
+  withJobLease: async (
+    _spec: unknown,
+    fn: (lease: { signal: AbortSignal }) => Promise<unknown>
+  ) => ({
+    ran: true,
+    value: await fn({ signal: new AbortController().signal })
+  })
 }))
 
 import { drainSearchOutbox } from '~/server/search/sync'
