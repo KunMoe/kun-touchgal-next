@@ -42,6 +42,20 @@ export const visibleWhere = (
   }
 }
 
+// 评论区随所属资源关闭: 评论自身对 viewer 可见, 且不属于任何资源或所属资源对 viewer 可见
+// (utils/content/policy.ts 的 isCommentContainerVisible 的 Prisma 方言)
+export const commentContainerWhere = (viewer: ContentViewer | null) => ({
+  AND: [
+    visibleWhere('comment', viewer),
+    {
+      OR: [
+        { resource_id: null },
+        { resource: { is: visibleWhere('resource', viewer) } }
+      ]
+    }
+  ]
+})
+
 const statusMatchSql = (column: Prisma.Sql, codes: number[]) =>
   codes.length === 1
     ? Prisma.sql`${column} = ${statusSql(codes[0])}`

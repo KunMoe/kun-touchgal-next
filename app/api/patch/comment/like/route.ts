@@ -9,7 +9,10 @@ import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
-import { decideContentAction } from '~/utils/content/policy'
+import {
+  decideContentAction,
+  isCommentContainerVisible
+} from '~/utils/content/policy'
 import type { ContentViewer } from '~/utils/content/policy'
 
 const commentIdSchema = z.object({
@@ -26,15 +29,16 @@ const toggleCommentLike = async (
   const { uid } = viewer
   const { commentId } = input
 
-  const decision = decideContentAction(
-    'comment',
-    await prisma.patch_comment.findUnique({
-      where: { id: commentId },
-      include: { patch: { select: { unique_id: true } } }
-    }),
-    viewer,
-    'like'
-  )
+  const found = await prisma.patch_comment.findUnique({
+    where: { id: commentId },
+    include: {
+      patch: { select: { unique_id: true } },
+      resource: { select: { status: true, user_id: true } }
+    }
+  })
+  const decision = decideContentAction('comment', found, viewer, 'like', {
+    containerVisible: isCommentContainerVisible(found?.resource, viewer)
+  })
   if (!decision.ok) {
     return decision.message
   }

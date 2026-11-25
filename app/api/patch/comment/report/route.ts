@@ -3,7 +3,10 @@ import { kunRoute } from '~/app/api/utils/kunRoute'
 import { createPatchCommentReportSchema } from '~/validations/patch'
 import { prisma } from '~/prisma'
 import { Prisma } from '~/prisma/generated/prisma/client'
-import { decideContentAction } from '~/utils/content/policy'
+import {
+  decideContentAction,
+  isCommentContainerVisible
+} from '~/utils/content/policy'
 import type { ContentViewer } from '~/utils/content/policy'
 
 const createReport = async (
@@ -17,13 +20,16 @@ const createReport = async (
       id: true,
       user_id: true,
       patch_id: true,
-      status: true
+      status: true,
+      resource: { select: { status: true, user_id: true } }
     }
   })
   if (found && found.patch_id !== input.patchId) {
     return '评论不属于当前游戏'
   }
-  const decision = decideContentAction('comment', found, viewer, 'report')
+  const decision = decideContentAction('comment', found, viewer, 'report', {
+    containerVisible: isCommentContainerVisible(found?.resource, viewer)
+  })
   if (!decision.ok) {
     return decision.message
   }

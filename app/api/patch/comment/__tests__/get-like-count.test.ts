@@ -44,6 +44,15 @@ vi.mock('~/app/api/patch/comment/cache', () => ({
 
 import { getPatchComment } from '~/app/api/patch/comment/get'
 
+// 资源评论区关闭时 getPatchComment 返回文案; 这里的资源恒可见, 只取分页
+const getPage = async (...args: Parameters<typeof getPatchComment>) => {
+  const result = await getPatchComment(...args)
+  if (typeof result === 'string') {
+    throw new Error(result)
+  }
+  return result
+}
+
 // 游客视角: 不查 bypass 计数, 也不叠加 isLike
 const guest = { uid: 0, role: 0 }
 
@@ -80,7 +89,7 @@ describe('评论点赞计数限定在本 patch 内', () => {
   it('根评论查询的 _count 带 comment.patch_id 过滤, 计数映射到 likeCount', async () => {
     findManyMock.mockResolvedValueOnce([commentRow(1, null, 5)])
 
-    const { comments } = await getPatchComment(
+    const { comments } = await getPage(
       { patchId: 10, page: 1, limit: 10 },
       guest
     )
@@ -95,7 +104,7 @@ describe('评论点赞计数限定在本 patch 内', () => {
       .mockResolvedValueOnce([commentRow(99, 1, 3)])
     queryRawMock.mockResolvedValueOnce([{ id: 99 }])
 
-    const { comments } = await getPatchComment(
+    const { comments } = await getPage(
       { patchId: 10, page: 1, limit: 10 },
       guest
     )

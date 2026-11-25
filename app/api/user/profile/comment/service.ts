@@ -3,12 +3,10 @@ import { prisma } from '~/prisma/index'
 import { getUserInfoSchema } from '~/validations/user'
 import { markdownToText } from '~/utils/markdownToText'
 import { PatchRefSelectField } from '~/constants/api/select'
-import {
-  getCommentRatingVisibilityWhere,
-  type KunViewer
-} from '~/app/api/utils/contentVisibility'
+import type { KunViewer } from '~/app/api/utils/contentVisibility'
 import type { UserComment } from '~/types/api/user'
 import { isContentVisible } from '~/utils/content/policy'
+import { commentContainerWhere } from '~/server/content/visibility'
 
 export const getUserComment = async (
   input: z.infer<typeof getUserInfoSchema>,
@@ -16,7 +14,8 @@ export const getUserComment = async (
 ) => {
   const { uid, page, limit } = input
   const offset = (page - 1) * limit
-  const visibilityWhere = getCommentRatingVisibilityWhere(viewer)
+  // 评论自身可见, 且所属资源 (若有) 对 viewer 可见: 资源被隐藏或仍在待审时, 它下面的评论不列出
+  const visibilityWhere = commentContainerWhere(viewer)
 
   const [data, total] = await Promise.all([
     prisma.patch_comment.findMany({

@@ -2,10 +2,8 @@ import * as z from 'zod'
 import { kunId } from '~/validations/primitives'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
-import {
-  getCommentRatingVisibilityWhere,
-  type KunViewer
-} from '~/app/api/utils/contentVisibility'
+import type { KunViewer } from '~/app/api/utils/contentVisibility'
+import { commentContainerWhere } from '~/server/content/visibility'
 
 const commentIdSchema = z.object({
   commentId: kunId('评论 ID')
@@ -18,7 +16,7 @@ const getCommentMarkdown = async (
   const { commentId } = input
 
   const comment = await prisma.patch_comment.findFirst({
-    where: { id: commentId, ...getCommentRatingVisibilityWhere(viewer) },
+    where: { id: commentId, ...commentContainerWhere(viewer) },
     select: {
       content: true,
       is_spoiler: true

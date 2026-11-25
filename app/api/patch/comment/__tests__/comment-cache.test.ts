@@ -72,6 +72,7 @@ vi.mock('~/prisma/index', () => ({
     user_patch_comment_like_relation: {
       findMany: likeFindManyMock
     },
+    patch_resource: { findFirst: vi.fn(async () => ({ id: 5 })) },
     $queryRaw: queryRawMock
   }
 }))
@@ -85,6 +86,15 @@ vi.mock('~/app/api/utils/render/renderKunMarkdown', () => ({
 }))
 
 import { getPatchComment } from '~/app/api/patch/comment/get'
+
+// 资源评论区关闭时 getPatchComment 返回文案; 这里的资源恒可见, 只取分页
+const getPage = async (...args: Parameters<typeof getPatchComment>) => {
+  const result = await getPatchComment(...args)
+  if (typeof result === 'string') {
+    throw new Error(result)
+  }
+  return result
+}
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 
 const rootComment = {
@@ -132,7 +142,7 @@ describe('getPatchComment 缓存', () => {
     await getPatchComment(input, viewer)
     rootFindManyMock.mockClear()
 
-    const result = await getPatchComment(input, viewer)
+    const result = await getPage(input, viewer)
 
     expect(rootFindManyMock).not.toHaveBeenCalled()
     expect(result.comments[0].id).toBe(100)
@@ -143,7 +153,7 @@ describe('getPatchComment 缓存', () => {
     await getPatchComment(input, viewer)
     likeFindManyMock.mockResolvedValueOnce([{ comment_id: 100 }])
 
-    const result = await getPatchComment(input, viewer)
+    const result = await getPage(input, viewer)
 
     expect(rootFindManyMock).toHaveBeenCalledTimes(1)
     expect(result.comments[0].isLike).toBe(true)
@@ -209,7 +219,7 @@ describe('getPatchComment 缓存', () => {
     rootFindManyMock.mockClear()
 
     await invalidatePatchCommentCache(10)
-    const result = await getPatchComment(input, viewer)
+    const result = await getPage(input, viewer)
 
     expect(rootFindManyMock).toHaveBeenCalledTimes(1)
     expect(result.comments[0].id).toBe(100)
@@ -252,7 +262,7 @@ describe('getPatchComment 缓存', () => {
       { ...rootComment, content_html: '<p>old</p>', content_html_version: 0 }
     ])
 
-    const result = await getPatchComment(input, viewer)
+    const result = await getPage(input, viewer)
 
     // 版本不匹配 → 回落渲染入口 (mock: `<p>${content}</p>`)
     expect(result.comments[0].content).toBe('<p>hello</p>')
@@ -286,7 +296,7 @@ describe('getPatchComment 缓存', () => {
       persistable: true
     }))
 
-    const result = await getPatchComment(input, viewer)
+    const result = await getPage(input, viewer)
 
     expect(result.comments.map((comment) => comment.id)).toEqual([100, 101])
     expect(result.comments[0].content).toBe('<p>hello</p>')
@@ -317,7 +327,7 @@ describe('getPatchComment 缓存', () => {
       persistable: false
     }))
 
-    const result = await getPatchComment(input, viewer)
+    const result = await getPage(input, viewer)
 
     expect(result.comments[0].content).toContain('暂时无法渲染')
     await Promise.resolve()

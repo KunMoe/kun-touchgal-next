@@ -16,7 +16,7 @@ import {
 import { can } from '~/constants/permission'
 import type { PatchComment } from '~/types/api/patch'
 import { COMMENT_STATUS } from '~/constants/contentStatus'
-import { visibleSql } from '~/server/content/visibility'
+import { visibleSql, visibleWhere } from '~/server/content/visibility'
 
 // 共享缓存基线视角: status=0 公开可见, isLike 一律 false
 const PUBLIC_VIEWER: KunViewer = { uid: 0, role: 0 }
@@ -361,6 +361,23 @@ export const getPatchComment = async (
 ) => {
   const { patchId, limit } = input
   const resourceId = input.resourceId ?? null
+
+  // 评论区随所属资源关闭 (utils/content/policy.ts 的 isCommentContainerVisible): 资源对 viewer
+  // 不可见时整个评论区按不存在处理。同一评论区里的评论共用这一个资源, 所以只在入口判一次,
+  // 下面的共享缓存与按页查询不用再带资源条件
+  if (resourceId) {
+    const resource = await prisma.patch_resource.findFirst({
+      where: {
+        id: resourceId,
+        patch_id: patchId,
+        ...visibleWhere('resource', viewer)
+      },
+      select: { id: true }
+    })
+    if (!resource) {
+      return '未找到该资源'
+    }
+  }
 
   const bypass = await shouldBypassCommentCache(patchId, viewer)
   const effectiveViewer = bypass ? viewer : PUBLIC_VIEWER

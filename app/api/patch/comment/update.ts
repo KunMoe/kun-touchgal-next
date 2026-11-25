@@ -15,7 +15,8 @@ import {
   contentGuard,
   contentSkipMessage,
   decideContentAction,
-  pendingTaskBlocks
+  pendingTaskBlocks,
+  isCommentContainerVisible
 } from '~/utils/content/policy'
 
 export const updateComment = async (
@@ -26,14 +27,21 @@ export const updateComment = async (
 
   const found = await prisma.patch_comment.findUnique({
     where: { id: commentId },
-    select: { id: true, user_id: true, status: true, content: true }
+    select: {
+      id: true,
+      user_id: true,
+      status: true,
+      content: true,
+      resource: { select: { status: true, user_id: true } }
+    }
   })
   const pendingTask =
     !!found &&
     pendingTaskBlocks(actor) &&
     (await hasPendingModeration('comment', { contentId: commentId }))
   const decision = decideContentAction('comment', found, actor, 'edit', {
-    pendingTask
+    pendingTask,
+    containerVisible: isCommentContainerVisible(found?.resource, actor)
   })
   if (!decision.ok) {
     return decision.message

@@ -150,6 +150,13 @@ export const isContentVisible = (
     contentPhase(kind, row.status)
   )
 
+// 评论区随所属资源关闭: 资源对 viewer 不可见时, 它下面的评论按不存在处理。游戏评论区
+// (没有所属资源) 不受影响
+export const isCommentContainerVisible = (
+  resource: { status: number; user_id: number } | null | undefined,
+  viewer: ContentViewer | null
+) => !resource || isContentVisible('resource', resource, viewer)
+
 // 不能处置他人内容的人, 内容有在途审核任务时也不能编辑 (送审快照会与实际内容脱节)。
 // 入口据此决定要不要去查在途任务
 export const pendingTaskBlocks = (viewer: ContentViewer | null) =>

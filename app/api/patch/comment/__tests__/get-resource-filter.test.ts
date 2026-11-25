@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { countMock, rootFindManyMock, likeFindManyMock, queryRawMock } =
-  vi.hoisted(() => ({
-    countMock: vi.fn(),
-    rootFindManyMock: vi.fn(),
-    likeFindManyMock: vi.fn(),
-    queryRawMock: vi.fn()
-  }))
+const {
+  countMock,
+  rootFindManyMock,
+  likeFindManyMock,
+  queryRawMock,
+  resourceFindFirstMock
+} = vi.hoisted(() => ({
+  countMock: vi.fn(),
+  rootFindManyMock: vi.fn(),
+  likeFindManyMock: vi.fn(),
+  queryRawMock: vi.fn(),
+  resourceFindFirstMock: vi.fn()
+}))
 
 vi.mock('~/prisma/index', () => ({
   prisma: {
@@ -18,6 +24,7 @@ vi.mock('~/prisma/index', () => ({
     user_patch_comment_like_relation: {
       findMany: likeFindManyMock
     },
+    patch_resource: { findFirst: resourceFindFirstMock },
     $queryRaw: queryRawMock
   }
 }))
@@ -49,6 +56,16 @@ vi.mock('~/app/api/patch/comment/cache', () => ({
 }))
 
 import { getPatchComment } from '~/app/api/patch/comment/get'
+import { matchesContentWhere } from '~/app/api/utils/__tests__/contentWhere'
+
+// 资源评论区关闭时 getPatchComment 返回文案; 取分页的用例里资源恒可见
+const getPage = async (...args: Parameters<typeof getPatchComment>) => {
+  const result = await getPatchComment(...args)
+  if (typeof result === 'string') {
+    throw new Error(result)
+  }
+  return result
+}
 
 const viewer = { uid: 7, role: 1 }
 
@@ -62,6 +79,7 @@ beforeEach(() => {
   rootFindManyMock.mockResolvedValue([])
   likeFindManyMock.mockResolvedValue([])
   queryRawMock.mockResolvedValue([])
+  resourceFindFirstMock.mockResolvedValue({ id: 5 })
 })
 
 describe('getPatchComment 资源维度过滤', () => {
@@ -108,7 +126,7 @@ describe('getPatchComment 资源维度过滤', () => {
       }
     ])
 
-    const result = await getPatchComment(
+    const result = await getPage(
       { patchId: 10, page: 3, limit: 10, commentId: 100 },
       viewer
     )
@@ -136,7 +154,7 @@ describe('getPatchComment 资源维度过滤', () => {
       }
     )
 
-    const result = await getPatchComment(
+    const result = await getPage(
       { patchId: 10, resourceId: 5, page: 3, limit: 10, commentId: 100 },
       viewer
     )
@@ -148,5 +166,47 @@ describe('getPatchComment 资源维度过滤', () => {
         where: expect.objectContaining({ resource_id: 5, parent_id: null })
       })
     )
+  })
+})
+
+// X02-04: 评论区随所属资源关闭。资源被隐藏, 或待审而 viewer 既不是资源作者也不是管理员时,
+// 这个资源的评论区 (分页与深链) 按不存在处理; 游戏评论区不受影响
+describe('资源评论区随资源关闭', () => {
+  it('资源对 viewer 不可见时返回未找到该资源, 不查评论', async () => {
+    resourceFindFirstMock.mockResolvedValue(null)
+
+    const result = await getPatchComment(
+      { patchId: 10, resourceId: 5, page: 1, limit: 10, commentId: 100 },
+      viewer
+    )
+
+    expect(result).toBe('未找到该资源')
+    expect(rootFindManyMock).not.toHaveBeenCalled()
+    expect(queryRawMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['公开的资源', { status: 0, user_id: 9 }, true],
+    ['隐藏的资源', { status: 1, user_id: 9 }, false],
+    ['他人待审的资源', { status: 3, user_id: 9 }, false],
+    ['他人待初审的资源', { status: 2, user_id: 9 }, false],
+    ['自己待审的资源', { status: 3, user_id: 7 }, true],
+    ['别的游戏下的资源', { status: 0, user_id: 9, patch_id: 11 }, false]
+  ])('按 viewer 的资源可见性与所属游戏查资源: %s', async (_name, row, open) => {
+    await getPatchComment(
+      { patchId: 10, resourceId: 5, page: 1, limit: 10 },
+      viewer
+    )
+
+    const [{ where }] = resourceFindFirstMock.mock.calls[0]
+    expect(matchesContentWhere(where, { id: 5, patch_id: 10, ...row })).toBe(
+      open
+    )
+  })
+
+  it('游戏评论区不查资源', async () => {
+    await getPatchComment({ patchId: 10, page: 1, limit: 10 }, viewer)
+
+    expect(resourceFindFirstMock).not.toHaveBeenCalled()
   })
 })

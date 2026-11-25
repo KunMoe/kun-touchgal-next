@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getCommentRatingVisibilityWhere } from '~/app/api/utils/contentVisibility'
+import { matchesContentWhere } from '~/app/api/utils/__tests__/contentWhere'
+import type { ContentWhereRow } from '~/app/api/utils/__tests__/contentWhere'
 
 const { parseGetMock, verifyHeaderCookieMock, findFirstMock } = vi.hoisted(
   () => ({
@@ -57,30 +58,31 @@ describe('comment markdown endpoint visibility gating', () => {
     expect(findFirstMock).not.toHaveBeenCalled()
   })
 
+  // 查询条件按语义比: 在几种行上求值, 看哪些行会被取到
+  const fetched = (row: ContentWhereRow) => {
+    const [args] = findFirstMock.mock.calls[0]
+    expect(args.select).toEqual({ content: true, is_spoiler: true })
+    return matchesContentWhere(args.where, { id: 42, ...row })
+  }
+
   it('restricts an anonymous-role viewer to public comments only', async () => {
     verifyHeaderCookieMock.mockResolvedValue({ uid: 0, role: 0 })
 
     await GET(request)
 
-    expect(findFirstMock).toHaveBeenCalledWith({
-      where: {
-        id: 42,
-        ...getCommentRatingVisibilityWhere({ uid: 0, role: 0 })
-      },
-      select: { content: true, is_spoiler: true }
-    })
+    expect(fetched({ status: 0, user_id: 5 })).toBe(true)
+    expect(fetched({ status: 1, user_id: 5 })).toBe(false)
+    expect(fetched({ status: 2, user_id: 5 })).toBe(false)
+    expect(fetched({ id: 43, status: 0, user_id: 5 })).toBe(false)
   })
 
   it('lets a logged-in user see public comments and their own pending ones', async () => {
     await GET(request)
 
-    expect(findFirstMock).toHaveBeenCalledWith({
-      where: {
-        id: 42,
-        OR: [{ status: 0 }, { status: 1, user_id: 7 }]
-      },
-      select: { content: true, is_spoiler: true }
-    })
+    expect(fetched({ status: 0, user_id: 5 })).toBe(true)
+    expect(fetched({ status: 1, user_id: 7 })).toBe(true)
+    expect(fetched({ status: 1, user_id: 5 })).toBe(false)
+    expect(fetched({ status: 2, user_id: 7 })).toBe(false)
   })
 
   it('lets an admin see public and pending comments but not hidden ones', async () => {
@@ -88,11 +90,33 @@ describe('comment markdown endpoint visibility gating', () => {
 
     await GET(request)
 
-    expect(findFirstMock).toHaveBeenCalledWith({
-      where: { id: 42, status: { in: [0, 1] } },
-      select: { content: true, is_spoiler: true }
-    })
+    expect(fetched({ status: 0, user_id: 5 })).toBe(true)
+    expect(fetched({ status: 1, user_id: 5 })).toBe(true)
+    expect(fetched({ status: 2, user_id: 5 })).toBe(false)
   })
+
+  // X02-04: 评论区随所属资源关闭, 取原文同样按不存在处理
+  it.each([
+    ['游戏评论区', null, true],
+    ['公开的资源', { status: 0, user_id: 5 }, true],
+    ['隐藏的资源', { status: 1, user_id: 7 }, false],
+    ['他人待审的资源', { status: 3, user_id: 5 }, false],
+    ['自己待初审的资源', { status: 2, user_id: 7 }, true]
+  ])(
+    'does not return comments under a resource the viewer cannot see: %s',
+    async (_name, resource, open) => {
+      await GET(request)
+
+      expect(
+        fetched({
+          status: 0,
+          user_id: 7,
+          resource_id: resource ? 5 : null,
+          resource
+        })
+      ).toBe(open)
+    }
+  )
 
   it('returns empty content when the visibility filter excludes the comment', async () => {
     findFirstMock.mockResolvedValue(null)

@@ -15,6 +15,7 @@ vi.mock('~/prisma/index', () => ({
 }))
 
 import { getUserComment } from '~/app/api/user/profile/comment/service'
+import { matchesContentWhere } from '~/app/api/utils/__tests__/contentWhere'
 
 const input = { uid: 42, page: 1, limit: 10 }
 
@@ -61,5 +62,31 @@ describe('用户评论点赞计数限定在页面用户的评论内', () => {
     const { comments } = await getUserComment(input, { uid: 9, role: 1 })
 
     expect(comments[0].like).toBe(5)
+  })
+})
+
+// X02-04: 评论区随所属资源关闭。主页的评论 tab 不列出 viewer 看不到的资源下的评论, 总数同口径
+describe('主页评论 tab 不列出已关闭的资源评论区里的评论', () => {
+  it.each([
+    ['游戏评论区', null, true],
+    ['公开的资源', { status: 0, user_id: 5 }, true],
+    ['隐藏的资源', { status: 1, user_id: 9 }, false],
+    ['他人待审的资源', { status: 3, user_id: 5 }, false],
+    ['viewer 自己待审的资源', { status: 3, user_id: 9 }, true]
+  ])('%s', async (_name, resource, listed) => {
+    await getUserComment(input, { uid: 9, role: 1 })
+
+    const row = {
+      status: 0,
+      user_id: 42,
+      resource_id: resource ? 5 : null,
+      resource
+    }
+    expect(matchesContentWhere(findManyMock.mock.calls[0][0].where, row)).toBe(
+      listed
+    )
+    expect(matchesContentWhere(countMock.mock.calls[0][0].where, row)).toBe(
+      listed
+    )
   })
 })
