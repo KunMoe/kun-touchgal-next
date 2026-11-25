@@ -8,6 +8,11 @@ import {
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { kunTx } from '~/server/db/tx'
 import { can } from '~/constants/permission'
+import {
+  meetsPointGate,
+  POINT_GATE_MESSAGE,
+  POINT_RULES
+} from '~/constants/points'
 import type { Conversation } from '~/types/api/conversation'
 import type { KunActor } from '~/constants/role'
 
@@ -62,9 +67,6 @@ export const getConversations = async (
   return { conversations, total }
 }
 
-const MOEMOEPOINT_REQUIRED = 20
-const MOEMOEPOINT_COST = 10
-
 export const checkConversation = async (
   input: z.infer<typeof createConversationSchema>,
   actor: KunActor
@@ -117,18 +119,14 @@ export const checkConversation = async (
   }
 
   const isPrivileged = can(actor, 'message.skipPointsGate')
-  const hasEnoughPoints = currentUser.moemoepoint >= MOEMOEPOINT_REQUIRED
-
-  if (!isPrivileged && !hasEnoughPoints) {
-    return {
-      error: `萌萌点不足，发起私聊需要至少 ${MOEMOEPOINT_REQUIRED} 萌萌点`
-    }
+  if (!isPrivileged && !meetsPointGate('conversation', currentUser)) {
+    return { error: POINT_GATE_MESSAGE.conversation }
   }
 
   return {
     exists: false,
     needsPayment: !isPrivileged,
-    cost: MOEMOEPOINT_COST,
+    cost: POINT_RULES.conversation.cost,
     currentPoints: currentUser.moemoepoint,
     targetUserName: targetUser.name
   }
@@ -212,8 +210,8 @@ export const getOrCreateConversation = async (
     }
   }
 
-  const insufficient = `萌萌点不足，发起私聊需要至少 ${MOEMOEPOINT_REQUIRED} 萌萌点`
-  if (currentUser.moemoepoint < MOEMOEPOINT_REQUIRED) {
+  const insufficient = POINT_GATE_MESSAGE.conversation
+  if (!meetsPointGate('conversation', currentUser)) {
     return insufficient
   }
 
@@ -222,11 +220,14 @@ export const getOrCreateConversation = async (
     // 条件更新即 CAS: 余额守卫必须落在 WHERE 里. 上面那次读取自事务之外, 只是省一次
     // 往返的快速失败, 不是安全边界; 并发请求读到同一份快照会一起通过它, 各扣一次把
     // 余额扣成负数 (唯一索引只约束同一对用户, 对 N 个不同目标并发不设防).
-    // 谓词用 REQUIRED 而非 COST, 保留「需要 20 才能开一个, 付 10」的语义
+    // 谓词用门槛而非价格, 保留「需要 20 才能开一个, 付 10」的语义
     created = await kunTx('conversation.create', async ({ tx, fail }) => {
       const { count } = await tx.user.updateMany({
-        where: { id: uid, moemoepoint: { gte: MOEMOEPOINT_REQUIRED } },
-        data: { moemoepoint: { decrement: MOEMOEPOINT_COST } }
+        where: {
+          id: uid,
+          moemoepoint: { gte: POINT_RULES.conversation.minBalance }
+        },
+        data: { moemoepoint: { decrement: POINT_RULES.conversation.cost } }
       })
       if (!count) {
         fail(insufficient)

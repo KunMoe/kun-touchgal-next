@@ -12,7 +12,8 @@ import { updatePatchResource } from './update'
 import { deleteResource } from './delete'
 import { prisma } from '~/prisma/index'
 import { acquireKvLock, releaseKvLock } from '~/lib/redis'
-import { can } from '~/constants/permission'
+import { canPublishResource } from '~/constants/permission'
+import { POINT_GATE_MESSAGE } from '~/constants/points'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
 const patchIdSchema = z.object({
@@ -37,9 +38,15 @@ export const POST = kunRoute.post({
     if (!user) {
       return NextResponse.json('未找到该用户')
     }
-    // 与上传初始化 (upload/init) 是同一条门槛, 豁免也是同一项能力
-    if (!can(payload, 'upload.skipPointsGate') && user.moemoepoint < 20) {
-      return NextResponse.json('仅限萌萌点大于 20 的用户才可以发布资源')
+    // 与上传初始化 (upload/init) 是同一条门槛; 豁免按会话里的角色判, 萌萌点取库里的
+    if (
+      !canPublishResource({
+        uid: payload.uid,
+        role: payload.role,
+        moemoepoint: user.moemoepoint
+      })
+    ) {
+      return NextResponse.json(POINT_GATE_MESSAGE.publishResource)
     }
 
     const resource = await prisma.patch_resource.findFirst({

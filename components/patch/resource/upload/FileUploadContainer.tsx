@@ -8,7 +8,8 @@ import { FileUploadCard } from './FileUploadCard'
 import { KunCaptchaModal } from '~/components/kun/auth/CaptchaModal'
 import { useDisclosure } from '@heroui/modal'
 import { useUserStore } from '~/store/userStore'
-import { can } from '~/constants/permission'
+import { can, canPublishResource } from '~/constants/permission'
+import { POINT_GATE_MESSAGE } from '~/constants/points'
 import {
   OBJECT_STORAGE_MAX_FILE_SIZE_BYTES,
   OBJECT_STORAGE_MAX_FILE_SIZE_LABEL
@@ -38,13 +39,10 @@ export const FileUploadContainer = ({
   setUploadingResource
 }: Props) => {
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const skipPointsGate = useUserStore((state) =>
-    can(state.user, 'upload.skipPointsGate')
-  )
+  const canPublish = useUserStore((state) => canPublishResource(state.user))
   const skipCaptcha = useUserStore((state) =>
     can(state.user, 'upload.skipCaptcha')
   )
-  const currentUserMoemoepoint = useUserStore((state) => state.user.moemoepoint)
   const [fileData, setFileData] = useState<FileStatus | null>(null)
 
   const handleCaptchaSuccess = async (
@@ -153,8 +151,8 @@ export const FileUploadContainer = ({
       return
     }
 
-    if (!skipPointsGate && currentUserMoemoepoint < 20) {
-      toast.error('仅限萌萌点大于 20 的用户才可以发布资源')
+    if (!canPublish) {
+      toast.error(POINT_GATE_MESSAGE.publishResource)
       return
     }
 

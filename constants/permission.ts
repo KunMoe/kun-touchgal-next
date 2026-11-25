@@ -1,4 +1,5 @@
 import { KUN_ROLE, toKunRole } from './role'
+import { meetsPointGate } from './points'
 import type { KunRole, KunSubject } from './role'
 
 // 能力 → 最低角色。每条权限规则只在这里有一份: 服务端执法、客户端的显隐与置灰都调
@@ -45,6 +46,14 @@ export const can = (
   !!subject &&
   subject.uid > 0 &&
   toKunRole(subject.role) >= KUN_CAPABILITY[capability]
+
+// 发布资源的萌萌点门槛与它的角色豁免只有这一份: 上传初始化、创建路由与上传组件都调它。
+// 角色取库里的还是会话里的由调用点决定
+export const canPublishResource = (
+  subject: (KunSubject & { readonly moemoepoint: number }) | null | undefined
+): boolean =>
+  can(subject, 'upload.skipPointsGate') ||
+  (!!subject && subject.uid > 0 && meetsPointGate('publishResource', subject))
 
 // 创作者是身份不是能力: 已经是创作者或以上的不需要再申请
 export const isCreatorRole = (role: number): boolean =>

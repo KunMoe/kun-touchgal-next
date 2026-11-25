@@ -64,7 +64,7 @@ const LOCK_TOKEN = 'lock-token'
 const LOCK_KEY = `lock:patch:resource:create:${UID}`
 const RESOURCE_ID = 9
 
-const MOEMOEPOINT_ERROR = '仅限萌萌点大于 20 的用户才可以发布资源'
+const MOEMOEPOINT_ERROR = '仅限萌萌点不少于 20 的用户才可以发布资源'
 const PENDING_ERROR =
   '您有至少一个 Galgame 资源在待审核阶段, 请等待审核结束后再发布资源'
 

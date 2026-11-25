@@ -49,7 +49,7 @@ const CAPTCHA = 'captcha-token'
 
 const PERMISSION_ERROR =
   '您的权限不足, 创作者或者管理员才可以上传文件到对象存储'
-const MOEMOEPOINT_ERROR = '仅限萌萌点大于 20 的用户才可以发布资源'
+const MOEMOEPOINT_ERROR = '仅限萌萌点不少于 20 的用户才可以发布资源'
 const CAPTCHA_ERROR = '人机验证无效, 请完成人机验证'
 const QUOTA_ERROR = '您今日的上传大小已达到 5GB 限额'
 const PENDING_ERROR =

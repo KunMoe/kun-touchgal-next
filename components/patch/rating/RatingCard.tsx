@@ -305,9 +305,7 @@ export const RatingCard = memo(function RatingCard({
         <ModalContent>
           <ModalHeader className="flex flex-col gap-1">删除评价</ModalHeader>
           <ModalBody>
-            <p>
-              您确定要删除这条评价吗？这将会导致您发布评价获得的萌萌点被扣除，该操作不可撤销。
-            </p>
+            <p>您确定要删除这条评价吗？该操作不可撤销。</p>
           </ModalBody>
           <ModalFooter>
             <Button variant="light" onPress={onCloseDelete}>

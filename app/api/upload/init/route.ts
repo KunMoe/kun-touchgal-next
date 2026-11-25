@@ -7,7 +7,8 @@ import {
 import { prisma } from '~/prisma'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { kunRoute } from '~/app/api/utils/kunRoute'
-import { can } from '~/constants/permission'
+import { can, canPublishResource } from '~/constants/permission'
+import { POINT_GATE_MESSAGE } from '~/constants/points'
 import { createStagedUpload } from '~/server/storage/stagedUpload'
 import {
   toSafeObjectName,
@@ -50,8 +51,8 @@ export const POST = kunRoute.post({
     if (!can(uploader, 'storage.s3')) {
       return '您的权限不足, 创作者或者管理员才可以上传文件到对象存储'
     }
-    if (!can(uploader, 'upload.skipPointsGate') && user.moemoepoint < 20) {
-      return '仅限萌萌点大于 20 的用户才可以发布资源'
+    if (!canPublishResource({ ...uploader, moemoepoint: user.moemoepoint })) {
+      return POINT_GATE_MESSAGE.publishResource
     }
     if (!can(uploader, 'upload.skipCaptcha')) {
       const passed = await checkKunCaptchaExist(String(input.captcha ?? ''))

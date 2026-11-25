@@ -18,6 +18,11 @@ import {
   useDisclosure
 } from '@heroui/modal'
 import toast from 'react-hot-toast'
+import {
+  meetsPointGate,
+  POINT_GATE_MESSAGE,
+  POINT_RULES
+} from '~/constants/points'
 
 export const Username = () => {
   const { user, setUser } = useUserStore(
@@ -32,8 +37,8 @@ export const Username = () => {
   const { isOpen, onOpen, onOpenChange } = useDisclosure()
 
   const handleSave = async () => {
-    if (user.moemoepoint < 30) {
-      toast.error('更改用户名最少需要 30 萌萌点, 您的萌萌点不足')
+    if (!meetsPointGate('rename', user)) {
+      toast.error(POINT_GATE_MESSAGE.rename)
       return
     }
 
@@ -57,7 +62,7 @@ export const Username = () => {
           setUser({
             ...user,
             name: nextName,
-            moemoepoint: user.moemoepoint - 30
+            moemoepoint: user.moemoepoint - POINT_RULES.rename.cost
           })
           setDraft(null)
         })
@@ -90,7 +95,8 @@ export const Username = () => {
 
       <CardFooter className="flex flex-col items-start gap-3 border-t border-default-100 bg-default-50/60 px-5 py-4 sm:flex-row sm:items-center dark:bg-default-100/10">
         <p className="min-w-0 flex-1 leading-6 text-default-500">
-          用户名长度最大为 17，可以是任意字符。更改用户名需要消耗 30 萌萌点。
+          用户名长度最大为 17，可以是任意字符。更改用户名需要消耗{' '}
+          {POINT_RULES.rename.cost} 萌萌点。
         </p>
 
         <Button
@@ -111,7 +117,10 @@ export const Username = () => {
                   您确定要更改用户名吗?
                 </ModalHeader>
                 <ModalBody>
-                  <p>更改用户名需要消耗您 30 萌萌点, 该操作不可撤销</p>
+                  <p>
+                    更改用户名需要消耗您 {POINT_RULES.rename.cost} 萌萌点,
+                    该操作不可撤销
+                  </p>
                 </ModalBody>
                 <ModalFooter>
                   <Button color="danger" variant="light" onPress={onClose}>
