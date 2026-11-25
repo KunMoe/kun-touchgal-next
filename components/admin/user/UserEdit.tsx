@@ -54,7 +54,7 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
   const assignableRoles = roleOptions.filter((role) =>
     canAssignRole(currentUser, { current: user.role, next: role.value })
   )
-  // 与服务端同一个判定: 超级管理员账号的邮箱、密码、角色与状态不在后台改
+  // 与服务端同一个判定: 超级管理员账号的邮箱、密码、角色、状态与 2FA 不在后台改
   const superAdminTarget = isSuperAdminRole(user.role)
   const { isOpen, onOpen, onClose } = useDisclosure()
 
@@ -155,7 +155,8 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
             <p>请注意, 您的任何更改都会导致该用户重新登录</p>
             {superAdminTarget && (
               <p className="text-small text-default-500">
-                这是超级管理员账号, 邮箱、密码、角色与状态不能在后台修改
+                这是超级管理员账号,
+                邮箱、密码、角色、状态与两步验证不能在后台修改
               </p>
             )}
             <div className="grid grid-cols-2 gap-4">
@@ -253,7 +254,12 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
               color="warning"
               variant="flat"
               className="mr-auto"
-              isDisabled={updating || disabling2FA || !formUser.enable2FA}
+              isDisabled={
+                updating ||
+                disabling2FA ||
+                !formUser.enable2FA ||
+                superAdminTarget
+              }
               isLoading={disabling2FA}
               onPress={handleDisable2FA}
             >

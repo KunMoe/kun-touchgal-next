@@ -131,8 +131,8 @@ export const canAssignRole = (
   (can(subject, 'role.assign') &&
     KUN_GRANTABLE_ROLES.some((role) => role === change.next))
 
-// 后台改不了超级管理员账号的邮箱、密码、角色与状态 (服务端拒绝, 弹窗里置灰): 邮箱与密码由
-// 本人经带二次验证的自助入口改, 后台不能成为绕过它的通道; 后台的操作者自己就是超级管理员,
-// 这一条同时挡住在后台封禁、降权自己
+// 后台改不了超级管理员账号的邮箱、密码、角色与状态, 也关不了它的两步验证 (服务端拒绝, 弹窗里
+// 置灰): 邮箱、密码与 2FA 由本人经带二次验证的自助入口改, 后台不能成为绕过它的通道; 后台的
+// 操作者自己就是超级管理员, 这一条同时挡住在后台封禁、降权自己
 export const isSuperAdminRole = (role: number): boolean =>
   toKunRole(role) >= KUN_ROLE.SUPER_ADMIN

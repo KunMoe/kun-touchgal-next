@@ -4,6 +4,7 @@ import { kunRoute } from '~/app/api/utils/kunRoute'
 import { kunTx } from '~/server/db/tx'
 import { disableTwoFactor } from '~/server/auth/twoFactorState'
 import { adminDisableUser2FASchema } from '~/validations/admin'
+import { isSuperAdminRole } from '~/constants/permission'
 
 const disableUser2FAByAdmin = async (
   input: { uid: number },
@@ -14,11 +15,16 @@ const disableUser2FAByAdmin = async (
     select: {
       id: true,
       name: true,
+      role: true,
       enable_2fa: true
     }
   })
   if (!user) {
     return '未找到该用户'
+  }
+  // 与后台改用户同一条规则 (isSuperAdminRole): 本人关 2FA 要过第二因子, 后台不能绕过它
+  if (isSuperAdminRole(user.role)) {
+    return '不能在后台关闭超级管理员的两步验证'
   }
   if (!user.enable_2fa) {
     return '该用户尚未启用两步验证'

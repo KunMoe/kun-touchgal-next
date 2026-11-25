@@ -112,6 +112,23 @@ describe('POST /api/admin/user/2fa/disable', () => {
     expect(session.revokedUids).toEqual([])
   })
 
+  // 本人关 2FA 要过第二因子; 后台的操作者自己就是超管, 不能借后台绕过 (T31 同一条规则)
+  it.each([
+    ['another super admin', TARGET_UID],
+    ['the operator themself', ADMIN_UID]
+  ])('refuses to turn off 2FA of %s, writes nothing', async (_label, uid) => {
+    db.patchUser(TARGET_UID, { role: KUN_ROLE.SUPER_ADMIN })
+    db.patchUser(ADMIN_UID, enabledTarget)
+
+    const response = await post({ uid })
+
+    expect(await read(response)).toBe('不能在后台关闭超级管理员的两步验证')
+    expect(db.user(uid)).toMatchObject(enabledTarget)
+    expect(db.adminLogs()).toEqual([])
+    expect(db.transactions).toEqual([])
+    expect(session.revokedUids).toEqual([])
+  })
+
   it('answers 该用户尚未启用两步验证 for a target without 2FA', async () => {
     db.patchUser(TARGET_UID, { enable_2fa: false })
 
