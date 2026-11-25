@@ -5,6 +5,7 @@ import { RESOURCE_STATUS, contentStatusLabel } from '~/constants/contentStatus'
 import { transitionResources } from '~/server/content/resource/transition'
 import { adminUpdateResourceHiddenSchema } from '~/validations/admin'
 import { truncateLogContent } from '~/app/api/admin/_log'
+import { RESOURCE_TRANSITIONS } from '~/utils/content/transitions'
 
 export const updateResourceHidden = async (
   input: z.infer<typeof adminUpdateResourceHiddenSchema>,
@@ -16,11 +17,9 @@ export const updateResourceHidden = async (
   }
 
   const { resourceIds, status } = input
-  // 仅在 0 (正常) / 1 (隐藏) 之间流转; 待初次审核 (2) / 待审核 (3) 为系统态, 永不被命中
-  const from =
-    status === RESOURCE_STATUS.hidden
-      ? [RESOURCE_STATUS.public]
-      : [RESOURCE_STATUS.hidden]
+  // 只在公开与隐藏之间迁移, 待初审 / 待审是系统态, 不被命中 (utils/content/transitions.ts)
+  const transition =
+    RESOURCE_TRANSITIONS[status === RESOURCE_STATUS.hidden ? 'hide' : 'unhide']
 
   // 与后台批删等入口在行锁上互等时数据库会判死锁回滚其中一方, 事务整体回滚、无副作用,
   // 重放即可
@@ -31,8 +30,7 @@ export const updateResourceHidden = async (
       // 命令先锁资源行、只对锁下真正迁移的行作废任务: 与并发的作者编辑交错时, 不会
       // 留下「待审核却没有任何在途任务」的资源, 也不会谎报隐藏成功
       const moved = await transitionResources(ctx, resourceIds, {
-        from,
-        to: status,
+        ...transition,
         openTasks: 'cancel-keep-dry-run'
       })
       if (!moved.length) {

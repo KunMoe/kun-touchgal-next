@@ -22,17 +22,17 @@ import {
   planResourceRemoval
 } from '~/server/content/resource/remove'
 import { transitionResources } from '~/server/content/resource/transition'
-import {
-  COMMENT_STATUS,
-  RATING_STATUS,
-  RESOURCE_STATUS
-} from '~/constants/contentStatus'
 import { getAppealEditableLinkFields } from '~/utils/appealPayload'
 import { APPEAL_APPROVED_LINK, APPEAL_RESULT_NOTICE } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
 import type { AppealLink, AppealPayload } from '~/types/api/appeal'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { KunTxContext } from '~/server/db/tx'
+import {
+  COMMENT_TRANSITIONS,
+  RATING_TRANSITIONS,
+  RESOURCE_TRANSITIONS
+} from '~/utils/content/transitions'
 
 // 申诉载荷提交后即锁定, 管理员改不了: 正文渲染不出来时能做的只有拒绝
 const APPEAL_UNRENDERABLE =
@@ -142,22 +142,19 @@ const approveAppeal = async (
       // commentContent 非空即 type === 'comment'
       if (commentContent !== null) {
         restored = await transitionComments(ctx, [contentId], {
-          from: [COMMENT_STATUS.hidden],
-          to: COMMENT_STATUS.public,
+          ...COMMENT_TRANSITIONS.appealApprove,
           data: { ...commentContent, edit: Date.now().toString() },
           openTasks: 'keep'
         })
       } else if (type === 'rating') {
         restored = await transitionRatings(ctx, [contentId], {
-          from: [RATING_STATUS.hidden],
-          to: RATING_STATUS.public,
+          ...RATING_TRANSITIONS.appealApprove,
           data: { short_summary: payload.text ?? '' },
           openTasks: 'keep'
         })
       } else {
         restored = await transitionResources(ctx, [contentId], {
-          from: [RESOURCE_STATUS.hidden],
-          to: RESOURCE_STATUS.public,
+          ...RESOURCE_TRANSITIONS.appealApprove,
           data: { name: payload.name ?? '', note: payload.note ?? '' },
           openTasks: 'keep'
         })
@@ -243,7 +240,7 @@ const rejectAppeal = async (
       let skipped: Array<{ reason: string }>
       if (type === 'comment') {
         const plan = await planCommentRemoval(ctx, [contentId], {
-          statusIn: [COMMENT_STATUS.hidden]
+          statusIn: COMMENT_TRANSITIONS.appealApprove.from
         })
         if (plan.roots.length) {
           await executeCommentRemoval(ctx, plan, { orphanReports: 'inline' })
@@ -253,7 +250,7 @@ const rejectAppeal = async (
       } else if (type === 'rating') {
         // 隐藏评价不计入统计: 守卫只放行隐藏态, 命令不重算、也不锁 patch
         const plan = await planRatingRemoval(ctx, [contentId], {
-          statusIn: [RATING_STATUS.hidden]
+          statusIn: RATING_TRANSITIONS.appealApprove.from
         })
         if (plan.rows.length) {
           await executeRatingRemoval(ctx, plan, { orphanReports: 'inline' })
@@ -262,7 +259,7 @@ const rejectAppeal = async (
         skipped = plan.skipped
       } else {
         const plan = await planResourceRemoval(ctx, [contentId], {
-          guard: { statusIn: [RESOURCE_STATUS.hidden] },
+          guard: { statusIn: RESOURCE_TRANSITIONS.appealApprove.from },
           refundPublishReward: false
         })
         if (plan.rows.length) {

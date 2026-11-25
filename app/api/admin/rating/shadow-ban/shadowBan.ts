@@ -4,6 +4,7 @@ import { kunTx } from '~/server/db/tx'
 import { RATING_STATUS, contentStatusLabel } from '~/constants/contentStatus'
 import { transitionRatings } from '~/server/content/rating/transition'
 import { adminUpdateRatingShadowBanSchema } from '~/validations/admin'
+import { RATING_TRANSITIONS } from '~/utils/content/transitions'
 
 const statusLabel = (status: number) => contentStatusLabel('rating', status)
 
@@ -37,8 +38,9 @@ export const updateRatingShadowBan = async (
     // 管理员的裁决是最终的, 在途的审核任务一并作废 (dry_run 评估保留)。评分统计由
     // 命令在同一事务里重算
     const [moved] = await transitionRatings(ctx, [ratingId], {
-      from: Object.values(RATING_STATUS).filter((value) => value !== status),
-      to: status,
+      ...RATING_TRANSITIONS[
+        status === RATING_STATUS.hidden ? 'hide' : 'unhide'
+      ],
       openTasks: 'cancel-keep-dry-run'
     })
     // 上面判的是事务外快照; 行锁下已是目标状态, 或已被删除

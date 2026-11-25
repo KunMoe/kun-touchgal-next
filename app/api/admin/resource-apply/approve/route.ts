@@ -7,6 +7,7 @@ import { kunTx } from '~/server/db/tx'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import { transitionResources } from '~/server/content/resource/transition'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { RESOURCE_TRANSITIONS } from '~/utils/content/transitions'
 
 const approvePatchResource = async (
   input: z.infer<typeof approvePatchResourceSchema>,
@@ -38,8 +39,7 @@ const approvePatchResource = async (
     // 该行, 或已被另一次通过处理时, 这里得到空集, 走字符串错误契约而不是 500。
     // 待初审的资源不送 AI 审核, 没有在途任务可作废
     const moved = await transitionResources(ctx, [resourceId], {
-      from: [RESOURCE_STATUS.awaitingApproval],
-      to: RESOURCE_STATUS.public,
+      ...RESOURCE_TRANSITIONS.approveFirst,
       openTasks: 'keep'
     })
     if (!moved.length) {

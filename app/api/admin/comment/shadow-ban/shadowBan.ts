@@ -4,6 +4,7 @@ import { kunTx } from '~/server/db/tx'
 import { COMMENT_STATUS, contentStatusLabel } from '~/constants/contentStatus'
 import { transitionComments } from '~/server/content/comment/transition'
 import { adminUpdateCommentShadowBanSchema } from '~/validations/admin'
+import { COMMENT_TRANSITIONS } from '~/utils/content/transitions'
 
 const statusLabel = (status: number) => contentStatusLabel('comment', status)
 
@@ -37,8 +38,9 @@ export const updateCommentShadowBan = async (
     // 管理员的裁决是最终的, 在途的审核任务一并作废 (dry_run 评估保留)。恢复为正常时,
     // 创建时被拦截而没发出的通知由命令在提交后补发
     const [moved] = await transitionComments(ctx, [commentId], {
-      from: Object.values(COMMENT_STATUS).filter((value) => value !== status),
-      to: status,
+      ...COMMENT_TRANSITIONS[
+        status === COMMENT_STATUS.hidden ? 'hide' : 'unhide'
+      ],
       openTasks: 'cancel-keep-dry-run'
     })
     // 上面判的是事务外快照; 行锁下已是目标状态, 或已被删除

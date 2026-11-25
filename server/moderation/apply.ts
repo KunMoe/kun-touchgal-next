@@ -12,11 +12,6 @@ import { transitionComments } from '~/server/content/comment/transition'
 import { transitionRatings } from '~/server/content/rating/transition'
 import { transitionResources } from '~/server/content/resource/transition'
 import {
-  COMMENT_STATUS,
-  RATING_STATUS,
-  RESOURCE_STATUS
-} from '~/constants/contentStatus'
-import {
   MODERATION_REJECT_CODE_MAP,
   MODERATION_REJECT_NOTICE,
   MODERATION_S3_TIMEOUT_MS
@@ -30,6 +25,11 @@ import {
   MODERATION_PAYLOAD_UNREADABLE,
   decodeModerationTask
 } from './taskCodec'
+import {
+  COMMENT_TRANSITIONS,
+  RATING_TRANSITIONS,
+  RESOURCE_TRANSITIONS
+} from '~/utils/content/transitions'
 
 export interface ApplyVerdictOptions {
   task: moderation_taskModel
@@ -206,22 +206,21 @@ export const applyModerationVerdict = async (
     switch (task.content_type) {
       case 'comment':
         await transitionComments(ctx, [contentId], {
-          from: [COMMENT_STATUS.pending],
-          to: approved ? COMMENT_STATUS.public : COMMENT_STATUS.hidden,
+          ...COMMENT_TRANSITIONS[approved ? 'verdictApprove' : 'verdictReject'],
           openTasks: 'keep'
         })
         break
       case 'rating':
         await transitionRatings(ctx, [contentId], {
-          from: [RATING_STATUS.pending],
-          to: approved ? RATING_STATUS.public : RATING_STATUS.hidden,
+          ...RATING_TRANSITIONS[approved ? 'verdictApprove' : 'verdictReject'],
           openTasks: 'keep'
         })
         break
       case 'resource':
         await transitionResources(ctx, [contentId], {
-          from: [RESOURCE_STATUS.pending],
-          to: approved ? RESOURCE_STATUS.public : RESOURCE_STATUS.hidden,
+          ...RESOURCE_TRANSITIONS[
+            approved ? 'verdictApprove' : 'verdictReject'
+          ],
           openTasks: 'keep'
         })
         break
