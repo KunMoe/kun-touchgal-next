@@ -32,8 +32,8 @@ const isAppRunning = (appName: string) =>
 
 const isApplicationRunning = () => appNames.some(isAppRunning)
 
-// cron 进程先单独停: 它收到信号后等在途作业最多约 25 秒 (ecosystem 的 kill_timeout), 这段时间
-// web 仍在服务旧版本。pnpm stop 按 ecosystem 并发删两个进程、等两者都退出才返回, 不先停 cron
+// cron 进程先单独停: 它收到信号后等在途作业最多约 25 秒 (宽限 20 秒 + 收尾 5 秒, 见
+// server/cron.ts; ecosystem 的 kill_timeout 30 秒是兜底的 SIGKILL), 这段时间 web 仍在服务旧版本。pnpm stop 按 ecosystem 并发删两个进程、等两者都退出才返回, 不先停 cron
 // 的话这段等待会叠进 web 的停机窗口
 const stopApplications = () => {
   if (isAppRunning(cronAppName)) {

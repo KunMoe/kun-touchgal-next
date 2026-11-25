@@ -23,9 +23,9 @@ export const resetDailyStats = async () => {
   await invalidateAllUserSessions()
 }
 
-// 每天的 0 点只重置一次: 部署时新旧两个 cron 进程短暂并存也只有一个执行。标记键沿用原来那把
-// 不释放的锁的键名, 与还没升级的进程照样互斥。没抢到 (Redis 连续出错) 这一天就不重置, 与
-// 原来相同
+// 每天的 0 点跨进程只重置一次 (有人另起了一个 cron 进程也只有一个执行; deploy:build 先停后起,
+// 不会让两个并存)。标记键沿用原来那把不释放的锁的键名, 与还没升级的进程照样互斥。没抢到
+// (Redis 连续出错) 这一天就不重置, 与原来相同
 export const resetDailyJob = defineScheduledJob({
   name: 'reset_daily',
   schedule: '0 0 * * *',
