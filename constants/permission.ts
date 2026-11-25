@@ -121,8 +121,8 @@ export const KUN_GRANTABLE_ROLES = [
   KUN_ROLE.ADMIN
 ] as const
 
-// 按 delta 判定: 角色没有变化恒放行 (表单整体提交, role 恒定携带), 否则操作者要有
-// 授予角色的能力, 且目标角色可被授予
+// 按 delta 判定: 角色没有变化恒放行 (下拉里列着当前值), 否则操作者要有授予角色的能力,
+// 且目标角色可被授予
 export const canAssignRole = (
   subject: KunSubject | null | undefined,
   change: { current: number; next: number }
@@ -130,3 +130,9 @@ export const canAssignRole = (
   change.next === change.current ||
   (can(subject, 'role.assign') &&
     KUN_GRANTABLE_ROLES.some((role) => role === change.next))
+
+// 后台改不了超级管理员账号的邮箱、密码、角色与状态 (服务端拒绝, 弹窗里置灰): 邮箱与密码由
+// 本人经带二次验证的自助入口改, 后台不能成为绕过它的通道; 后台的操作者自己就是超级管理员,
+// 这一条同时挡住在后台封禁、降权自己
+export const isSuperAdminRole = (role: number): boolean =>
+  toKunRole(role) >= KUN_ROLE.SUPER_ADMIN

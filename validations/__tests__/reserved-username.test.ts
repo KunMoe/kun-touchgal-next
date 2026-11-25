@@ -141,8 +141,8 @@ describe('服务端 schema 拦截保留词', () => {
     code: 'Abc1234',
     password: 'pass1234'
   }
-  // 管理端改用户信息的保留词校验不在 schema 层 (整表单提交会锁死存量保留名
-  // 用户), 落在 app/api/admin/user/update.ts 的改名分支, 由 update.test.ts 覆盖
+  // 管理端改用户信息的保留词校验不在 schema 层 (只有名字确实变了才判, schema 看不到
+  // 原名), 落在 app/api/admin/user/update.ts 的改名分支, 由 update.test.ts 覆盖
 
   it('registerServerSchema 拒绝保留词, 错误定位在 name', () => {
     const result = registerServerSchema.safeParse({

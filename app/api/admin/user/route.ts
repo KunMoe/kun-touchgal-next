@@ -1,6 +1,6 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import {
-  adminUpdateUserSchema,
+  adminPatchUserSchema,
   adminUserPaginationSchema
 } from '~/validations/admin'
 import { userUidSchema } from '~/validations/user'
@@ -18,7 +18,7 @@ export const GET = kunRoute.get({
 export const PUT = kunRoute.put({
   auth: 'user',
   capability: 'admin.access',
-  input: adminUpdateUserSchema,
+  input: adminPatchUserSchema,
   handler: ({ input, actor }) => updateUser(input, actor.uid)
 })
 

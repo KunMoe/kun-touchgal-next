@@ -26,7 +26,7 @@ export const classifyLoginIdentifier = (input: string): LoginIdentifier => {
 }
 
 // 登录框收「邮箱」或「1~17 个字符的用户名」。用户名一侧与改名规则 (validations/user.ts
-// 的 usernameSchema、admin 的 adminUpdateUserSchema) 一致, 不套注册正则: 改名放行的
+// 的 usernameSchema、admin 的 adminPatchUserSchema) 一致, 不套注册正则: 改名放行的
 // 「Mr.Pizza」「Nihil Contingens」以前只能用邮箱登录。长度按码点计, 与 zod 的 .max、
 // 库里 VarChar(17) 的字符数同一个单位。NUL 单独拒绝: PostgreSQL 的文本存不了它, 库里不可能
 // 有这样的名字, 放过去查询会以 22021 报错、回 500 (注册正则以前在这里就拒掉了)

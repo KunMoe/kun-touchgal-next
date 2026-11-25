@@ -19,11 +19,11 @@ import {
 import { Edit2 } from 'lucide-react'
 import { USER_STATUS_MAP } from '~/constants/user'
 import { KUN_ROLE_LABEL } from '~/constants/role'
-import { canAssignRole } from '~/constants/permission'
+import { canAssignRole, isSuperAdminRole } from '~/constants/permission'
 import { kunFetchPost, kunFetchPut } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useUserStore } from '~/store/userStore'
-import type { AdminUser } from '~/types/api/admin'
+import type { AdminUser, AdminUserPatchResult } from '~/types/api/admin'
 
 interface Props {
   initialUser: AdminUser
@@ -44,6 +44,7 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
   const [user, setUser] = useState<AdminUser>(initialUser)
   const [formUser, setFormUser] = useState<AdminUser>(initialUser)
   const [password, setPassword] = useState('')
+  const [resetImageCount, setResetImageCount] = useState(false)
   const [disabling2FA, setDisabling2FA] = useState(false)
   const currentUser = useUserStore(
     useShallow((state) => ({ uid: state.user.uid, role: state.user.role }))
@@ -52,6 +53,8 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
   const assignableRoles = roleOptions.filter((role) =>
     canAssignRole(currentUser, { current: user.role, next: role.value })
   )
+  // 与服务端同一个判定: 超级管理员账号的邮箱、密码、角色与状态不在后台改
+  const superAdminTarget = isSuperAdminRole(user.role)
   const { isOpen, onOpen, onClose } = useDisclosure()
 
   useEffect(() => {
@@ -66,44 +69,48 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
   const handleOpen = () => {
     setFormUser(user)
     setPassword('')
+    setResetImageCount(false)
     onOpen()
   }
 
   const handleClose = () => {
     setFormUser(user)
     setPassword('')
+    setResetImageCount(false)
     onClose()
   }
 
   // 输入框填目标值, 请求只带差值: 打开弹窗之后用户签到、被赞、消费的增减不被覆盖
   const pointDelta = formUser.moemoepoint - user.moemoepoint
+  // 请求只带这次改了的键 (合并契约): 与打开弹窗时的快照比, 没改的列不随请求写回,
+  // 打开之后别处写下的改名、改邮箱、升权、封禁不会被快照回滚
+  const changes = {
+    ...(formUser.name !== user.name ? { name: formUser.name } : {}),
+    ...(formUser.email !== user.email ? { email: formUser.email } : {}),
+    ...(formUser.role !== user.role ? { role: formUser.role } : {}),
+    ...(formUser.status !== user.status ? { status: formUser.status } : {}),
+    ...(formUser.bio !== user.bio ? { bio: formUser.bio } : {}),
+    ...(pointDelta ? { moemoepointDelta: pointDelta } : {}),
+    ...(resetImageCount ? { resetDailyImageCount: true } : {}),
+    ...(password.trim() ? { password } : {})
+  }
+  const hasChanges = Object.keys(changes).length > 0
 
   const [updating, setUpdating] = useState(false)
   const handleUpdateUserInfo = async () => {
-    const requestData = {
-      uid: formUser.id,
-      name: formUser.name,
-      email: formUser.email,
-      role: formUser.role,
-      status: formUser.status,
-      dailyImageCount: formUser.dailyImageCount,
-      ...(pointDelta ? { moemoepointDelta: pointDelta } : {}),
-      bio: formUser.bio,
-      ...(password ? { password } : {})
-    }
-
     setUpdating(true)
     try {
-      const res = await kunFetchPut<KunResponse<{ moemoepoint: number }>>(
+      const res = await kunFetchPut<KunResponse<AdminUserPatchResult>>(
         '/admin/user',
-        requestData
+        { uid: user.id, ...changes }
       )
-      kunErrorHandler(res, ({ moemoepoint }) => {
-        // 萌萌点以服务端写后的余额为准
-        const saved = { ...formUser, moemoepoint }
+      kunErrorHandler(res, (result) => {
+        // 以服务端写后的值为准
+        const saved = { ...user, ...result }
         setUser(saved)
         setFormUser(saved)
         setPassword('')
+        setResetImageCount(false)
         toast.success('更新用户信息成功')
         onClose()
         onUpdated?.(saved)
@@ -153,6 +160,11 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
           <ModalHeader>编辑用户: {formUser.name}</ModalHeader>
           <ModalBody>
             <p>请注意, 您的任何更改都会导致该用户重新登录</p>
+            {superAdminTarget && (
+              <p className="text-small text-default-500">
+                这是超级管理员账号, 邮箱、密码、角色与状态不能在后台修改
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <Input label="用户 ID" value={String(formUser.id)} isReadOnly />
               <Input
@@ -164,11 +176,13 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
                 label="邮箱"
                 type="email"
                 value={formUser.email}
+                isDisabled={superAdminTarget}
                 onChange={(e) => handleChange('email', e.target.value)}
               />
               <Select
                 label="角色"
                 selectedKeys={[String(formUser.role)]}
+                isDisabled={superAdminTarget}
                 onChange={(e) => handleChange('role', Number(e.target.value))}
               >
                 {assignableRoles.map((role) => (
@@ -178,6 +192,7 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
               <Select
                 label="状态"
                 selectedKeys={[String(formUser.status)]}
+                isDisabled={superAdminTarget}
                 onChange={(e) => handleChange('status', Number(e.target.value))}
                 disabledKeys={['1']}
               >
@@ -186,11 +201,25 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
                 ))}
               </Select>
               <Input
-                label="每日图片限额"
-                type="number"
-                value={String(formUser.dailyImageCount)}
-                onChange={(e) =>
-                  handleChange('dailyImageCount', Number(e.target.value))
+                label="今日已用图片"
+                value={String(resetImageCount ? 0 : formUser.dailyImageCount)}
+                description={
+                  resetImageCount
+                    ? `保存后清零 (现为 ${formUser.dailyImageCount} 张)`
+                    : undefined
+                }
+                isReadOnly
+                endContent={
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    isDisabled={
+                      !resetImageCount && formUser.dailyImageCount === 0
+                    }
+                    onPress={() => setResetImageCount((prev) => !prev)}
+                  >
+                    {resetImageCount ? '撤销' : '清零'}
+                  </Button>
                 }
               />
               <Input
@@ -212,6 +241,7 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
                   type="password"
                   autoComplete="new-password"
                   description="留空则不修改该用户密码"
+                  isDisabled={superAdminTarget}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
@@ -241,7 +271,7 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
             </Button>
             <Button
               color="primary"
-              isDisabled={updating || disabling2FA}
+              isDisabled={updating || disabling2FA || !hasChanges}
               isLoading={updating}
               onPress={handleUpdateUserInfo}
             >

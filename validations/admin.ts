@@ -187,45 +187,86 @@ export const adminReportPaginationSchema = adminPaginationSchema.extend({
   targetType: adminReportTargetTypeSchema.default('comment')
 })
 
-export const adminUpdateUserSchema = z.object({
-  uid: kunId('用户 ID'),
-  name: z
-    .string()
-    .trim()
-    .min(1, { message: '用户名长度至少为 1 个字符' })
-    .max(17, { message: '用户名长度不能超过 17 个字符' }),
-  email: z.string().trim().email({ message: '请输入合法的邮箱格式' }),
-  // 只校验取值域。表单整体提交, role 恒定携带: 在这里卡「可授予」的上限会让超级管理员账号
-  // 连别的字段都保存不了; 能不能改成这个角色由服务按新旧角色判定 (canAssignRole)
-  role: kunInt(KUN_ROLE.USER, KUN_ROLE.SUPER_ADMIN, '用户角色无效'),
-  status: kunInt(0, 2, '用户状态无效'),
-  dailyImageCount: kunInt(0, 50, '每日图片上传数须为 0～50 的整数'),
-  // 萌萌点按差值调整 (表单里仍填目标值, 由客户端换算), 打开表单之后发生的增减不会被覆盖;
-  // 不改萌萌点就不带这个键
-  moemoepointDelta: kunInt(
-    -9999999,
-    9999999,
-    '萌萌点调整值须为 -9999999～9999999 的整数'
-  ).optional(),
-  password: z.preprocess(
-    (value) => {
-      if (typeof value !== 'string') {
-        return value
-      }
+// 后台改用户是合并契约: 请求只带这一次改了的字段 (客户端拿打开弹窗时的快照比出来), 没带的列
+// 不写。打开弹窗之后别处写下的改名、改邮箱、升权、封禁、萌萌点与图片计数因此不会被快照回滚,
+// 只属于某一列的规则也只在改这一列时才拦。计数列只收差值或清零, 不收绝对值。
+// strict: 旧页面的整行请求体 (带着已删掉的 dailyImageCount) 整个拒绝, 不会剥掉未知键之后接着
+// 用快照覆盖其余的列
+export const adminPatchUserSchema = z
+  .strictObject(
+    {
+      uid: kunId('用户 ID'),
+      name: z
+        .string()
+        .trim()
+        .min(1, { message: '用户名长度至少为 1 个字符' })
+        .max(17, { message: '用户名长度不能超过 17 个字符' })
+        .optional(),
+      email: z
+        .string()
+        .trim()
+        .email({ message: '请输入合法的邮箱格式' })
+        .optional(),
+      // 只校验取值域, 能不能改成这个角色由服务按新旧角色判定 (canAssignRole)
+      role: kunInt(
+        KUN_ROLE.USER,
+        KUN_ROLE.SUPER_ADMIN,
+        '用户角色无效'
+      ).optional(),
+      status: kunInt(0, 2, '用户状态无效').optional(),
+      // 萌萌点按差值调整 (表单里仍填目标值, 由客户端换算), 打开表单之后发生的增减不会被覆盖
+      moemoepointDelta: kunInt(
+        -9999999,
+        9999999,
+        '萌萌点调整值须为 -9999999～9999999 的整数'
+      )
+        .refine((delta) => delta !== 0, { message: '萌萌点调整值不能为 0' })
+        .optional(),
+      // 当日已用图片数只能清零: 它另有抢占、退还与每日重置三个写者
+      resetDailyImageCount: z
+        .literal(true, { message: '清零图片计数的参数无效' })
+        .optional(),
+      password: z.preprocess(
+        (value) => {
+          if (typeof value !== 'string') {
+            return value
+          }
 
-      const trimmedValue = value.trim()
-      return trimmedValue ? trimmedValue : undefined
+          const trimmedValue = value.trim()
+          return trimmedValue ? trimmedValue : undefined
+        },
+        z
+          .string()
+          .regex(kunPasswordRegex, {
+            message:
+              '新密码格式非法, 密码长度需为 6 到 1007 位, 且至少包含一个英文字符和一个数字'
+          })
+          .optional()
+      ),
+      bio: z
+        .string()
+        .trim()
+        .max(107, { message: '个人简介不能超过 107 个字符' })
+        .optional()
     },
-    z
-      .string()
-      .regex(kunPasswordRegex, {
-        message:
-          '新密码格式非法, 密码长度需为 6 到 1007 位, 且至少包含一个英文字符和一个数字'
-      })
-      .optional()
-  ),
-  bio: z.string().trim().max(107, { message: '个人简介不能超过 107 个字符' })
-})
+    {
+      error: (issue) =>
+        issue.code === 'unrecognized_keys'
+          ? '页面版本已过期, 请刷新后重试'
+          : undefined
+    }
+  )
+  .refine(
+    (input) =>
+      Object.entries(input).some(
+        ([key, value]) => key !== 'uid' && value !== undefined
+      ),
+    {
+      message: '没有需要保存的修改',
+      // 旧页面的请求体只报「页面版本已过期」: 未知键不中止解析, 不加这一句会再多报一条
+      when: (payload) => payload.issues.length === 0
+    }
+  )
 
 export const adminDisableUser2FASchema = z.object({
   uid: kunId('用户 ID')

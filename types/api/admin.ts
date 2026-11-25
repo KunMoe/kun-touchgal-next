@@ -41,6 +41,19 @@ export interface AdminUser {
   }
 }
 
+// PUT /api/admin/user 的应答: 写后的可编辑列 (服务端的真值, 不是这次提交的值)
+export type AdminUserPatchResult = Pick<
+  AdminUser,
+  | 'id'
+  | 'name'
+  | 'email'
+  | 'bio'
+  | 'role'
+  | 'status'
+  | 'dailyImageCount'
+  | 'moemoepoint'
+>
+
 export interface AdminCreator {
   id: number
   content: string
