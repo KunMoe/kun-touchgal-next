@@ -33,6 +33,7 @@ import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useUserStore } from '~/store/userStore'
 import { can } from '~/constants/permission'
 import type { PatchComment } from '~/types/api/patch'
+import { isPendingStatus } from '~/constants/contentStatus'
 
 interface Props {
   comment: PatchComment
@@ -42,7 +43,7 @@ interface Props {
 
 export const CommentDropdown = ({ comment, setComments, onDeleted }: Props) => {
   const user = useUserStore((state) => state.user)
-  const isPending = comment.status === 1
+  const isPending = isPendingStatus('comment', comment.status)
 
   const [editContent, setEditContent] = useState('')
   const [editIsSpoiler, setEditIsSpoiler] = useState(false)

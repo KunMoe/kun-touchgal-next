@@ -1422,6 +1422,52 @@ export const KUN_INVARIANTS = [
         'export const n = (x: { coerce: { numbers: () => number } }) => x.coerce.numbers()'
       ]
     }
+  },
+  {
+    id: 'inv-status-01',
+    aliases: ['T29'],
+    statement:
+      'status 不写一位数的数字字面量 (对象键 status 的值、status 过滤条件里的值、与 .status 的相等比较、SQL 文本里的 status 比较): 评论、评价、资源用 constants/contentStatus.ts 的常量与 contentPhase; 别的表 (举报、用户、私信、反馈、创作者申请) 的 status 还没有常量, 存量记在 eslint-suppressions.json 基线里, 只减不增',
+    reason:
+      '三张内容表的 status 是无约束 Int, 编码按表错位 (评论 / 评价 1 待审 2 隐藏, 资源 1 隐藏 2 待初审 3 待审)。裸数字之上的规则曾在 12 个闸门、3 个可见性构造器和 13 个组件里各抄一份: 810ff0a8 新增资源 3 时靠对抗审查才找出 4 处旧判断, 还漏了发布弹窗一处 (P26-04); 兄弟路径各少一道判断的点修出过 5 次。认不出值从变量传进来的写法 (那几处已改用迁移表)',
+    removeWhen:
+      'status 改成 PG / Prisma enum 或 text 列, 或内容状态拆成独立的审核列与可见性列',
+    // lint/ 自己的样例串会被 strings 命中
+    ignores: ['constants/contentStatus.ts', 'lint/**', '**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `Property${keyIs("'status'")} > Literal.value[raw=/^[0-9]$/]`,
+        `Property${keyIs("'status'")} > ConditionalExpression > Literal[raw=/^[0-9]$/]`,
+        `Property${keyIs("'status'")} > ObjectExpression > Property > Literal.value[raw=/^[0-9]$/]`,
+        `Property${keyIs("'status'")} > ObjectExpression > Property > ArrayExpression > Literal[raw=/^[0-9]$/]`,
+        "BinaryExpression[operator=/^[!=]==?$/]:matches([left.property.name='status'], [left.expression.property.name='status']) > Literal.right[raw=/^[0-9]$/]",
+        "BinaryExpression[operator=/^[!=]==?$/]:matches([right.property.name='status'], [right.expression.property.name='status']) > Literal.left[raw=/^[0-9]$/]"
+      ],
+      strings: [/\bstatus\s*(=|<>|!=|\bIN\b)\s*\(?\s*[0-9]\b/i]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        'export const w = { status: 0 }',
+        'export const w = { patch_id: 1, status: { in: [0, 1] } }',
+        'export const w = { status: { not: 2 } }',
+        'export const d = (intercept: boolean) => ({ status: intercept ? 1 : 0 })',
+        'export const f = (r: { status: number }) => r.status === 1',
+        'export const f = (r: { status: number }) => 2 !== r.status',
+        'export const f = (r?: { status: number }) => r?.status === 3',
+        'export const q = `SELECT id FROM patch_comment WHERE status = 0`',
+        'export const q = `WHERE status IN (0, 1) AND user_id = ${1}`'
+      ],
+      good: [
+        "import { COMMENT_STATUS } from '~/constants/contentStatus'\nexport const w = { status: COMMENT_STATUS.public }",
+        "import { contentPhase, isPendingPhase } from '~/constants/contentStatus'\nexport const f = (r: { status: number }) => isPendingPhase(contentPhase('resource', r.status))",
+        "export const s = { status: 'pending' }",
+        'export const f = (r: Response) => r.status === 401',
+        'export const init = { status: 502 }',
+        'export const w = { avatar_status: 0 }'
+      ]
+    }
   }
 ]
 

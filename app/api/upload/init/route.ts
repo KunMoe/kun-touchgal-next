@@ -13,6 +13,7 @@ import {
   toSafeObjectName,
   UNSAFE_OBJECT_NAME_ERROR
 } from '~/utils/safeObjectName'
+import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
 const MIN_FILE_SIZE = 1024
 
@@ -68,7 +69,10 @@ export const POST = kunRoute.post({
     }
 
     const pending = await prisma.patch_resource.findFirst({
-      where: { user_id: payload.uid, status: 2 }
+      where: {
+        user_id: payload.uid,
+        status: RESOURCE_STATUS.awaitingApproval
+      }
     })
     if (pending) {
       return '您有至少一个 Galgame 资源在待审核阶段, 请等待审核结束后再发布资源'

@@ -1,15 +1,11 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
-import { RATING_STATUS } from '~/constants/contentStatus'
+import { RATING_STATUS, contentStatusLabel } from '~/constants/contentStatus'
 import { transitionRatings } from '~/server/content/rating/transition'
 import { adminUpdateRatingShadowBanSchema } from '~/validations/admin'
 
-const statusLabel: Record<number, string> = {
-  0: '正常',
-  1: '待审核',
-  2: '隐藏'
-}
+const statusLabel = (status: number) => contentStatusLabel('rating', status)
 
 export const updateRatingShadowBan = async (
   input: z.infer<typeof adminUpdateRatingShadowBanSchema>,
@@ -34,7 +30,7 @@ export const updateRatingShadowBan = async (
     return '未找到该评价'
   }
   if (rating.status === status) {
-    return `该评价已处于${statusLabel[status]}状态`
+    return `该评价已处于${statusLabel(status)}状态`
   }
 
   const failure = await kunTx('admin.rating.shadowBan', async (ctx) => {
@@ -52,7 +48,7 @@ export const updateRatingShadowBan = async (
         select: { id: true }
       })
       return ctx.fail(
-        exists ? `该评价已处于${statusLabel[status]}状态` : '未找到该评价'
+        exists ? `该评价已处于${statusLabel(status)}状态` : '未找到该评价'
       )
     }
 
@@ -60,7 +56,7 @@ export const updateRatingShadowBan = async (
       data: {
         type: 'update',
         user_id: adminUid,
-        content: `管理员 ${admin.name} 将用户 ${rating.user.name} 的评价 (ID: ${ratingId}) 状态由 ${statusLabel[moved.from]} 修改为 ${statusLabel[status]}`
+        content: `管理员 ${admin.name} 将用户 ${rating.user.name} 的评价 (ID: ${ratingId}) 状态由 ${statusLabel(moved.from)} 修改为 ${statusLabel(status)}`
       }
     })
   })

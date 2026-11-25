@@ -40,13 +40,6 @@ export const APPLICANT_STATUS_MAP: Record<number, string> = {
   3: '已拒绝'
 }
 
-export const RESOURCE_STATUS_MAP: Record<number, string> = {
-  0: '正常',
-  1: '隐藏',
-  2: '待初次审核',
-  3: '待审核'
-}
-
 export const ADMIN_LOG_TYPE_MAP: Record<string, string> = {
   create: '创建',
   delete: '删除',

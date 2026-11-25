@@ -1,15 +1,10 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
-import { RESOURCE_STATUS } from '~/constants/contentStatus'
+import { RESOURCE_STATUS, contentStatusLabel } from '~/constants/contentStatus'
 import { transitionResources } from '~/server/content/resource/transition'
 import { adminUpdateResourceHiddenSchema } from '~/validations/admin'
 import { truncateLogContent } from '~/app/api/admin/_log'
-
-const statusLabel: Record<number, string> = {
-  0: '正常',
-  1: '隐藏'
-}
 
 export const updateResourceHidden = async (
   input: z.infer<typeof adminUpdateResourceHiddenSchema>,
@@ -50,7 +45,7 @@ export const updateResourceHidden = async (
           type: 'update',
           user_id: uid,
           content: truncateLogContent(
-            `管理员 ${admin.name} 批量将 ${movedIds.length} 条资源状态修改为 ${statusLabel[status]}\n资源 ID: ${movedIds.join(', ')}`
+            `管理员 ${admin.name} 批量将 ${movedIds.length} 条资源状态修改为 ${contentStatusLabel('resource', status)}\n资源 ID: ${movedIds.join(', ')}`
           )
         }
       })

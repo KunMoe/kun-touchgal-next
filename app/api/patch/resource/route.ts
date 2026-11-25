@@ -13,6 +13,7 @@ import { deleteResource } from './delete'
 import { prisma } from '~/prisma/index'
 import { acquireKvLock, releaseKvLock } from '~/lib/redis'
 import { can } from '~/constants/permission'
+import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
 const patchIdSchema = z.object({
   patchId: kunId('游戏 ID')
@@ -42,7 +43,10 @@ export const POST = kunRoute.post({
     }
 
     const resource = await prisma.patch_resource.findFirst({
-      where: { user_id: payload.uid, status: 2 }
+      where: {
+        user_id: payload.uid,
+        status: RESOURCE_STATUS.awaitingApproval
+      }
     })
     if (resource) {
       return NextResponse.json(

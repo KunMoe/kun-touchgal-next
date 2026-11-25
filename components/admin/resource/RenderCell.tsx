@@ -2,12 +2,23 @@
 
 import { Chip } from '@heroui/react'
 import Link from 'next/link'
-import { RESOURCE_STATUS_MAP } from '~/constants/admin'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { ResourceEdit } from './ResourceEdit'
 import { KunUser } from '~/components/kun/floating-card/KunUser'
 import type { AdminResource } from '~/types/api/admin'
 import type { PatchResource } from '~/types/api/patch'
+import { contentPhase, contentStatusLabel } from '~/constants/contentStatus'
+import type { ContentPhase } from '~/constants/contentStatus'
+
+const RESOURCE_PHASE_COLOR: Record<
+  ContentPhase,
+  'success' | 'danger' | 'warning' | 'default'
+> = {
+  public: 'success',
+  hidden: 'danger',
+  pending: 'warning',
+  awaitingApproval: 'default'
+}
 
 interface RenderActions {
   onUpdated: (resource: PatchResource) => void
@@ -59,16 +70,10 @@ export const RenderCell = (
       )
     case 'status': {
       const color =
-        resource.status === 0
-          ? 'success'
-          : resource.status === 1
-            ? 'danger'
-            : resource.status === 3
-              ? 'warning'
-              : 'default'
+        RESOURCE_PHASE_COLOR[contentPhase('resource', resource.status)]
       return (
         <Chip color={color} variant="flat">
-          {RESOURCE_STATUS_MAP[resource.status] ?? '未知'}
+          {contentStatusLabel('resource', resource.status)}
         </Chip>
       )
     }

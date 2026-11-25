@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import { Prisma } from '~/prisma/generated/prisma/client'
 
 const { executeRawMock } = vi.hoisted(() => ({
   executeRawMock: vi.fn()
@@ -22,16 +22,18 @@ expectTypeOf(recomputePatchRatingStats).parameters.toEqualTypeOf<
   [number[], Prisma.TransactionClient]
 >()
 
-const getSql = (call: unknown[]) =>
-  (call[0] as TemplateStringsArray).join('?').replace(/\s+/g, ' ').trim()
+// 按 Prisma 自己的规则拼回整条 SQL: 内嵌的 Prisma.join / Prisma.raw 展开, 其余插值是绑定参数
+const compose = (call: unknown[]) =>
+  new Prisma.Sql(call[0] as TemplateStringsArray, call.slice(1) as never[])
 
+const getSql = (call: unknown[]) =>
+  compose(call).sql.replace(/\s+/g, ' ').trim()
+
+// Prisma.join(patchIds) 那个插值; 状态码的 Prisma.raw 没有绑定参数, 跳过
 const getJoinedValues = (call: unknown[]) => {
   const joined = call.find(
     (value): value is { values: unknown[] } =>
-      typeof value === 'object' &&
-      value !== null &&
-      'values' in value &&
-      Array.isArray(value.values)
+      value instanceof Prisma.Sql && value.values.length > 0
   )
   return joined?.values
 }

@@ -16,6 +16,12 @@ import type {
   AppealPayload,
   AppealResourceField
 } from '~/types/api/appeal'
+import {
+  COMMENT_STATUS,
+  RATING_STATUS,
+  RESOURCE_STATUS
+} from '~/constants/contentStatus'
+import { statusSql } from '~/server/content/visibility'
 
 type SubmitAppealInput = z.infer<typeof submitAppealSchema>
 type ResourceAppealInput = Extract<
@@ -34,20 +40,32 @@ const checkContentAppealable = async (
       where: { id: contentId },
       select: { user_id: true, status: true }
     })
-    return !!comment && comment.user_id === uid && comment.status === 2
+    return (
+      !!comment &&
+      comment.user_id === uid &&
+      comment.status === COMMENT_STATUS.hidden
+    )
   }
   if (contentType === 'rating') {
     const rating = await prisma.patch_rating.findUnique({
       where: { id: contentId },
       select: { user_id: true, status: true }
     })
-    return !!rating && rating.user_id === uid && rating.status === 2
+    return (
+      !!rating &&
+      rating.user_id === uid &&
+      rating.status === RATING_STATUS.hidden
+    )
   }
   const resource = await prisma.patch_resource.findUnique({
     where: { id: contentId },
     select: { user_id: true, status: true }
   })
-  return !!resource && resource.user_id === uid && resource.status === 1
+  return (
+    !!resource &&
+    resource.user_id === uid &&
+    resource.status === RESOURCE_STATUS.hidden
+  )
 }
 
 // 用 FOR UPDATE 锁定目标内容行, 与并发的内容删除在该行上互斥;
@@ -61,7 +79,8 @@ const lockContentForAppeal = async (
   if (contentType === 'comment') {
     const rows = await tx.$queryRaw<{ id: number }[]>`
       SELECT id FROM patch_comment
-      WHERE id = ${contentId} AND user_id = ${uid} AND status = 2
+      WHERE id = ${contentId} AND user_id = ${uid}
+        AND status = ${statusSql(COMMENT_STATUS.hidden)}
       FOR UPDATE
     `
     return rows.length > 0
@@ -69,14 +88,16 @@ const lockContentForAppeal = async (
   if (contentType === 'rating') {
     const rows = await tx.$queryRaw<{ id: number }[]>`
       SELECT id FROM patch_rating
-      WHERE id = ${contentId} AND user_id = ${uid} AND status = 2
+      WHERE id = ${contentId} AND user_id = ${uid}
+        AND status = ${statusSql(RATING_STATUS.hidden)}
       FOR UPDATE
     `
     return rows.length > 0
   }
   const rows = await tx.$queryRaw<{ id: number }[]>`
     SELECT id FROM patch_resource
-    WHERE id = ${contentId} AND user_id = ${uid} AND status = 1
+    WHERE id = ${contentId} AND user_id = ${uid}
+      AND status = ${statusSql(RESOURCE_STATUS.hidden)}
     FOR UPDATE
   `
   return rows.length > 0

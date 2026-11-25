@@ -9,6 +9,7 @@ import { ResourceLikeButton } from './ResourceLike'
 import { ResourceDownloadCard } from './DownloadCard'
 import { getResourceView } from './resourceView'
 import type { PatchResource } from '~/types/api/patch'
+import { isPendingStatus } from '~/constants/contentStatus'
 
 interface Props {
   resource: PatchResource
@@ -17,7 +18,7 @@ interface Props {
 
 // 资源备注不在卡片上展示, 点击资源名进入资源详情页查看简介与评论
 export const ResourceDownload = ({ resource, patchResource }: Props) => {
-  const isPending = resource.status === 2 || resource.status === 3
+  const isPending = isPendingStatus('resource', resource.status)
   const [showLinks, setShowLinks] = useState(() =>
     getResourceView().expandedIds.has(resource.id)
   )

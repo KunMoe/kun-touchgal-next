@@ -1,15 +1,11 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
-import { COMMENT_STATUS } from '~/constants/contentStatus'
+import { COMMENT_STATUS, contentStatusLabel } from '~/constants/contentStatus'
 import { transitionComments } from '~/server/content/comment/transition'
 import { adminUpdateCommentShadowBanSchema } from '~/validations/admin'
 
-const statusLabel: Record<number, string> = {
-  0: '正常',
-  1: '待审核',
-  2: '隐藏'
-}
+const statusLabel = (status: number) => contentStatusLabel('comment', status)
 
 export const updateCommentShadowBan = async (
   input: z.infer<typeof adminUpdateCommentShadowBanSchema>,
@@ -34,7 +30,7 @@ export const updateCommentShadowBan = async (
     return '未找到该评论'
   }
   if (comment.status === status) {
-    return `该评论已处于${statusLabel[status]}状态`
+    return `该评论已处于${statusLabel(status)}状态`
   }
 
   const failure = await kunTx('admin.comment.shadowBan', async (ctx) => {
@@ -52,7 +48,7 @@ export const updateCommentShadowBan = async (
         select: { id: true }
       })
       return ctx.fail(
-        exists ? `该评论已处于${statusLabel[status]}状态` : '未找到该评论'
+        exists ? `该评论已处于${statusLabel(status)}状态` : '未找到该评论'
       )
     }
 
@@ -60,7 +56,7 @@ export const updateCommentShadowBan = async (
       data: {
         type: 'update',
         user_id: adminUid,
-        content: `管理员 ${admin.name} 将用户 ${comment.user.name} 的评论 (ID: ${commentId}) 状态由 ${statusLabel[moved.from]} 修改为 ${statusLabel[status]}`
+        content: `管理员 ${admin.name} 将用户 ${comment.user.name} 的评论 (ID: ${commentId}) 状态由 ${statusLabel(moved.from)} 修改为 ${statusLabel(status)}`
       }
     })
   })

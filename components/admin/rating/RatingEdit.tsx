@@ -21,6 +21,7 @@ import { MoreVertical } from 'lucide-react'
 import { kunFetchDelete, kunFetchGet, kunFetchPut } from '~/utils/kunFetch'
 import type { AdminRating } from '~/types/api/admin'
 import toast from 'react-hot-toast'
+import { RATING_STATUS } from '~/constants/contentStatus'
 
 interface Props {
   initialRating: AdminRating
@@ -53,7 +54,7 @@ export const RatingEdit = ({ initialRating, onUpdated, onDeleted }: Props) => {
     }
   }
 
-  const isHidden = initialRating.status === 2
+  const isHidden = initialRating.status === RATING_STATUS.hidden
   const [hiding, setHiding] = useState(false)
   const handleUpdateStatus = async (status: number) => {
     setHiding(true)
@@ -68,7 +69,9 @@ export const RatingEdit = ({ initialRating, onUpdated, onDeleted }: Props) => {
       if (typeof res === 'string') {
         toast.error(res)
       } else {
-        toast.success(status === 0 ? '已恢复该评价' : '已隐藏该评价')
+        toast.success(
+          status === RATING_STATUS.public ? '已恢复该评价' : '已隐藏该评价'
+        )
         onUpdated?.({ ...initialRating, status })
       }
     } finally {
@@ -155,7 +158,11 @@ export const RatingEdit = ({ initialRating, onUpdated, onDeleted }: Props) => {
             className="text-warning"
             color="warning"
             isDisabled={hiding}
-            onPress={() => handleUpdateStatus(isHidden ? 0 : 2)}
+            onPress={() =>
+              handleUpdateStatus(
+                isHidden ? RATING_STATUS.public : RATING_STATUS.hidden
+              )
+            }
           >
             {isHidden ? '取消隐藏' : '隐藏'}
           </DropdownItem>

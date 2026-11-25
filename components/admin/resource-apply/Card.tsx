@@ -5,8 +5,8 @@ import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { KunPatchAttribute } from '~/components/kun/PatchAttribute'
 import { KunUser } from '~/components/kun/floating-card/KunUser'
 import { SUPPORTED_RESOURCE_LINK_MAP } from '~/constants/resource'
-import { RESOURCE_STATUS_MAP } from '~/constants/admin'
 import type { AdminResource } from '~/types/api/admin'
+import { contentStatusLabel } from '~/constants/contentStatus'
 
 interface Props {
   resource: AdminResource
@@ -37,7 +37,7 @@ export const AdminResourceApplyCard = ({ resource, actions }: Props) => {
 
           <div className="flex flex-col items-end gap-2">
             <Chip size="sm" variant="flat" color="warning">
-              {RESOURCE_STATUS_MAP[resource.status] ?? '待审核'}
+              {contentStatusLabel('resource', resource.status)}
             </Chip>
           </div>
         </div>

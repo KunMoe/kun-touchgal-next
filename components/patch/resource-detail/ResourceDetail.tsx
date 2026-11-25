@@ -30,6 +30,7 @@ import { formatNumber } from '~/utils/formatNumber'
 import { cn } from '~/utils/cn'
 import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
 import type { PatchResourceDetail } from '~/app/api/patch/resource/detail'
+import { isPendingStatus } from '~/constants/contentStatus'
 
 // 编辑表单连带 zod 全量 / RHF / Select / 上传, 只有上传者和管理员用得到,
 // 静态导入会让每位访客首屏多下约 150KB gz
@@ -63,7 +64,7 @@ interface Props {
 
 export const ResourceDetail = ({ detail, isLoggedIn }: Props) => {
   const { resource, galgame, otherResources } = detail
-  const isPending = resource.status === 2 || resource.status === 3
+  const isPending = isPendingStatus('resource', resource.status)
   const pageTitle = getResourcePageTitle(resource)
   const mainColumnRef = useRef<HTMLDivElement>(null)
   const noteRef = useRef<HTMLDivElement>(null)

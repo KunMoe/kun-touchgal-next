@@ -27,6 +27,7 @@ import { useUserStore } from '~/store/userStore'
 import { KunNull } from '~/components/kun/Null'
 import toast from 'react-hot-toast'
 import type { PatchComment, PatchCommentResponse } from '~/types/api/patch'
+import { isPendingStatus } from '~/constants/contentStatus'
 
 interface Props {
   id: number
@@ -278,7 +279,7 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
                         }
                       }}
                     />
-                    {comment.status === 1 && (
+                    {isPendingStatus('comment', comment.status) && (
                       <Tooltip content="审核中，仅你和管理员可见">
                         <Chip color="warning" variant="flat" size="sm">
                           待审核
@@ -299,13 +300,13 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
                   <CommentLikeButton
                     comment={comment}
                     setComments={setComments}
-                    isDisabled={comment.status === 1}
+                    isDisabled={isPendingStatus('comment', comment.status)}
                   />
                   <Button
                     variant="ghost"
                     size="sm"
                     className="gap-2"
-                    isDisabled={comment.status === 1}
+                    isDisabled={isPendingStatus('comment', comment.status)}
                     onPress={() =>
                       setReplyTo(
                         replyTo?.commentId === comment.id
@@ -366,7 +367,7 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
                                 }
                               }}
                             />
-                            {reply.status === 1 && (
+                            {isPendingStatus('comment', reply.status) && (
                               <Tooltip content="审核中，仅你和管理员可见">
                                 <Chip color="warning" variant="flat" size="sm">
                                   待审核
@@ -387,13 +388,19 @@ export const Comments = ({ id, resourceId, targetCommentId }: Props) => {
                           <CommentLikeButton
                             comment={reply}
                             setComments={setComments}
-                            isDisabled={reply.status === 1}
+                            isDisabled={isPendingStatus(
+                              'comment',
+                              reply.status
+                            )}
                           />
                           <Button
                             variant="ghost"
                             size="sm"
                             className="gap-2"
-                            isDisabled={reply.status === 1}
+                            isDisabled={isPendingStatus(
+                              'comment',
+                              reply.status
+                            )}
                             onPress={() =>
                               setReplyTo(
                                 replyTo?.commentId === reply.id

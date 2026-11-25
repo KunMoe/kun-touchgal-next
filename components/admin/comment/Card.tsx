@@ -6,6 +6,7 @@ import { formatDate } from '~/utils/time'
 import Link from 'next/link'
 import { CommentEdit } from './CommentEdit'
 import type { AdminComment } from '~/types/api/admin'
+import { COMMENT_STATUS } from '~/constants/contentStatus'
 
 interface Props {
   comment: AdminComment
@@ -48,12 +49,12 @@ export const CommentCard = ({
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <h2 className="font-semibold">{comment.user.name}</h2>
-                {comment.status === 1 && (
+                {comment.status === COMMENT_STATUS.pending && (
                   <Chip color="warning" variant="flat" size="sm">
                     待审核
                   </Chip>
                 )}
-                {comment.status === 2 && (
+                {comment.status === COMMENT_STATUS.hidden && (
                   <Chip color="danger" variant="flat" size="sm">
                     已隐藏
                   </Chip>

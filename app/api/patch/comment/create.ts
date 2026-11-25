@@ -15,6 +15,7 @@ import { prepareCommentContent } from './html'
 import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import type { PatchComment } from '~/types/api/patch'
 import type { KunActor } from '~/constants/role'
+import { COMMENT_STATUS } from '~/constants/contentStatus'
 
 // 待审核 (status=1) 的评论不可回复; 隐藏 (status=2) 的评论前端不可见, 与不存在等同
 const replyParentError = (parent: { status: number } | null | undefined) => {
@@ -110,7 +111,9 @@ export const createPatchComment = async (
         data: {
           ...prepared,
           is_spoiler: input.isSpoiler,
-          status: moderation.intercept ? 1 : 0,
+          status: moderation.intercept
+            ? COMMENT_STATUS.pending
+            : COMMENT_STATUS.public,
           user_id: uid,
           patch_id: input.patchId,
           parent_id: input.parentId,

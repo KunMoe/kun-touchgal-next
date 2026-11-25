@@ -15,6 +15,7 @@ import {
 } from './cache'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { PatchResource } from '~/types/api/patch'
+import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
 const patchIdSchema = z.object({
   patchId: kunId('游戏 ID')
@@ -110,7 +111,7 @@ const queryPublicResources = async (
   patchId: number
 ): Promise<PatchResource[]> => {
   const data = await prisma.patch_resource.findMany({
-    where: { patch_id: patchId, status: 0 },
+    where: { patch_id: patchId, status: RESOURCE_STATUS.public },
     include: listInclude(patchId),
     orderBy: listOrderBy
   })

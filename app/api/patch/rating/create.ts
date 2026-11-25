@@ -11,6 +11,7 @@ import {
 import { ratingSubject } from '~/server/moderation/subject'
 import type { KunPatchRating } from '~/types/api/galgame'
 import type { KunActor } from '~/constants/role'
+import { RATING_STATUS } from '~/constants/contentStatus'
 
 export const createPatchRating = async (
   input: z.infer<typeof patchRatingCreateSchema>,
@@ -54,7 +55,9 @@ export const createPatchRating = async (
           play_status: playStatus,
           short_summary: shortSummary,
           spoiler_level: spoilerLevel,
-          status: moderation.intercept ? 1 : 0
+          status: moderation.intercept
+            ? RATING_STATUS.pending
+            : RATING_STATUS.public
         },
         include: {
           patch: {

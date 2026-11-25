@@ -14,6 +14,21 @@
       "count": 1
     }
   },
+  "app/api/admin/creator/approve/route.ts": {
+    "kun/inv-status-01": {
+      "count": 3
+    }
+  },
+  "app/api/admin/creator/decline/route.ts": {
+    "kun/inv-status-01": {
+      "count": 3
+    }
+  },
+  "app/api/admin/feedback/handle/route.ts": {
+    "kun/inv-status-01": {
+      "count": 2
+    }
+  },
   "app/api/admin/moderation/batch/route.ts": {
     "no-console": {
       "count": 2
@@ -24,19 +39,58 @@
       "count": 1
     }
   },
+  "app/api/admin/report/handle/service.ts": {
+    "kun/inv-status-01": {
+      "count": 4
+    }
+  },
   "app/api/admin/report/service.ts": {
     "kun/inv-content-01": {
+      "count": 1
+    },
+    "kun/inv-status-01": {
+      "count": 3
+    }
+  },
+  "app/api/apply/route.ts": {
+    "kun/inv-status-01": {
+      "count": 1
+    }
+  },
+  "app/api/auth/login/route.ts": {
+    "kun/inv-status-01": {
+      "count": 1
+    }
+  },
+  "app/api/message/conversation/[id]/read/route.ts": {
+    "kun/inv-status-01": {
+      "count": 2
+    }
+  },
+  "app/api/message/read/route.ts": {
+    "kun/inv-status-01": {
+      "count": 3
+    }
+  },
+  "app/api/message/unread/service.ts": {
+    "kun/inv-status-01": {
       "count": 1
     }
   },
   "app/api/patch/comment/create.ts": {
     "kun/inv-content-01": {
       "count": 1
+    },
+    "kun/inv-status-01": {
+      "count": 2
     }
   },
   "app/api/patch/comment/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
+    },
+    "kun/inv-status-01": {
+      "count": 2
     }
   },
   "app/api/patch/comment/get.ts": {
@@ -44,9 +98,22 @@
       "count": 1
     }
   },
+  "app/api/patch/comment/like/route.ts": {
+    "kun/inv-status-01": {
+      "count": 2
+    }
+  },
+  "app/api/patch/comment/report/route.ts": {
+    "kun/inv-status-01": {
+      "count": 3
+    }
+  },
   "app/api/patch/comment/update.ts": {
     "kun/inv-content-01": {
       "count": 1
+    },
+    "kun/inv-status-01": {
+      "count": 2
     }
   },
   "app/api/patch/delete.ts": {
@@ -72,11 +139,32 @@
   "app/api/patch/rating/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
+    },
+    "kun/inv-status-01": {
+      "count": 2
+    }
+  },
+  "app/api/patch/rating/like/route.ts": {
+    "kun/inv-status-01": {
+      "count": 2
+    }
+  },
+  "app/api/patch/rating/report/route.ts": {
+    "kun/inv-status-01": {
+      "count": 3
+    }
+  },
+  "app/api/patch/rating/update.ts": {
+    "kun/inv-status-01": {
+      "count": 2
     }
   },
   "app/api/patch/resource/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
+    },
+    "kun/inv-status-01": {
+      "count": 2
     }
   },
   "app/api/patch/resource/get.ts": {
@@ -84,9 +172,17 @@
       "count": 1
     }
   },
+  "app/api/patch/resource/like/route.ts": {
+    "kun/inv-status-01": {
+      "count": 3
+    }
+  },
   "app/api/user/profile/comment/service.ts": {
     "kun/inv-content-02": {
       "count": 1
+    },
+    "kun/inv-status-01": {
+      "count": 2
     }
   },
   "app/api/user/setting/_upload.ts": {
@@ -97,6 +193,16 @@
   "app/api/user/setting/avatar/route.ts": {
     "no-console": {
       "count": 1
+    }
+  },
+  "app/api/user/status/service.ts": {
+    "kun/inv-status-01": {
+      "count": 1
+    }
+  },
+  "app/api/utils/contentVisibility.ts": {
+    "kun/inv-status-01": {
+      "count": 15
     }
   },
   "app/api/utils/createMentionMessage.ts": {
@@ -124,8 +230,16 @@
       "count": 1
     }
   },
+  "components/admin/creator/RenderCell.tsx": {
+    "kun/inv-status-01": {
+      "count": 1
+    }
+  },
   "components/admin/feedback/Container.tsx": {
     "kun/inv-list-01": {
+      "count": 1
+    },
+    "kun/inv-status-01": {
       "count": 1
     }
   },
@@ -139,6 +253,11 @@
       "count": 1
     }
   },
+  "components/admin/report/Container.tsx": {
+    "kun/inv-status-01": {
+      "count": 2
+    }
+  },
   "components/admin/resource-apply/Container.tsx": {
     "kun/inv-list-01": {
       "count": 1
@@ -146,6 +265,11 @@
   },
   "components/admin/user/Container.tsx": {
     "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/admin/user/UserDelete.tsx": {
+    "kun/inv-status-01": {
       "count": 1
     }
   },
@@ -176,6 +300,16 @@
   },
   "components/kun/milkdown/EditorProvider.tsx": {
     "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "components/message/MessageCard.tsx": {
+    "kun/inv-status-01": {
+      "count": 1
+    }
+  },
+  "components/message/chat/ChatContainer.tsx": {
+    "kun/inv-status-01": {
       "count": 1
     }
   },
@@ -219,6 +353,11 @@
       "count": 1
     }
   },
+  "components/patch/resource/publish/PublishResource.tsx": {
+    "kun/inv-status-01": {
+      "count": 1
+    }
+  },
   "components/resource/Container.tsx": {
     "kun/inv-list-01": {
       "count": 1
@@ -236,6 +375,11 @@
   },
   "components/tag/detail/Container.tsx": {
     "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/user/Profile.tsx": {
+    "kun/inv-status-01": {
       "count": 1
     }
   },
@@ -266,6 +410,11 @@
   },
   "lib/mdx/element/kunHeading.ts": {
     "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "lib/oidc/account.ts": {
+    "kun/inv-status-01": {
       "count": 1
     }
   },
@@ -309,9 +458,24 @@
       "count": 1
     }
   },
+  "server/account/deleteAccount.ts": {
+    "kun/inv-status-01": {
+      "count": 1
+    }
+  },
+  "server/auth/session.ts": {
+    "kun/inv-status-01": {
+      "count": 4
+    }
+  },
   "server/moderation/apply.ts": {
     "no-console": {
       "count": 3
+    }
+  },
+  "server/report/pending.ts": {
+    "kun/inv-status-01": {
+      "count": 1
     }
   },
   "server/search/document.ts": {

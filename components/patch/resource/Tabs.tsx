@@ -39,6 +39,7 @@ import { kunMoyuMoe } from '~/config/moyu-moe'
 import { cn } from '~/utils/cn'
 import { kunCjkIndentClass } from '~/utils/kunCjkIndent'
 import { getResourceView } from './resourceView'
+import { isPendingStatus } from '~/constants/contentStatus'
 
 type ResourceSection = (typeof SUPPORTED_RESOURCE_SECTION)[number]
 
@@ -263,7 +264,7 @@ export const ResourceTabs = ({
               </h3>
             )}
             <ResourceInfo resource={resource} />
-            {(resource.status === 2 || resource.status === 3) && (
+            {isPendingStatus('resource', resource.status) && (
               <Tooltip content="审核中，仅你和管理员可见">
                 <Chip color="warning" variant="flat" size="sm">
                   待审核
@@ -286,7 +287,7 @@ export const ResourceTabs = ({
             <DropdownMenu
               aria-label="Resource actions"
               disabledKeys={
-                resource.status === 2 || resource.status === 3
+                isPendingStatus('resource', resource.status)
                   ? ['edit', 'delete']
                   : user.uid !== resource.userId &&
                       !can(user, 'content.moderateAny')

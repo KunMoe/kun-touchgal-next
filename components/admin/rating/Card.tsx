@@ -6,6 +6,7 @@ import { formatDate } from '~/utils/time'
 import Link from 'next/link'
 import { RatingEdit } from './RatingEdit'
 import type { AdminRating } from '~/types/api/admin'
+import { RATING_STATUS } from '~/constants/contentStatus'
 
 const recommendLabel: Record<string, string> = {
   strong_yes: '强烈推荐',
@@ -82,12 +83,12 @@ export const RatingCard = ({
             <div className="flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="font-semibold">{rating.user.name}</h2>
-                {rating.status === 1 && (
+                {rating.status === RATING_STATUS.pending && (
                   <Chip color="warning" variant="flat" size="sm">
                     待审核
                   </Chip>
                 )}
-                {rating.status === 2 && (
+                {rating.status === RATING_STATUS.hidden && (
                   <Chip color="danger" variant="flat" size="sm">
                     已隐藏
                   </Chip>

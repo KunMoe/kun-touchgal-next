@@ -25,6 +25,7 @@ import type { PatchResource } from '~/types/api/patch'
 import type { ResourceStatus } from '~/constants/contentStatus'
 import type { KunActor } from '~/constants/role'
 import type { KunTxContext } from '~/server/db/tx'
+import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
 export const createPatchResource = async (
   input: z.infer<typeof patchResourceCreateSchema>,
@@ -159,7 +160,11 @@ export const createPatchResource = async (
         platform,
         emulator_type,
         model_name,
-        status: needApproval ? 2 : moderation.intercept ? 3 : 0,
+        status: needApproval
+          ? RESOURCE_STATUS.awaitingApproval
+          : moderation.intercept
+            ? RESOURCE_STATUS.pending
+            : RESOURCE_STATUS.public,
         ...resourceData,
         links: {
           create: preparedLinks

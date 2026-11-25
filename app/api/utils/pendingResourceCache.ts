@@ -1,6 +1,7 @@
 import { prisma } from '~/prisma/index'
 import { delKv, getKv, setKv } from '~/lib/redis'
 import { USER_PENDING_RESOURCE_CACHE_DURATION } from '~/config/cache'
+import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
 // hasPendingResource 几乎恒为 false, 却在每个已登录非管理员的首页/资源列表请求里
 // 查一次 DB, 把纯缓存命中变成"命中 + 1 次 DB 往返 + 1 次 pool 借用". 读穿 Redis
@@ -30,7 +31,12 @@ export const hasPendingResource = async (uid: number) => {
   }
 
   const pendingResourceCount = await prisma.patch_resource.count({
-    where: { user_id: uid, status: { in: [2, 3] } }
+    where: {
+      user_id: uid,
+      status: {
+        in: [RESOURCE_STATUS.awaitingApproval, RESOURCE_STATUS.pending]
+      }
+    }
   })
   const hasPending = pendingResourceCount > 0
 

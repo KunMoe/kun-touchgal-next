@@ -1,3 +1,4 @@
+import { COMMENT_STATUS, RESOURCE_STATUS } from '~/constants/contentStatus'
 // 6 个派生列的只读对账: 每条查询返回「列值与实算值不一致」的行数, 期望全为 0。
 // 这些列没有任何应用层写入方, 只由 db/migrations 里的触发器维护。
 // 只读: 发现不一致时不要拿这些表达式直接 UPDATE —— READ COMMITTED 下无锁的绝对重算
@@ -23,7 +24,7 @@ FROM "patch" p
 LEFT JOIN (
   SELECT patch_id, COUNT(*)::int AS c
   FROM "patch_resource"
-  WHERE status = 0
+  WHERE status = ${RESOURCE_STATUS.public}
   GROUP BY patch_id
 ) r ON r.patch_id = p.id
 WHERE p.resource_count IS DISTINCT FROM COALESCE(r.c, 0)`
@@ -36,7 +37,7 @@ FROM "patch" p
 LEFT JOIN (
   SELECT patch_id, COUNT(*)::int AS c
   FROM "patch_comment"
-  WHERE status = 0 AND resource_id IS NULL
+  WHERE status = ${COMMENT_STATUS.public} AND resource_id IS NULL
   GROUP BY patch_id
 ) c ON c.patch_id = p.id
 WHERE p.comment_count IS DISTINCT FROM COALESCE(c.c, 0)`

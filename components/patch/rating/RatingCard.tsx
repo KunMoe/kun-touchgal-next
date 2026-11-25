@@ -27,6 +27,7 @@ import {
   KUN_GALGAME_RATING_SPOILER_MAP
 } from '~/constants/galgame'
 import type { KunPatchRating } from '~/types/api/galgame'
+import { isPendingStatus } from '~/constants/contentStatus'
 
 interface Props {
   rating: KunPatchRating
@@ -81,7 +82,7 @@ export const RatingCard = memo(function RatingCard({
 
   const canEdit =
     user.uid === rating.user.id || can(user, 'content.moderateAny')
-  const isPending = rating.status === 1
+  const isPending = isPendingStatus('rating', rating.status)
 
   const {
     isOpen: isOpenDelete,

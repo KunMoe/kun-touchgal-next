@@ -139,7 +139,7 @@ export const updatePatchResource = async (
   // (status=2) 的资源不送 AI; 全空的资源无文本可审, 直接放行. 预筛必须先于 S3 重绑:
   // 预筛 (读审核配置) 可能因 Redis 故障抛错, 在绑定之后抛会泄漏已复制的对象
   const moderation =
-    resource.status === 2
+    resource.status === RESOURCE_STATUS.awaitingApproval
       ? MODERATION_SKIP
       : await planTextModeration(
           resourceSubject({

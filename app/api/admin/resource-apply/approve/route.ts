@@ -24,7 +24,7 @@ const approvePatchResource = async (
   if (!resource) {
     return '该资源不存在'
   }
-  if (resource.status !== 2) {
+  if (resource.status !== RESOURCE_STATUS.awaitingApproval) {
     return '当前资源状态无需审核'
   }
 

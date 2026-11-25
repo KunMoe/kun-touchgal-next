@@ -16,6 +16,7 @@ import {
 } from './html'
 import { can } from '~/constants/permission'
 import type { PatchComment } from '~/types/api/patch'
+import { COMMENT_STATUS } from '~/constants/contentStatus'
 
 // 共享缓存基线视角: status=0 公开可见, isLike 一律 false
 const PUBLIC_VIEWER: KunViewer = { uid: 0, role: 0 }
@@ -39,7 +40,11 @@ const shouldBypassCommentCache = async (patchId: number, viewer: KunViewer) => {
   }
 
   const pendingCount = await prisma.patch_comment.count({
-    where: { patch_id: patchId, user_id: viewer.uid, status: 1 }
+    where: {
+      patch_id: patchId,
+      user_id: viewer.uid,
+      status: COMMENT_STATUS.pending
+    }
   })
   return pendingCount > 0
 }

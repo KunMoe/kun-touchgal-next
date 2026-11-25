@@ -1,4 +1,6 @@
 import { Prisma } from '~/prisma/generated/prisma/client'
+import { RATING_STATUS } from '~/constants/contentStatus'
+import { statusSql } from '~/server/content/visibility'
 
 // 通告锁命名空间: 与 patch type 锁 (recalcPatchType) 分属不同域, 同 patch 的评分统计
 // 重算按 (域, patchId) 串行
@@ -65,7 +67,7 @@ const recomputePatchRatingStatsLocked = async (
       statement_timestamp() AT TIME ZONE 'UTC'
     FROM patch AS p
     LEFT JOIN patch_rating AS r
-      ON r.patch_id = p.id AND r.status = 0
+      ON r.patch_id = p.id AND r.status = ${statusSql(RATING_STATUS.public)}
     WHERE p.id IN (${Prisma.join(patchIds)})
     GROUP BY p.id
     ON CONFLICT (patch_id) DO UPDATE SET

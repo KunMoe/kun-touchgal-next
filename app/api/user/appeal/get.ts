@@ -12,6 +12,12 @@ import type {
   UserAppealItem,
   UserAppealState
 } from '~/types/api/appeal'
+import {
+  COMMENT_STATUS,
+  RATING_STATUS,
+  RESOURCE_STATUS
+} from '~/constants/contentStatus'
+import { statusSql } from '~/server/content/visibility'
 
 interface ContentInfo {
   hidden: boolean
@@ -36,15 +42,18 @@ const findAppealableTaskIds = async (uid: number) => {
       AND CASE t.content_type
         WHEN 'comment' THEN EXISTS (
           SELECT 1 FROM patch_comment c
-          WHERE c.id = t.content_id AND c.status = 2
+          WHERE c.id = t.content_id
+            AND c.status = ${statusSql(COMMENT_STATUS.hidden)}
         )
         WHEN 'rating' THEN EXISTS (
           SELECT 1 FROM patch_rating r
-          WHERE r.id = t.content_id AND r.status = 2
+          WHERE r.id = t.content_id
+            AND r.status = ${statusSql(RATING_STATUS.hidden)}
         )
         WHEN 'resource' THEN EXISTS (
           SELECT 1 FROM patch_resource r
-          WHERE r.id = t.content_id AND r.status = 1
+          WHERE r.id = t.content_id
+            AND r.status = ${statusSql(RESOURCE_STATUS.hidden)}
         )
         ELSE false
       END
@@ -155,21 +164,21 @@ export const getUserAppeals = async (
   const contentMap = new Map<string, ContentInfo>()
   for (const comment of comments) {
     contentMap.set(`comment:${comment.id}`, {
-      hidden: comment.status === 2,
+      hidden: comment.status === COMMENT_STATUS.hidden,
       patchName: comment.patch.name,
       original: { text: comment.content }
     })
   }
   for (const rating of ratings) {
     contentMap.set(`rating:${rating.id}`, {
-      hidden: rating.status === 2,
+      hidden: rating.status === RATING_STATUS.hidden,
       patchName: rating.patch.name,
       original: { text: rating.short_summary }
     })
   }
   for (const resource of resources) {
     contentMap.set(`resource:${resource.id}`, {
-      hidden: resource.status === 1,
+      hidden: resource.status === RESOURCE_STATUS.hidden,
       patchName: resource.patch.name,
       original: {
         name: resource.name,

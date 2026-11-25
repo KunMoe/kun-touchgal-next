@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Prisma } from '~/prisma/generated/prisma/client'
 
 const {
   findTasksMock,
@@ -157,8 +158,9 @@ describe('getUserAppeals 状态筛选', () => {
     const where = await whereOf('appealable')
 
     expect(where).toMatchObject({ user_id: 7, id: { in: [3, 9] } })
-    // 标签模板的调用参数: 模板片段之后是各插值, 这里只有用户 id
-    expect(queryRawMock.mock.calls[0].slice(1)).toEqual([7])
+    // 按 Prisma 的规则拼回: 绑定参数只有用户 id (状态码以字面量内联)
+    const [strings, ...values] = queryRawMock.mock.calls[0]
+    expect(new Prisma.Sql(strings, values).values).toEqual([7])
   })
 
   it('已失效: 未申诉的任务里排除可申诉的', async () => {

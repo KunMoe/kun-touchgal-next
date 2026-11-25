@@ -6,6 +6,7 @@ import {
   type ContentLimit
 } from '~/server/viewer/patchVisibility'
 import type { AdminResource } from '~/types/api/admin'
+import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
 export const getPatchResourceApply = async (
   input: z.infer<typeof adminResourceApplyPaginationSchema>,
@@ -17,7 +18,7 @@ export const getPatchResourceApply = async (
   const whereBase = {
     // 后台列表只按分级过滤, 不套用屏蔽标签
     patch: toPatchWhere({ contentLimit, blockedTagIds: [] }),
-    status: 2
+    status: RESOURCE_STATUS.awaitingApproval
   } as const
 
   const where = search

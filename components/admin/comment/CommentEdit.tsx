@@ -22,6 +22,7 @@ import { kunFetchDelete, kunFetchGet, kunFetchPut } from '~/utils/kunFetch'
 import { markdownToText } from '~/utils/markdownToText'
 import type { AdminComment } from '~/types/api/admin'
 import toast from 'react-hot-toast'
+import { COMMENT_STATUS } from '~/constants/contentStatus'
 
 interface Props {
   initialComment: AdminComment
@@ -62,7 +63,7 @@ export const CommentEdit = ({
     }
   }
 
-  const isHidden = initialComment.status === 2
+  const isHidden = initialComment.status === COMMENT_STATUS.hidden
   const [hiding, setHiding] = useState(false)
   const handleUpdateStatus = async (status: number) => {
     setHiding(true)
@@ -77,7 +78,9 @@ export const CommentEdit = ({
       if (typeof res === 'string') {
         toast.error(res)
       } else {
-        toast.success(status === 0 ? '已恢复该评论' : '已隐藏该评论')
+        toast.success(
+          status === COMMENT_STATUS.public ? '已恢复该评论' : '已隐藏该评论'
+        )
         onUpdated?.({ ...initialComment, status })
       }
     } finally {
@@ -167,7 +170,11 @@ export const CommentEdit = ({
             className="text-warning"
             color="warning"
             isDisabled={hiding}
-            onPress={() => handleUpdateStatus(isHidden ? 0 : 2)}
+            onPress={() =>
+              handleUpdateStatus(
+                isHidden ? COMMENT_STATUS.public : COMMENT_STATUS.hidden
+              )
+            }
           >
             {isHidden ? '取消隐藏' : '隐藏'}
           </DropdownItem>
