@@ -7,9 +7,9 @@ vi.mock('~/app/api/utils/pendingResourceCache', () => ({
 import { can } from '~/constants/permission'
 import {
   getCommentRatingVisibilityWhere,
-  getCommentVisibilitySql,
   getResourceVisibilityWhere
 } from '~/app/api/utils/contentVisibility'
+import { visibleSql } from '~/server/content/visibility'
 
 // 三张内容表在前台的可见性逐格对照: 每个取值 × 作者与否 × 每类 viewer。WHERE 片段用一个只认
 // 这几种形状的小求值器在行上求值, 比的是语义而不是写法; 写法另由 contentVisibility.test.ts 钉住。
@@ -85,18 +85,23 @@ describe('内容可见性逐格对照', () => {
 })
 
 describe('评论可见性的 SQL 方言', () => {
-  // 两种方言必须同口径: 原生 SQL 只有两种写法, 逐类 viewer 钉住文本与参数
-  it.each(VIEWERS.map(({ name, viewer }) => [name, viewer] as const))(
-    '%s',
-    (_name, viewer) => {
-      const sql = getCommentVisibilitySql(viewer)
-      if (can(viewer, 'content.viewPending')) {
-        expect(sql.sql).toBe('status IN (0, 1)')
-        expect(sql.values).toEqual([])
-      } else {
-        expect(sql.sql).toBe('(status = 0 OR (status = 1 AND user_id = ?))')
-        expect(sql.values).toEqual([viewer?.uid ?? 0])
-      }
+  // 两种方言必须同口径: 原生 SQL 只有两种写法, 逐类 viewer 与表别名钉住文本与参数
+  it.each(
+    VIEWERS.flatMap(({ name, viewer }) =>
+      (['patch_comment', 'pc'] as const).map(
+        (alias) => [`${name} ${alias}`, viewer, alias] as const
+      )
+    )
+  )('%s', (_name, viewer, alias) => {
+    const sql = visibleSql('comment', viewer, alias)
+    if (can(viewer, 'content.viewPending')) {
+      expect(sql.sql).toBe(`${alias}.status IN (0, 1)`)
+      expect(sql.values).toEqual([])
+    } else {
+      expect(sql.sql).toBe(
+        `(${alias}.status = 0 OR (${alias}.status = 1 AND ${alias}.user_id = ?))`
+      )
+      expect(sql.values).toEqual([viewer?.uid ?? 0])
     }
-  )
+  })
 })

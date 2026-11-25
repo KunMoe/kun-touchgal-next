@@ -36,7 +36,7 @@ export const CONTENT_STATUS = {
 >
 
 export type ContentStatusOf<K extends ContentKind> =
-  (typeof CONTENT_STATUS)[K][keyof (typeof CONTENT_STATUS)[K]]
+  (typeof CONTENT_STATUS)[K][keyof (typeof CONTENT_STATUS)[K]] & number
 
 // 这张表里有的那些阶段的编码, 按编码升序; 表里没有的阶段 (评论没有 awaitingApproval) 跳过
 export const statusesOf = <K extends ContentKind>(

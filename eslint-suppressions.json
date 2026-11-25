@@ -80,17 +80,11 @@
   "app/api/patch/comment/create.ts": {
     "kun/inv-content-01": {
       "count": 1
-    },
-    "kun/inv-status-01": {
-      "count": 2
     }
   },
   "app/api/patch/comment/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    },
-    "kun/inv-status-01": {
-      "count": 2
     }
   },
   "app/api/patch/comment/get.ts": {
@@ -98,22 +92,14 @@
       "count": 1
     }
   },
-  "app/api/patch/comment/like/route.ts": {
-    "kun/inv-status-01": {
-      "count": 2
-    }
-  },
   "app/api/patch/comment/report/route.ts": {
     "kun/inv-status-01": {
-      "count": 3
+      "count": 1
     }
   },
   "app/api/patch/comment/update.ts": {
     "kun/inv-content-01": {
       "count": 1
-    },
-    "kun/inv-status-01": {
-      "count": 2
     }
   },
   "app/api/patch/delete.ts": {
@@ -139,32 +125,16 @@
   "app/api/patch/rating/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    },
-    "kun/inv-status-01": {
-      "count": 2
-    }
-  },
-  "app/api/patch/rating/like/route.ts": {
-    "kun/inv-status-01": {
-      "count": 2
     }
   },
   "app/api/patch/rating/report/route.ts": {
     "kun/inv-status-01": {
-      "count": 3
-    }
-  },
-  "app/api/patch/rating/update.ts": {
-    "kun/inv-status-01": {
-      "count": 2
+      "count": 1
     }
   },
   "app/api/patch/resource/delete.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    },
-    "kun/inv-status-01": {
-      "count": 2
     }
   },
   "app/api/patch/resource/get.ts": {
@@ -172,17 +142,9 @@
       "count": 1
     }
   },
-  "app/api/patch/resource/like/route.ts": {
-    "kun/inv-status-01": {
-      "count": 3
-    }
-  },
   "app/api/user/profile/comment/service.ts": {
     "kun/inv-content-02": {
       "count": 1
-    },
-    "kun/inv-status-01": {
-      "count": 2
     }
   },
   "app/api/user/setting/_upload.ts": {
@@ -198,11 +160,6 @@
   "app/api/user/status/service.ts": {
     "kun/inv-status-01": {
       "count": 1
-    }
-  },
-  "app/api/utils/contentVisibility.ts": {
-    "kun/inv-status-01": {
-      "count": 15
     }
   },
   "app/api/utils/createMentionMessage.ts": {
@@ -350,11 +307,6 @@
   },
   "components/patch/resource/kun/KunResourceDownload.tsx": {
     "kun/inv-content-04": {
-      "count": 1
-    }
-  },
-  "components/patch/resource/publish/PublishResource.tsx": {
-    "kun/inv-status-01": {
       "count": 1
     }
   },

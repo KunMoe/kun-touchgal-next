@@ -73,8 +73,8 @@ export const ResourceDetail = ({ detail, isLoggedIn }: Props) => {
   const user = useUserStore((state) => state.user)
   const isAdmin = can(user, 'content.moderateAny')
   const canEdit = isAdmin || user.uid === resource.userId
-  // 待审核资源后端只放行 content.moderateAny (patch/resource/update.ts 的
-  // frontResourceEditGuard), 作者本人提交必被拒, 故置灰而非让他点了才看到报错
+  // 待审核资源后端只放行 content.moderateAny (utils/content/policy.ts 的
+  // decideContentAction), 作者本人提交必被拒, 故置灰而非让他点了才看到报错
   const isEditDisabled = isPending && !isAdmin
   // 点赞与关注上传者的状态归本页持有 (两个按钮受控), 以 SSR 数据为初值;
   // 换资源时路由段重新挂载会重新取初值, 编辑后的 router.refresh() 不覆盖它们

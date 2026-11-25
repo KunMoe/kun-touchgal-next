@@ -7,20 +7,21 @@ import {
 } from '~/server/moderation/submit'
 import { ratingSubject } from '~/server/moderation/subject'
 import { kunTx } from '~/server/db/tx'
-import { RATING_STATUS } from '~/constants/contentStatus'
-import { can } from '~/constants/permission'
 import { editRating } from '~/server/content/rating/edit'
-import type { RatingStatus } from '~/constants/contentStatus'
-import type { ContentGuard } from '~/server/content/guard'
 import type { KunPatchRating } from '~/types/api/galgame'
 import type { KunActor } from '~/constants/role'
+import {
+  contentGuard,
+  contentSkipMessage,
+  decideContentAction,
+  pendingTaskBlocks
+} from '~/utils/content/policy'
 
 export const updatePatchRating = async (
   input: z.infer<typeof patchRatingUpdateSchema>,
   actor: KunActor
 ) => {
   const { uid } = actor
-  const canModerate = can(actor, 'content.moderateAny')
   const {
     ratingId,
     recommend,
@@ -30,27 +31,21 @@ export const updatePatchRating = async (
     spoilerLevel
   } = input
 
-  const rating = await prisma.patch_rating.findUnique({
+  const found = await prisma.patch_rating.findUnique({
     where: { id: ratingId },
     select: { id: true, user_id: true, status: true, short_summary: true }
   })
-  // 隐藏 (status=2) 的评价仅后台可管理, 前端与不存在等同
-  if (!rating || rating.status === 2) {
-    return '评价不存在'
-  }
-  if (rating.user_id !== uid && !canModerate) {
-    return '您没有权限更新该评价'
-  }
-  if (
-    !canModerate &&
+  const pendingTask =
+    !!found &&
+    pendingTaskBlocks(actor) &&
     (await hasPendingModeration('rating', { contentId: ratingId }))
-  ) {
-    return '您发布的评价正在审核中, 暂时无法修改'
+  const decision = decideContentAction('rating', found, actor, 'edit', {
+    pendingTask
+  })
+  if (!decision.ok) {
+    return decision.message
   }
-  // 待审核 (status=1) 的评价禁止修改; hasPendingModeration 之外再兜底一层
-  if (!canModerate && rating.status === 1) {
-    return '您发布的评价正在审核中, 暂时无法修改'
-  }
+  const rating = decision.row
 
   // 编辑评价文本后必须重新送审, 防止先发正常内容再改成违规绕过审核
   const moderation = await planTextModeration(ratingSubject(shortSummary), {
@@ -63,9 +58,7 @@ export const updatePatchRating = async (
 
   // 上面判的是事务外快照。同一组条件交给命令在行锁下再判一次: 其间被管理员隐藏的
   // 评价不会被这次编辑写回待审核
-  const guard: ContentGuard<RatingStatus> = !canModerate
-    ? { statusIn: [RATING_STATUS.public], ownerUid: uid }
-    : { statusIn: [RATING_STATUS.public, RATING_STATUS.pending] }
+  const guard = contentGuard('rating', actor)
 
   const data = await kunTx('rating.update', async (ctx) => {
     const { skipped } = await editRating(ctx, ratingId, {
@@ -80,14 +73,7 @@ export const updatePatchRating = async (
       moderation
     })
     if (skipped) {
-      ctx.fail(
-        skipped.reason === 'owner'
-          ? '您没有权限更新该评价'
-          : skipped.reason === 'status' &&
-              skipped.status === RATING_STATUS.pending
-            ? '您发布的评价正在审核中, 暂时无法修改'
-            : '评价不存在'
-      )
+      ctx.fail(contentSkipMessage('rating', 'edit', skipped))
     }
 
     // 响应要带作者与点赞信息: 在同一事务里读回写入后的行

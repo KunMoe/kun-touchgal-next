@@ -10,12 +10,12 @@ vi.mock('~/app/api/utils/pendingResourceCache', () => ({
 
 import {
   getCommentRatingVisibilityWhere,
-  getCommentVisibilitySql,
   getListResourceStatusWhere,
   getResourceVisibilityWhere,
-  isContentVisibleToViewer,
   shouldBypassSharedCache
 } from '~/app/api/utils/contentVisibility'
+import { visibleSql } from '~/server/content/visibility'
+import { isContentVisible } from '~/utils/content/policy'
 
 describe('shouldBypassSharedCache', () => {
   beforeEach(() => {
@@ -94,6 +94,7 @@ describe('getListResourceStatusWhere', () => {
 // 管理员 (role 3) 起才看得到他人的待审内容
 describe('待审内容可见性的角色边界 (content.viewPending)', () => {
   const OTHER_UID = 99
+  const pendingBy = (user_id: number) => ({ status: 1, user_id })
 
   beforeEach(() => {
     vi.resetAllMocks()
@@ -102,31 +103,35 @@ describe('待审内容可见性的角色边界 (content.viewPending)', () => {
   it.each([1, 2])('role %i 看不到他人的待审内容', (role) => {
     const viewer = { uid: 7, role }
 
-    expect(isContentVisibleToViewer(viewer, OTHER_UID)).toBe(false)
-    expect(isContentVisibleToViewer(viewer, 7)).toBe(true)
+    expect(isContentVisible('comment', pendingBy(OTHER_UID), viewer)).toBe(
+      false
+    )
+    expect(isContentVisible('comment', pendingBy(7), viewer)).toBe(true)
     expect(getCommentRatingVisibilityWhere(viewer)).toEqual({
       OR: [{ status: 0 }, { status: 1, user_id: 7 }]
     })
     expect(getResourceVisibilityWhere(viewer)).toEqual({
       OR: [{ status: 0 }, { status: { in: [2, 3] }, user_id: 7 }]
     })
-    const sql = getCommentVisibilitySql(viewer)
-    expect(sql.sql).toBe('(status = 0 OR (status = 1 AND user_id = ?))')
+    const sql = visibleSql('comment', viewer, 'pc')
+    expect(sql.sql).toBe(
+      '(pc.status = 0 OR (pc.status = 1 AND pc.user_id = ?))'
+    )
     expect(sql.values).toEqual([7])
   })
 
   it.each([3, 4])('role %i 看得到他人的待审内容', (role) => {
     const viewer = { uid: 7, role }
 
-    expect(isContentVisibleToViewer(viewer, OTHER_UID)).toBe(true)
+    expect(isContentVisible('comment', pendingBy(OTHER_UID), viewer)).toBe(true)
     expect(getCommentRatingVisibilityWhere(viewer)).toEqual({
       status: { in: [0, 1] }
     })
     expect(getResourceVisibilityWhere(viewer)).toEqual({
       status: { in: [0, 2, 3] }
     })
-    const sql = getCommentVisibilitySql(viewer)
-    expect(sql.sql).toBe('status IN (0, 1)')
+    const sql = visibleSql('comment', viewer, 'pc')
+    expect(sql.sql).toBe('pc.status IN (0, 1)')
     expect(sql.values).toEqual([])
   })
 

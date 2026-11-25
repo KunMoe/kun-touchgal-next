@@ -24,8 +24,24 @@ import {
   SUPPORTED_TYPE
 } from '~/constants/resource'
 import type { PatchResource } from '~/types/api/patch'
+import { contentPhase } from '~/constants/contentStatus'
 
 type EditResourceFormData = z.infer<typeof patchResourceCreateSchema>
+
+// 按阶段穷举: 编辑被预审拦下时资源转为待审核、别人暂时看不到, 不能只说更新成功 (P26-04)
+const editSuccessMessage = (status: number) => {
+  const phase = contentPhase('resource', status)
+  switch (phase) {
+    case 'pending':
+      return '资源已更新，正在审核中，通过前仅你和管理员可见'
+    case 'public':
+    case 'awaitingApproval':
+    case 'hidden':
+      return '资源更新成功'
+    default:
+      return phase satisfies never
+  }
+}
 
 interface EditResourceDialogProps {
   resource: PatchResource
@@ -76,7 +92,7 @@ export const EditResourceDialog = ({
     kunErrorHandler(res, (value) => {
       reset()
       onSuccess(value)
-      toast.success('资源更新成功')
+      toast.success(editSuccessMessage(value.status))
     })
     setEditing(false)
   }

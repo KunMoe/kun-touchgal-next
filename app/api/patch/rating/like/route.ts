@@ -8,6 +8,8 @@ import { createDedupMessage } from '~/app/api/utils/message'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { PatchRefSelectField } from '~/constants/api/select'
+import { decideContentAction } from '~/utils/content/policy'
+import type { ContentViewer } from '~/utils/content/policy'
 
 const ratingIdSchema = z.object({
   ratingId: kunId('评价 ID')
@@ -21,27 +23,24 @@ const LIKE_LOCK_NAMESPACE = 481004
 
 const toggleRatingLike = async (
   input: z.infer<typeof ratingIdSchema>,
-  uid: number
+  viewer: ContentViewer
 ) => {
+  const { uid } = viewer
   const { ratingId } = input
 
-  const rating = await prisma.patch_rating.findUnique({
-    where: { id: ratingId },
-    include: { patch: { select: PatchRefSelectField } }
-  })
-  if (!rating) {
-    return '评价不存在'
+  const decision = decideContentAction(
+    'rating',
+    await prisma.patch_rating.findUnique({
+      where: { id: ratingId },
+      include: { patch: { select: PatchRefSelectField } }
+    }),
+    viewer,
+    'like'
+  )
+  if (!decision.ok) {
+    return decision.message
   }
-  if (rating.user_id === uid) {
-    return '您不能给自己点赞'
-  }
-  // 待审核 (status=1) 的评价不可点赞; 隐藏 (status=2) 的评价前端不可见, 与不存在等同
-  if (rating.status === 1) {
-    return '该评价正在审核中, 暂时无法点赞'
-  }
-  if (rating.status !== 0) {
-    return '评价不存在'
-  }
+  const rating = decision.row
 
   const messageData = {
     type: 'like' as const,
@@ -116,7 +115,7 @@ export const PUT = kunRoute.put({
   input: ratingIdSchema,
   handler: async ({ input, actor }) => {
     // 成功时是点赞后的布尔状态, kunRoute 的返回类型不收布尔, 在这里序列化
-    const response = await toggleRatingLike(input, actor.uid)
+    const response = await toggleRatingLike(input, actor)
     return NextResponse.json(response)
   }
 })

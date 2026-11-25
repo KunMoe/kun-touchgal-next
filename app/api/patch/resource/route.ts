@@ -8,7 +8,7 @@ import {
 } from '~/validations/patch'
 import { getPatchResource } from './get'
 import { createPatchResource } from './create'
-import { frontResourceEditGuard, updatePatchResource } from './update'
+import { updatePatchResource } from './update'
 import { deleteResource } from './delete'
 import { prisma } from '~/prisma/index'
 import { acquireKvLock, releaseKvLock } from '~/lib/redis'
@@ -88,8 +88,7 @@ export const POST = kunRoute.post({
 export const PUT = kunRoute.put({
   auth: 'user',
   input: patchResourceUpdateSchema,
-  handler: ({ input, actor }) =>
-    updatePatchResource(input, actor, frontResourceEditGuard(actor))
+  handler: ({ input, actor }) => updatePatchResource(input, actor, 'front')
 })
 
 export const DELETE = kunRoute.delete({

@@ -5,7 +5,6 @@ import { updatePatchResource as updatePatchResourceByRole } from '~/app/api/patc
 import { sanitizeResourceLinksForAuditLog } from '~/app/api/patch/resource/_helper'
 import { patchResourceUpdateSchema } from '~/validations/patch'
 import { truncateLogContent } from '~/app/api/admin/_log'
-import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import type { KunActor } from '~/constants/role'
 
 export const updatePatchResource = async (
@@ -28,9 +27,7 @@ export const updatePatchResource = async (
 
   // 以操作者本人编辑: 送审豁免只看会话里的角色 (超级管理员豁免), 入口伪造不了。
   // 后台可以编辑任何状态的资源, 包括隐藏的 (编辑后仍是隐藏)
-  const updatedResource = await updatePatchResourceByRole(input, actor, {
-    statusIn: Object.values(RESOURCE_STATUS)
-  })
+  const updatedResource = await updatePatchResourceByRole(input, actor, 'admin')
   if (typeof updatedResource === 'string') {
     return updatedResource
   }

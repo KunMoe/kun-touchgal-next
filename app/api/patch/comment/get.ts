@@ -5,7 +5,6 @@ import { Prisma } from '~/prisma/generated/prisma/client'
 import { getPatchCommentSchema } from '~/validations/patch'
 import {
   getCommentRatingVisibilityWhere,
-  getCommentVisibilitySql,
   type KunViewer
 } from '~/app/api/utils/contentVisibility'
 import { withPatchCommentPageCache } from './cache'
@@ -17,6 +16,7 @@ import {
 import { can } from '~/constants/permission'
 import type { PatchComment } from '~/types/api/patch'
 import { COMMENT_STATUS } from '~/constants/contentStatus'
+import { visibleSql } from '~/server/content/visibility'
 
 // 共享缓存基线视角: status=0 公开可见, isLike 一律 false
 const PUBLIC_VIEWER: KunViewer = { uid: 0, role: 0 }
@@ -60,18 +60,18 @@ const resolveCurrentPage = async (
     return page
   }
 
-  const visibilitySql = getCommentVisibilitySql(viewer)
   const rows = await prisma.$queryRaw<CommentLocator[]>`
     WITH RECURSIVE ancestors AS (
       SELECT id, patch_id, parent_id, resource_id, created
       FROM patch_comment
       WHERE id = ${commentId} AND patch_id = ${patchId}
-        AND ${visibilitySql}
+        AND ${visibleSql('comment', viewer, 'patch_comment')}
       UNION ALL
       SELECT pc.id, pc.patch_id, pc.parent_id, pc.resource_id, pc.created
       FROM patch_comment pc
       INNER JOIN ancestors a ON pc.id = a.parent_id
-      WHERE pc.patch_id = ${patchId} AND ${visibilitySql}
+      WHERE pc.patch_id = ${patchId}
+        AND ${visibleSql('comment', viewer, 'pc')}
     )
     SELECT id, patch_id, parent_id, resource_id, created
     FROM ancestors
@@ -122,7 +122,6 @@ const buildCommentPage = async (
   viewer: KunViewer
 ): Promise<{ comments: PatchComment[]; total: number }> => {
   const visibilityWhere = getCommentRatingVisibilityWhere(viewer)
-  const visibilitySql = getCommentVisibilitySql(viewer)
 
   const commentSelect = {
     id: true,
@@ -183,12 +182,13 @@ const buildCommentPage = async (
         FROM patch_comment
         WHERE parent_id IN (${Prisma.join(rootIds)})
           AND patch_id = ${patchId}
-          AND ${visibilitySql}
+          AND ${visibleSql('comment', viewer, 'patch_comment')}
         UNION ALL
         SELECT pc.id, pc.parent_id
         FROM patch_comment pc
         INNER JOIN descendants d ON pc.parent_id = d.id
-        WHERE pc.patch_id = ${patchId} AND ${visibilitySql}
+        WHERE pc.patch_id = ${patchId}
+          AND ${visibleSql('comment', viewer, 'pc')}
       )
       SELECT id FROM descendants
     `

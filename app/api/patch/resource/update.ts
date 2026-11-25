@@ -18,59 +18,40 @@ import {
 import { resourceSubject } from '~/server/moderation/subject'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
-import { can } from '~/constants/permission'
 import { markResourcePendingReview } from '~/server/content/resource/edit'
 import { linkStorageGateError } from './storageGate'
 import { kunTx } from '~/server/db/tx'
 import { recordKunChanges } from '~/server/cache/publish'
 import type { ResourceStatus } from '~/constants/contentStatus'
-import type { ContentGuard } from '~/server/content/guard'
 import type { PatchResource } from '~/types/api/patch'
 import type { KunActor } from '~/constants/role'
 import type { KunTxContext } from '~/server/db/tx'
+import { decideContentAction, pendingTaskBlocks } from '~/utils/content/policy'
 
-// 守卫是入口算好的数据: 允许编辑的状态, 以及是否要求作者本人。同一份守卫在事务外的
-// 快照上判一次 (快速失败), 在行锁下再判一次
-const resourceEditGuardError = (
+// front: 前台入口, 按 utils/content/policy.ts 判 (作者只能改自己已上线的资源, 管理员还可以
+// 改待初审、待审核的, 隐藏的与不存在等同)。admin: 后台入口, 可以编辑任何状态的资源,
+// 包括隐藏的 (编辑后仍是隐藏)。同一条规则在事务外的快照上判一次, 在行锁下再判一次
+export type ResourceEditScope = 'front' | 'admin'
+
+const resourceEditError = (
+  scope: ResourceEditScope,
   row: { status: number; user_id: number },
-  guard: ContentGuard<ResourceStatus>
+  actor: KunActor,
+  pendingTask = false
 ) => {
-  const allowed = guard.statusIn.includes(row.status as ResourceStatus)
-  // 不在允许之列的隐藏资源与不存在等同
-  if (!allowed && row.status === RESOURCE_STATUS.hidden) {
-    return '未找到该资源'
+  if (scope === 'admin') {
+    return null
   }
-  if (guard.ownerUid !== undefined && row.user_id !== guard.ownerUid) {
-    return '您没有权限更改该资源'
-  }
-  if (!allowed) {
-    // status=2: 首个资源的人工审批流, 审批期间同样禁止修改
-    return row.status === RESOURCE_STATUS.awaitingApproval
-      ? '您发布的资源正在等待管理员审核, 暂时无法修改'
-      : '您发布的资源正在审核中, 暂时无法修改'
-  }
-  return null
+  const decision = decideContentAction('resource', row, actor, 'edit', {
+    pendingTask
+  })
+  return decision.ok ? null : decision.message
 }
-
-// 前台入口的守卫: 作者只能改自己已上线的资源; 管理员还可以改待初审、待审核的。
-// 隐藏的资源只在后台管理, 对前台与不存在等同
-export const frontResourceEditGuard = (
-  actor: KunActor
-): ContentGuard<ResourceStatus> =>
-  !can(actor, 'content.moderateAny')
-    ? { statusIn: [RESOURCE_STATUS.public], ownerUid: actor.uid }
-    : {
-        statusIn: [
-          RESOURCE_STATUS.public,
-          RESOURCE_STATUS.awaitingApproval,
-          RESOURCE_STATUS.pending
-        ]
-      }
 
 export const updatePatchResource = async (
   input: z.infer<typeof patchResourceUpdateSchema>,
   actor: KunActor,
-  guard: ContentGuard<ResourceStatus>
+  scope: ResourceEditScope
 ) => {
   const {
     resourceId,
@@ -94,17 +75,13 @@ export const updatePatchResource = async (
   if (!resource) {
     return '未找到该资源'
   }
-  const snapshotError = resourceEditGuardError(resource, guard)
+  const pendingTask =
+    scope === 'front' &&
+    pendingTaskBlocks(actor) &&
+    (await hasPendingModeration('resource', { contentId: resourceId }))
+  const snapshotError = resourceEditError(scope, resource, actor, pendingTask)
   if (snapshotError) {
     return snapshotError
-  }
-  // 不许编辑待审核资源的操作者 (作者): 有在途审核任务时同样不许改, 否则编辑会让
-  // 送审快照与实际内容脱节
-  if (
-    !guard.statusIn.includes(RESOURCE_STATUS.pending) &&
-    (await hasPendingModeration('resource', { contentId: resourceId }))
-  ) {
-    return '您发布的资源正在审核中, 暂时无法修改'
   }
 
   if (inputPatchId !== resource.patch_id) {
@@ -227,9 +204,10 @@ export const updatePatchResource = async (
     // 清理入队; abandon 兜底只在没有提交时执行, 不覆盖此处
     // 作者不会变, 锁下只需复检状态
     const guardError = previous
-      ? resourceEditGuardError(
+      ? resourceEditError(
+          scope,
           { status: previous.status, user_id: resource.user_id },
-          guard
+          actor
         )
       : '未找到该资源'
     if (!previous || guardError) {

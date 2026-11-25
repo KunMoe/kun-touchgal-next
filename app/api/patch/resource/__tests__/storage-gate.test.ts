@@ -85,10 +85,7 @@ vi.mock('~/server/storage/s3Outbox', () => ({
 }))
 
 import { createPatchResource } from '~/app/api/patch/resource/create'
-import {
-  frontResourceEditGuard,
-  updatePatchResource
-} from '~/app/api/patch/resource/update'
+import { updatePatchResource } from '~/app/api/patch/resource/update'
 import { linkStorageGateError } from '~/app/api/patch/resource/storageGate'
 import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
@@ -182,11 +179,7 @@ const frontUpdate = (
   role: KunRole
 ) => {
   const actor = kunTestActor({ uid, role })
-  return updatePatchResource(
-    { ...input, resourceId: 1 },
-    actor,
-    frontResourceEditGuard(actor)
-  )
+  return updatePatchResource({ ...input, resourceId: 1 }, actor, 'front')
 }
 
 const expectNoSideEffects = () => {

@@ -8,6 +8,8 @@ import { createDedupMessage } from '~/app/api/utils/message'
 import { recordKunChanges } from '~/server/cache/publish'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
+import { decideContentAction } from '~/utils/content/policy'
+import type { ContentViewer } from '~/utils/content/policy'
 
 const resourceIdSchema = z.object({
   resourceId: kunId('资源 ID')
@@ -18,30 +20,26 @@ const LIKE_LOCK_NAMESPACE = 481004
 
 const toggleResourceLike = async (
   input: z.infer<typeof resourceIdSchema>,
-  uid: number
+  viewer: ContentViewer
 ) => {
+  const { uid } = viewer
   const { resourceId } = input
 
-  const resource = await prisma.patch_resource.findUnique({
-    where: { id: resourceId },
-    include: {
-      patch: { select: { name: true, unique_id: true } }
-    }
-  })
-  if (!resource) {
-    return '未找到资源'
+  const decision = decideContentAction(
+    'resource',
+    await prisma.patch_resource.findUnique({
+      where: { id: resourceId },
+      include: {
+        patch: { select: { name: true, unique_id: true } }
+      }
+    }),
+    viewer,
+    'like'
+  )
+  if (!decision.ok) {
+    return decision.message
   }
-  if (resource.user_id === uid) {
-    return '您不能给自己点赞'
-  }
-  // 待初次审核 (status=2) / 待审核 (status=3) 的资源不可点赞;
-  // 隐藏 (status=1) 的资源前端不可见, 与不存在等同
-  if (resource.status === 2 || resource.status === 3) {
-    return '该资源正在审核中, 暂时无法点赞'
-  }
-  if (resource.status !== 0) {
-    return '未找到资源'
-  }
+  const resource = decision.row
 
   const messageData = {
     type: 'like' as const,
@@ -119,7 +117,7 @@ export const PUT = kunRoute.put({
   input: resourceIdSchema,
   handler: async ({ input, actor }) => {
     // 成功时是点赞后的布尔状态, kunRoute 的返回类型不收布尔, 在这里序列化
-    const response = await toggleResourceLike(input, actor.uid)
+    const response = await toggleResourceLike(input, actor)
     return NextResponse.json(response)
   }
 })

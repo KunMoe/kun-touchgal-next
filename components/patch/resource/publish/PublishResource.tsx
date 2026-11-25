@@ -29,6 +29,7 @@ import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useUserStore } from '~/store/userStore'
 import { can, defaultLinkStorage } from '~/constants/permission'
 import type { PatchResource } from '~/types/api/patch'
+import { contentPhase } from '~/constants/contentStatus'
 
 export type ResourceFormData = z.infer<typeof patchResourceCreateSchema>
 
@@ -100,12 +101,26 @@ export const PublishResource = ({
       )
       kunErrorHandler(res, (value) => {
         reset()
-        if (value.status === 2) {
-          toast.success('资源已提交审核，通过后将自动显示')
-          onClose()
-        } else {
-          onSuccess?.(value)
-          toast.success('发布成功')
+        // 按阶段穷举: 新增阶段时这里编译不过, 不会再漏掉一种提示 (P26-04)
+        const phase = contentPhase('resource', value.status)
+        switch (phase) {
+          case 'public':
+            onSuccess?.(value)
+            toast.success('发布成功')
+            break
+          case 'pending':
+            // 被预审拦下送去审核: 作者自己的列表里看得到 (带「待审核」标记), 别人看不到
+            onSuccess?.(value)
+            toast.success('发布成功，资源正在审核中，通过前仅你和管理员可见')
+            break
+          // 发布不会得到隐藏的资源; 认不出的编码按隐藏处理, 与待初审一样只提示已提交
+          case 'awaitingApproval':
+          case 'hidden':
+            toast.success('资源已提交审核，通过后将自动显示')
+            onClose()
+            break
+          default:
+            phase satisfies never
         }
       })
     } finally {

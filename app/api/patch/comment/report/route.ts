@@ -3,12 +3,15 @@ import { kunRoute } from '~/app/api/utils/kunRoute'
 import { createPatchCommentReportSchema } from '~/validations/patch'
 import { prisma } from '~/prisma'
 import { Prisma } from '~/prisma/generated/prisma/client'
+import { decideContentAction } from '~/utils/content/policy'
+import type { ContentViewer } from '~/utils/content/policy'
 
 const createReport = async (
   input: z.infer<typeof createPatchCommentReportSchema>,
-  uid: number
+  viewer: ContentViewer
 ) => {
-  const comment = await prisma.patch_comment.findUnique({
+  const { uid } = viewer
+  const found = await prisma.patch_comment.findUnique({
     where: { id: input.commentId },
     select: {
       id: true,
@@ -17,22 +20,14 @@ const createReport = async (
       status: true
     }
   })
-  if (!comment) {
-    return '评论不存在'
-  }
-  if (comment.patch_id !== input.patchId) {
+  if (found && found.patch_id !== input.patchId) {
     return '评论不属于当前游戏'
   }
-  if (comment.user_id === uid) {
-    return '不能举报自己的评论'
+  const decision = decideContentAction('comment', found, viewer, 'report')
+  if (!decision.ok) {
+    return decision.message
   }
-  // 待审核 (status=1) 的评论不可举报; 隐藏 (status=2) 的评论前端不可见, 与不存在等同
-  if (comment.status === 1) {
-    return '该评论正在审核中, 暂时无法举报'
-  }
-  if (comment.status !== 0) {
-    return '评论不存在'
-  }
+  const comment = decision.row
 
   const existingReport = await prisma.patch_report.findFirst({
     where: {
@@ -77,5 +72,5 @@ export const POST = kunRoute.post({
   auth: 'user',
   input: createPatchCommentReportSchema,
   abuse: ['report.create'],
-  handler: ({ input, actor }) => createReport(input, actor.uid)
+  handler: ({ input, actor }) => createReport(input, actor)
 })

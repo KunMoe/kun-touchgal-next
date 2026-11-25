@@ -80,9 +80,7 @@ describe('后台 updatePatchResource', () => {
   it('后台可以编辑任何状态的资源, 包括隐藏的', async () => {
     await updatePatchResource(input, kunTestActor({ uid: 99, role: 4 }))
 
-    expect(updateByRoleMock.mock.calls[0][2]).toEqual({
-      statusIn: [0, 1, 2, 3]
-    })
+    expect(updateByRoleMock.mock.calls[0][2]).toBe('admin')
   })
 
   it('编辑用例返回业务错误时原样返回, 不记审计', async () => {

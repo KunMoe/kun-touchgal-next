@@ -98,10 +98,7 @@ vi.mock('~/server/storage/s3Outbox', () => ({
 }))
 
 import { resourceSubject } from '~/server/moderation/subject'
-import {
-  frontResourceEditGuard,
-  updatePatchResource
-} from '~/app/api/patch/resource/update'
+import { updatePatchResource } from '~/app/api/patch/resource/update'
 import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import type { KunRole } from '~/constants/role'
 
@@ -112,7 +109,7 @@ const updateResource = (
   role: KunRole
 ) => {
   const actor = kunTestActor({ uid, role })
-  return updatePatchResource(input, actor, frontResourceEditGuard(actor))
+  return updatePatchResource(input, actor, 'front')
 }
 
 const buildInput = (overrides: Record<string, unknown> = {}) => ({

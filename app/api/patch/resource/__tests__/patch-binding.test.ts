@@ -123,10 +123,7 @@ vi.mock('~/app/api/utils/message', () => ({
 }))
 
 import { createPatchResource } from '~/app/api/patch/resource/create'
-import {
-  frontResourceEditGuard,
-  updatePatchResource
-} from '~/app/api/patch/resource/update'
+import { updatePatchResource } from '~/app/api/patch/resource/update'
 import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import type { KunRole } from '~/constants/role'
 
@@ -137,7 +134,7 @@ const updateResource = (
   role: KunRole
 ) => {
   const actor = kunTestActor({ uid, role })
-  return updatePatchResource(input, actor, frontResourceEditGuard(actor))
+  return updatePatchResource(input, actor, 'front')
 }
 
 const resourceInput = {

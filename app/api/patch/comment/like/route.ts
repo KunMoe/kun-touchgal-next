@@ -9,6 +9,8 @@ import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
+import { decideContentAction } from '~/utils/content/policy'
+import type { ContentViewer } from '~/utils/content/policy'
 
 const commentIdSchema = z.object({
   commentId: kunId('评论 ID')
@@ -19,27 +21,24 @@ const LIKE_LOCK_NAMESPACE = 481004
 
 const toggleCommentLike = async (
   input: z.infer<typeof commentIdSchema>,
-  uid: number
+  viewer: ContentViewer
 ) => {
+  const { uid } = viewer
   const { commentId } = input
 
-  const comment = await prisma.patch_comment.findUnique({
-    where: { id: commentId },
-    include: { patch: { select: { unique_id: true } } }
-  })
-  if (!comment) {
-    return '未找到评论'
+  const decision = decideContentAction(
+    'comment',
+    await prisma.patch_comment.findUnique({
+      where: { id: commentId },
+      include: { patch: { select: { unique_id: true } } }
+    }),
+    viewer,
+    'like'
+  )
+  if (!decision.ok) {
+    return decision.message
   }
-  if (comment.user_id === uid) {
-    return '您不能给自己点赞'
-  }
-  // 待审核 (status=1) 的评论不可点赞; 隐藏 (status=2) 的评论前端不可见, 与不存在等同
-  if (comment.status === 1) {
-    return '该评论正在审核中, 暂时无法点赞'
-  }
-  if (comment.status !== 0) {
-    return '未找到评论'
-  }
+  const comment = decision.row
 
   const messageData = {
     type: 'like' as const,
@@ -123,7 +122,7 @@ export const PUT = kunRoute.put({
   input: commentIdSchema,
   handler: async ({ input, actor }) => {
     // 成功时是点赞后的布尔状态, kunRoute 的返回类型不收布尔, 在这里序列化
-    const response = await toggleCommentLike(input, actor.uid)
+    const response = await toggleCommentLike(input, actor)
     return NextResponse.json(response)
   }
 })

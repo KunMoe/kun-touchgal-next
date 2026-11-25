@@ -1427,7 +1427,7 @@ export const KUN_INVARIANTS = [
     id: 'inv-status-01',
     aliases: ['T29'],
     statement:
-      'status 不写一位数的数字字面量 (对象键 status 的值、status 过滤条件里的值、与 .status 的相等比较、SQL 文本里的 status 比较): 评论、评价、资源用 constants/contentStatus.ts 的常量与 contentPhase; 别的表 (举报、用户、私信、反馈、创作者申请) 的 status 还没有常量, 存量记在 eslint-suppressions.json 基线里, 只减不增',
+      'status 不写一位数的数字字面量 (对象键 status 的值、status 过滤条件里的值、与 .status 的相等比较、SQL 文本里的 status 比较): 评论、评价、资源用 constants/contentStatus.ts 的常量与 contentPhase, 判能否看、能否操作用 utils/content/policy.ts 与 server/content/visibility.ts; 别的表 (举报、用户、私信、反馈、创作者申请) 的 status 还没有常量, 存量记在 eslint-suppressions.json 基线里, 只减不增',
     reason:
       '三张内容表的 status 是无约束 Int, 编码按表错位 (评论 / 评价 1 待审 2 隐藏, 资源 1 隐藏 2 待初审 3 待审)。裸数字之上的规则曾在 12 个闸门、3 个可见性构造器和 13 个组件里各抄一份: 810ff0a8 新增资源 3 时靠对抗审查才找出 4 处旧判断, 还漏了发布弹窗一处 (P26-04); 兄弟路径各少一道判断的点修出过 5 次。认不出值从变量传进来的写法 (那几处已改用迁移表)',
     removeWhen:

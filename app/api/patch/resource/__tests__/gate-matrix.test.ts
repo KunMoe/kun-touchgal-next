@@ -74,10 +74,7 @@ vi.mock('~/app/api/utils/parseQuery', () => ({
 import { applyContentGuard } from '~/server/content/guard'
 import { kunTestActor } from '~/app/api/utils/__tests__/kunTestActor'
 import { PUT as likeResource } from '~/app/api/patch/resource/like/route'
-import {
-  frontResourceEditGuard,
-  updatePatchResource
-} from '~/app/api/patch/resource/update'
+import { updatePatchResource } from '~/app/api/patch/resource/update'
 import { deleteResource } from '~/app/api/patch/resource/delete'
 
 const RESOURCE_ID = 5
@@ -125,11 +122,7 @@ const runGate = async (
       parseBodyMock.mockResolvedValue({ resourceId: RESOURCE_ID })
       return (await likeResource(request)).json()
     case 'edit':
-      return updatePatchResource(
-        UPDATE_INPUT,
-        actor,
-        frontResourceEditGuard(actor)
-      )
+      return updatePatchResource(UPDATE_INPUT, actor, 'front')
     default:
       return deleteResource({ resourceId: RESOURCE_ID }, actor)
   }
@@ -158,17 +151,6 @@ describe('资源闸门的预检逐格对照期望表', () => {
       const result = await runGate(c.action, c.row, c.viewer)
       const passed = c.action === 'edit' ? EDIT_PASSED : PASSED
       expect(result).toBe(c.expected ?? passed)
-    }
-  )
-})
-
-describe('前台编辑资源交给命令的守卫', () => {
-  it.each(enumerateSkipCases('resource.edit').map((c) => [c.viewer.name, c]))(
-    '%s',
-    (_name, c) => {
-      expect(frontResourceEditGuard(actorOf(c.viewer))).toEqual(
-        EXPECTED_GUARD['resource.edit'](c.viewer)
-      )
     }
   )
 })

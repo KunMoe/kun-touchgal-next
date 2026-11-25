@@ -16,19 +16,20 @@ import { invalidatePatchContentCache } from '~/app/api/patch/cache'
 import type { PatchComment } from '~/types/api/patch'
 import type { KunActor } from '~/constants/role'
 import { COMMENT_STATUS } from '~/constants/contentStatus'
+import { decideContentAction } from '~/utils/content/policy'
 
-// 待审核 (status=1) 的评论不可回复; 隐藏 (status=2) 的评论前端不可见, 与不存在等同
-const replyParentError = (parent: { status: number } | null | undefined) => {
-  if (!parent) {
-    return '未找到该评论'
-  }
-  if (parent.status === 1) {
-    return '该评论正在审核中, 暂时无法回复'
-  }
-  if (parent.status !== 0) {
-    return '未找到该评论'
-  }
-  return null
+// 父评论能不能回复: 同一条规则在事务外的快照上与行锁下各判一次
+const replyParentError = (
+  parent: { status: number; user_id: number } | null | undefined,
+  actor: KunActor
+) => {
+  const decision = decideContentAction(
+    'comment',
+    parent ?? null,
+    actor,
+    'reply'
+  )
+  return decision.ok ? null : decision.message
 }
 
 export const createPatchComment = async (
@@ -36,15 +37,18 @@ export const createPatchComment = async (
   actor: KunActor
 ) => {
   const { uid } = actor
-  let parentComment: { status: number; resource_id: number | null } | null =
-    null
+  let parentComment: {
+    status: number
+    user_id: number
+    resource_id: number | null
+  } | null = null
   if (input.parentId) {
     // patch_id 同查: 防跨补丁回复造出 patch_id 与 resource_id 互相矛盾的评论
     parentComment = await prisma.patch_comment.findFirst({
       where: { id: input.parentId, patch_id: input.patchId },
-      select: { status: true, resource_id: true }
+      select: { status: true, user_id: true, resource_id: true }
     })
-    const parentError = replyParentError(parentComment)
+    const parentError = replyParentError(parentComment, actor)
     if (parentError) {
       return parentError
     }
@@ -99,9 +103,11 @@ export const createPatchComment = async (
       if (input.parentId) {
         // 补丁被整体删除时父评论随之消失, 由下面的父评论检查给出结果
         await tx.$executeRaw`SELECT id FROM patch WHERE id = ${input.patchId} FOR KEY SHARE`
-        const [parent] = await tx.$queryRaw<Array<{ status: number }>>`
-        SELECT status FROM patch_comment WHERE id = ${input.parentId} FOR KEY SHARE`
-        const parentError = replyParentError(parent)
+        const [parent] = await tx.$queryRaw<
+          Array<{ status: number; user_id: number }>
+        >`
+        SELECT status, user_id FROM patch_comment WHERE id = ${input.parentId} FOR KEY SHARE`
+        const parentError = replyParentError(parent, actor)
         if (parentError) {
           ctx.fail(parentError)
         }

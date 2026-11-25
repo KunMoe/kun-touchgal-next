@@ -8,43 +8,37 @@ import {
 } from '~/server/moderation/submit'
 import { commentSubject } from '~/server/moderation/subject'
 import { kunTx } from '~/server/db/tx'
-import { COMMENT_STATUS } from '~/constants/contentStatus'
-import { can } from '~/constants/permission'
 import { editComment } from '~/server/content/comment/edit'
 import { prepareCommentContent } from './html'
-import type { CommentStatus } from '~/constants/contentStatus'
-import type { ContentGuard } from '~/server/content/guard'
 import type { KunActor } from '~/constants/role'
+import {
+  contentGuard,
+  contentSkipMessage,
+  decideContentAction,
+  pendingTaskBlocks
+} from '~/utils/content/policy'
 
 export const updateComment = async (
   input: z.infer<typeof patchCommentUpdateSchema>,
   actor: KunActor
 ) => {
-  const { uid } = actor
-  const canModerate = can(actor, 'content.moderateAny')
   const { commentId, content, isSpoiler } = input
 
-  const comment = await prisma.patch_comment.findUnique({
+  const found = await prisma.patch_comment.findUnique({
     where: { id: commentId },
     select: { id: true, user_id: true, status: true, content: true }
   })
-  // 隐藏 (status=2) 的评论仅后台可管理, 前端与不存在等同
-  if (!comment || comment.status === 2) {
-    return '未找到该评论'
-  }
-  if (comment.user_id !== uid && !canModerate) {
-    return '您没有权限更改该评论'
-  }
-  if (
-    !canModerate &&
+  const pendingTask =
+    !!found &&
+    pendingTaskBlocks(actor) &&
     (await hasPendingModeration('comment', { contentId: commentId }))
-  ) {
-    return '您发布的评论正在审核中, 暂时无法修改'
+  const decision = decideContentAction('comment', found, actor, 'edit', {
+    pendingTask
+  })
+  if (!decision.ok) {
+    return decision.message
   }
-  // 待审核 (status=1) 的评论禁止修改; hasPendingModeration 之外再兜底一层
-  if (!canModerate && comment.status === 1) {
-    return '您发布的评论正在审核中, 暂时无法修改'
-  }
+  const comment = decision.row
 
   const prepared = await prepareCommentContent(content)
   if (typeof prepared === 'string') {
@@ -62,9 +56,7 @@ export const updateComment = async (
 
   // 上面判的是事务外快照。同一组条件交给命令在行锁下再判一次: 其间被管理员隐藏的
   // 评论不会被这次编辑写回待审核
-  const guard: ContentGuard<CommentStatus> = !canModerate
-    ? { statusIn: [COMMENT_STATUS.public], ownerUid: uid }
-    : { statusIn: [COMMENT_STATUS.public, COMMENT_STATUS.pending] }
+  const guard = contentGuard('comment', actor)
 
   const result = await kunTx('comment.update', async (ctx) => {
     const { skipped } = await editComment(ctx, commentId, {
@@ -77,14 +69,7 @@ export const updateComment = async (
       moderation
     })
     if (skipped) {
-      ctx.fail(
-        skipped.reason === 'owner'
-          ? '您没有权限更改该评论'
-          : skipped.reason === 'status' &&
-              skipped.status === COMMENT_STATUS.pending
-            ? '您发布的评论正在审核中, 暂时无法修改'
-            : '未找到该评论'
-      )
+      ctx.fail(contentSkipMessage('comment', 'edit', skipped))
     }
   })
   if (typeof result === 'string') {

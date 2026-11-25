@@ -5,10 +5,10 @@ import { markdownToText } from '~/utils/markdownToText'
 import { PatchRefSelectField } from '~/constants/api/select'
 import {
   getCommentRatingVisibilityWhere,
-  isContentVisibleToViewer,
   type KunViewer
 } from '~/app/api/utils/contentVisibility'
 import type { UserComment } from '~/types/api/user'
+import { isContentVisible } from '~/utils/content/policy'
 
 export const getUserComment = async (
   input: z.infer<typeof getUserInfoSchema>,
@@ -52,12 +52,9 @@ export const getUserComment = async (
   ])
 
   const comments: UserComment[] = data.map((comment) => {
-    // 父评论待审核 (status=1) 时仅对作者与管理员显示引用信息; 隐藏 (status=2) 时对所有人隐藏
+    // 父评论对 viewer 不可见时不显示引用信息 (待审的只给父评论作者与管理员看, 隐藏的谁都不给)
     const parentVisible =
-      !!comment.parent &&
-      (comment.parent.status === 0 ||
-        (comment.parent.status === 1 &&
-          isContentVisibleToViewer(viewer, comment.parent.user_id)))
+      !!comment.parent && isContentVisible('comment', comment.parent, viewer)
 
     return {
       id: comment.id,

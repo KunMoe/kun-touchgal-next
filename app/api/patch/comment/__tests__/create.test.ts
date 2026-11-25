@@ -288,7 +288,7 @@ describe('createPatchComment 事务内的行锁', () => {
     'SELECT id FROM patch_resource WHERE id = ? FOR KEY SHARE'
   const PATCH_LOCK = 'SELECT id FROM patch WHERE id = ? FOR KEY SHARE'
   const PARENT_LOCK =
-    'SELECT status FROM patch_comment WHERE id = ? FOR KEY SHARE'
+    'SELECT status, user_id FROM patch_comment WHERE id = ? FOR KEY SHARE'
 
   beforeEach(() => {
     parentFindFirstMock.mockResolvedValue({ status: 0, resource_id: null })

@@ -9,7 +9,6 @@ const {
   releaseKvLockMock,
   createPatchResourceMock,
   updatePatchResourceMock,
-  frontResourceEditGuardMock,
   deleteResourceMock,
   getPatchResourceMock
 } = vi.hoisted(() => ({
@@ -20,7 +19,6 @@ const {
   releaseKvLockMock: vi.fn(),
   createPatchResourceMock: vi.fn(),
   updatePatchResourceMock: vi.fn(),
-  frontResourceEditGuardMock: vi.fn(),
   deleteResourceMock: vi.fn(),
   getPatchResourceMock: vi.fn()
 }))
@@ -48,8 +46,7 @@ vi.mock('~/app/api/patch/resource/create', () => ({
 }))
 
 vi.mock('~/app/api/patch/resource/update', () => ({
-  updatePatchResource: updatePatchResourceMock,
-  frontResourceEditGuard: frontResourceEditGuardMock
+  updatePatchResource: updatePatchResourceMock
 }))
 
 vi.mock('~/app/api/patch/resource/delete', () => ({
@@ -140,7 +137,6 @@ beforeEach(() => {
     id: RESOURCE_ID,
     name: 'updated'
   })
-  frontResourceEditGuardMock.mockReturnValue({ statusIn: [0] })
   deleteResourceMock.mockResolvedValue({})
 })
 
