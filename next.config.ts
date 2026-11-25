@@ -59,7 +59,7 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   experimental: {
     optimizePackageImports: ['@heroui/react', 'framer-motion'],
-    // 命中 proxy matcher 的请求体在 proxy 之前被缓冲并截断在这个数 (取值与默认值相同, 只是让它归仓库):
+    // 命中 proxy matcher 的请求体在交给 handler 之前被收完并截断在这个数 (取值与默认值相同, 只是让它归仓库):
     // 各入口的字节预算与截断的文案都按它算, 理由与不要调大的原因见 constants/bodyBudget.ts
     proxyClientMaxBodySize: KUN_PROXY_BODY_CLONE_LIMIT
     // turbotrace: {
