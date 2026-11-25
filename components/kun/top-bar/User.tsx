@@ -39,13 +39,16 @@ type SessionCheckResult =
   | { status: 'unreachable' }
 
 // UserDropdown 连带 Dropdown / Menu / Popover / Modal / Avatar 只对登录用户渲染, 静态导入
-// 会让游客在每一页都下载它们. 改为确认会话时并行按需加载, 加载完成后再翻转会话状态,
-// 头像与铃铛仍在同一帧出现. 不用 next/dynamic: 会话翻转由 zustand 同步渲染驱动, 走
-// Suspense 揭示会被 React 19 节流到 fallback 后 300ms, 预热也绕不开
+// 会让游客在每一页都下载它们. 改为确认会话时并行按需加载. 会话写入不等它 (按 uid 门控的
+// 请求不被懒块拖住), 顶栏在块到齐之前保持骨架 (deriveTopBarView), 头像与铃铛仍在同一帧出现.
+// 不用 next/dynamic: 会话翻转由 zustand 同步渲染驱动, 走 Suspense 揭示会被 React 19 节流到
+// fallback 后 300ms, 预热也绕不开
 const loadUserDropdown = () => import('./UserDropdown')
 type UserDropdownModule = Awaited<ReturnType<typeof loadUserDropdown>>
 let userDropdownModule: UserDropdownModule | null = null
 let userDropdownLoading: Promise<void> | null = null
+// 最近一次加载失败了: 顶栏不再等块, 头像位单独留骨架; 成功后复位
+let userDropdownFailed = false
 const userDropdownListeners = new Set<() => void>()
 const subscribeUserDropdown = (listener: () => void) => {
   userDropdownListeners.add(listener)
@@ -55,6 +58,8 @@ const subscribeUserDropdown = (listener: () => void) => {
 }
 const getUserDropdownModule = () => userDropdownModule
 const getServerUserDropdownModule = () => null
+const getUserDropdownFailed = () => userDropdownFailed
+const getServerUserDropdownFailed = () => false
 const ensureUserDropdownModule = () => {
   if (userDropdownModule) {
     return Promise.resolve()
@@ -63,10 +68,14 @@ const ensureUserDropdownModule = () => {
     .then(
       (module) => {
         userDropdownModule = module
+        userDropdownFailed = false
         userDropdownListeners.forEach((listener) => listener())
       },
-      // 块加载失败: 头像位保留骨架, 会话就绪后的 effect 会再试一次
-      () => {}
+      // 块加载失败: 头像位保留骨架, 顶栏里的 effect 会再试一次
+      () => {
+        userDropdownFailed = true
+        userDropdownListeners.forEach((listener) => listener())
+      }
     )
     .finally(() => {
       userDropdownLoading = null
@@ -141,12 +150,18 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
     getUserDropdownModule,
     getServerUserDropdownModule
   )
-  // 骨架只等首次判定访客身份 (store 的 status 离开 pending 之后不再回去): 根布局在软导航里
-  // 不重渲染, initialSession 一直是整页加载时的值, 之后的站内登入 / 登出只改 store
+  const dropdownFailed = useSyncExternalStore(
+    subscribeUserDropdown,
+    getUserDropdownFailed,
+    getServerUserDropdownFailed
+  )
+  // 骨架等首次判定访客身份 (store 的 status 离开 pending 之后不再回去) 与已登录时的头像菜单块:
+  // 根布局在软导航里不重渲染, initialSession 一直是整页加载时的值, 之后的站内登入 / 登出只改 store
   const view = deriveTopBarView({
     isMounted,
     isSessionPending: !!isSessionPending,
-    status
+    status,
+    dropdown: dropdownModule ? 'ready' : dropdownFailed ? 'failed' : 'loading'
   })
 
   useEffect(() => {
@@ -156,12 +171,10 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
 
     let cancelled = false
     const hydrateSession = async () => {
-      // 等懒块期间站内换了账号或登出了, 这份首屏会话就过时了
+      // 等待期间站内换了账号或登出了, 这份首屏会话就过时了
       const epoch = getKunSessionEpoch()
-      await Promise.all([
-        useSettingStore.persist.rehydrate(),
-        ensureUserDropdownModule()
-      ])
+      void ensureUserDropdownModule()
+      await useSettingStore.persist.rehydrate()
       if (cancelled || epoch !== getKunSessionEpoch()) {
         return
       }
@@ -185,7 +198,7 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
 
     let cancelled = false
     const handleMissingSession = async () => {
-      // 回查要等懒块 (C20), 慢网下可能好几秒: 期间站内登入或登出了, 回查结果就不再适用
+      // 回查在慢网下可能要好几秒: 期间站内登入或登出了, 回查结果就不再适用
       const epoch = getKunSessionEpoch()
       await useSettingStore.persist.rehydrate()
       const uid = await loadKunStoredUid()
@@ -198,10 +211,8 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
         return
       }
 
-      const [sessionCheck] = await Promise.all([
-        fetchCurrentSession(),
-        ensureUserDropdownModule()
-      ])
+      void ensureUserDropdownModule()
+      const sessionCheck = await fetchCurrentSession()
       if (cancelled || epoch !== getKunSessionEpoch()) {
         return
       }
@@ -224,13 +235,14 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
     }
   }, [initialSession, isSessionPending, isMounted, signOut])
 
-  // 站内登录 (登录页 signInKunSession) 等不经过上面两条会话路径的翻转, 以及加载失败后的重试
+  // 已登录而块还没到: 站内登录 (登录页 signInKunSession) 等不经过上面两条会话路径的翻转从这里
+  // 开始加载; 加载失败 (dropdownFailed 变真) 时再试一次, 再失败不会再触发
   useEffect(() => {
-    if (view !== 'user' || dropdownModule) {
+    if (status !== 'authenticated' || dropdownModule) {
       return
     }
     void ensureUserDropdownModule()
-  }, [dropdownModule, view])
+  }, [dropdownFailed, dropdownModule, status])
 
   return (
     <NavbarContent as="div" className="items-center" justify="end">
