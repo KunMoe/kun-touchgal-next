@@ -25,7 +25,7 @@ const main = async () => {
   })
   console.log('测试 client 就绪：', {
     client_id: client.client_id,
-    client_secret: client.client_secret,
+    client_secret: CLIENT.client_secret,
     redirect_uris: client.redirect_uris
   })
 }

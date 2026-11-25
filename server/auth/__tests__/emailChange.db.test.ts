@@ -268,8 +268,12 @@ describe.skipIf(!dbContractUrl)(
         }
 
         const storedCodes = async (uid: number) =>
-          (await prisma.user.findUniqueOrThrow({ where: { id: uid } }))
-            .two_factor_backup
+          (
+            await prisma.user.findUniqueOrThrow({
+              where: { id: uid },
+              select: { two_factor_backup: true }
+            })
+          ).two_factor_backup
 
         it('uses the code up together with the change', async () => {
           const user = await newUserWith2FA()

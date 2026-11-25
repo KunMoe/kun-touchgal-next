@@ -44,10 +44,13 @@ const userIdByLower = async (
 // name 列。有人把用户名改成别人的邮箱时, 邮箱的持有者照样登得进去 (以前是一条 OR 加
 // 无序的 findFirst, 两行里随机取一行)。邮箱形态的名字没法拿来登录, 所以取新名字时不许
 // 邮箱形态 (server/identity/username.ts)。以前查不到邮箱还会回落到 name 列, 照顾这类
-// 存量; 生产统计存量为 0 之后删了。每列至多命中一行由 lower() 唯一索引保证
+// 存量; 生产统计存量为 0 之后删了。每列至多命中一行由 lower() 唯一索引保证。
+// 登录要校验密码, 显式取回全局 omit 隐藏的 password (prisma/columnPolicy.ts)
 export const findUserForLogin = async ({ kind, raw }: LoginIdentifier) => {
   const id = await userIdByLower(kind, raw, null)
-  return id === null ? null : prisma.user.findUnique({ where: { id } })
+  return id === null
+    ? null
+    : prisma.user.findUnique({ where: { id }, omit: { password: false } })
 }
 
 // exceptUid 必填: 调用点要在类型上回答「这次有没有当前用户」。改自己名字的大小写

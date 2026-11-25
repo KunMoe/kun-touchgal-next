@@ -30,7 +30,8 @@ const uidKey = (uid: string) => `oidc:uid:${uid}`
 const createClientAdapter = (): Adapter => ({
   async find(id) {
     const row = await prisma.oidc_client.findUnique({
-      where: { client_id: id }
+      where: { client_id: id },
+      omit: { client_secret: false }
     })
     if (!row || row.disabled) {
       return undefined

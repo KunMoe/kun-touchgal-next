@@ -52,7 +52,11 @@ describe('findUserForLogin', () => {
     const user = await findUserForLogin({ kind: 'email', raw: 'victim@qq.com' })
     expect(user).toMatchObject({ id: 1 })
     expect(lookups().map(({ column }) => column)).toEqual(['email'])
-    expect(findUniqueMock).toHaveBeenCalledWith({ where: { id: 1 } })
+    // 登录要校验密码: 显式取回全局 omit 隐藏的 password
+    expect(findUniqueMock).toHaveBeenCalledWith({
+      where: { id: 1 },
+      omit: { password: false }
+    })
   })
 
   it('没有人持有这个邮箱时不回落到 name 列, 邮箱形态的用户名登不进去', async () => {

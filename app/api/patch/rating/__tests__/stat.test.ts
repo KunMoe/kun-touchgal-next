@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 
 const { executeRawMock } = vi.hoisted(() => ({
   executeRawMock: vi.fn()
@@ -7,7 +8,7 @@ const { executeRawMock } = vi.hoisted(() => ({
 
 const transactionClient = {
   $executeRaw: executeRawMock
-} as unknown as Prisma.TransactionClient
+} as unknown as KunTx
 
 import {
   recomputePatchRatingStat,
@@ -15,11 +16,11 @@ import {
 } from '~/app/api/patch/rating/stat'
 
 expectTypeOf(recomputePatchRatingStat).parameters.toEqualTypeOf<
-  [number, Prisma.TransactionClient]
+  [number, KunTx]
 >()
 
 expectTypeOf(recomputePatchRatingStats).parameters.toEqualTypeOf<
-  [number[], Prisma.TransactionClient]
+  [number[], KunTx]
 >()
 
 // 按 Prisma 自己的规则拼回整条 SQL: 内嵌的 Prisma.join / Prisma.raw 展开, 其余插值是绑定参数

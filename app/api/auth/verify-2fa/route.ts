@@ -34,7 +34,8 @@ const verifyLogin2FA = async (
   const { id: uid, jti } = challenge
 
   const user = await prisma.user.findUnique({
-    where: { id: uid }
+    where: { id: uid },
+    omit: { two_factor_secret: false }
   })
 
   if (!user || !user.enable_2fa) {
