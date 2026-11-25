@@ -131,7 +131,10 @@ describe.skipIf(!dbContractUrl)('security stamp on real PostgreSQL', () => {
       data: { password: 'rehashed' }
     })
 
-    const row = await prisma.user.findUnique({ where: { id: user.id } })
-    expect(row).toMatchObject({ password: 'rehashed', security_stamp: null })
+    const row = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { password: true, security_stamp: true }
+    })
+    expect(row).toEqual({ password: 'rehashed', security_stamp: null })
   })
 })

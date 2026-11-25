@@ -113,8 +113,9 @@ describe.skipIf(!dbContractUrl)('favorite toggle on real PostgreSQL', () => {
   // 撞上的话 「锁键是收藏夹 id」 这条断言分不清键是不是取错了列, 所以避开
   const newFolder = async (userId: number, avoid: number[]) => {
     for (;;) {
+      // 公开收藏夹: 收藏进私密收藏夹不给作者发通知, 这里数的是通知
       const folder = await prisma.user_patch_favorite_folder.create({
-        data: { name: randomUUID(), user_id: userId }
+        data: { name: randomUUID(), user_id: userId, is_public: true }
       })
       if (!avoid.includes(folder.id)) {
         return folder
