@@ -182,6 +182,16 @@ const COERCE_OBJECT =
 const COERCE_INIT =
   "[init.type='MemberExpression'][init.computed=false][init.property.name='coerce'], [init.type='MemberExpression'][init.property.value='coerce']"
 
+// inv-points-01。任意 delegate 的写入调用, 写入体在 data (update* / create*) 或 upsert 的 update / create;
+// 写入体里任意深度 (嵌套写) 的 moemoepoint 键都算, 嵌套写自己的 where 里的不算
+const POINT_WRITE_CALL =
+  'CallExpression[callee.property.name=/^(update|updateMany|updateManyAndReturn|upsert|create|createMany|createManyAndReturn)$/]'
+const POINT_PAYLOAD = `${POINT_WRITE_CALL} > ObjectExpression > Property${keyIs('/^(data|update|create)$/')}`
+const POINT_KEY = `Property${keyOrTemplateIs("'moemoepoint'")}`
+// raw SQL: SET 列表到 WHERE / RETURNING 为止 (写法同 SET_STATUS), 以及 INSERT 的列清单
+const SET_POINTS = String.raw`SET\b(?:'[^']*'|(?!\b(?:WHERE|RETURNING)\b)[^'])*?\bmoemoepoint\b`
+const INSERT_POINTS = String.raw`\bINSERT\s+INTO\s+[\w".]+\s*\([^)]*\bmoemoepoint\b`
+
 /** @type {KunInvariant[]} */
 export const KUN_INVARIANTS = [
   {
@@ -1468,6 +1478,57 @@ export const KUN_INVARIANTS = [
         'export const f = (r: Response) => r.status === 401',
         'export const init = { status: 502 }',
         'export const w = { avatar_status: 0 }'
+      ]
+    }
+  },
+  {
+    id: 'inv-points-01',
+    aliases: ['T30'],
+    statement:
+      'user.moemoepoint 只由 server/points/account.ts 写: 模块外写入调用 (update / updateMany / upsert / create 及嵌套写) 的写入体里不得出现 moemoepoint 键, applyKunCredentialChange 的写入体也不得带它, 原生 SQL 不得在 SET 或 INSERT 列清单里写它; 发放、扣费、收回与后台调分都调 server/points 的函数, 数值取自 constants/points.ts',
+    reason:
+      '扣费必须把余额守卫写进条件更新的 WHERE (CAS), 只做增量不写绝对值, 与改名 / 签到标记写在同一条语句里。这套纪律原先只在注释与记忆文件里, 新写者生来就违反它: 私聊扣费 9a266466 上线时是事务外读加裸 decrement, 后台调分 0b7afaac 是按列表快照整值覆盖。user 表写入体是变量或带展开的写法由 inv-auth-04 拦; 把写入体先放进变量再传给 applyKunCredentialChange、解构出 delegate 再调都看不到',
+    removeWhen: '萌萌点改由流水表记账, 余额列不再由应用层直接写',
+    files: [
+      'app/**/*.ts',
+      'server/**/*.ts',
+      'lib/**/*.ts',
+      'utils/**/*.ts',
+      'scripts/**/*.ts'
+    ],
+    ignores: ['server/points/**', '**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `${POINT_PAYLOAD} ${POINT_KEY}:not(${POINT_PAYLOAD} Property${keyIs("'where'")} *)`,
+        `CallExpression[callee.name='applyKunCredentialChange'] ${POINT_KEY}`
+      ],
+      strings: [new RegExp(SET_POINTS, 'i'), new RegExp(INSERT_POINTS, 'i')]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        'export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { moemoepoint: { increment: 3 } } })',
+        'export const run = (tx: any) => tx.user.updateMany({ where: { id: 1, moemoepoint: { gte: 20 } }, data: { moemoepoint: { decrement: 10 } } })',
+        "export const run = (prisma: any) => prisma.user.create({ data: { name: 'x', moemoepoint: 100 } })",
+        "export const run = (prisma: any) => prisma.user.upsert({ where: { id: 1 }, create: { name: 'x' }, update: { moemoepoint: 0 } })",
+        'export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { user: { update: { moemoepoint: { increment: 1 } } } } })',
+        "export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { ['moemoepoint']: 5 } })",
+        'export const run = (tx: any) => tx.user.update({ where: { id: 1 }, data: { [`moemoepoint`]: 5 } })',
+        "export const run = (tx: any) => applyKunCredentialChange(tx, { uid: 1, event: 'admin-edited', data: { status: 2, moemoepoint: 5 } })",
+        'export const run = (tx: any, n: number, id: number) => tx.$executeRaw`UPDATE "user" SET moemoepoint = moemoepoint + ${n} WHERE id = ${id}`',
+        'export const run = (tx: any, n: string, id: number) => tx.$executeRawUnsafe(\'update "user" set name = $1, moemoepoint = 0 where id = $2\', n, id)',
+        'export const run = (tx: any, n: string) => tx.$executeRaw`INSERT INTO "user" (name, moemoepoint) VALUES (${n}, 100)`'
+      ],
+      good: [
+        'export const run = (prisma: any) => prisma.user.findUnique({ where: { id: 1 }, select: { moemoepoint: true } })',
+        'export const run = (prisma: any) => prisma.user.findMany({ where: { moemoepoint: { gte: 20 } } })',
+        "export const run = (tx: any) => tx.user.updateMany({ where: { id: 1, moemoepoint: { gte: 20 } }, data: { name: 'x' } })",
+        "export const run = (tx: any) => tx.patch.update({ where: { id: 1 }, data: { user: { update: { where: { moemoepoint: { gte: 1 } }, data: { name: 'x' } } } } })",
+        "export const run = (tx: any) => creditPoints(tx, 1, 'like_received')",
+        'export const run = (tx: any, id: number) => tx.$queryRaw`SELECT moemoepoint FROM "user" WHERE id = ${id}`',
+        'export const run = (tx: any, n: string) => tx.$executeRaw`UPDATE "user" SET name = ${n} WHERE moemoepoint >= 20`',
+        "export const message = '萌萌点不足, 请先签到再重设 moemoepoint'"
       ]
     }
   }

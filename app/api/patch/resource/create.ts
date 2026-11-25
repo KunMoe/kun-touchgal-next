@@ -20,6 +20,7 @@ import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkd
 import { can } from '~/constants/permission'
 import { linkStorageGateError } from './storageGate'
 import { kunTx } from '~/server/db/tx'
+import { creditPoints } from '~/server/points/account'
 import { recordKunChanges } from '~/server/cache/publish'
 import type { PatchResource } from '~/types/api/patch'
 import type { ResourceStatus } from '~/constants/contentStatus'
@@ -184,10 +185,7 @@ export const createPatchResource = async (
       }
     })
 
-    await prisma.user.update({
-      where: { id: uid },
-      data: { moemoepoint: { increment: 3 } }
-    })
+    await creditPoints(prisma, uid, 'resource_publish')
 
     if (moderation.queue) {
       await enqueueTextModeration(prisma, moderation, {

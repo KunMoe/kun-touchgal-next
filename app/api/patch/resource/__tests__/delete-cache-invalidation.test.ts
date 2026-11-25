@@ -202,6 +202,8 @@ describe('资源删除的清理顺序', () => {
     await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 7, role: 2 }))
 
     expect(shortResourceLabels(rec)).toEqual([
+      // 收回奖励的入口先读作者、锁作者行
+      'patch_resource.findMany',
       'lock user',
       'lock resource',
       'patch_resource.findMany',

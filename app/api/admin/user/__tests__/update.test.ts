@@ -9,6 +9,7 @@ const {
   queryRawMock,
   transactionMock,
   updateUserMock,
+  adjustUserMock,
   createLogMock,
   finishMock,
   hashPasswordMock
@@ -17,14 +18,16 @@ const {
   queryRawMock: vi.fn(),
   transactionMock: vi.fn(),
   updateUserMock: vi.fn(),
+  adjustUserMock: vi.fn(),
   createLogMock: vi.fn(),
   finishMock: vi.fn(),
   hashPasswordMock: vi.fn()
 }))
 
-// 凭据与权限列经 applyKunCredentialChange 写入 (平铺 WHERE 的 updateMany)
+// 凭据与权限列经 applyKunCredentialChange 写入 (平铺 WHERE 的 updateMany); 萌萌点经
+// server/points 的 adjustPoints 按差值写 (update)
 const transactionClient = {
-  user: { updateMany: updateUserMock },
+  user: { updateMany: updateUserMock, update: adjustUserMock },
   admin_log: { create: createLogMock }
 }
 
@@ -68,7 +71,6 @@ const baseInput = {
   role: 1,
   status: 0,
   dailyImageCount: 10,
-  moemoepoint: 100,
   bio: ''
 }
 
@@ -80,6 +82,7 @@ beforeEach(() => {
   queryRawMock.mockReset()
   queryRawMock.mockResolvedValue([])
   updateUserMock.mockResolvedValue({ count: 1 })
+  adjustUserMock.mockResolvedValue({ moemoepoint: 0 })
   createLogMock.mockResolvedValue({})
   finishMock.mockResolvedValue({ revokedOthers: 0 })
   transactionMock.mockImplementation(
@@ -92,7 +95,7 @@ describe('updateUser 保留用户名', () => {
   it('不改名时放行存量保留名用户的封禁与改权', async () => {
     await expect(
       updateUser({ ...baseInput, role: 2, status: 1 }, 99)
-    ).resolves.toEqual({})
+    ).resolves.toEqual({ moemoepoint: 100 })
 
     // 只查目标用户与管理员两次, 不进重名查询分支
     expect(findUserMock).toHaveBeenCalledTimes(2)
@@ -104,7 +107,6 @@ describe('updateUser 保留用户名', () => {
         email: 'target@example.com',
         role: 2,
         status: 1,
-        moemoepoint: 100,
         bio: ''
       }
     })
@@ -130,7 +132,7 @@ describe('updateUser 保留用户名', () => {
   it('允许把存量保留名用户改成非保留名', async () => {
     await expect(
       updateUser({ ...baseInput, name: 'kun-admin' }, 99)
-    ).resolves.toEqual({})
+    ).resolves.toEqual({ moemoepoint: 100 })
 
     expect(
       queryRawMock.mock.calls.map(([query]) => parseLowerLookup(query))
@@ -168,7 +170,7 @@ describe('updateUser 新名字的规则与查重 (T18)', () => {
 
     await expect(
       updateUser({ ...baseInput, name: 'legacy@qq.com', status: 1 }, 99)
-    ).resolves.toEqual({})
+    ).resolves.toEqual({ moemoepoint: 100 })
 
     expect(queryRawMock).not.toHaveBeenCalled()
   })
@@ -219,9 +221,9 @@ describe('updateUser 改了密码或邮箱 (账号恢复)', () => {
   ])('%s: 走刷新安全戳的事件', async (_label, change, checksEmail) => {
     hashPasswordMock.mockResolvedValue('new-hash')
 
-    await expect(updateUser({ ...baseInput, ...change }, 99)).resolves.toEqual(
-      {}
-    )
+    await expect(updateUser({ ...baseInput, ...change }, 99)).resolves.toEqual({
+      moemoepoint: 100
+    })
 
     // 新邮箱的查重: 大小写不敏感, 排除目标用户自己; 没改邮箱就不查
     expect(
@@ -262,12 +264,12 @@ describe('updateUser 角色按 delta 判定', () => {
     setup(4)
 
     await expect(
-      updateUser({ ...baseInput, role: 4, moemoepoint: 7 }, 99)
-    ).resolves.toEqual({})
+      updateUser({ ...baseInput, role: 4, bio: 'hi' }, 99)
+    ).resolves.toEqual({ moemoepoint: 100 })
 
     expect(updateUserMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ role: 4, moemoepoint: 7 })
+        data: expect.objectContaining({ role: 4, bio: 'hi' })
       })
     )
   })
@@ -294,9 +296,9 @@ describe('updateUser 角色按 delta 判定', () => {
   ])('可以把 role %i 改成 role %i (含给超级管理员降权)', async (from, to) => {
     setup(from)
 
-    await expect(updateUser({ ...baseInput, role: to }, 99)).resolves.toEqual(
-      {}
-    )
+    await expect(updateUser({ ...baseInput, role: to }, 99)).resolves.toEqual({
+      moemoepoint: 100
+    })
 
     expect(updateUserMock).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ role: to }) })
@@ -320,5 +322,63 @@ describe('updateUser 角色按 delta 判定', () => {
 
     expect([1, 2, 3, 4].map(parse)).toEqual([true, true, true, true])
     expect([0, 5].map(parse)).toEqual([false, false])
+  })
+})
+
+// 表单整体提交时萌萌点曾按打开时的快照整值写回: 期间的签到、被赞、消费被覆盖, 负余额用户
+// 被 min(0) 卡住连封禁都存不了 (X04-04)。现在只带差值, 由 server/points 写
+describe('updateUser 萌萌点按差值调整', () => {
+  it('带差值时按差值写, 不进凭据写入体, 返回写后的余额并记入审计', async () => {
+    adjustUserMock.mockResolvedValue({ moemoepoint: 75 })
+
+    await expect(
+      updateUser({ ...baseInput, moemoepointDelta: -30 }, 99)
+    ).resolves.toEqual({ moemoepoint: 75 })
+
+    expect(adjustUserMock.mock.calls).toEqual([
+      [
+        {
+          where: { id: 7 },
+          data: { moemoepoint: { increment: -30 } },
+          select: { moemoepoint: true }
+        }
+      ]
+    ])
+    expect(updateUserMock.mock.calls[0][0].data).not.toHaveProperty(
+      'moemoepoint'
+    )
+    expect(createLogMock.mock.calls[0][0].data.content).toContain(
+      '"moemoepointDelta":-30'
+    )
+    expect(finishMock).toHaveBeenCalledWith(7, 'admin-edited')
+  })
+
+  it('不带差值时不写萌萌点', async () => {
+    await updateUser({ ...baseInput, status: 2 }, 99)
+
+    expect(adjustUserMock).not.toHaveBeenCalled()
+  })
+
+  it('负余额用户可以照常保存 (封禁)', async () => {
+    findUserMock.mockReset()
+    findUserMock
+      .mockResolvedValueOnce({ ...reservedNameUser, moemoepoint: -5 })
+      .mockResolvedValueOnce({ role: 4, name: 'root-admin' })
+    const parsed = adminUpdateUserSchema.safeParse({ ...baseInput, status: 2 })
+    expect(parsed.success).toBe(true)
+
+    await expect(updateUser(parsed.data!, 99)).resolves.toEqual({
+      moemoepoint: -5
+    })
+  })
+
+  it('schema: 旧的整值键被剥掉, 差值须为整数', () => {
+    const parse = (extra: Record<string, unknown>) =>
+      adminUpdateUserSchema.safeParse({ ...baseInput, ...extra })
+
+    expect(parse({ moemoepoint: 5 }).data).not.toHaveProperty('moemoepoint')
+    expect(parse({ moemoepointDelta: -12 }).data?.moemoepointDelta).toBe(-12)
+    expect(parse({ moemoepointDelta: 1.5 }).success).toBe(false)
+    expect(parse({ moemoepointDelta: 10000000 }).success).toBe(false)
   })
 })

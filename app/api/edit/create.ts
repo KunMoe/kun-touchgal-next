@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
+import { creditGalgamePublish } from '~/server/points/account'
 import { encodePatchBanner } from './_upload'
 import { putPatchBannerSet } from '~/server/storage/patchBanner'
 import { newPatchBannerSet } from '~/server/storage/imageObjects'
@@ -209,13 +210,8 @@ export const createGalgame = async (input: CreateGalgameInput, uid: number) => {
         })
       }
 
-      await prisma.user.update({
-        where: { id: uid },
-        data: {
-          daily_image_count: { increment: 1 },
-          moemoepoint: { increment: 3 }
-        }
-      })
+      // 发布奖励与封面占用的当日图片计数是同一条 UPDATE
+      await creditGalgamePublish(prisma, uid)
 
       // 事务性入队：与 patch.create 原子提交，关闭崩溃丢失窗口；tags 由后续
       // processSubmittedExternalData 另行写入，它写完之后自己再入队一次

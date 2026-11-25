@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
+import { creditPoints, reverseCredit } from '~/server/points/account'
 import { createDedupMessage } from '~/app/api/utils/message'
 import { recordKunChanges } from '~/server/cache/publish'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
@@ -84,10 +85,11 @@ const toggleResourceLike = async (
         await createDedupMessage(messageData, tx)
       }
 
-      await tx.user.update({
-        where: { id: resource.user_id },
-        data: { moemoepoint: { increment: isRemoved ? -1 : 1 } }
-      })
+      if (isRemoved) {
+        await reverseCredit(tx, resource.user_id, 'like_received')
+      } else {
+        await creditPoints(tx, resource.user_id, 'like_received')
+      }
       recordKunChanges(ctx, [
         {
           kind: 'resourceReaction',

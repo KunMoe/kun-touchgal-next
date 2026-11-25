@@ -4,6 +4,7 @@ import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import {
   executeResourceRemoval,
+  lockResourceOwnerAccounts,
   planResourceRemoval
 } from '~/server/content/resource/remove'
 import type { KunActor } from '~/constants/role'
@@ -42,10 +43,12 @@ export const deleteResource = async (
   const guard = contentGuard('resource', actor)
 
   const failure = await kunTx('resource.delete', async (ctx) => {
-    // 前台删除收回发布时给作者的奖励; 其余删除入口都不收回
+    // 收回发布时给作者的奖励: 先锁作者行, 再由命令锁资源行
     const plan = await planResourceRemoval(ctx, [patchResource.id], {
       guard,
-      refundPublishReward: true
+      refundPublishReward: await lockResourceOwnerAccounts(ctx, [
+        patchResource.id
+      ])
     })
     const [skipped] = plan.skipped
     if (skipped) {

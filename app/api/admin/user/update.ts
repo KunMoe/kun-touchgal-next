@@ -10,14 +10,24 @@ import {
 } from '~/server/auth/securityEvents'
 import { hashPassword } from '~/app/api/utils/algorithm'
 import { can, canAssignRole } from '~/constants/permission'
+import { adjustPoints } from '~/server/points/account'
 
 export const updateUser = async (
   input: z.infer<typeof adminUpdateUserSchema>,
   adminUid: number
 ) => {
   // 凭据与权限列 (email / role / status / password) 单独解构, 经 applyKunCredentialChange 写入;
-  // rest 里只剩普通资料列
-  const { uid, dailyImageCount, password, email, role, status, ...rest } = input
+  // 萌萌点只经 server/points 按差值写; rest 里只剩普通资料列
+  const {
+    uid,
+    dailyImageCount,
+    password,
+    email,
+    role,
+    status,
+    moemoepointDelta,
+    ...rest
+  } = input
 
   const user = await prisma.user.findUnique({
     where: { id: uid },
@@ -80,7 +90,7 @@ export const updateUser = async (
     hashedPassword || email !== user.email
       ? 'admin-credentials-changed'
       : 'admin-edited'
-  const failure = await kunTx(
+  const result = await kunTx(
     'admin.user.update',
     async ({ tx: prisma }) => {
       const { count } = await applyKunCredentialChange(prisma, {
@@ -99,6 +109,10 @@ export const updateUser = async (
       if (!count) {
         throw new Error(`用户 ${uid} 已不存在`)
       }
+      // 列表显示写后的余额: 没调整时就是本次请求开头读到的值
+      const moemoepoint = moemoepointDelta
+        ? await adjustPoints(prisma, uid, moemoepointDelta)
+        : user.moemoepoint
 
       await prisma.admin_log.create({
         data: {
@@ -107,19 +121,20 @@ export const updateUser = async (
           content: `管理员 ${admin.name} 更改了一个用户的信息\n\n更改内容:\n${JSON.stringify(logInput)}\n\n原用户信息:\n${JSON.stringify(user)}`
         }
       })
+      return { moemoepoint }
     },
     {
       // 上面的查重与这里的写入之间有窗口: 同时被别人取走的名字或邮箱 (含只差大小写) 撞唯一索引
       violations: { P2002: '该用户名或邮箱已被其他用户使用' }
     }
   )
-  if (typeof failure === 'string') {
-    return failure
+  if (typeof result === 'string') {
+    return result
   }
 
   // 改权 (降权 / 封禁) 必须删光会话 (策略表 admin-edited: redis all): 删掉 access token 使
   // 旧凭证校验先行失败, 是「旧鉴权缓存不被采信」的根闸门。不能只轮转缓存版本键, 那一步的
   // 失败会被吞掉, 存活的旧 token 将命中旧权限缓存
   await finishKunSecurityEvent(uid, event)
-  return {}
+  return result
 }

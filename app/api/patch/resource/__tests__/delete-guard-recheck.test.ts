@@ -83,6 +83,8 @@ const snapshot = (status = 0) => ({ id: 1, user_id: 7, status })
 const expectNoWrites = () => {
   // 守卫没过时一条写入都没有: 没有扣分, 也就不需要靠回滚把它撤回来
   expect(shortResourceLabels(rec)).toEqual([
+    // 读作者 → 锁作者行 → 锁资源行 → 锁下重读
+    'patch_resource.findMany',
     'lock user',
     'lock resource',
     'patch_resource.findMany'
@@ -182,7 +184,11 @@ describe('删除资源在行锁下复检守卫', () => {
     )
 
     expect(result).toBe('未找到对应的资源')
-    expect(shortResourceLabels(rec)).toEqual(['lock user', 'lock resource'])
+    // 读作者时行已不在, 不锁任何账户
+    expect(shortResourceLabels(rec)).toEqual([
+      'patch_resource.findMany',
+      'lock resource'
+    ])
     expect(kickS3Mock).not.toHaveBeenCalled()
   })
 
@@ -215,7 +221,11 @@ describe('删除资源收回发布奖励', () => {
 
     expect(result).toEqual({})
     const labels = shortResourceLabels(rec)
-    expect(labels.slice(0, 2)).toEqual(['lock user', 'lock resource'])
+    expect(labels.slice(0, 3)).toEqual([
+      'patch_resource.findMany',
+      'lock user',
+      'lock resource'
+    ])
     expect(labels.indexOf('patch_resource.deleteMany')).toBeLessThan(
       labels.indexOf('user.update')
     )

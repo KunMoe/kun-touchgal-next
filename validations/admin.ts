@@ -200,7 +200,13 @@ export const adminUpdateUserSchema = z.object({
   role: kunInt(KUN_ROLE.USER, KUN_ROLE.SUPER_ADMIN, '用户角色无效'),
   status: kunInt(0, 2, '用户状态无效'),
   dailyImageCount: kunInt(0, 50, '每日图片上传数须为 0～50 的整数'),
-  moemoepoint: kunInt(0, 9999999, '萌萌点须为 0～9999999 的整数'),
+  // 萌萌点按差值调整 (表单里仍填目标值, 由客户端换算), 打开表单之后发生的增减不会被覆盖;
+  // 不改萌萌点就不带这个键
+  moemoepointDelta: kunInt(
+    -9999999,
+    9999999,
+    '萌萌点调整值须为 -9999999～9999999 的整数'
+  ).optional(),
   password: z.preprocess(
     (value) => {
       if (typeof value !== 'string') {

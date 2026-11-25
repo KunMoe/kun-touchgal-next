@@ -75,6 +75,9 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
     onClose()
   }
 
+  // 输入框填目标值, 请求只带差值: 打开弹窗之后用户签到、被赞、消费的增减不被覆盖
+  const pointDelta = formUser.moemoepoint - user.moemoepoint
+
   const [updating, setUpdating] = useState(false)
   const handleUpdateUserInfo = async () => {
     const requestData = {
@@ -84,21 +87,26 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
       role: formUser.role,
       status: formUser.status,
       dailyImageCount: formUser.dailyImageCount,
-      moemoepoint: formUser.moemoepoint,
+      ...(pointDelta ? { moemoepointDelta: pointDelta } : {}),
       bio: formUser.bio,
       ...(password ? { password } : {})
     }
 
     setUpdating(true)
     try {
-      const res = await kunFetchPut<KunResponse<{}>>('/admin/user', requestData)
-      kunErrorHandler(res, () => {
-        setUser(formUser)
-        setFormUser(formUser)
+      const res = await kunFetchPut<KunResponse<{ moemoepoint: number }>>(
+        '/admin/user',
+        requestData
+      )
+      kunErrorHandler(res, ({ moemoepoint }) => {
+        // 萌萌点以服务端写后的余额为准
+        const saved = { ...formUser, moemoepoint }
+        setUser(saved)
+        setFormUser(saved)
         setPassword('')
         toast.success('更新用户信息成功')
         onClose()
-        onUpdated?.(formUser)
+        onUpdated?.(saved)
       })
     } catch (error) {
       errorReporter(error)
@@ -189,6 +197,11 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
                 label="萌萌点"
                 type="number"
                 value={String(formUser.moemoepoint)}
+                description={
+                  pointDelta
+                    ? `将调整 ${pointDelta > 0 ? '+' : ''}${pointDelta}`
+                    : undefined
+                }
                 onChange={(e) =>
                   handleChange('moemoepoint', Number(e.target.value))
                 }

@@ -7,6 +7,7 @@ import {
 } from '~/validations/conversation'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { kunTx } from '~/server/db/tx'
+import { spendOnConversation } from '~/server/points/account'
 import { can } from '~/constants/permission'
 import {
   meetsPointGate,
@@ -217,19 +218,11 @@ export const getOrCreateConversation = async (
 
   let created: { id: number } | string
   try {
-    // 条件更新即 CAS: 余额守卫必须落在 WHERE 里. 上面那次读取自事务之外, 只是省一次
+    // 扣费是条件更新 (CAS), 余额守卫在 WHERE 里. 上面那次读取自事务之外, 只是省一次
     // 往返的快速失败, 不是安全边界; 并发请求读到同一份快照会一起通过它, 各扣一次把
-    // 余额扣成负数 (唯一索引只约束同一对用户, 对 N 个不同目标并发不设防).
-    // 谓词用门槛而非价格, 保留「需要 20 才能开一个, 付 10」的语义
+    // 余额扣成负数 (唯一索引只约束同一对用户, 对 N 个不同目标并发不设防)
     created = await kunTx('conversation.create', async ({ tx, fail }) => {
-      const { count } = await tx.user.updateMany({
-        where: {
-          id: uid,
-          moemoepoint: { gte: POINT_RULES.conversation.minBalance }
-        },
-        data: { moemoepoint: { decrement: POINT_RULES.conversation.cost } }
-      })
-      if (!count) {
+      if (!(await spendOnConversation(tx, uid))) {
         fail(insufficient)
       }
 
