@@ -108,13 +108,16 @@ describe('deleteResource 批量删除', () => {
     ).resolves.toEqual({ count: 3 })
 
     expect(rec.attempts).toHaveLength(1)
-    const lock = rec.labels()[0]
+    const lock = rec.labels()[2]
     expect(lock).toBe(
       '$queryRaw: SELECT id FROM patch_resource WHERE id = ANY(?::int[]) ORDER BY id FOR UPDATE'
     )
     expect(rec.argsOf(lock)).toEqual([[[3, 1, 2]]])
-    // 后台删除不收回发布奖励: 不锁作者行、不扣分
+    // 后台删除收回发布奖励: 先读作者、升序锁作者行, 再锁资源行 (与前台删除同向)
+    expect(rec.argsOf(rec.labels()[1])).toEqual([[[5, 6, 7]]])
     expect(shortResourceLabels(rec)).toEqual([
+      'patch_resource.findMany',
+      'lock user',
       'lock resource',
       // 锁下重读的集合 (而非入参) 是删除与派生清理的事实源
       'patch_resource.findMany',
@@ -130,6 +133,10 @@ describe('deleteResource 批量删除', () => {
       'moderation_task.deleteMany',
       'moderation_appeal.deleteMany',
       'patch_report.deleteMany',
+      // 删除之后按作者升序各收回 3 点
+      'user.update',
+      'user.update',
+      'user.update',
       // 补丁 10、20 各重算一次: patch 行 → 通告锁
       'lock patch',
       'recalc.lock',
@@ -146,7 +153,13 @@ describe('deleteResource 批量删除', () => {
     expect(rec.argsOf('patch_resource.deleteMany')).toEqual([
       { where: { id: { in: [1, 2, 3] } } }
     ])
-    expect(userSessionMock).not.toHaveBeenCalled()
+    expect(rec.argsOf('user.update')).toEqual(
+      [5, 6, 7].map((id) => ({
+        where: { id },
+        data: { moemoepoint: { increment: -3 } }
+      }))
+    )
+    expect(userSessionMock.mock.calls).toEqual([[5], [6], [7]])
   })
 
   it('patch 通告锁与搜索入箱按 patchId 去重升序, S3 仅入队 s3 链接', async () => {
@@ -206,7 +219,11 @@ describe('deleteResource 批量删除', () => {
       '未找到对应的资源'
     )
 
-    expect(shortResourceLabels(rec)).toEqual(['lock resource'])
+    // 读作者时一行都没有: 不锁账户、不扣分
+    expect(shortResourceLabels(rec)).toEqual([
+      'patch_resource.findMany',
+      'lock resource'
+    ])
     expect(patchContentMock).not.toHaveBeenCalled()
     expect(kickSearchMock).not.toHaveBeenCalled()
     expect(kickS3Mock).not.toHaveBeenCalled()

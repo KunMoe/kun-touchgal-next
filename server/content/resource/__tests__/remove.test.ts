@@ -265,6 +265,8 @@ describe('收回发布奖励', () => {
 
     await remove([1, 2, 3], { refundPublishReward: true })
 
+    // 作者去重升序加锁
+    expect(rec.argsOf(USER_LOCK)).toEqual([[[7, 9]]])
     expect(rec.argsOf('user.update')).toEqual([
       { where: { id: 7 }, data: { moemoepoint: { increment: -6 } } },
       { where: { id: 9 }, data: { moemoepoint: { increment: -3 } } }

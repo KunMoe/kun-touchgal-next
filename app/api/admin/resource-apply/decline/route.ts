@@ -7,6 +7,7 @@ import { kunTx } from '~/server/db/tx'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import {
   executeResourceRemoval,
+  lockResourceOwnerAccounts,
   planResourceRemoval
 } from '~/server/content/resource/remove'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
@@ -36,10 +37,10 @@ const declinePatchResource = async (
   const result = await kunTx('admin.resource.decline', async (ctx) => {
     // 守卫在行锁下判定: 仍是待初审才删。并发的审核通过 (2→0) 要么先提交 (这里看到
     // 已上线, 跳过), 要么排在本事务之后 —— 不会误删已上线的资源 (删除会级联带走评论,
-    // S3 对象也随出箱清掉, 不可恢复)。未通过时什么都不清理
+    // S3 对象也随出箱清掉, 不可恢复)。未通过时什么都不清理, 也不收回发布奖励
     const plan = await planResourceRemoval(ctx, [resourceId], {
       guard: { statusIn: [RESOURCE_STATUS.awaitingApproval] },
-      refundPublishReward: false
+      refundPublishReward: await lockResourceOwnerAccounts(ctx, [resourceId])
     })
     if (!plan.rows.length) {
       ctx.fail('当前资源状态无需审核')

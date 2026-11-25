@@ -43,7 +43,8 @@ export const deleteResource = async (
   const guard = contentGuard('resource', actor)
 
   const failure = await kunTx('resource.delete', async (ctx) => {
-    // 收回发布时给作者的奖励: 先锁作者行, 再由命令锁资源行
+    // 收回发布时给作者的奖励 (后台删除、初审拒绝、申诉驳回同样收回; 删游戏与隐藏不收回):
+    // 先锁作者行, 再由命令锁资源行
     const plan = await planResourceRemoval(ctx, [patchResource.id], {
       guard,
       refundPublishReward: await lockResourceOwnerAccounts(ctx, [
