@@ -2,7 +2,7 @@ import { KUN_PROXY_BODY_CLONE_LIMIT } from '~/constants/bodyBudget'
 
 // 读请求体的唯一出口 (T32): 边读边计数, 超过入口声明的预算就停, 不先把整段收进内存再判断。
 // 预算取值在 constants/bodyBudget.ts。别处不直接调 req.json() / formData() / arrayBuffer() /
-// text() / blob(), 也不读 req.body: 它们都要收完整段才返回, 不设上限。
+// text() / blob(), 也不读 req.body (kun/inv-body-01): 它们都要收完整段才返回, 不设上限。
 // 纯模块, 不导入 prisma / redis / s3: OIDC 桥 (lib/oidc/webToNode.ts) 也用它
 
 export type KunBodyFailure = {

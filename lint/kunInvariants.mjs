@@ -193,6 +193,11 @@ const SET_POINTS = String.raw`SET\b(?:'[^']*'|(?!\b(?:WHERE|RETURNING)\b)[^'])*?
 const INSERT_POINTS = String.raw`\bINSERT\s+INTO\s+[\w".]+\s*\([^)]*\bmoemoepoint\b`
 
 /** @type {KunInvariant[]} */
+// inv-body-01。Request 上会把整段请求体收进内存的成员; 按变量名认 req / request (仓库里
+// Request 参数只有这两种写法)
+const BODY_READER = '/^(req|request)$/'
+const BODY_MEMBERS = '/^(body|json|formData|arrayBuffer|text|blob)$/'
+
 export const KUN_INVARIANTS = [
   {
     id: 'inv-bundle-01',
@@ -1529,6 +1534,46 @@ export const KUN_INVARIANTS = [
         'export const run = (tx: any, id: number) => tx.$queryRaw`SELECT moemoepoint FROM "user" WHERE id = ${id}`',
         'export const run = (tx: any, n: string) => tx.$executeRaw`UPDATE "user" SET name = ${n} WHERE moemoepoint >= 20`',
         "export const message = '萌萌点不足, 请先签到再重设 moemoepoint'"
+      ]
+    }
+  },
+  {
+    id: 'inv-body-01',
+    aliases: ['T32'],
+    statement:
+      '请求体只经 lib/http/readBody.ts 的 kunReadBody 按预算读: Route Handler 在 kunRoute 的 input 旁写 maxBytes (取值在 constants/bodyBudget.ts, JSON 不写取默认 1 MiB), 不写 input、自己读的入口直接调 kunReadBody。不在别处调 req / request 的 json() / formData() / arrayBuffer() / text() / blob(), 也不读或解构它们的 body',
+    reason:
+      '这几个成员都要把整段请求体收进内存才返回, 不设上限。仓库里原先唯一起作用的上限是 Next 运行 proxy 前克隆请求体时的 10 MiB 截断: 它只管命中 matcher 的路由, 而且是截断不是拒绝 (两张封面合计超过 10 MiB 时 formData() 抛 TypeError 成 500); matcher 之外的 OIDC 桥在 oidc-provider 自己的 56 KiB 上限之前就整段读完。上限由此成了「CSRF 放在哪里」的副产品, 98d2c7d6 的点修同时种下了两边的缺陷。按变量名认, 换了名字的 Request、先 clone() 再读的看不到',
+    removeWhen:
+      'Next 对 Route Handler 的请求体提供按入口声明、超限即拒绝的上限, 或入口不再自己读请求体',
+    ignores: ['lib/http/readBody.ts', '**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        `MemberExpression[object.name=${BODY_READER}]:matches([computed=false][property.name=${BODY_MEMBERS}], [property.value=${BODY_MEMBERS}])`,
+        `VariableDeclarator[init.name=${BODY_READER}] > ObjectPattern > Property${keyIs(BODY_MEMBERS)}`
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample/route.ts',
+      bad: [
+        'export const POST = async (req: Request) => Response.json(await req.json())',
+        'export const run = (request: Request) => request.formData()',
+        'export const run = (req: Request) => req.arrayBuffer()',
+        'export const run = (req: Request) => req.text()',
+        "export const run = (req: Request) => req['blob']()",
+        'export const run = (req: Request) => req.body?.getReader()',
+        'export const run = (req: Request) => { const { body } = req; return body }',
+        'export const run = (req: Request) => req.json.bind(req)'
+      ],
+      good: [
+        "import { kunReadBody } from '~/lib/http/readBody'\nexport const run = (req: Request) => kunReadBody(req, 16 * 1024)",
+        'export const run = async (res: Response) => res.json()',
+        'export const run = (blob: Blob) => new Response(blob).arrayBuffer()',
+        "export const run = (req: Request) => req.headers.get('content-length')",
+        'export const run = (req: Request) => req.bodyUsed',
+        'export const run = (ctx: { request: { body: unknown } }) => ctx.request.body',
+        'export const run = (req: Request) => { const { headers } = req; return headers }'
       ]
     }
   }
