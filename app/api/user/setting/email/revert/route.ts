@@ -1,4 +1,6 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
+import { kunBodyFormData, kunBodyJson, kunReadBody } from '~/lib/http/readBody'
 import { delKv, getKv } from '~/lib/redis'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import {
@@ -51,15 +53,20 @@ const isUniqueViolation = (error: unknown) =>
   'code' in error &&
   error.code === 'P2002'
 
+// 请求体只有一个令牌; 超出预算与读不出来的同样当作没带令牌
 const getTokenFromBody = async (req: NextRequest) => {
+  const read = await kunReadBody(req, KUN_BODY_BUDGET.tiny)
+  if (!read.ok) {
+    return ''
+  }
   const contentType = req.headers.get('content-type') || ''
 
   if (contentType.includes('application/json')) {
-    const body = await req.json().catch(() => null)
+    const body = kunBodyJson(read.bytes) as { token?: unknown } | null
     return typeof body?.token === 'string' ? body.token.trim() : ''
   }
 
-  const formData = await req.formData().catch(() => null)
+  const formData = await kunBodyFormData(read.bytes, contentType)
   const token = formData?.get('token')
   return typeof token === 'string' ? token.trim() : ''
 }

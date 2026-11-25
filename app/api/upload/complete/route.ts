@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 import {
   readUploadToken,
   verifyStagedObject
@@ -12,6 +13,7 @@ const completeSchema = z.object({
 export const POST = kunRoute.post({
   auth: 'user',
   input: completeSchema,
+  maxBytes: KUN_BODY_BUDGET.tiny,
   legacyDeny: { unauthenticated: '用户未认证' },
   handler: async ({ input, actor: payload }) => {
     const meta = await readUploadToken(input.token, payload.uid)

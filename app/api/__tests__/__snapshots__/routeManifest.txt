@@ -74,8 +74,8 @@ POST /api/company/search                                 public
 POST /api/edit/bangumi                                   user abuse=external.fetch,upstream.bangumi
 POST /api/edit/dlsite                                    user abuse=external.fetch,upstream.dlsite
 GET /api/edit/duplicate                                  public
-POST /api/edit                                           user capability=galgame.create form
-PUT /api/edit                                            user capability=galgame.rewrite
+POST /api/edit                                           user capability=galgame.create form maxBytes=KUN_BODY_BUDGET.imagePair
+PUT /api/edit                                            user capability=galgame.rewrite maxBytes=KUN_BODY_BUDGET.jsonLarge
 POST /api/edit/steam                                     user abuse=external.fetch,upstream.steam
 POST /api/edit/vndb/details                              user abuse=external.fetch,upstream.vndb
 POST /api/edit/vndb/relation                             user abuse=external.fetch,upstream.vndb
@@ -97,7 +97,7 @@ PUT /api/message/read                                    user
 DELETE /api/message/read                                 user
 POST /api/message                                        public
 GET /api/message/unread                                  user
-POST /api/patch/banner                                   user capability=banner.edit form
+POST /api/patch/banner                                   user capability=banner.edit form maxBytes=KUN_BODY_BUDGET.imagePair
 PUT /api/patch/comment/like                              user
 GET /api/patch/comment/markdown                          user
 POST /api/patch/comment/report                           user abuse=report.create
@@ -138,8 +138,8 @@ POST /api/tag                                            user capability=tag.man
 PUT /api/tag                                             user capability=tag.manage
 DELETE /api/tag                                          user capability=tag.manage
 POST /api/tag/search                                     user
-POST /api/upload/complete                                user legacyDeny.unauthenticated=用户未认证
-POST /api/upload/init                                    user legacyDeny.unauthenticated=用户未认证
+POST /api/upload/complete                                user maxBytes=KUN_BODY_BUDGET.tiny legacyDeny.unauthenticated=用户未认证
+POST /api/upload/init                                    user maxBytes=KUN_BODY_BUDGET.tiny legacyDeny.unauthenticated=用户未认证
 POST /api/upload/resource                                public
 GET /api/user/appeal                                     user
 POST /api/user/appeal                                    user
@@ -147,7 +147,7 @@ POST /api/user/follow/follow                             user
 GET /api/user/follow/follower                            user
 GET /api/user/follow/following                           user
 POST /api/user/follow/unfollow                           user
-POST /api/user/image                                     user form
+POST /api/user/image                                     user form maxBytes=KUN_BODY_BUDGET.image
 GET /api/user/mention/search                             user
 GET /api/user/profile/comment                            user legacyDeny.unauthenticated=用户登录失效
 GET /api/user/profile/favorite/folder/patch              user
@@ -164,7 +164,7 @@ POST /api/user/setting/2fa/enable                        user
 POST /api/user/setting/2fa/save-secret                   user order=auth-first
 GET /api/user/setting/2fa/status                         optional
 POST /api/user/setting/allow-private-message             user
-POST /api/user/setting/avatar                            user form
+POST /api/user/setting/avatar                            user form maxBytes=KUN_BODY_BUDGET.image
 POST /api/user/setting/bio                               user
 GET /api/user/setting/blocked-tag                        user
 POST /api/user/setting/blocked-tag                       user

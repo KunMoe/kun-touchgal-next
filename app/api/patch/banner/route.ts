@@ -1,4 +1,5 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 import { prisma } from '~/prisma/index'
 import { updatePatchBannerSchema } from '~/validations/patch'
 import { encodePatchBanner } from '~/app/api/edit/_upload'
@@ -31,6 +32,7 @@ export const POST = kunRoute.post({
   auth: 'user',
   capability: 'banner.edit',
   form: true,
+  maxBytes: KUN_BODY_BUDGET.imagePair,
   input: updatePatchBannerSchema,
   handler: async ({ input }) => {
     const image = await new Response(input.image)?.arrayBuffer()

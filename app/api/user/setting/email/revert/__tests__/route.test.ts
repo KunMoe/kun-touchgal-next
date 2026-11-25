@@ -9,6 +9,7 @@ import {
 } from 'vitest'
 import { createHash } from 'crypto'
 import { KUN_ROLE } from '~/constants/role'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 
 // 撤销邮箱变更入口的可观察行为。令牌先查台账 (user_email_change); 台账上线之前发出的链接
 // 状态还在 Redis 里, 回落到旧路径, 那一段按上线前的行为原样钉住
@@ -301,6 +302,25 @@ describe('POST /api/user/setting/email/revert', () => {
     expect(response.status).toBe(400)
     expect(await titleOf(response)).toBe('撤销链接无效')
     expect(db.queries).toEqual([])
+  })
+
+  it('treats a body over the 16 KiB budget as carrying no token, and keeps the token', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    recordChange(TOKEN)
+
+    const response = await postForm({
+      token: TOKEN,
+      pad: 'a'.repeat(KUN_BODY_BUDGET.tiny)
+    })
+
+    expect(response.status).toBe(400)
+    expect(await titleOf(response)).toBe('撤销链接无效')
+    expect(db.queries).toEqual([])
+    expect(db.user(UID)?.email).toBe(NEW_EMAIL)
+    expect(warn).toHaveBeenCalledWith(
+      '[kunReadBody] rejected',
+      expect.objectContaining({ path: revertPath, reason: 'too-large' })
+    )
   })
 
   it('answers 400 撤销链接已失效 for a token nobody issued', async () => {

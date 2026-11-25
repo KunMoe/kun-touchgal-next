@@ -1,4 +1,5 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 import { prisma } from '~/prisma/index'
 import { uploadIntroductionImage } from './_upload'
 import { newContentImageKey } from '~/server/storage/imageObjects'
@@ -45,6 +46,7 @@ const uploadImage = async (uid: number, image: ArrayBuffer) => {
 export const POST = kunRoute.post({
   auth: 'user',
   form: true,
+  maxBytes: KUN_BODY_BUDGET.image,
   input: imageSchema,
   handler: async ({ input, actor: payload }) => {
     const image = await new Response(input.image)?.arrayBuffer()

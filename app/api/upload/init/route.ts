@@ -7,6 +7,7 @@ import {
 import { prisma } from '~/prisma'
 import { checkKunCaptchaExist } from '~/app/api/utils/verifyKunCaptcha'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 import { can, canPublishResource } from '~/constants/permission'
 import { POINT_GATE_MESSAGE } from '~/constants/points'
 import { createStagedUpload } from '~/server/storage/stagedUpload'
@@ -34,6 +35,7 @@ const initSchema = z.object({
 export const POST = kunRoute.post({
   auth: 'user',
   input: initSchema,
+  maxBytes: KUN_BODY_BUDGET.tiny,
   legacyDeny: { unauthenticated: '用户未认证' },
   handler: async ({ input, actor: payload }) => {
     // 名字不可用的文件在查库与消耗人机验证之前就拒掉; createStagedUpload 建对象时仍以

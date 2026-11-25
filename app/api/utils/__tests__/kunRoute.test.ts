@@ -204,7 +204,9 @@ describe('解析与鉴权的顺序', () => {
     const handler = vi.fn(async () => ({}))
     await kunRoute.post({ auth: 'user', input: schema, handler })(req)
 
-    expect(postBodyMock).toHaveBeenCalledWith(req, schema)
+    expect(postBodyMock).toHaveBeenCalledWith(req, schema, {
+      maxBytes: undefined
+    })
     expect(handler).toHaveBeenCalledWith(
       expect.objectContaining({ input: { id: 3 }, actor: user })
     )
@@ -261,12 +263,37 @@ describe('解析与鉴权的顺序', () => {
         kunRoute.delete(def),
         kunRoute.post(def),
         kunRoute.put(def),
-        kunRoute.post({ ...def, form: true }),
-        kunRoute.put({ ...def, form: true })
+        kunRoute.post({ ...def, form: true, maxBytes: 300 }),
+        kunRoute.put({ ...def, form: true, maxBytes: 300 })
       ].map(async (route) => body(await route(req)))
     )
 
     expect(results.map((result) => result.input.id)).toEqual([1, 2, 3, 4, 5, 5])
+  })
+
+  it('请求体的字节预算原样交给解析函数', async () => {
+    postBodyMock.mockResolvedValue({ id: 3 })
+    putBodyMock.mockResolvedValue({ id: 4 })
+    formDataMock.mockResolvedValue({ id: 5 })
+    const handler = vi.fn(async () => ({}))
+    const def = { auth: 'public' as const, input: schema, handler }
+
+    await kunRoute.post({ ...def, maxBytes: 100 })(req)
+    await kunRoute.put({ ...def, maxBytes: 200 })(req)
+    await kunRoute.post({ ...def, form: true, maxBytes: 300 })(req)
+
+    expect(postBodyMock).toHaveBeenCalledWith(req, schema, { maxBytes: 100 })
+    expect(putBodyMock).toHaveBeenCalledWith(req, schema, { maxBytes: 200 })
+    expect(formDataMock).toHaveBeenCalledWith(req, schema, { maxBytes: 300 })
+  })
+
+  it('multipart 不写预算、读 query 的方法写了预算, 都编译不过 (由 tsc 检查)', () => {
+    const def = { auth: 'public' as const, input: schema, handler: vi.fn() }
+
+    // @ts-expect-error multipart 没有默认预算
+    expect(() => kunRoute.post({ ...def, form: true })).not.toThrow()
+    // @ts-expect-error GET 不读请求体
+    expect(() => kunRoute.get({ ...def, maxBytes: 100 })).not.toThrow()
   })
 })
 

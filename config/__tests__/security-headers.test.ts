@@ -54,6 +54,22 @@ describe('next.config.ts 的接线', () => {
   it('不发 X-Powered-By', () => {
     expect(fields.get('poweredByHeader')?.kind).toBe(ts.SyntaxKind.FalseKeyword)
   })
+
+  // 截断的文案 (lib/http/readBody.ts) 按这个常量说上限, 两者必须是同一个数
+  it('proxy 克隆请求体的上限取 constants/bodyBudget.ts 的常量', () => {
+    const experimental = fields.get('experimental')
+    const limit =
+      experimental && ts.isObjectLiteralExpression(experimental)
+        ? experimental.properties.find(
+            (property) =>
+              ts.isPropertyAssignment(property) &&
+              property.name.getText() === 'proxyClientMaxBodySize'
+          )
+        : undefined
+    expect(
+      limit && ts.isPropertyAssignment(limit) && limit.initializer.getText()
+    ).toBe('KUN_PROXY_BODY_CLONE_LIMIT')
+  })
 })
 
 const nextConfig = {

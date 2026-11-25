@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 // kunRoute.<method>({ ... }) 定义、访问相关的字段都是字面量, 所以这里静态读源码就能拿到
 // 全部声明, 不必 import 路由模块 (那会连带加载 prisma、redis 与各家 SDK)。
 // 清单本身写进 __snapshots__/routeManifest.txt: 任何访问级别、能力、遗留文案的变化都会出现在
-// 那个文件的 diff 里, 必须由评审者看过再更新 (vitest -u)
+// 那个文件的 diff 里, 必须由评审者看过再更新 (vitest -u)。请求体的字节预算 (maxBytes) 也记在这里
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url))
 
@@ -20,6 +20,8 @@ interface RouteDecl {
   capability: string | null
   order: string | null
   form: boolean
+  // 请求体的字节预算 (constants/bodyBudget.ts), 记源码原文; 没写的是 null (JSON 取默认值)
+  maxBytes: string | null
   legacyDeny: Record<string, string>
   // 频率预算的策略名 (server/abuse/policies.ts); 不是字面量的元素记成 <非字面量>
   abuse: string[]
@@ -66,6 +68,7 @@ const readDef = (object: ts.ObjectLiteralExpression) => {
     capability: text('capability'),
     order: text('order'),
     form: text('form') === 'true',
+    maxBytes: fields.get('maxBytes')?.getText() ?? null,
     legacyDeny,
     abuse: !abuse
       ? []
@@ -143,6 +146,7 @@ const collectRoutes = () => {
                 capability: null,
                 order: null,
                 form: false,
+                maxBytes: null,
                 legacyDeny: {},
                 abuse: []
               })
@@ -250,6 +254,7 @@ const formatDecl = (decl: RouteDecl) =>
     decl.capability && `capability=${decl.capability}`,
     decl.order && `order=${decl.order}`,
     decl.form && 'form',
+    decl.maxBytes && `maxBytes=${decl.maxBytes}`,
     ...Object.entries(decl.legacyDeny).map(
       ([key, value]) => `legacyDeny.${key}=${value}`
     ),

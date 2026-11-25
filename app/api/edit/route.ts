@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 import { patchCreateSchema, patchUpdateSchema } from '~/validations/edit'
 import { createGalgame } from './create'
 import { updateGalgame } from './update'
@@ -40,6 +41,7 @@ export const POST = kunRoute.post({
   auth: 'user',
   capability: 'galgame.create',
   form: true,
+  maxBytes: KUN_BODY_BUDGET.imagePair,
   input: patchCreateSchema,
   handler: async ({ input, actor }) => {
     const { alias, banner, bannerOriginal, tag, ...rest } = input
@@ -74,5 +76,7 @@ export const PUT = kunRoute.put({
   auth: 'user',
   capability: 'galgame.rewrite',
   input: patchUpdateSchema,
+  // 1000 个移除的标签 ID、100 个新标签、100 个别名加 128 KiB 的简介, 合法的最坏载荷超过 1 MiB
+  maxBytes: KUN_BODY_BUDGET.jsonLarge,
   handler: ({ input, actor }) => updateGalgame(input, actor.uid)
 })

@@ -1,11 +1,17 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as z from 'zod'
 
 vi.mock('next/server', () => ({
   NextRequest: class {}
 }))
 
-import { kunParseGetQuery, kunParsePostBody } from '../parseQuery'
+import {
+  kunParseFormData,
+  kunParseGetQuery,
+  kunParsePostBody,
+  kunParsePutBody
+} from '../parseQuery'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 
 const schema = z.object({
   page: z.coerce.number().min(1, { message: '页数最小为 1' }),
@@ -97,5 +103,162 @@ describe('兜底文案与去重', () => {
       ids
     )
     expect(result).toBe('ID 无效')
+  })
+})
+
+type BodyRequest = Parameters<typeof kunParsePostBody>[0]
+
+const bodyRequest = (
+  method: 'POST' | 'PUT',
+  body: BodyInit,
+  headers: Record<string, string> = {}
+) =>
+  new Request('http://localhost/api/test', {
+    method,
+    body,
+    headers
+  }) as unknown as BodyRequest
+
+// 只有 kunReadBody 读的三样; 用来造读完比 Content-Length 少的请求体 (proxy 克隆截断之后的样子)
+const truncatedRequest = (bytes: Uint8Array<ArrayBuffer>, declared: number) =>
+  ({
+    url: 'http://localhost/api/test',
+    headers: new Headers({ 'content-length': String(declared) }),
+    body: new Response(bytes).body
+  }) as unknown as BodyRequest
+
+describe('请求体的字节预算', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    warnSpy.mockRestore()
+  })
+
+  it.each([
+    ['POST', kunParsePostBody],
+    ['PUT', kunParsePutBody]
+  ] as const)('%s: 预算之内照常交给 schema', async (method, parse) => {
+    await expect(
+      parse(bodyRequest(method, JSON.stringify({ page: 2 })), schema)
+    ).resolves.toEqual({ page: 2 })
+    await expect(parse(bodyRequest(method, 'not json'), schema)).resolves.toBe(
+      '参数类型不正确'
+    )
+  })
+
+  it.each([
+    ['POST', kunParsePostBody],
+    ['PUT', kunParsePutBody]
+  ] as const)(
+    '%s: 默认预算 1 MiB, 超出即拒绝, 不交给 schema',
+    async (method, parse) => {
+      const big = JSON.stringify({
+        page: 1,
+        pad: 'a'.repeat(KUN_BODY_BUDGET.json)
+      })
+
+      await expect(parse(bodyRequest(method, big), schema)).resolves.toBe(
+        '请求内容超过 1 MB, 请缩小后重试'
+      )
+    }
+  )
+
+  it('入口声明的预算优先于默认值', async () => {
+    const body = JSON.stringify({ page: 1, search: 'kun' })
+
+    await expect(
+      kunParsePostBody(bodyRequest('POST', body), schema, { maxBytes: 10 })
+    ).resolves.toBe('请求内容超过 1 KB, 请缩小后重试')
+    await expect(
+      kunParsePutBody(bodyRequest('PUT', body), schema, {
+        maxBytes: body.length
+      })
+    ).resolves.toEqual({ page: 1, search: 'kun' })
+  })
+
+  it('JSON 被截断 (读到的比 Content-Length 少) 回截断的文案', async () => {
+    const bytes = new TextEncoder().encode(
+      '{"page":1'
+    ) as Uint8Array<ArrayBuffer>
+
+    await expect(
+      kunParsePostBody(truncatedRequest(bytes, 100), schema)
+    ).resolves.toBe('请求内容超过 10 MB, 请缩小后重试')
+  })
+})
+
+describe('kunParseFormData', () => {
+  const fileSchema = z.object({
+    name: z.string(),
+    image: z.instanceof(File)
+  })
+
+  // 以 FormData 为源的 Request 被取消后 undici 会异步抛出未捕获的错误: 先序列化成字节
+  const multipart = async (size: number) => {
+    const form = new FormData()
+    form.append('name', '封面')
+    form.append('image', new Blob([new Uint8Array(size)]), 'a.png')
+    const response = new Response(form)
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      contentType: response.headers.get('content-type') as string
+    }
+  }
+
+  let warnSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    warnSpy.mockRestore()
+  })
+
+  it('预算之内解析出字段与文件', async () => {
+    const { bytes, contentType } = await multipart(1000)
+    const req = bodyRequest('POST', bytes, { 'content-type': contentType })
+
+    const result = await kunParseFormData(req, fileSchema, { maxBytes: 2000 })
+
+    expect(result).toMatchObject({ name: '封面' })
+    expect((result as { image: File }).image.size).toBe(1000)
+  })
+
+  it('超过预算回中文文案', async () => {
+    const { bytes, contentType } = await multipart(1000)
+    const req = bodyRequest('POST', bytes, {
+      'content-type': contentType,
+      'content-length': String(bytes.byteLength)
+    })
+
+    await expect(
+      kunParseFormData(req, fileSchema, { maxBytes: 500 })
+    ).resolves.toBe('请求内容超过 1 KB, 请缩小后重试')
+  })
+
+  it('带 Content-Length 的截断回截断的文案, 不再抛 TypeError 变成 500', async () => {
+    const { bytes, contentType } = await multipart(1000)
+    const req = truncatedRequest(bytes.slice(0, 600), bytes.byteLength)
+    req.headers.set('content-type', contentType)
+
+    await expect(
+      kunParseFormData(req, fileSchema, { maxBytes: KUN_BODY_BUDGET.image })
+    ).resolves.toBe('请求内容超过 10 MB, 请缩小后重试')
+  })
+
+  it('没有 Content-Length 的截断与畸形表单回解析失败的文案', async () => {
+    const { bytes, contentType } = await multipart(1000)
+    const cut = bodyRequest('POST', bytes.slice(0, 600), {
+      'content-type': contentType
+    })
+    const noType = bodyRequest('POST', 'name=x')
+    noType.headers.delete('content-type')
+
+    for (const req of [cut, noType]) {
+      await expect(
+        kunParseFormData(req, fileSchema, { maxBytes: KUN_BODY_BUDGET.image })
+      ).resolves.toBe('表单内容不完整或格式不正确, 请重试')
+    }
   })
 })

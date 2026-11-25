@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { avatarSchema } from '~/validations/user'
@@ -173,6 +174,7 @@ const updateUserAvatar = async (actor: KunActor, avatar: ArrayBuffer) => {
 export const POST = kunRoute.post({
   auth: 'user',
   form: true,
+  maxBytes: KUN_BODY_BUDGET.image,
   input: avatarSchema,
   handler: async ({ input, actor: payload }) => {
     const avatar = await new Response(input.avatar)?.arrayBuffer()
