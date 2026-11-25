@@ -165,16 +165,17 @@ describe('请求体的字节预算', () => {
     }
   )
 
-  it('入口声明的预算优先于默认值', async () => {
+  it.each([
+    ['POST', kunParsePostBody],
+    ['PUT', kunParsePutBody]
+  ] as const)('%s: 入口声明的预算优先于默认值', async (method, parse) => {
     const body = JSON.stringify({ page: 1, search: 'kun' })
 
     await expect(
-      kunParsePostBody(bodyRequest('POST', body), schema, { maxBytes: 10 })
+      parse(bodyRequest(method, body), schema, { maxBytes: body.length - 1 })
     ).resolves.toBe('请求内容超过 1 KB, 请缩小后重试')
     await expect(
-      kunParsePutBody(bodyRequest('PUT', body), schema, {
-        maxBytes: body.length
-      })
+      parse(bodyRequest(method, body), schema, { maxBytes: body.length })
     ).resolves.toEqual({ page: 1, search: 'kun' })
   })
 
