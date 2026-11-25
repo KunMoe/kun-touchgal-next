@@ -1588,7 +1588,7 @@ export const KUN_INVARIANTS = [
     statement:
       'sharp 只许 server/image/ 导入 (静态、动态 import 与 require 都算, 纯类型导入除外), 上传图片经 pipeline.ts 的 admitImage → encodeVariants',
     reason:
-      '像素前置、有界编码槽和逐变体体积上限曾是「加/改任何 sharp() 解码入口时逐条对照」的人工规则, 漏过入口: 像素守卫先只加在建游戏一处, 两天后才补上图床和头像, 头像小图一直没有体积上限。现在 encodeVariants 只收 admitImage 产出的 AdmittedImage, 但在别处直接 sharp(buffer) 就绕开了这一切; 服务端自产图片的转码走 transcode.ts',
+      '像素前置、格式白名单、有界编码槽和逐变体体积上限曾是「加/改任何 sharp() 解码入口时逐条对照」的人工规则, 漏过入口: 像素守卫先只加在建游戏一处, 两天后才补上图床和头像, 头像小图一直没有体积上限。现在 encodeVariants 只收 admitImage 产出的 AdmittedImage, 但在别处直接 sharp(buffer) 就绕开了这一切; 服务端自产图片的转码走 transcode.ts',
     removeWhen: '服务端不再用 sharp 解码图片',
     // instrumentation.ts 只设 sharp.concurrency(1); 测试要用 sharp 造夹具、读产物
     ignores: ['server/image/**', 'instrumentation.ts', '**/__tests__/**'],

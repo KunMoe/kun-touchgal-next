@@ -1,4 +1,5 @@
 import sharp from 'sharp'
+import type { Metadata } from 'sharp'
 
 import { MAX_IMAGE_PIXELS } from '~/validations/file'
 import { EncodeBusyError, withEncodeSlot } from './encodeLimit'
@@ -26,16 +27,49 @@ export interface AdmittedImage {
   readonly height: number
 }
 
-// 编码前的廉价护栏: metadata() 只读文件头、不解码像素, 用它在真正解码之前拦掉高压缩比
-// 「像素炸弹」(声明尺寸巨大、压缩后体积却很小的图), 避免 ≤10MB 的上传解码成近 GB 级位图。
-// 所有拒绝都发生在进编码槽、扣额度之前
+// 按内容识别的格式 (metadata().format) 只收这几种。AVIF 报 heif 且 compression 为 av1;
+// 同样报 heif 的 HEIC (hevc) 不收: 预编译的 libheif 解不了它。SVG 不收: 声明尺寸与渲染开销
+// 无关, 1 KB 的嵌套 <use> 能占满编码槽数秒 (9-03 H3)。TIFF 等其余 libvips 能读的格式一并不收。
+// 页面上的四个入口都先在浏览器里用 canvas 重编码成 webp (不支持时是 png), 只有直接调接口才会碰到
+const admittedFormat = (
+  format: string | undefined,
+  compression: string | undefined
+) => {
+  switch (format) {
+    case 'jpeg':
+    case 'png':
+    case 'webp':
+    case 'gif':
+      return true
+    case 'heif':
+      return compression === 'av1'
+    default:
+      return false
+  }
+}
+
+// 编码前的廉价护栏: metadata() 只读文件头、不解码像素, 用它在真正解码之前拦掉认不出或不收的
+// 格式, 以及高压缩比「像素炸弹」(声明尺寸巨大、压缩后体积却很小的图), 避免 ≤10MB 的上传解码
+// 成近 GB 级位图。所有拒绝都发生在进编码槽、扣额度之前。动图只解第一帧, 像素数按单帧算
 export const admitImage = async (
   input: ArrayBuffer
 ): Promise<AdmittedImage | ImageRejection> => {
   if (input.byteLength === 0) {
     return new ImageRejection('上传文件不能为空', false)
   }
-  const { width, height } = await sharp(input).metadata()
+  let metadata: Metadata
+  try {
+    metadata = await sharp(input).metadata()
+  } catch {
+    return new ImageRejection('无法识别的图片文件', false)
+  }
+  const { format, compression, width, height } = metadata
+  if (!admittedFormat(format, compression)) {
+    return new ImageRejection(
+      '不支持该图片格式, 仅支持 jpg、png、webp、avif、gif',
+      false
+    )
+  }
   if (!width || !height) {
     return new ImageRejection('无法解析图片尺寸', false)
   }

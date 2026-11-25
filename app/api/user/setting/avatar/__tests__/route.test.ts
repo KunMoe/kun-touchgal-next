@@ -217,9 +217,9 @@ describe('POST /api/user/setting/avatar', () => {
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   }, 30000)
 
-  it('认不出的字节: metadata 抛错, 退还额度后原样抛出', async () => {
-    await expect(postAvatar(createGarbage())).rejects.toThrow(
-      'unsupported image format'
+  it('认不出的字节: 拒绝且不写入, 抢占的额度退还', async () => {
+    expect(await (await postAvatar(createGarbage())).json()).toBe(
+      '无法识别的图片文件'
     )
     expect(quotaCalls('increment')).toBe(1)
     expect(quotaCalls('decrement')).toBe(1)

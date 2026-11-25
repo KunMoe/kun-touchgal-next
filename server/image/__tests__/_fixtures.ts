@@ -41,6 +41,31 @@ export const createSvg = () =>
     )
   )
 
+// 以 AVIF 的 ftyp 字样开头的 SVG: 按内容识别仍是 svg
+export const createDisguisedSvg = () =>
+  toArrayBuffer(
+    Buffer.concat([Buffer.from('<!--ftypavif-->'), Buffer.from(createSvg())])
+  )
+
+export const createTiff = async () =>
+  toArrayBuffer(
+    await sharp({
+      create: { width: 64, height: 48, channels: 3, background: '#336699' }
+    })
+      .tiff()
+      .toBuffer()
+  )
+
+// macOS 的 sips 由 64×48 纯色 PNG 转出的 HEIC (heif + hevc)。sharp 能读文件头, 预编译的
+// libheif 不带 HEVC 解码器, 真正解码时抛错; sharp 自己也编不出 HEVC, 所以内嵌字节
+export const createHeic = () =>
+  toArrayBuffer(
+    Buffer.from(
+      'AAAAJGZ0eXBoZWljAAAAAG1pZjFNaVBybWlhZk1pSEJoZWljAAABw21ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAHBpY3QAAAAAAAAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAADnBpdG0AAAAAAAEAAAA4aWluZgAAAAAAAgAAABVpbmZlAgAAAAABAABodmMxAAAAABVpbmZlAgAAAQACAABFeGlmAAAAABppcmVmAAAAAAAAAA5jZHNjAAIAAQABAAAA5mlwcnAAAADFaXBjbwAAABNjb2xybmNseAACAAIABoAAAAAMY2xsaQDLAEAAAAAUaXNwZQAAAAAAAABAAAAAMAAAAAlpcm90AAAAABBwaXhpAAAAAAMICAgAAABxaHZjQwEDcAAAALAAAAAAAB7wAPz9+PgAAAsDoAABABdAAQwB//8DcAAAAwCwAAADAAADAB5wJKEAAQAjQgEBA3AAAAMAsAAAAwAAAwAeoBQgQcGMTiHuRZVNwICBgCCiAAEACUQBwGFyyEBTJAAAABlpcG1hAAAAAAAAAAEAAQaBAgMFhoQAAAAsaWxvYwAAAABEAAACAAEAAAABAAACQwAAAC8AAgAAAAEAAAH3AAAATAAAAAFtZGF0AAAAAAAAAIsAAAAGRXhpZgAATU0AKgAAAAgAAwEaAAUAAAABAAAAMgEbAAUAAAABAAAAOgEoAAMAAAABAAIAAAAAAAAAAAAZAAAAAQAAABkAAAABAAAAKygBr6L2RoF8//zGZ6/0l//8sfPsNrRPWX+/9q9b+dJP6f/QPm4HCZqbVH4=',
+      'base64'
+    )
+  )
+
 // 两个槽位加满等待队列: 之后的 acquire 立刻以 EncodeBusyError 拒绝。返回放行函数
 export const saturateEncodeQueue = async () => {
   let release!: () => void

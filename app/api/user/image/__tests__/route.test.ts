@@ -127,20 +127,22 @@ describe('POST /api/user/image', () => {
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   }, 30000)
 
-  it('认不出的字节: metadata 抛错, 退还额度后原样抛出', async () => {
-    await expect(postImage(createGarbage())).rejects.toThrow(
-      'unsupported image format'
+  it('认不出的字节: 拒绝且不写入, 抢占的额度退还', async () => {
+    expect(await (await postImage(createGarbage())).json()).toBe(
+      '无法识别的图片文件'
     )
     expect(quotaCalls('increment')).toBe(1)
     expect(quotaCalls('decrement')).toBe(1)
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 
-  it('SVG: 照常渲染并写入', async () => {
-    expect(await (await postImage(createSvg())).json()).toEqual({
-      imageLink: expect.stringMatching(/\.avif$/)
-    })
-    expect(uploadImageToS3Mock).toHaveBeenCalledTimes(1)
+  it('SVG: 拒绝且不写入, 抢占的额度退还', async () => {
+    expect(await (await postImage(createSvg())).json()).toBe(
+      '不支持该图片格式, 仅支持 jpg、png、webp、avif、gif'
+    )
+    expect(quotaCalls('increment')).toBe(1)
+    expect(quotaCalls('decrement')).toBe(1)
+    expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 
   it('文件头完整、像素数据损坏: 解码抛错, 退还额度后原样抛出', async () => {

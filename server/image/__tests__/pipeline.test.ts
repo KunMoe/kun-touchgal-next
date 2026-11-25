@@ -6,7 +6,16 @@ import {
   admitImage,
   encodeVariants
 } from '~/server/image/pipeline'
-import { createPixelBomb, createPng, saturateEncodeQueue } from './_fixtures'
+import {
+  createDisguisedSvg,
+  createGarbage,
+  createHeic,
+  createPixelBomb,
+  createPng,
+  createSvg,
+  createTiff,
+  saturateEncodeQueue
+} from './_fixtures'
 
 const admit = async (input: ArrayBuffer) => {
   const image = await admitImage(input)
@@ -20,6 +29,46 @@ describe('admitImage', () => {
   it('空文件拒绝', async () => {
     expect(await admitImage(new ArrayBuffer(0))).toEqual(
       new ImageRejection('上传文件不能为空', false)
+    )
+  })
+
+  const UNSUPPORTED = new ImageRejection(
+    '不支持该图片格式, 仅支持 jpg、png、webp、avif、gif',
+    false
+  )
+
+  const encodeAs = async (format: 'jpeg' | 'png' | 'webp' | 'avif' | 'gif') => {
+    const buf = await sharp({
+      create: { width: 64, height: 48, channels: 4, background: '#33669980' }
+    })
+      [format]()
+      .toBuffer()
+    return buf.buffer.slice(
+      buf.byteOffset,
+      buf.byteOffset + buf.byteLength
+    ) as ArrayBuffer
+  }
+
+  it.each(['jpeg', 'png', 'webp', 'avif', 'gif'] as const)(
+    '%s 放行 (AVIF 按内容识别报 heif + av1)',
+    async (format) => {
+      const image = await admitImage(await encodeAs(format))
+      expect(image).not.toBeInstanceOf(ImageRejection)
+    }
+  )
+
+  it.each([
+    ['svg', createSvg],
+    ['以 ftypavif 字样开头的 svg', createDisguisedSvg],
+    ['heif + hevc (HEIC)', createHeic],
+    ['tiff', createTiff]
+  ])('%s 拒绝, 不计费', async (_name, create) => {
+    expect(await admitImage(await create())).toEqual(UNSUPPORTED)
+  })
+
+  it('认不出的字节拒绝, 不抛错', async () => {
+    expect(await admitImage(createGarbage())).toEqual(
+      new ImageRejection('无法识别的图片文件', false)
     )
   })
 
