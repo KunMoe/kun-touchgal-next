@@ -1,41 +1,29 @@
-import sharp from 'sharp'
-
 import { uploadImageToS3 } from '~/lib/s3'
-import { checkBufferSize } from '~/app/api/utils/checkBufferSize'
-import { withEncodeSlotOrBusy } from '~/server/image/encodeLimit'
-import { ensureWithinPixelLimit } from '~/server/image/pixelGuard'
+import {
+  ImageRejection,
+  admitImage,
+  encodeVariants
+} from '~/server/image/pipeline'
+import type { VariantPlan } from '~/server/image/pipeline'
+
+const INTRODUCTION_IMAGE_PLAN = {
+  image: { width: 1920, height: 1080, quality: 30, maxMB: 1.007 }
+} as const satisfies VariantPlan<'image'>
 
 // key 由调用方经 newContentImageKey 取得 (server/storage/imageObjects.ts)
 export const uploadIntroductionImage = async (
   key: string,
   image: ArrayBuffer
 ) => {
-  if (image.byteLength === 0) {
-    return '上传文件不能为空'
+  const admitted = await admitImage(image)
+  if (admitted instanceof ImageRejection) {
+    return admitted.message
   }
 
-  const pixelError = await ensureWithinPixelLimit(image)
-  if (pixelError) {
-    return pixelError
+  const encoded = await encodeVariants(admitted, INTRODUCTION_IMAGE_PLAN)
+  if (encoded instanceof ImageRejection) {
+    return encoded.message
   }
 
-  const minImage = await withEncodeSlotOrBusy(() =>
-    sharp(image)
-      .resize(1920, 1080, {
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .avif({ quality: 30 })
-      .toBuffer()
-  )
-
-  if (typeof minImage === 'string') {
-    return minImage
-  }
-
-  if (!checkBufferSize(minImage, 1.007)) {
-    return '图片体积过大'
-  }
-
-  await uploadImageToS3(key, minImage)
+  await uploadImageToS3(key, encoded.image)
 }

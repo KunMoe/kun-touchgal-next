@@ -1,85 +1,51 @@
-import sharp from 'sharp'
-
-import { checkBufferSize } from '~/app/api/utils/checkBufferSize'
-import { withEncodeSlotOrBusy } from '~/server/image/encodeLimit'
-import { ensureWithinPixelLimit } from '~/server/image/pixelGuard'
+import {
+  ImageRejection,
+  admitImage,
+  encodeVariants
+} from '~/server/image/pipeline'
+import type { VariantPlan } from '~/server/image/pipeline'
 import type { EncodedPatchBanner } from '~/server/storage/patchBanner'
 
+const BANNER_PLAN = {
+  banner: { width: 1920, height: 1080, quality: 60, maxMB: 5 },
+  miniBanner: { width: 460, height: 259, quality: 60, maxMB: 1.007 }
+} as const satisfies VariantPlan<'banner' | 'miniBanner'>
+
+const FULL_BANNER_PLAN = {
+  fullBanner: { width: 3840, height: null, quality: 60, maxMB: 10 }
+} as const satisfies VariantPlan<'fullBanner'>
+
 // 校验与编码不依赖 patch id, 建档 (create.ts) 与换封面 (patch/banner/route.ts) 都在写入之前
-// 先跑完: 这里所有"返回字符串即错误"的路径 (像素守卫 / 编码限流 / 体积超限) 都发生在建行或上传
+// 先跑完: 这里所有"返回字符串即错误"的路径 (准入 / 编码限流 / 体积超限) 都发生在建行或上传
 // 之前, 失败时还没有任何写入. 写入归 server/storage/patchBanner.ts
 export const encodePatchBanner = async (
   image: ArrayBuffer,
   originalImage?: ArrayBuffer
 ): Promise<EncodedPatchBanner | string> => {
-  if (image.byteLength === 0) {
-    return '上传文件不能为空'
+  const admittedImage = await admitImage(image)
+  if (admittedImage instanceof ImageRejection) {
+    return admittedImage.message
   }
-  if (originalImage && originalImage.byteLength === 0) {
-    return '上传文件不能为空'
-  }
-
-  const imagePixelError = await ensureWithinPixelLimit(image)
-  if (imagePixelError) {
-    return imagePixelError
-  }
-  if (originalImage) {
-    const originalPixelError = await ensureWithinPixelLimit(originalImage)
-    if (originalPixelError) {
-      return originalPixelError
-    }
-  }
-
-  const encodeFull = originalImage
-    ? withEncodeSlotOrBusy(() =>
-        sharp(originalImage)
-          .resize(3840, null, {
-            fit: 'inside',
-            withoutEnlargement: true
-          })
-          .avif({ quality: 60 })
-          .toBuffer()
-      )
+  const admittedOriginal = originalImage
+    ? await admitImage(originalImage)
     : undefined
+  if (admittedOriginal instanceof ImageRejection) {
+    return admittedOriginal.message
+  }
 
-  const [main, fullBanner] = await Promise.all([
-    withEncodeSlotOrBusy(async () => {
-      const banner = await sharp(image)
-        .resize(1920, 1080, {
-          fit: 'inside',
-          withoutEnlargement: true
-        })
-        .avif({ quality: 60 })
-        .toBuffer()
-      const miniBanner = await sharp(image)
-        .resize(460, 259, {
-          fit: 'inside',
-          withoutEnlargement: true
-        })
-        .avif({ quality: 60 })
-        .toBuffer()
-      return { banner, miniBanner }
-    }),
-    encodeFull
+  // 主图与原图各占一个编码槽并行
+  const [main, full] = await Promise.all([
+    encodeVariants(admittedImage, BANNER_PLAN),
+    admittedOriginal
+      ? encodeVariants(admittedOriginal, FULL_BANNER_PLAN)
+      : undefined
   ])
-
-  if (typeof main === 'string') {
-    return main
+  if (main instanceof ImageRejection) {
+    return main.message
   }
-  if (typeof fullBanner === 'string') {
-    return fullBanner
-  }
-  const { banner, miniBanner } = main
-
-  if (!checkBufferSize(banner, 5)) {
-    return '图片体积过大'
-  }
-  if (!checkBufferSize(miniBanner, 1.007)) {
-    return '图片体积过大'
-  }
-  if (fullBanner && !checkBufferSize(fullBanner, 10)) {
-    return '图片体积过大'
+  if (full instanceof ImageRejection) {
+    return full.message
   }
 
-  return { banner, miniBanner, fullBanner }
+  return { ...main, fullBanner: full?.fullBanner }
 }
