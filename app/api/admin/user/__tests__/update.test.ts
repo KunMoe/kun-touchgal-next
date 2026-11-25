@@ -130,7 +130,7 @@ beforeEach(() => {
   )
 })
 
-// 表单曾整行提交、按打开时的快照绝对值写回: 期间别处写下的改名、改邮箱、升权、封禁、
+// 表单曾整行提交、按列表里的快照绝对值写回: 期间别处写下的改名、改邮箱、升权、封禁、
 // 萌萌点与图片计数被静默回滚 (P06-02 / X03-01 / X04-04), 只属于某一列的上限又锁死整次
 // 保存 (计数 51、role 4、负余额)。现在请求只带改了的键
 describe('adminPatchUserSchema 合并契约', () => {
@@ -363,11 +363,21 @@ describe('updateUser 改了密码或邮箱 (账号恢复)', () => {
         data: expect.objectContaining({ security_stamp: expect.any(Date) })
       })
     )
-    // 日志里不留密码哈希
-    expect(createLogMock.mock.calls[0][0].data.content).not.toContain(
-      'newpass123'
-    )
+    // 日志里不留密码明文, 也不留哈希
+    const logContent = createLogMock.mock.calls[0][0].data.content
+    expect(logContent).not.toContain('newpass123')
+    expect(logContent).not.toContain('new-hash')
     expect(finishMock).toHaveBeenCalledWith(7, 'admin-credentials-changed')
+  })
+
+  it('带着与原值相同的邮箱: 不查重, 不算账号恢复', async () => {
+    await updateUser({ uid: 7, email: 'target@example.com' }, 99)
+
+    expect(queryRawMock).not.toHaveBeenCalled()
+    expect(updateUserMock.mock.calls[0][0].data).not.toHaveProperty(
+      'security_stamp'
+    )
+    expect(finishMock).toHaveBeenCalledWith(7, 'admin-edited')
   })
 
   it('只改资料与权限: 不刷新戳', async () => {

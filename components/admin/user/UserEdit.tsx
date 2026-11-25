@@ -23,6 +23,7 @@ import { canAssignRole, isSuperAdminRole } from '~/constants/permission'
 import { kunFetchPost, kunFetchPut } from '~/utils/kunFetch'
 import { errorReporter, kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useUserStore } from '~/store/userStore'
+import { kunAdminUserChanges } from '~/components/admin/user/changes'
 import type { AdminUser, AdminUserPatchResult } from '~/types/api/admin'
 
 interface Props {
@@ -80,20 +81,12 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
     onClose()
   }
 
-  // 输入框填目标值, 请求只带差值: 打开弹窗之后用户签到、被赞、消费的增减不被覆盖
+  // 输入框填目标值, 请求只带差值 (见 kunAdminUserChanges)
   const pointDelta = formUser.moemoepoint - user.moemoepoint
-  // 请求只带这次改了的键 (合并契约): 与打开弹窗时的快照比, 没改的列不随请求写回,
-  // 打开之后别处写下的改名、改邮箱、升权、封禁不会被快照回滚
-  const changes = {
-    ...(formUser.name !== user.name ? { name: formUser.name } : {}),
-    ...(formUser.email !== user.email ? { email: formUser.email } : {}),
-    ...(formUser.role !== user.role ? { role: formUser.role } : {}),
-    ...(formUser.status !== user.status ? { status: formUser.status } : {}),
-    ...(formUser.bio !== user.bio ? { bio: formUser.bio } : {}),
-    ...(pointDelta ? { moemoepointDelta: pointDelta } : {}),
-    ...(resetImageCount ? { resetDailyImageCount: true } : {}),
-    ...(password.trim() ? { password } : {})
-  }
+  const changes = kunAdminUserChanges(user, formUser, {
+    password,
+    resetImageCount
+  })
   const hasChanges = Object.keys(changes).length > 0
 
   const [updating, setUpdating] = useState(false)
@@ -213,9 +206,6 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
                   <Button
                     size="sm"
                     variant="flat"
-                    isDisabled={
-                      !resetImageCount && formUser.dailyImageCount === 0
-                    }
                     onPress={() => setResetImageCount((prev) => !prev)}
                   >
                     {resetImageCount ? '撤销' : '清零'}

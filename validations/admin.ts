@@ -187,9 +187,9 @@ export const adminReportPaginationSchema = adminPaginationSchema.extend({
   targetType: adminReportTargetTypeSchema.default('comment')
 })
 
-// 后台改用户是合并契约: 请求只带这一次改了的字段 (客户端拿打开弹窗时的快照比出来), 没带的列
-// 不写。打开弹窗之后别处写下的改名、改邮箱、升权、封禁、萌萌点与图片计数因此不会被快照回滚,
-// 只属于某一列的规则也只在改这一列时才拦。计数列只收差值或清零, 不收绝对值。
+// 后台改用户是合并契约: 请求只带这一次改了的字段 (客户端由 kunAdminUserChanges 与列表里这一行
+// 比出来), 没带的列不写。列表加载之后别处写下的改名、改邮箱、升权、封禁、萌萌点与图片计数
+// 因此不会被回滚, 只属于某一列的规则也只在改这一列时才拦。计数列只收差值或清零, 不收绝对值。
 // strict: 旧页面的整行请求体 (带着已删掉的 dailyImageCount) 整个拒绝, 不会剥掉未知键之后接着
 // 用快照覆盖其余的列
 export const adminPatchUserSchema = z
@@ -214,7 +214,7 @@ export const adminPatchUserSchema = z
         '用户角色无效'
       ).optional(),
       status: kunInt(0, 2, '用户状态无效').optional(),
-      // 萌萌点按差值调整 (表单里仍填目标值, 由客户端换算), 打开表单之后发生的增减不会被覆盖
+      // 萌萌点按差值调整 (表单里仍填目标值, 由客户端换算), 列表加载之后发生的增减不会被覆盖
       moemoepointDelta: kunInt(
         -9999999,
         9999999,
