@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
+import { isFavoriteFolderVisibleTo } from '~/app/api/utils/contentVisibility'
 import { getFavoriteFolderPatchSchema } from '~/validations/user'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 
@@ -13,7 +14,7 @@ export const GET = kunRoute.get({
 
 const getPatchByFolder = async (
   input: z.infer<typeof getFavoriteFolderPatchSchema>,
-  uid?: number
+  uid: number
 ) => {
   const folder = await prisma.user_patch_favorite_folder.findUnique({
     where: { id: input.folderId }
@@ -21,7 +22,7 @@ const getPatchByFolder = async (
   if (!folder) {
     return '未找到该文件夹'
   }
-  if (!folder.is_public && folder.user_id !== uid) {
+  if (!isFavoriteFolderVisibleTo(folder, uid)) {
     return '您无权查看该私密文件夹'
   }
 

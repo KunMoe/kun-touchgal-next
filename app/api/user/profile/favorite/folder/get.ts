@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { getFavoriteFolderVisibilityWhere } from '~/app/api/utils/contentVisibility'
 import type { UserFavoritePatchFolder } from '~/types/api/user'
 import type { getFavoriteFoldersSchema } from '~/validations/user'
 
@@ -8,10 +9,7 @@ export const getFolders = async (
   pageUid: number,
   currentUserUid: number
 ) => {
-  const where = {
-    user_id: pageUid,
-    is_public: pageUid !== currentUserUid ? true : undefined
-  }
+  const where = getFavoriteFolderVisibilityWhere(pageUid, currentUserUid)
 
   const paginated = input.page != null && input.limit != null
 

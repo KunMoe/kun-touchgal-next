@@ -94,10 +94,7 @@ describe('getFolders', () => {
     await getFolders({}, 42, 42)
     await getFolders({}, 42, 9)
 
-    expect(findManyMock.mock.calls[0][0].where).toEqual({
-      user_id: 42,
-      is_public: undefined
-    })
+    expect(findManyMock.mock.calls[0][0].where).toEqual({ user_id: 42 })
     expect(findManyMock.mock.calls[1][0].where).toEqual({
       user_id: 42,
       is_public: true
@@ -114,9 +111,7 @@ describe('getFolders', () => {
     )
 
     expect(findManyMock.mock.calls[0][0]).toMatchObject({ skip: 10, take: 5 })
-    expect(countMock).toHaveBeenCalledWith({
-      where: { user_id: 42, is_public: undefined }
-    })
+    expect(countMock).toHaveBeenCalledWith({ where: { user_id: 42 } })
     expect(total).toBe(12)
   })
 

@@ -112,7 +112,7 @@ beforeEach(() => {
     name: 'Test Galgame',
     unique_id: 'kun123'
   })
-  folderFindUniqueMock.mockResolvedValue({ user_id: 99 })
+  folderFindUniqueMock.mockResolvedValue({ user_id: 99, is_public: true })
   relationFindUniqueMock.mockResolvedValue(null)
   relationFindFirstMock.mockResolvedValue(null)
   executeRawMock.mockResolvedValue(1)
@@ -229,6 +229,37 @@ describe('PUT /api/patch/favorite', () => {
     await expect(res.json()).resolves.toEqual({ added: true, isFavorite: true })
     expect(createDedupMessageMock).not.toHaveBeenCalled()
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
+  })
+
+  // X02-01 / X04-08: 通知带着收藏者的身份, 私密收藏夹的收藏不能经它透露给作者
+  it('does not notify the author when favoriting into a private folder', async () => {
+    folderFindUniqueMock.mockResolvedValue({ user_id: 99, is_public: false })
+
+    const res = await PUT(mockRequest)
+    await expect(res.json()).resolves.toEqual({ added: true, isFavorite: true })
+    expect(folderFindUniqueMock).toHaveBeenCalledWith({
+      where: { id: 3 },
+      select: { user_id: true, is_public: true }
+    })
+    expect(relationCreateManyMock).toHaveBeenCalled()
+    expect(createDedupMessageMock).not.toHaveBeenCalled()
+  })
+
+  it('still cleans up the notification by link when removing from a private folder', async () => {
+    folderFindUniqueMock.mockResolvedValue({ user_id: 99, is_public: false })
+    relationDeleteManyMock.mockResolvedValue({ count: 1 })
+
+    await PUT(mockRequest)
+
+    // 收藏时还是公开、之后才改成私密的收藏夹, 当初发出的通知要照样清掉
+    expect(messageDeleteManyMock).toHaveBeenCalledWith({
+      where: {
+        type: 'favorite',
+        sender_id: 99,
+        recipient_id: 1,
+        link: '/kun123?folderId=3'
+      }
+    })
   })
 
   it('threads the transaction client into createDedupMessage', async () => {

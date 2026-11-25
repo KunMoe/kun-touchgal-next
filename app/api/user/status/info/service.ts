@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { getUserProfileSchema } from '~/validations/user'
+import { getFavoriteFolderVisibilityWhere } from '~/app/api/utils/contentVisibility'
 import type { KunViewer } from '~/app/api/utils/contentVisibility'
 import type { UserInfo } from '~/types/api/user'
 
@@ -28,8 +29,11 @@ export const getUserProfile = async (
         }
       }
     }),
+    // 他人只数公开收藏夹里的收藏 (X15-01)
     prisma.user_patch_favorite_folder_relation.count({
-      where: { folder: { user_id: input.id } }
+      where: {
+        folder: getFavoriteFolderVisibilityWhere(input.id, currentUserUid)
+      }
     }),
     currentUserUid && !isSelf
       ? prisma.user_follow_relation.findUnique({

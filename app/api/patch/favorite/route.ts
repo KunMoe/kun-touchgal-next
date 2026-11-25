@@ -4,6 +4,7 @@ import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { togglePatchFavoriteSchema } from '~/validations/patch'
 import { createDedupMessage } from '~/app/api/utils/message'
+import { isFavoriteFolderVisibleTo } from '~/app/api/utils/contentVisibility'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import {
   invalidatePatchFavoriteCache,
@@ -26,7 +27,7 @@ const togglePatchFavorite = async (
     }),
     prisma.user_patch_favorite_folder.findUnique({
       where: { id: input.folderId },
-      select: { user_id: true }
+      select: { user_id: true, is_public: true }
     })
   ])
   if (!patch) {
@@ -89,7 +90,12 @@ const togglePatchFavorite = async (
         },
         skipDuplicates: true
       })
-      if (patch.user_id !== uid) {
+      // 通知带着收藏者的身份: 作者看不到这个收藏夹 (私密) 就不发。取消收藏时上面按链接
+      // 删通知不看这一条, 收藏之后才改成私密的那条通知也照样清掉
+      if (
+        patch.user_id !== uid &&
+        isFavoriteFolderVisibleTo(folder, patch.user_id)
+      ) {
         await createDedupMessage(messageData, tx)
       }
       return { added: true, isFavorite: true }

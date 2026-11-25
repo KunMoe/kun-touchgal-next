@@ -3,6 +3,7 @@ import { can } from '~/constants/permission'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import { visibleWhere } from '~/server/content/visibility'
 import type { ListView } from '~/server/viewer/patchVisibility'
+import type { Prisma } from '~/prisma/generated/prisma/client'
 
 export interface KunViewer {
   uid: number
@@ -34,3 +35,18 @@ export const shouldBypassSharedCache = async (viewer: KunViewer | null) => {
 
   return hasPendingResource(viewer.uid)
 }
+
+// 私密收藏夹: 从收藏关系派生、对他人可见的任何信息 (收藏夹列表、内容、计数、通知),
+// 以观看方或接收方能否看到源收藏夹为准。游客的 viewerUid 传 0
+export const getFavoriteFolderVisibilityWhere = (
+  ownerUid: number,
+  viewerUid: number
+): Prisma.user_patch_favorite_folderWhereInput =>
+  ownerUid === viewerUid
+    ? { user_id: ownerUid }
+    : { user_id: ownerUid, is_public: true }
+
+export const isFavoriteFolderVisibleTo = (
+  folder: { user_id: number; is_public: boolean },
+  viewerUid: number
+) => folder.is_public || folder.user_id === viewerUid
