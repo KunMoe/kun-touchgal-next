@@ -689,6 +689,8 @@ export interface ModerationPoolContext {
   signal: AbortSignal
   // 关停的宽限期满时中止: 在途的模型与存储调用放弃, 认领清掉 (见 releaseClaim)
   cancelSignal: AbortSignal
+  // 池每转一圈报一次 (至少每 POOL_POLL_MS 一圈): 租约的停滞看门狗据此判断池还活着
+  progress?: () => void
 }
 
 // 连续工作池: 槽位 (MODERATION_CONCURRENCY) 空出来就取下一轮候选, 不等其余在途的任务 —— 一次
@@ -703,7 +705,7 @@ export interface ModerationPoolContext {
 // 导出只为测试: 生产里只由下面的作业在租约内调用
 export const runModerationPool = async (
   worker: ModerationWorker,
-  { signal, cancelSignal }: ModerationPoolContext
+  { signal, cancelSignal, progress: reportProgress }: ModerationPoolContext
 ) => {
   const inFlight = new Map<
     number,
@@ -854,6 +856,7 @@ export const runModerationPool = async (
     let crowdedRounds = 0
     // 宽限期满之前 signal 总是先中止; 也看 cancelSignal, 免得刚清掉认领的任务又被取回来
     while (!stopped()) {
+      reportProgress?.()
       const seen = progress
       if (Date.now() >= pausedUntil && inFlight.size < MODERATION_CONCURRENCY) {
         let round = { started: 0, crowded: false }

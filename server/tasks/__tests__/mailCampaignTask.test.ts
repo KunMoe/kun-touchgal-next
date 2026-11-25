@@ -20,7 +20,8 @@ let stop: AbortController
 const tick = () =>
   mailCampaignJob.run({
     signal: stop.signal,
-    cancelSignal: new AbortController().signal
+    cancelSignal: new AbortController().signal,
+    progress: () => {}
   })
 
 beforeEach(() => {

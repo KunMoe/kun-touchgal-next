@@ -175,6 +175,8 @@ export interface SearchWriter {
   // 一段先看它: 租约丢了还接着写, 另一个写者可能已经开始, 两边按 Meilisearch 任务入队的先后
   // 写乱 (旧文档覆盖新文档)
   signal: AbortSignal
+  // 做完一段 (出箱的一行、计数的一批): 写锁的停滞看门狗重新计时 (server/jobs/lease.ts)
+  progress: () => void
   // 把计数 partial 文档写进索引，返回实际写入的那些。出箱里还挂着行 (待同步或已隔离) 的 id
   // 先剔除：它们可能还不在索引里 (新建的 patch、写入一直失败的)，PUT 会为不存在的 id 建出
   // 只有计数的残缺文档；它们的计数随后由 drain 写全量文档时一并带上。漏了入箱、又不在索引里
@@ -220,7 +222,8 @@ export const withSearchWriter = async <T>(
 ) => {
   const result = await withJobLease(
     { name: taskName, key: SEARCH_WRITER_LOCK_KEY, waitMs, signal },
-    (lease) => fn({ signal: lease.signal, applyCounts })
+    (lease) =>
+      fn({ signal: lease.signal, progress: lease.progress, applyCounts })
   )
   return result.ran ? result.value : undefined
 }
@@ -392,6 +395,7 @@ export const drainSearchOutbox = async ({
             return { outcome: 'paused', synced, failed }
           }
           const outcome = await applyOutboxRow(row)
+          writer.progress()
           if (outcome === 'engine-unavailable') {
             return { outcome, synced, failed }
           }

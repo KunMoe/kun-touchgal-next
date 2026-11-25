@@ -15,6 +15,7 @@ vi.mock('~/lib/redis', () => ({
 }))
 
 import {
+  DEFAULT_LEASE_STALL_MS,
   DEFAULT_LEASE_TTL_SECONDS,
   LeaseLostError,
   claimJobSlot,
@@ -159,7 +160,7 @@ describe('心跳', () => {
 
   it('任务远长于 TTL 也一直持有: 租约与耗时无关', async () => {
     const held = holdLease()
-    await vi.advanceTimersByTimeAsync(10 * DEFAULT_LEASE_TTL_SECONDS * 1000)
+    await vi.advanceTimersByTimeAsync(5 * DEFAULT_LEASE_TTL_SECONDS * 1000)
 
     expect(held.lease().signal.aborted).toBe(false)
     held.finish()
@@ -297,5 +298,65 @@ describe('时间槽标记', () => {
     )
     expect(releaseKvLockMock).not.toHaveBeenCalled()
     expect(renewKvLockMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('停滞看门狗', () => {
+  // 心跳与进度脱钩之后, 卡在没有上界的调用上 (连接被黑洞掉的 PG 查询) 的持有者会永远续租
+  it('超过 stallMs 没有进展: 停止续租、立即释放、中止 signal 并记一条 error', async () => {
+    const held = holdLease()
+    await vi.advanceTimersByTimeAsync(0)
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_LEASE_STALL_MS - HEARTBEAT_MS)
+    expect(held.lease().signal.aborted).toBe(false)
+    const renewsBefore = renewKvLockMock.mock.calls.length
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS)
+
+    const { signal } = held.lease()
+    expect(signal.reason).toBeInstanceOf(LeaseLostError)
+    expect(String(signal.reason.message)).toContain('没有进展')
+    expect(renewKvLockMock).toHaveBeenCalledTimes(renewsBefore)
+    expect(releaseKvLockMock).toHaveBeenCalledExactlyOnceWith('k', 'token')
+    expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining('[kun-jobs] drain 的租约已丢失')
+    )
+
+    held.finish()
+    await held.running
+  })
+
+  it('每做完一个工作单元报一次进度: 持有远超 stallMs 也不算停滞', async () => {
+    let lease: JobLease | undefined
+    const { promise, resolve } = Promise.withResolvers<void>()
+    const running = withJobLease(spec, async (held) => {
+      lease = held
+      await promise
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(DEFAULT_LEASE_STALL_MS / 2)
+      lease!.progress()
+    }
+
+    expect(lease!.signal.aborted).toBe(false)
+    resolve()
+    await running
+  })
+
+  it('stallMs 可以按作业放宽', async () => {
+    let lease: JobLease | undefined
+    const { promise, resolve } = Promise.withResolvers<void>()
+    const running = withJobLease(
+      { ...spec, stallMs: 60 * 60 * 1000 },
+      async (held) => {
+        lease = held
+        await promise
+      }
+    )
+    await vi.advanceTimersByTimeAsync(DEFAULT_LEASE_STALL_MS * 3)
+
+    expect(lease!.signal.aborted).toBe(false)
+    resolve()
+    await running
   })
 })

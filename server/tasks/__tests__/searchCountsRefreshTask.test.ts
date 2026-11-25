@@ -43,10 +43,12 @@ import {
 
 // 写锁的 signal: 用例中止它模拟租约丢失或关停
 let writerSignal: AbortController
+const progressMock = vi.fn()
 const writer = {
   get signal() {
     return writerSignal.signal
   },
+  progress: progressMock,
   applyCounts: applyCountsMock
 }
 
@@ -113,10 +115,15 @@ beforeEach(() => {
 })
 
 describe('searchCountsRefreshJob 与出箱共用写锁', () => {
+  let stop: AbortController
+  beforeEach(() => {
+    stop = new AbortController()
+  })
   const runTask = () =>
     searchCountsRefreshJob.run({
-      signal: new AbortController().signal,
-      cancelSignal: new AbortController().signal
+      signal: stop.signal,
+      cancelSignal: new AbortController().signal,
+      progress: () => {}
     })
 
   it('未配置 Meili 时直接返回，不抢锁、不读库', async () => {
@@ -139,6 +146,18 @@ describe('searchCountsRefreshJob 与出箱共用写锁', () => {
       { waitMs: 90_000, signal: expect.any(AbortSignal) }
     )
     expect(applyCountsMock).toHaveBeenCalledTimes(1)
+  })
+
+  // 关停时不再等锁: 那不是「90 秒内没等到」
+  it('关停中返回而没拿到锁: 不记跳过的日志', async () => {
+    withSearchWriterMock.mockResolvedValue(undefined)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    stop.abort()
+
+    await runTask()
+
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
   it('等不到锁时本轮跳过、不读库, 并留一条日志', async () => {
@@ -260,8 +279,9 @@ describe('refreshSearchCounts 快照 diff', () => {
 
     await refreshSearchCounts(writer)
 
-    // 每批各推一次，r2 未变被剔除
+    // 每批各推一次，r2 未变被剔除; 每做完一批报一次进度 (写锁的停滞看门狗)
     expect(applyCountsMock).toHaveBeenCalledTimes(2)
+    expect(progressMock).toHaveBeenCalledTimes(2)
     expect(pushedDocs(0).map((d) => d.id)).toEqual([1])
     expect(pushedDocs(1).map((d) => d.id)).toEqual([3])
     // 游标随批推进：即便 r2 未变，lastId 也推进到 2，第三批查 id>3

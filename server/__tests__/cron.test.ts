@@ -180,13 +180,14 @@ describe('关停契约', () => {
 
   it('收到信号先关停作业再退出, 退出码为 128 + 信号编号', async () => {
     const handlers = new Map<string, (signal: NodeJS.Signals) => void>()
-    const once = vi.spyOn(process, 'once').mockImplementation(((
+    // 用 on 不用 once (见 handleKunJobShutdownSignals 的注释)
+    const on = vi.spyOn(process, 'on').mockImplementation(((
       event: string,
       handler: () => void
     ) => {
       handlers.set(event, handler)
       return process
-    }) as typeof process.once)
+    }) as typeof process.on)
     const exit = vi
       .spyOn(process, 'exit')
       .mockImplementation((() => undefined) as typeof process.exit)
@@ -205,7 +206,33 @@ describe('关停契约', () => {
 
     finishStop()
     await vi.waitFor(() => expect(exit).toHaveBeenCalledExactlyOnceWith(143))
-    once.mockRestore()
+    on.mockRestore()
+    exit.mockRestore()
+  })
+
+  it('关停期间再收到信号: 立即退出, 不再等作业', async () => {
+    const handlers = new Map<string, (signal: NodeJS.Signals) => void>()
+    const on = vi.spyOn(process, 'on').mockImplementation(((
+      event: string,
+      handler: () => void
+    ) => {
+      handlers.set(event, handler)
+      return process
+    }) as typeof process.on)
+    const exit = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((() => undefined) as typeof process.exit)
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    stopMock.mockReset().mockReturnValue(new Promise(() => {}))
+
+    handleKunJobShutdownSignals({ stop: stopMock })
+    handlers.get('SIGINT')!('SIGINT')
+    expect(exit).not.toHaveBeenCalled()
+    handlers.get('SIGINT')!('SIGINT')
+
+    expect(exit).toHaveBeenCalledExactlyOnceWith(130)
+    expect(stopMock).toHaveBeenCalledOnce()
+    on.mockRestore()
     exit.mockRestore()
   })
 })

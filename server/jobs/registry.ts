@@ -1,5 +1,5 @@
 import cron from 'node-cron'
-import { claimJobSlot, withJobLease } from './lease'
+import { LeaseLostError, claimJobSlot, withJobLease } from './lease'
 
 // 进程内的最小作业层: 定时任务只声明 spec (惰性数据, import 时不建定时器), 由 startJobRuntime
 // 统一建节拍、在进程内防重叠、按作业名记错误、优雅关停。node-cron 只当节拍器用
@@ -10,6 +10,8 @@ export interface JobContext {
   signal: AbortSignal
   // 关停的宽限期满时中止: 在途的外部调用应当放弃, 进程随即退出
   cancelSignal: AbortSignal
+  // 做完一个工作单元: 租约的停滞看门狗重新计时 (lease.ts)。没声明 lease 的作业里是空操作
+  progress: () => void
 }
 
 export interface ScheduledJobSpec {
@@ -17,9 +19,11 @@ export interface ScheduledJobSpec {
   name: string
   // node-cron 表达式, 按进程所在时区
   schedule: string
-  // 跨进程互斥: 持租约执行 (心跳续租, 见 lease.ts), 抢不到这一拍就跳过
-  lease?: { key: string; ttlSeconds?: number }
-  // 每个时间槽跨进程只执行一次: 执行前占一个不释放的标记键, 已被占就跳过
+  // 跨进程互斥: 持租约执行 (心跳续租, 见 lease.ts), 抢不到这一拍就跳过。stallMs 是没有进展
+  // (ctx.progress) 多久之后放弃租约, 默认 DEFAULT_LEASE_STALL_MS
+  lease?: { key: string; ttlSeconds?: number; stallMs?: number }
+  // 每个时间槽跨进程只执行一次: 执行前占一个不释放的标记键, 已被占就跳过。不能与 lease 同时
+  // 声明 (标记先占, 租约抢不到的那一拍会白白耗掉这个槽)
   slotMarker?: { key: string; ttlSeconds: number }
   run: (ctx: JobContext) => Promise<unknown>
 }
@@ -66,9 +70,12 @@ export const startJobRuntime = async (
   specs: readonly ScheduledJobSpec[]
 ): Promise<JobRuntime> => {
   const names = new Set<string>()
-  for (const { name } of specs) {
+  for (const { name, lease, slotMarker } of specs) {
     if (names.has(name)) {
       throw new Error(`作业名重复: ${name}`)
+    }
+    if (lease && slotMarker) {
+      throw new Error(`作业 ${name} 不能同时声明 lease 与 slotMarker`)
     }
     names.add(name)
   }
@@ -77,7 +84,8 @@ export const startJobRuntime = async (
   const cancelController = new AbortController()
   const ctx: JobContext = {
     signal: stopController.signal,
-    cancelSignal: cancelController.signal
+    cancelSignal: cancelController.signal,
+    progress: () => {}
   }
   // 在途的执行, 按作业名: 同一个作业上一拍没结束时这一拍直接跳过。重叠是常态 (审核池一轮
   // 可以跨好几拍), 不记日志
@@ -105,13 +113,16 @@ export const startJobRuntime = async (
           { name: spec.name, ...lease, signal: ctx.signal },
           (held) => {
             signal = held.signal
-            return spec.run({ ...ctx, signal })
+            return spec.run({ ...ctx, signal, progress: held.progress })
           }
         )
       } catch (error) {
-        // 作业按 signal 的要求中止时抛出的就是 signal 的 reason (关停, 或已由 lease.ts 记过的
-        // 租约丢失), 不算失败
-        if (!(signal.aborted && error === signal.reason)) {
+        // 作业按 signal 的要求中止时抛出的就是 signal 的 reason (关停, 或租约丢失); 作业自己在
+        // 里面拿的租约 (计数刷新) 丢了也一样: lease.ts 已经记过, 不再记成失败
+        if (
+          !(signal.aborted && error === signal.reason) &&
+          !(error instanceof LeaseLostError)
+        ) {
           // eslint-disable-next-line no-console
           console.error(`[kun-jobs] ${spec.name} 执行失败:`, error)
         }

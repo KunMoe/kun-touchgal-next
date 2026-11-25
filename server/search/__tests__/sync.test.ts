@@ -92,6 +92,7 @@ const rejectedTask = {
 
 let errorSpy: ReturnType<typeof vi.spyOn>
 let lease: AbortController
+const progressMock = vi.fn()
 
 beforeEach(() => {
   getMeiliClientMock.mockReset().mockReturnValue({
@@ -118,8 +119,14 @@ beforeEach(() => {
     .mockImplementation(
       async (
         _spec,
-        fn: (held: { signal: AbortSignal }) => Promise<unknown>
-      ) => ({ ran: true, value: await fn({ signal: lease.signal }) })
+        fn: (held: {
+          signal: AbortSignal
+          progress: () => void
+        }) => Promise<unknown>
+      ) => ({
+        ran: true,
+        value: await fn({ signal: lease.signal, progress: progressMock })
+      })
     )
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -191,6 +198,18 @@ describe('drainSearchOutbox 单消费者 + CAS 删除', () => {
     expect(where.OR[0]).toEqual({ next_attempt_at: null })
     expect(where.OR[1].next_attempt_at.lte).toBeInstanceOf(Date)
     expect(orderBy).toEqual({ updated: 'asc' })
+  })
+
+  it('每处理完一行报一次进度 (写锁的停滞看门狗), 被拒的行也算', async () => {
+    progressMock.mockClear()
+    outboxFindManyMock.mockResolvedValueOnce([row(5), row(6)])
+    waitTaskMock
+      .mockResolvedValueOnce(rejectedTask)
+      .mockResolvedValueOnce({ status: 'succeeded' })
+
+    await drainSearchOutbox()
+
+    expect(progressMock).toHaveBeenCalledTimes(2)
   })
 
   it('一行被拒不阻断其余行处理', async () => {

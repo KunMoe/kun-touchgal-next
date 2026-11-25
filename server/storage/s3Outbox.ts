@@ -108,6 +108,7 @@ export const drainS3DeletionOutbox = async ({
             error
           )
         }
+        lease.progress()
       }
       return { deleted, skippedReferenced }
     }

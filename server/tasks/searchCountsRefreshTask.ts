@@ -29,12 +29,13 @@ export const countsFingerprint = (doc: GalgameSearchCountsDoc) =>
 // 写锁丢失或关停 (writer.signal 中止) 时停在两批之间, 剩下的行等下一轮
 export const refreshSearchCounts = async ({
   signal,
+  progress,
   applyCounts
 }: SearchWriter) => {
   const snapshot = await getKvHashAll(COUNTS_SNAPSHOT_KEY)
 
   let lastId = 0
-  for (;;) {
+  for (; ; progress()) {
     signal.throwIfAborted()
     const rows = await prisma.patch.findMany({
       where: { id: { gt: lastId } },
@@ -102,7 +103,8 @@ export const searchCountsRefreshJob = defineScheduledJob({
       },
       { waitMs: COUNTS_REFRESH_LOCK_WAIT_MS, signal }
     )
-    if (!ran) {
+    // 关停时不再等锁, 那不是「没等到」
+    if (!ran && !signal.aborted) {
       // eslint-disable-next-line no-console
       console.warn(
         `[kun-search] 搜索计数快照刷新跳过: ${COUNTS_REFRESH_LOCK_WAIT_MS / 1000} 秒内没等到写锁`

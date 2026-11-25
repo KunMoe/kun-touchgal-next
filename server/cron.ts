@@ -70,9 +70,18 @@ export const startKunJobs = () => {
 
 // 收到 SIGINT / SIGTERM 时先优雅关停作业再退出。只有 Next 不接管信号时 (cron 进程的
 // NEXT_MANUAL_SIG_HANDLE) 才真正等得到: 否则 Next 关掉 HTTP 就直接退出进程。退出码与 Next 的
-// 约定一致 (128 + 信号编号)
+// 约定一致 (128 + 信号编号)。用 on 不用 once: once 在调用之前就移除了监听, 之后注册的
+// signal-exit 一类监听会以为自己是最后一个、重发信号, 按默认行为立即杀掉进程。关停期间再收到
+// 信号 (操作者第二次 Ctrl-C) 立即退出
 export const handleKunJobShutdownSignals = (runtime: JobRuntime) => {
+  let stopping = false
   const shutdown = (signal: NodeJS.Signals) => {
+    const code = signal === 'SIGINT' ? 130 : 143
+    if (stopping) {
+      process.exit(code)
+      return
+    }
+    stopping = true
     // eslint-disable-next-line no-console
     console.log(`[kun-jobs] 收到 ${signal}, 关停作业后退出`)
     void runtime
@@ -81,8 +90,8 @@ export const handleKunJobShutdownSignals = (runtime: JobRuntime) => {
         // eslint-disable-next-line no-console
         console.error('[kun-jobs] 关停作业失败:', error)
       })
-      .finally(() => process.exit(signal === 'SIGINT' ? 130 : 143))
+      .finally(() => process.exit(code))
   }
-  process.once('SIGINT', shutdown)
-  process.once('SIGTERM', shutdown)
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }

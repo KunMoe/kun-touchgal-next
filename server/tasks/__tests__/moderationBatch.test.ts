@@ -1881,6 +1881,32 @@ describe('连续工作池: 复核补充', () => {
   })
 
   // 现在认领与取候选的谓词相同, 没认领到的行下一轮取不到; 这里假设它们哪天不一致
+  it('池每转一圈报一次进度: 租约的停滞看门狗据此判断它还活着', async () => {
+    vi.useFakeTimers({
+      toFake: [
+        'Date',
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval'
+      ]
+    })
+    vi.setSystemTime(NOW)
+    const slow = addTask()
+    const call = gateModelCalls()
+    const progress = vi.fn()
+
+    const pool = runPool(newWorker(), { ...poolSignals(), progress })
+    await settle()
+    const before = progress.mock.calls.length
+    // 唯一的在途调用一直不回来: 池仍每 15 秒转一圈
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(progress.mock.calls.length - before).toBeGreaterThanOrEqual(4)
+
+    call(slow).succeed()
+    await pool
+  })
+
   it('认领一直抢不到、行又一直取得到: 池结束这一轮, 不在库上空转', async () => {
     addTask()
     updateTaskMock.mockResolvedValue({ count: 0 })

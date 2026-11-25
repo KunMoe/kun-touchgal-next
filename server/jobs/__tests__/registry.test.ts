@@ -44,7 +44,9 @@ const { withJobLeaseMock, claimJobSlotMock } = vi.hoisted(() => ({
   withJobLeaseMock: vi.fn(),
   claimJobSlotMock: vi.fn()
 }))
-vi.mock('~/server/jobs/lease', () => ({
+vi.mock('~/server/jobs/lease', async (importOriginal) => ({
+  LeaseLostError: (await importOriginal<typeof import('~/server/jobs/lease')>())
+    .LeaseLostError,
   withJobLease: withJobLeaseMock,
   claimJobSlot: claimJobSlotMock
 }))
@@ -116,6 +118,21 @@ describe('启动', () => {
     expect(
       createdTasks.every((task) => task.start.mock.calls.length === 1)
     ).toBe(true)
+  })
+
+  it('同一个作业不能同时声明 lease 与 slotMarker', async () => {
+    await expect(
+      startJobRuntime([
+        defineScheduledJob({
+          name: 'both',
+          schedule: '0 0 * * *',
+          lease: { key: 'k' },
+          slotMarker: { key: 's', ttlSeconds: 3600 },
+          run: vi.fn()
+        })
+      ])
+    ).rejects.toThrow('不能同时声明 lease 与 slotMarker')
+    expect(createdTasks).toHaveLength(0)
   })
 
   it('作业名重复时拒绝启动, 不建任何节拍', async () => {
@@ -192,9 +209,10 @@ describe('每一拍', () => {
 describe('租约与时间槽', () => {
   it('声明了 lease: 持租约执行, ctx.signal 换成租约的 signal (它也接着运行时的关停)', async () => {
     const leaseSignal = new AbortController().signal
+    const leaseProgress = vi.fn()
     withJobLeaseMock.mockImplementation(async (_spec, fn) => ({
       ran: true,
-      value: await fn({ signal: leaseSignal })
+      value: await fn({ signal: leaseSignal, progress: leaseProgress })
     }))
     const run = vi.fn(async () => {})
     await startJobRuntime([
@@ -216,7 +234,8 @@ describe('租约与时间槽', () => {
     })
     expect(run).toHaveBeenCalledExactlyOnceWith({
       signal: leaseSignal,
-      cancelSignal: expect.any(AbortSignal)
+      cancelSignal: expect.any(AbortSignal),
+      progress: leaseProgress
     })
   })
 
@@ -242,7 +261,7 @@ describe('租约与时间槽', () => {
     const lost = new AbortController()
     withJobLeaseMock.mockImplementation(async (_spec, fn) => ({
       ran: true,
-      value: await fn({ signal: lost.signal })
+      value: await fn({ signal: lost.signal, progress: () => {} })
     }))
     await startJobRuntime([
       defineScheduledJob({
@@ -257,6 +276,24 @@ describe('租约与时间槽', () => {
     ])
 
     await taskOf('flush').tick()
+
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  // 计数刷新的写锁在作业里面拿 (spec 没有 lease): 它丢了抛出的 LeaseLostError 已由 lease.ts 记过
+  it('作业里自己拿的租约丢了: 抛出的 LeaseLostError 不再记成失败', async () => {
+    const { LeaseLostError } = await import('~/server/jobs/lease')
+    await startJobRuntime([
+      defineScheduledJob({
+        name: 'counts',
+        schedule: '* * * * *',
+        run: async () => {
+          throw new LeaseLostError('searchCountsRefreshTask', 'gone')
+        }
+      })
+    ])
+
+    await taskOf('counts').tick()
 
     expect(errorSpy).not.toHaveBeenCalled()
   })

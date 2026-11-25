@@ -25,10 +25,16 @@ vi.mock('~/lib/s3', () => ({ deleteFileFromS3: deleteFileFromS3Mock }))
 vi.mock('~/server/jobs/lease', () => ({
   withJobLease: async (
     _spec: unknown,
-    fn: (lease: { signal: AbortSignal }) => Promise<unknown>
+    fn: (lease: {
+      signal: AbortSignal
+      progress: () => void
+    }) => Promise<unknown>
   ) => ({
     ran: true,
-    value: await fn({ signal: new AbortController().signal })
+    value: await fn({
+      signal: new AbortController().signal,
+      progress: () => {}
+    })
   })
 }))
 

@@ -54,6 +54,7 @@ import {
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
 let lease: AbortController
+const progressMock = vi.fn()
 
 beforeEach(() => {
   outboxFindManyMock.mockReset().mockResolvedValue([])
@@ -68,8 +69,14 @@ beforeEach(() => {
     .mockImplementation(
       async (
         _spec,
-        fn: (held: { signal: AbortSignal }) => Promise<unknown>
-      ) => ({ ran: true, value: await fn({ signal: lease.signal }) })
+        fn: (held: {
+          signal: AbortSignal
+          progress: () => void
+        }) => Promise<unknown>
+      ) => ({
+        ran: true,
+        value: await fn({ signal: lease.signal, progress: progressMock })
+      })
     )
 })
 
@@ -195,6 +202,20 @@ describe('drainS3DeletionOutbox 单消费者 + 引用判定 + CAS 删行', () =>
       data: { attempts: { increment: 1 } }
     })
     error.mockRestore()
+  })
+
+  it('每处理完一行报一次进度 (租约的停滞看门狗), 失败的行也算', async () => {
+    progressMock.mockClear()
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    outboxFindManyMock.mockResolvedValue([
+      { s3_key: 'k1', seq: 0 },
+      { s3_key: 'k2', seq: 1 }
+    ])
+    deleteFileFromS3Mock.mockRejectedValueOnce(new Error('S3 down'))
+
+    await drainS3DeletionOutbox()
+
+    expect(progressMock).toHaveBeenCalledTimes(2)
   })
 
   it('一行失败不阻断其余行处理', async () => {
