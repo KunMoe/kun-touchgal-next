@@ -3,7 +3,10 @@ import { Socket } from 'node:net'
 import { cookies, headers } from 'next/headers'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { OIDC_ISSUER, OIDC_MOUNT_PATH } from '~/config/oidc'
+import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
+import { KunBodyLimitError, kunReadBody } from '~/lib/http/readBody'
 import { getOidcCallback } from './provider'
+import type { KunBodyFailure } from '~/lib/http/readBody'
 
 export interface NodeBridge {
   req: IncomingMessage
@@ -121,6 +124,8 @@ const makeReq = (
 // 从 Web Request 构造 bridge。stripMount=true 时剥离 /oidc 前缀，供 provider.callback() 相对路由。
 // skipBody=true 用于 interaction 场景：provider.interactionDetails/Finished 不读 body，
 // 且调用方可能已消费过 request body。
+// /oidc 不在 proxy 的 matcher 里, 请求体没有被 Next 截断过: provider 自己的 56 KiB 上限要等它读
+// bridge 时才生效, 所以这里先按 KUN_BODY_BUDGET.oidc 有界地读, 超出的抛 KunBodyLimitError
 export const buildRequestBridge = async (
   request: Request,
   stripMount: boolean,
@@ -143,7 +148,17 @@ export const buildRequestBridge = async (
   const bridge = attachCapture(req)
   const bodyless =
     options.skipBody || request.method === 'GET' || request.method === 'HEAD'
-  bridge.bodyBuffer = bodyless ? null : Buffer.from(await request.arrayBuffer())
+  if (!bodyless) {
+    const read = await kunReadBody(request, KUN_BODY_BUDGET.oidc)
+    if (!read.ok) {
+      throw new KunBodyLimitError(read)
+    }
+    bridge.bodyBuffer = Buffer.from(
+      read.bytes.buffer,
+      read.bytes.byteOffset,
+      read.bytes.byteLength
+    )
+  }
   return bridge
 }
 
@@ -162,6 +177,19 @@ export const buildHeadersBridge = async (
   return bridge
 }
 
+// 请求体超出桥的预算: 不进 provider, 按 OAuth 的错误格式回真实状态码
+const bodyRejected = ({ reason }: KunBodyFailure) =>
+  Response.json(
+    {
+      error: 'invalid_request',
+      error_description:
+        reason === 'too-large'
+          ? 'request entity too large'
+          : 'request body could not be read'
+    },
+    { status: reason === 'too-large' ? 413 : 400 }
+  )
+
 // catch-all 路由入口：把 Web 请求交给 provider.callback()，等 res 结束后转回 Response。
 export const handleOidcCallback = (request: Request): Promise<Response> =>
   new Promise((resolve, reject) => {
@@ -175,5 +203,11 @@ export const handleOidcCallback = (request: Request): Promise<Response> =>
         }
         bridge.req.push(null)
       })
-      .catch(reject)
+      .catch((error) => {
+        if (error instanceof KunBodyLimitError) {
+          resolve(bodyRejected(error.failure))
+          return
+        }
+        reject(error)
+      })
   })

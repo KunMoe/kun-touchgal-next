@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { IncomingMessage } from 'node:http'
 import { Socket } from 'node:net'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Provider from 'oidc-provider'
 import type { JWK } from 'oidc-provider'
 
@@ -186,5 +186,123 @@ describe('真实 provider 经桥', () => {
     for (const cookie of cookies) {
       expect(cookie.toLowerCase(), cookie).toContain('; secure')
     }
+  })
+})
+
+describe('请求体预算 (/oidc 不经 proxy, 桥自己限)', () => {
+  const KIB = 1024
+  const FORM = 'application/x-www-form-urlencoded'
+
+  // 授权码换令牌, 带错误的客户端密钥: provider 读完请求体后回 invalid_client
+  const tokenBody = (padding = 0) =>
+    new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: 'x',
+      client_id: 'rp',
+      client_secret: 'wrong',
+      redirect_uri: REDIRECT_URI,
+      ...(padding ? { pad: 'a'.repeat(padding) } : {})
+    }).toString()
+
+  const tokenRequest = (body: string) =>
+    new Request('http://localhost:3000/oidc/token', {
+      method: 'POST',
+      body,
+      headers: {
+        'content-type': FORM,
+        'content-length': String(Buffer.byteLength(body))
+      }
+    })
+
+  const chunkedRequest = (body: ReadableStream<Uint8Array>) =>
+    new Request('http://localhost:3000/oidc/token', {
+      method: 'POST',
+      body,
+      headers: { 'content-type': FORM },
+      duplex: 'half'
+    } as RequestInit)
+
+  let warnSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    warnSpy.mockRestore()
+  })
+
+  it('预算之内的请求体原样交给 provider', async () => {
+    const res = await handleOidcCallback(tokenRequest(tokenBody()))
+
+    expect(res.status).toBe(401)
+    expect(await res.json()).toMatchObject({ error: 'invalid_client' })
+  })
+
+  it('56 KiB 与 64 KiB 之间的仍交给 provider, 由它报协议格式的错误', async () => {
+    const res = await handleOidcCallback(tokenRequest(tokenBody(60 * KIB)))
+
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: 'invalid_request' })
+  })
+
+  it('Content-Length 超过 64 KiB 回 413, 不读请求体也不进 provider', async () => {
+    const callback = vi.fn()
+    callbackRef.current = callback
+    const request = tokenRequest(tokenBody(65 * KIB))
+
+    const res = await handleOidcCallback(request)
+
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({
+      error: 'invalid_request',
+      error_description: 'request entity too large'
+    })
+    expect(request.bodyUsed).toBe(false)
+    expect(callback).not.toHaveBeenCalled()
+  })
+
+  it('没有 Content-Length 的流读到超出 64 KiB 即取消, 回 413', async () => {
+    const callback = vi.fn()
+    callbackRef.current = callback
+    const cancel = vi.fn()
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(16 * KIB))
+      },
+      cancel
+    })
+
+    const res = await handleOidcCallback(chunkedRequest(endless))
+
+    expect(res.status).toBe(413)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(callback).not.toHaveBeenCalled()
+  })
+
+  it('读的过程中流出错回 400, 不进 provider', async () => {
+    const callback = vi.fn()
+    callbackRef.current = callback
+    const broken = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error('socket hang up'))
+      }
+    })
+
+    const res = await handleOidcCallback(chunkedRequest(broken))
+
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({
+      error: 'invalid_request',
+      error_description: 'request body could not be read'
+    })
+    expect(callback).not.toHaveBeenCalled()
+  })
+
+  it('skipBody 不读请求体', async () => {
+    const request = tokenRequest(tokenBody(65 * KIB))
+
+    const bridge = await buildRequestBridge(request, false, { skipBody: true })
+
+    expect(bridge.bodyBuffer).toBeNull()
+    expect(request.bodyUsed).toBe(false)
   })
 })
