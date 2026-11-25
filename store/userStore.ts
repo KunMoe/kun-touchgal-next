@@ -37,8 +37,14 @@ export const kunUserStore = createStore<UserStoreState>()(
     storage: createJSONStorage(() => window.localStorage),
     skipHydration: true,
     // 存储形状仍是 { state: { user }, version: 0 }。status 不持久化: 从 localStorage 读回来的
-    // 旧用户不算这个文档判定过的身份
-    partialize: (state) => ({ user: state.user })
+    // 旧用户不算这个文档判定过的身份。读回时也只取 user: 默认的浅合并会让存储里的任何键
+    // (旧版本或改坏的 partialize 留下的 status) 盖掉内存
+    partialize: (state) => ({ user: state.user }),
+    merge: (persisted, current) => ({
+      ...current,
+      user:
+        (persisted as Partial<UserStoreState> | undefined)?.user ?? current.user
+    })
   })
 )
 
@@ -47,5 +53,3 @@ export const useUserStore = <T>(selector: (state: UserStoreState) => T): T =>
 
 // 事件处理器里读当前值用 (不订阅)
 export const getKunUserSnapshot = () => kunUserStore.getState().user
-
-export const rehydrateKunUserStore = () => kunUserStore.persist.rehydrate()

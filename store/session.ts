@@ -43,6 +43,30 @@ const resetUnread = () => {
   kunUnreadStore.setState(KUN_NO_UNREAD)
 }
 
+// 站内登入、登出与换号的代次。发出之后要等一阵才落地的结果 (顶栏等懒块的首屏会话与会话回查、
+// 登入后补取的未读) 落地前比一下: 等待期间换过账号或登出过就丢弃, 不把新账号盖回旧账号、
+// 不把刚登入的会话按旧的 401 登出、不把上一账号的未读落到新账号上
+let kunSessionEpoch = 0
+export const getKunSessionEpoch = () => kunSessionEpoch
+
+const hasStoredUser = () => {
+  try {
+    return Boolean(window.localStorage.getItem('kun-patch-user-store'))
+  } catch {
+    return true
+  }
+}
+
+// 首屏没有会话时这台设备记着的用户 uid。只在还没判定身份时读存储; 判定过之后 (同一文档里
+// router.refresh 带回的会话变成没有) 以内存为准 —— 存储可能已被别的标签页改写成访客或另一个账号
+export const loadKunStoredUid = async () => {
+  if (kunUserStore.getState().status === 'pending' && hasStoredUser()) {
+    // 浏览器禁用站点数据时 window.localStorage 的 getter 抛错, persist 不会被装上
+    await kunUserStore.persist?.rehydrate()
+  }
+  return kunUserStore.getState().user.uid
+}
+
 // 服务端给出的会话: 首屏的 initialSession、同一文档里 router.refresh 带回的新快照、缺会话时
 // 回查的结果。同一账号以服务端快照覆盖 user (refresh 晚于它发出之前完成的所有写入, 保留
 // 刷新自愈); 换了账号先清掉上一账号的未读。pending 时不清: 那时已落地的未读快照来自已读接口,
@@ -50,6 +74,7 @@ const resetUnread = () => {
 export const reconcileKunSession = ({ user, unread }: UserSession) => {
   const current = kunUserStore.getState()
   if (current.status !== 'pending' && current.user.uid !== user.uid) {
+    kunSessionEpoch++
     resetUnread()
   }
   kunUserStore.setState({ status: 'authenticated', user })
@@ -73,10 +98,11 @@ export const keepKunStoredSession = () => {
 
 // 登录、2FA 第二步与注册共用。这三个接口不带未读, 登入后补取一次
 export const signInKunSession = (user: UserState) => {
+  const epoch = ++kunSessionEpoch
   resetUnread()
   kunUserStore.setState({ status: 'authenticated', user })
   void kunFetchGet<UnreadSnapshot>('/message/unread').then((res) => {
-    if (typeof res !== 'string') {
+    if (typeof res !== 'string' && epoch === kunSessionEpoch) {
       applyUnreadSnapshot(res)
     }
   })
@@ -84,6 +110,7 @@ export const signInKunSession = (user: UserState) => {
 
 // 所有登出路径的客户端清理 (导航与提示在 hooks/useKunSession.ts)。分级偏好随会话重置
 export const endKunClientSession = () => {
+  kunSessionEpoch++
   kunUserStore.setState({ status: 'guest', user: KUN_GUEST_USER })
   resetUnread()
   useSettingStore.getState().resetData()

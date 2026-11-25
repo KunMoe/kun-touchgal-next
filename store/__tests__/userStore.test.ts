@@ -102,10 +102,29 @@ describe('userStore 的持久化', () => {
       'kun-patch-user-store',
       JSON.stringify({ state: { user: USER }, version: 0 })
     )
-    const { kunUserStore, rehydrateKunUserStore } =
-      await import('~/store/userStore')
+    const { kunUserStore } = await import('~/store/userStore')
+    const { loadKunStoredUid } = await import('~/store/session')
 
-    await rehydrateKunUserStore()
+    expect(await loadKunStoredUid()).toBe(USER.uid)
+
+    expect(kunUserStore.getState()).toEqual({ status: 'pending', user: USER })
+  })
+
+  // 默认的浅合并会让存储里的任何键盖掉内存; 旧版本或改坏的 partialize 留下的 status
+  // 会让没回查过的旧用户直接算作已登录
+  it('读回时只取 user, 存储里多出来的 status 不生效', async () => {
+    createCookieJar()
+    items.set(
+      'kun-patch-user-store',
+      JSON.stringify({
+        state: { user: USER, status: 'authenticated' },
+        version: 0
+      })
+    )
+    const { kunUserStore } = await import('~/store/userStore')
+    const { loadKunStoredUid } = await import('~/store/session')
+
+    await loadKunStoredUid()
 
     expect(kunUserStore.getState()).toEqual({ status: 'pending', user: USER })
   })

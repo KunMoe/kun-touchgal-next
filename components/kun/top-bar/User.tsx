@@ -6,15 +6,13 @@ import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { Button } from '@heroui/button'
 import { Skeleton } from '@heroui/skeleton'
-import {
-  getKunUserSnapshot,
-  rehydrateKunUserStore,
-  useUserStore
-} from '~/store/userStore'
+import { useUserStore } from '~/store/userStore'
 import { useMessageStore } from '~/store/messageStore'
 import { useSettingStore } from '~/store/settingStore'
 import {
+  getKunSessionEpoch,
   keepKunStoredSession,
+  loadKunStoredUid,
   markKunSessionGuest,
   markNotificationsSeen,
   reconcileKunSession
@@ -39,14 +37,6 @@ type SessionCheckResult =
   | { status: 'valid'; session: UserSession }
   | { status: 'invalid' }
   | { status: 'unreachable' }
-
-const hasPersistedUserStore = () => {
-  try {
-    return Boolean(window.localStorage.getItem('kun-patch-user-store'))
-  } catch {
-    return true
-  }
-}
 
 // UserDropdown 连带 Dropdown / Menu / Popover / Modal / Avatar 只对登录用户渲染, 静态导入
 // 会让游客在每一页都下载它们. 改为确认会话时并行按需加载, 加载完成后再翻转会话状态,
@@ -166,11 +156,13 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
 
     let cancelled = false
     const hydrateSession = async () => {
+      // 等懒块期间站内换了账号或登出了, 这份首屏会话就过时了
+      const epoch = getKunSessionEpoch()
       await Promise.all([
         useSettingStore.persist.rehydrate(),
         ensureUserDropdownModule()
       ])
-      if (cancelled) {
+      if (cancelled || epoch !== getKunSessionEpoch()) {
         return
       }
 
@@ -193,17 +185,15 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
 
     let cancelled = false
     const handleMissingSession = async () => {
+      // 回查要等懒块 (C20), 慢网下可能好几秒: 期间站内登入或登出了, 回查结果就不再适用
+      const epoch = getKunSessionEpoch()
       await useSettingStore.persist.rehydrate()
-      const hasStoredUser = hasPersistedUserStore()
-      if (hasStoredUser) {
-        await rehydrateKunUserStore()
-      }
-      if (cancelled) {
+      const uid = await loadKunStoredUid()
+      if (cancelled || epoch !== getKunSessionEpoch()) {
         return
       }
 
-      const currentUser = hasStoredUser ? getKunUserSnapshot() : { uid: 0 }
-      if (!currentUser.uid) {
+      if (!uid) {
         markKunSessionGuest()
         return
       }
@@ -212,7 +202,7 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
         fetchCurrentSession(),
         ensureUserDropdownModule()
       ])
-      if (cancelled) {
+      if (cancelled || epoch !== getKunSessionEpoch()) {
         return
       }
       if (sessionCheck.status === 'valid') {

@@ -55,14 +55,13 @@ const load = async (stored?: UserState) => {
     'kun-patch-setting-store|version': '0'
   })
   const session = await import('~/store/session')
-  const { kunUserStore, rehydrateKunUserStore } =
-    await import('~/store/userStore')
+  const { kunUserStore } = await import('~/store/userStore')
   const { kunUnreadStore } = await import('~/store/messageStore')
   const { useSettingStore } = await import('~/store/settingStore')
   await useSettingStore.persist.rehydrate()
   return {
     ...session,
-    rehydrateKunUserStore,
+    items,
     jar,
     identity: () => kunUserStore.getState(),
     unread: () => kunUnreadStore.getState(),
@@ -131,10 +130,18 @@ describe('身份三态', () => {
       () => s.keepKunStoredSession(),
       () => s.signInKunSession(B),
       () => s.applyUnreadSnapshot(snapshot(5, true)),
-      () => s.markNotificationsSeen()
+      () => s.markNotificationsSeen(),
+      // 读回存储也不行, 哪怕存储里写着 status: 'pending'
+      () => {
+        s.items.set(
+          'kun-patch-user-store',
+          JSON.stringify({ state: { user: A, status: 'pending' }, version: 0 })
+        )
+        return s.loadKunStoredUid()
+      }
     ]
     for (const step of steps) {
-      step()
+      await step()
       expect(s.identity().status).not.toBe('pending')
     }
   })
@@ -151,15 +158,87 @@ describe('身份三态', () => {
 
   it('回查不可达: 沿用 store 里记着的用户; 没记着就是游客', async () => {
     const withUser = await load(A)
-    await withUser.rehydrateKunUserStore()
+    expect(await withUser.loadKunStoredUid()).toBe(A.uid)
     expect(withUser.identity()).toEqual({ status: 'pending', user: A })
     withUser.keepKunStoredSession()
     expect(withUser.identity()).toEqual({ status: 'authenticated', user: A })
 
     vi.resetModules()
     const withoutUser = await load()
+    expect(await withoutUser.loadKunStoredUid()).toBe(0)
     withoutUser.keepKunStoredSession()
     expect(withoutUser.identity().status).toBe('guest')
+  })
+
+  // 判定过之后 router.refresh 带回的会话变成没有, 缺会话回查会再走一遍。这时存储可能已被
+  // 别的标签页改写: 那边登出写进了访客, 读回来就成了「已登录的访客」(铃铛加空头像)
+  it('判定过之后不再读存储, 以内存里的用户为准', async () => {
+    const s = await load()
+    s.reconcileKunSession({ user: A, unread: snapshot(1, false) })
+    s.items.set(
+      'kun-patch-user-store',
+      JSON.stringify({ state: { user: user(0, { name: '' }) }, version: 0 })
+    )
+
+    expect(await s.loadKunStoredUid()).toBe(A.uid)
+    expect(s.identity()).toEqual({ status: 'authenticated', user: A })
+  })
+
+  // 浏览器禁用站点数据时 window.localStorage 的 getter 抛错, persist 不会被装上。
+  // 曾经在这里抛出未处理的拒绝, 顶栏永远停在骨架
+  it('存储不可用: 读回不抛错, 按没有记着用户处理', async () => {
+    vi.stubGlobal('window', {
+      get localStorage(): Storage {
+        throw new Error('blocked')
+      }
+    })
+    createCookieJar()
+    const session = await import('~/store/session')
+    const { kunUserStore } = await import('~/store/userStore')
+
+    expect(await session.loadKunStoredUid()).toBe(0)
+    session.markKunSessionGuest()
+    expect(kunUserStore.getState().status).toBe('guest')
+  })
+})
+
+describe('登入、登出与换号的代次', () => {
+  it('只有登入、登出与换号推进代次', async () => {
+    const s = await load()
+    kunFetchGetMock.mockResolvedValue('x')
+    const epochs = [s.getKunSessionEpoch()]
+    const step = (run: () => void) => {
+      run()
+      epochs.push(s.getKunSessionEpoch())
+    }
+    step(() => s.reconcileKunSession({ user: A, unread: snapshot(1, false) }))
+    step(() => s.reconcileKunSession({ user: A, unread: snapshot(2, false) }))
+    step(() => s.patchKunUser({ bio: 'b' }))
+    step(() => s.applyUnreadSnapshot(snapshot(3, true)))
+    step(() => s.reconcileKunSession({ user: B, unread: snapshot(4, false) }))
+    step(() => s.endKunClientSession())
+    step(() => s.signInKunSession(A))
+
+    const [e0] = epochs
+    expect(epochs).toEqual([e0, e0, e0, e0, e0, e0 + 1, e0 + 2, e0 + 3])
+  })
+
+  // 登入后补取的未读晚到: 期间登出又换了号, 上一账号的快照不能落到新账号上,
+  // 还会因为时刻更新挡掉新账号从缓存拿到的快照
+  it('登入后补取的未读只落到发起它的那次登入上', async () => {
+    const s = await load()
+    const pending: ((value: UnreadSnapshot) => void)[] = []
+    kunFetchGetMock.mockImplementation(
+      () => new Promise((resolve) => pending.push(resolve))
+    )
+
+    s.signInKunSession(B)
+    s.endKunClientSession()
+    s.signInKunSession(user(9))
+    const [forB, forC] = pending
+    forB(snapshot(200, true, true))
+    forC(snapshot(150, false, false))
+    await vi.waitFor(() => expect(s.unread()).toEqual(snapshot(150, false)))
   })
 })
 

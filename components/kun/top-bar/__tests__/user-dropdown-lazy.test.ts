@@ -37,6 +37,36 @@ describe('顶栏 UserDropdown 按需加载且不经 Suspense', () => {
     )
   })
 
+  // 只查 Promise.all 写法在不在拦不住「把写入挪到 await 之前」: 那样头像位先出骨架、
+  // 块到了才换成头像, 铃铛与头像不再同帧
+  it('两条路径里写入已登录身份的命令都排在等块之后', () => {
+    const indexesOf = (needle: string) =>
+      [...userSource.matchAll(new RegExp(needle, 'g'))].map(
+        (match) => match.index
+      )
+    const [firstWait] = indexesOf(
+      String.raw`await Promise\.all\(\[\s*useSettingStore\.persist\.rehydrate\(\)`
+    )
+    const [secondWait] = indexesOf(
+      String.raw`await Promise\.all\(\[\s*fetchCurrentSession\(\)`
+    )
+    const firstPath = indexesOf(
+      String.raw`reconcileKunSession\(initialSession\)`
+    )
+    const secondPath = [
+      ...indexesOf(String.raw`reconcileKunSession\(sessionCheck\.session\)`),
+      ...indexesOf(String.raw`keepKunStoredSession\(\)`)
+    ]
+
+    expect(firstWait).toBeLessThan(secondWait)
+    expect(indexesOf(String.raw`reconcileKunSession\(`)).toHaveLength(2)
+    expect(firstPath).toHaveLength(1)
+    expect(firstPath[0]).toBeGreaterThan(firstWait)
+    expect(firstPath[0]).toBeLessThan(secondWait)
+    expect(secondPath).toHaveLength(2)
+    secondPath.forEach((index) => expect(index).toBeGreaterThan(secondWait))
+  })
+
   it('渲染直接读模块缓存', () => {
     expect(userSource).toMatch(
       /useSyncExternalStore\(\s*subscribeUserDropdown,\s*getUserDropdownModule,\s*getServerUserDropdownModule\s*\)/
