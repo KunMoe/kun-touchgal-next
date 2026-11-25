@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MODERATION_BATCH_SIZE,
   MODERATION_BREAKER,
   MODERATION_MAX_DEFERRALS
 } from '~/constants/moderation'
@@ -13,6 +12,9 @@ import type {
 } from '~/server/moderation/breaker'
 
 const NOW = 1_000_000
+// 模拟里每一拍最多处理的条数 (改成连续工作池之前的批次大小)。这组模拟比较的是记账与探测
+// 策略, 不模拟工作池的调度; 吞吐取定值, 结论只在策略之间比
+const SIM_TASKS_PER_TICK = 10
 
 const record = (
   before: BreakerState,
@@ -276,7 +278,7 @@ describe('场景: 队列在各种故障下的走向', () => {
           ? probe === 'newest-fresh' && newestFresh
             ? [newestFresh]
             : ready.slice(0, 1)
-          : ready.slice(0, MODERATION_BATCH_SIZE)
+          : ready.slice(0, SIM_TASKS_PER_TICK)
       if (admission === 'probe' && !batch.length) {
         breaker.releaseProbe()
         continue

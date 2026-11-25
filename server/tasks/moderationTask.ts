@@ -10,7 +10,6 @@ import {
 import { transcodeTrustedAvifToJpeg } from '~/server/image/transcode'
 import { KUN_MODERATION_VERDICT_CACHE_KEY } from '~/config/redis'
 import {
-  MODERATION_BATCH_SIZE,
   MODERATION_BREAKER,
   MODERATION_CONCURRENCY,
   MODERATION_LANE,
@@ -115,10 +114,12 @@ const cacheVerdict = async (
 
 const applyAiResult = async (
   task: moderation_taskModel,
-  result: ModerationAiResult
+  result: ModerationAiResult,
+  signal?: AbortSignal
 ) => {
   const { verdict } = result
   await applyModerationVerdict({
+    signal,
     task,
     approved: verdict.pass,
     manual: verdict.manual === true,
@@ -137,11 +138,13 @@ const applyAiResult = async (
 // 它们对依赖的状态什么也说明不了
 type LaneHealthy = () => void
 
+// signal: 中止时放弃在途的模型调用 (作业关停的宽限期满)
 export const processTextTask = async (
   task: moderation_taskModel,
   blacklistEntries: ModerationBlacklistEntry[],
   policy: ModerationPolicy,
-  laneHealthy: LaneHealthy = () => {}
+  laneHealthy: LaneHealthy = () => {},
+  signal?: AbortSignal
 ) => {
   const body = decodeModerationTask(task)
   if (!body || body.contentType === 'avatar') {
@@ -196,16 +199,18 @@ export const processTextTask = async (
     return
   }
 
-  const result = await moderateText(policy, contentType, userMessage)
+  const result = await moderateText(policy, contentType, userMessage, signal)
   laneHealthy()
   await cacheVerdict(policy, contentType, hash, result.verdict)
   await applyAiResult(task, result)
 }
 
+// signal: 中止时放弃在途的取图、模型调用与落地复制 (作业关停的宽限期满)
 export const processAvatarTask = async (
   task: moderation_taskModel,
   policy: ModerationPolicy,
-  laneHealthy: LaneHealthy = () => {}
+  laneHealthy: LaneHealthy = () => {},
+  signal?: AbortSignal
 ) => {
   const body = decodeModerationTask(task)
   if (body?.contentType !== 'avatar') {
@@ -222,15 +227,18 @@ export const processAvatarTask = async (
   try {
     buffer = await getFileFromS3(
       body.payload.pendingKey,
-      AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
+      AbortSignal.any([
+        AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS),
+        ...(signal ? [signal] : [])
+      ])
     )
   } catch (error) {
     throw toDependencyFailure('s3', error)
   }
   // vision APIs handle jpeg far more reliably than avif
   const jpeg = await transcodeTrustedAvifToJpeg(buffer)
-  const result = await moderateImage(policy, jpeg.toString('base64'))
-  await applyAiResult(task, result)
+  const result = await moderateImage(policy, jpeg.toString('base64'), signal)
+  await applyAiResult(task, result, signal)
   laneHealthy()
 }
 
@@ -339,29 +347,39 @@ const applyAccounting = async (taskId: number, decision: FailureAccounting) => {
   })
 }
 
-interface BatchContext {
-  // 这一批用的审核策略: 每批读一次环境变量, 批内的调用与缓存键同源
+// 一条任务的处理上下文。同一轮取出的任务共用除 probe 之外的各项
+interface TaskContext {
+  // 这一轮用的审核策略: 每轮读一次环境变量, 同一轮的调用与缓存键同源
   policy: ModerationPolicy
   blacklistEntries: ModerationBlacklistEntry[]
   leaseStaleBefore: Date
-  // 取任务时已经替它拿了车道探测名额的任务; 开始处理时移出
-  probeTaskIds: Set<number>
+  // 关停的宽限期满时中止: 在途的模型与存储调用随之放弃 (见 processTask 的 catch)
+  cancelSignal: AbortSignal
+  // 取任务时已经替它拿了车道的探测名额
+  probe: boolean
 }
 
+// 关停的宽限期满、在途调用被中止: 不是这条内容的问题, 也不是依赖的, 不扣预算、不进熔断器。
+// 清掉认领, 下一个进程立即就能重新取到它; 不清的话要等认领租约过期, 回收时还会被当成崩溃
+// 扣一次 retry
+const releaseClaim = (taskId: number) =>
+  prisma.moderation_task.updateMany({
+    where: { id: taskId, status: 'pending' },
+    data: { picked_at: null }
+  })
+
 // 处理单条任务: 成功即落裁决, 失败按 accounting.ts 记账. 各任务的 apply 是独立事务,
-// 缓存与黑名单为共享只读, 因此可安全并发
+// 缓存与黑名单为共享只读, 因此可安全并发。只有写库失败 (认领、记账、转人工) 才会抛出
 const processTask = async (
   worker: ModerationWorker,
   task: moderation_taskModel,
-  batch: BatchContext
+  context: TaskContext
 ) => {
   const breaker = worker.breakers[laneOf(task)]
 
-  // 车道门: 同一批里前面的任务可能刚把车道打开, 所以取任务时问过一次, 认领之前再问
+  // 车道门: 正在处理的其它任务可能刚把车道打开, 所以取任务时问过一次, 认领之前再问
   // 一次。不放行的任务留在 pending、不认领, 车道恢复后照常被取到
-  const admission = batch.probeTaskIds.delete(task.id)
-    ? 'probe'
-    : breaker.admit()
+  const admission = context.probe ? 'probe' : breaker.admit()
   if (admission === 'blocked') {
     return
   }
@@ -373,13 +391,14 @@ const processTask = async (
     // 崩溃 worker 的任务不会绕过 MAX_RETRY 被无限回收
     const isReclaim = task.picked_at !== null
 
-    // 认领: 在昂贵的 AI/S3 调用前先给这一行盖上租约. 全局锁失效或部署期两个 cron 短暂
+    // 认领: 在昂贵的 AI/S3 调用前先给这一行盖上租约. 锁键丢失或部署期两个 cron 短暂
     // 并存时, 抢不到 (count 0) 的一方直接跳过, 同一任务永不被重复调用/重复扣费; 过期
-    // 租约 (崩溃 worker 遗留) 可被回收
+    // 租约 (崩溃 worker 遗留) 可被回收。抢不到说明这一行在取出之后刚被改过 (认领、退避
+    // 或结算), 下一轮按同一谓词取不到它, 池不会在它身上空转
     const claim = await prisma.moderation_task.updateMany({
       where: {
         id: task.id,
-        ...claimablePredicate(new Date(), batch.leaseStaleBefore)
+        ...claimablePredicate(new Date(), context.leaseStaleBefore)
       },
       data: {
         picked_at: new Date(),
@@ -407,16 +426,28 @@ const processTask = async (
     }
     try {
       if (task.content_type === 'avatar') {
-        await processAvatarTask(task, batch.policy, laneHealthy)
+        await processAvatarTask(
+          task,
+          context.policy,
+          laneHealthy,
+          context.cancelSignal
+        )
       } else {
         await processTextTask(
           task,
-          batch.blacklistEntries,
-          batch.policy,
-          laneHealthy
+          context.blacklistEntries,
+          context.policy,
+          laneHealthy,
+          context.cancelSignal
         )
       }
     } catch (error) {
+      // 按我们自己的信号判, 不看错误的样子: 中止之后抛出的是什么都不算这条任务的
+      if (context.cancelSignal.aborted) {
+        await releaseClaim(task.id)
+        return
+      }
+
       // 这一类模型没配 (例如刻意不配视觉模型): 不是故障, 不进熔断器, 直接转人工
       if (error instanceof ModerationConfigError) {
         await markTaskManual(task.id, {
@@ -441,7 +472,7 @@ const processTask = async (
       console.error(`Moderation task ${task.id} attempt failed:`, error)
     }
   } finally {
-    // 拿了探测名额却没有调到依赖 (没抢到认领、命中黑名单或缓存、转人工): 归还,
+    // 拿了探测名额却没有调到依赖 (没抢到认领、命中黑名单或缓存、转人工、被中止): 归还,
     // 否则车道会停在 half_open 直到名额的占用期满
     if (holdsProbe) {
       breaker.releaseProbe()
@@ -451,10 +482,11 @@ const processTask = async (
 
 // resource/rating 裁决在 apply 后处理会读改写 patch 级聚合 (resource→recalcPatchType
 // 改 patch.type; rating→recomputePatchRatingStat 改 patch_rating_stat), 由 patch 级通告锁
-// 串行化; 序列化 key 把同 patch 的这两类归同组 (组内串行、组间并发) 以降低锁争用与并发面:
-// 同一 patch 串行、不同 patch 并行 (resource 与 rating 写不同聚合本不互斥, 合用 patch:<id>
-// 键属保守简化); 旧任务无 patch_id 时降级按类型整体串行 (与改动前一致). avatar/bio 写同一
-// user 行, 按 user 分组; 评论各自独立, 全并发
+// 串行化; 序列化 key 把同 patch 的这两类归同组 (池里同一个键至多一条在途) 以降低锁争用与
+// 并发面: 同一 patch 串行、不同 patch 并行 (resource 与 rating 写不同聚合本不互斥, 合用
+// patch:<id> 键属保守简化); 旧任务无 patch_id 时降级按类型整体串行. avatar/bio 写同一
+// user 行, 按 user 分组; 评论各自独立, 全并发。正确性不靠它 (supersede、status CAS、patch
+// 通告锁与 user 行锁), 它只把争用维持在原来的水平
 const serializationKey = (task: moderation_taskModel): string => {
   switch (task.content_type) {
     case 'resource':
@@ -470,8 +502,8 @@ const serializationKey = (task: moderation_taskModel): string => {
   }
 }
 
-// blacklist 只被这一个 cron 进程读、且极少变动, 进程内短 TTL 缓存即可, 免去每
-// 15s tick 的全表重载 (与 getModerationConfig 同一权衡: 命中即拒的新规则最长延迟
+// blacklist 只被这一个 cron 进程读、且极少变动, 进程内短 TTL 缓存即可, 免去每一轮取任务
+// 的全表重载 (与 getModerationConfig 同一权衡: 命中即拒的新规则最长延迟
 // BLACKLIST_CACHE_DURATION_MS 生效)
 const BLACKLIST_CACHE_DURATION_MS = 60 * 1000
 
@@ -492,10 +524,17 @@ const getBlacklistEntries = async (): Promise<ModerationBlacklistEntry[]> => {
   return entries
 }
 
-// 按车道取任务: 一条车道被挡住时另一条照常取, 不被排在前面的对方任务占满批次。
-// content_type 只是过滤条件, 仍走 [status, next_attempt] 索引; 两条车道合起来仍只处理
-// 一批的量。返回前已替 probe 车道选出的那一条任务登记探测名额
-const fetchBatch = async (worker: ModerationWorker, leaseStaleBefore: Date) => {
+// 每条车道一次取多少条候选: 槽位数的两倍, 跳过同键在途的之后通常还够填满空出的槽位
+const CANDIDATE_WINDOW = MODERATION_CONCURRENCY * 2
+
+// 按车道取候选: 一条车道被挡住时另一条照常取, 不被排在前面的对方任务占满。content_type 只是
+// 过滤条件, 仍走 [status, next_attempt] 索引。返回按就绪时刻排好的候选, 已替 probe 车道排最前
+// 的那一条登记探测名额; report 为真时先上报一次车道状态 (池的第一轮)
+const fetchCandidates = async (
+  worker: ModerationWorker,
+  leaseStaleBefore: Date,
+  { report }: { report: boolean }
+) => {
   const admissions = {
     text: worker.breakers.text.admit(),
     avatar: worker.breakers.avatar.admit()
@@ -511,7 +550,7 @@ const fetchBatch = async (worker: ModerationWorker, leaseStaleBefore: Date) => {
   // 被挡住的车道不取, 探测只取一条
   const takeOf = (lane: ModerationLane) => {
     if (admissions[lane] === 'pass') {
-      return MODERATION_BATCH_SIZE
+      return CANDIDATE_WINDOW
     }
     return admissions[lane] === 'probe' ? 1 : 0
   }
@@ -555,8 +594,10 @@ const fetchBatch = async (worker: ModerationWorker, leaseStaleBefore: Date) => {
   }
   let fetched: moderation_taskModel[][]
   try {
-    // 车道状态以问过门之后的为准 (到点的 open 此刻已是 half_open)
-    await reportHealth(worker)
+    if (report) {
+      // 车道状态以问过门之后的为准 (到点的 open 此刻已是 half_open)
+      await reportHealth(worker)
+    }
     fetched = await Promise.all(MODERATION_LANE.map(fetchLane))
   } catch (error) {
     releaseProbes()
@@ -566,9 +607,8 @@ const fetchBatch = async (worker: ModerationWorker, leaseStaleBefore: Date) => {
   const tasks = fetched
     .flat()
     .sort((a, b) => a.next_attempt.getTime() - b.next_attempt.getTime())
-    .slice(0, MODERATION_BATCH_SIZE)
 
-  // 探测名额交给该车道排最前的那一条; 没有可认领的任务 (或被合并截掉) 就归还
+  // 探测名额交给该车道排最前的那一条; 没有可认领的任务就归还
   const probeTaskIds = new Set<number>()
   const probedLanes = new Set<ModerationLane>()
   for (const task of tasks) {
@@ -583,84 +623,156 @@ const fetchBatch = async (worker: ModerationWorker, leaseStaleBefore: Date) => {
   return { tasks, probeTaskIds }
 }
 
-// 批次进行中的心跳间隔: 一次慢的模型调用可以让批次持续数分钟, 期间车道状态的键不能过期
+// 池运行期间的心跳间隔: 池可以连续运行很久 (一次慢的模型调用就是数分钟), 期间车道状态的键
+// 不能过期
 const HEALTH_HEARTBEAT_MS = 30 * 1000
 
-// 导出只为测试: 生产里只由下面的 cron 任务在全局锁内调用
-export const runModerationBatch = async (
-  worker: ModerationWorker = defaultWorker
+// 没有可开始的任务、又有任务在途时, 最长隔这么久再取一次 (与 cron 一拍同长): 新到的任务
+// 不必等在途的慢调用结束
+const POOL_POLL_MS = 15 * 1000
+
+interface InFlightTask {
+  key: string
+  done: Promise<void>
+}
+
+// 等到一条在途任务结束、到了下一次查看的时刻、或 signal 中止, 先到者为准
+const waitForSlot = async (
+  inFlight: Map<number, InFlightTask>,
+  signal: AbortSignal
 ) => {
-  // 早于此刻的租约视为过期 (worker 崩溃), 连同未认领的行一起纳入候选; 认领时按行
-  // 二次校验租约, 避免与仍在处理该行的其它 worker 撞车
-  const leaseStaleBefore = new Date(
-    Date.now() - MODERATION_LEASE_SECONDS * 1000
-  )
-  const { tasks, probeTaskIds } = await fetchBatch(worker, leaseStaleBefore)
-  if (!tasks.length) {
+  if (signal.aborted) {
     return
   }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let wake = () => {}
+  try {
+    await Promise.race([
+      ...[...inFlight.values()].map(({ done }) => done),
+      new Promise<void>((resolve) => {
+        wake = () => resolve()
+        timer = setTimeout(wake, POOL_POLL_MS)
+        signal.addEventListener('abort', wake, { once: true })
+      })
+    ])
+  } finally {
+    clearTimeout(timer)
+    signal.removeEventListener('abort', wake)
+  }
+}
 
+export interface ModerationPoolContext {
+  // 租约丢失或作业运行时开始关停时中止: 不再取新的任务, 在途的做完
+  signal: AbortSignal
+  // 关停的宽限期满时中止: 在途的模型与存储调用放弃, 认领清掉 (见 releaseClaim)
+  cancelSignal: AbortSignal
+}
+
+// 连续工作池: 槽位 (MODERATION_CONCURRENCY) 空出来就取下一条, 不等同一轮的其余任务 —— 一次
+// 慢的模型调用只占一个槽位, 不拖住整条队列。没有可开始的任务、也没有在途任务时返回, 作业层的
+// 下一拍再来。同一个序列化键至多一条在途。
+// 任何一条任务的写库失败 (认领、记账、转人工) 都让池停止取新任务、等在途的结束后返回: 库此刻
+// 写不进去时, 每个立即空出的槽位都会马上再开一轮, 在库上空转; 停下来就回到每拍至多一轮。
+// 导出只为测试: 生产里只由下面的作业在租约内调用
+export const runModerationPool = async (
+  worker: ModerationWorker,
+  { signal, cancelSignal }: ModerationPoolContext
+) => {
+  const inFlight = new Map<number, InFlightTask>()
+  let crashed = false
+  let rounds = 0
+  let startedAny = false
   const heartbeat = setInterval(
     () => void reportHealth(worker),
     HEALTH_HEARTBEAT_MS
   )
   try {
-    // blacklist 仅文本任务需要: 纯头像批跳过查询, 其余走进程内缓存
-    const needsBlacklist = tasks.some((task) => task.content_type !== 'avatar')
-    const batch: BatchContext = {
-      policy: loadModerationPolicy(),
-      blacklistEntries: needsBlacklist ? await getBlacklistEntries() : [],
-      leaseStaleBefore,
-      probeTaskIds
-    }
+    // 宽限期满之前 signal 总是先中止; 也看 cancelSignal, 免得刚清掉认领的任务又被取回来
+    while (!signal.aborted && !cancelSignal.aborted && !crashed) {
+      const free = MODERATION_CONCURRENCY - inFlight.size
+      if (free > 0) {
+        // 早于此刻的租约视为过期 (worker 崩溃), 连同未认领的行一起纳入候选; 认领时按行
+        // 二次校验租约, 避免与仍在处理该行的其它 worker 撞车
+        const leaseStaleBefore = new Date(
+          Date.now() - MODERATION_LEASE_SECONDS * 1000
+        )
+        const { tasks, probeTaskIds } = await fetchCandidates(
+          worker,
+          leaseStaleBefore,
+          { report: rounds++ === 0 }
+        )
 
-    // 把会相互竞态的任务归到同组 (组内串行), 再以有界并发处理各组: 一次慢的 vision
-    // 调用不再阻塞排在其后的缓存/文本裁决. 批次只取一次, 并发 worker 通过 cursor++
-    // 各领一组, 永不重复处理同一行
-    const groups = new Map<string, moderation_taskModel[]>()
-    for (const task of tasks) {
-      const key = serializationKey(task)
-      const group = groups.get(key)
-      if (group) {
-        group.push(task)
-      } else {
-        groups.set(key, [task])
-      }
-    }
-    const groupList = [...groups.values()]
+        // 就绪早的先; 跳过在途的 (认领还没落库的那一刻仍取得到) 与同键在途的
+        const busyKeys = new Set([...inFlight.values()].map(({ key }) => key))
+        const picked: moderation_taskModel[] = []
+        for (const task of tasks) {
+          const key = serializationKey(task)
+          if (
+            picked.length < free &&
+            !inFlight.has(task.id) &&
+            !busyKeys.has(key)
+          ) {
+            busyKeys.add(key)
+            picked.push(task)
+          } else if (probeTaskIds.delete(task.id)) {
+            // 探测的那条这一轮开始不了 (槽位已满、同键在途): 归还, 下一轮再探
+            worker.breakers[laneOf(task)].releaseProbe()
+          }
+        }
 
-    let cursor = 0
-    const runWorker = async () => {
-      let index: number
-      while ((index = cursor++) < groupList.length) {
-        for (const task of groupList[index]) {
-          await processTask(worker, task, batch)
+        if (picked.length) {
+          let shared: Omit<TaskContext, 'probe'>
+          try {
+            // blacklist 仅文本任务需要: 纯头像的一轮跳过查询, 其余走进程内缓存
+            const needsBlacklist = picked.some(
+              (task) => task.content_type !== 'avatar'
+            )
+            shared = {
+              policy: loadModerationPolicy(),
+              blacklistEntries: needsBlacklist
+                ? await getBlacklistEntries()
+                : [],
+              leaseStaleBefore,
+              cancelSignal
+            }
+          } catch (error) {
+            for (const task of picked) {
+              if (probeTaskIds.has(task.id)) {
+                worker.breakers[laneOf(task)].releaseProbe()
+              }
+            }
+            throw error
+          }
+          startedAny = true
+          for (const task of picked) {
+            const done = processTask(worker, task, {
+              ...shared,
+              probe: probeTaskIds.has(task.id)
+            })
+              .catch((error) => {
+                crashed = true
+                console.error('Moderation worker crashed:', error)
+              })
+              .finally(() => {
+                inFlight.delete(task.id)
+              })
+            inFlight.set(task.id, { key: serializationKey(task), done })
+          }
+        } else if (inFlight.size === 0) {
+          return
         }
       }
-    }
-    // allSettled 而非 all: 即便某 worker 因记账写库失败而 reject, 也必须等其余 worker
-    // 全部结束再返回——否则作业层会在后台 worker 仍运行时释放租约, 与下批重叠
-    const workerCount = Math.min(MODERATION_CONCURRENCY, groupList.length)
-    const results = await Promise.allSettled(
-      Array.from({ length: workerCount }, runWorker)
-    )
-    // worker 仅在记账写库失败时 reject (业务错误已在 processTask 内消化并记录);
-    // 补记 rejected, 否则 DB 故障会让整批静默失败、排障无迹
-    for (const result of results) {
-      if (result.status === 'rejected') {
-        console.error('Moderation worker crashed:', result.reason)
-      }
+      await waitForSlot(inFlight, signal)
     }
   } finally {
+    // 不管为什么结束 (队列空、要求停下、写库失败、取任务出错), 都等在途的做完再返回:
+    // 返回之后租约就释放了
+    await Promise.allSettled([...inFlight.values()].map(({ done }) => done))
     clearInterval(heartbeat)
-    // 探测任务没轮到就中断了 (黑名单读库失败、同组前一条任务让 worker 崩溃): 归还名额
-    for (const task of tasks) {
-      if (probeTaskIds.has(task.id)) {
-        worker.breakers[laneOf(task)].releaseProbe()
-      }
+    // 处理过的任务可能刚把车道打开或闭合: 不等下一次上报, 现在就让管理端看到
+    if (startedAny) {
+      await reportHealth(worker)
     }
-    // 这一批可能刚把车道打开或闭合: 不等下一批, 现在就让管理端看到
-    await reportHealth(worker)
   }
 }
 
@@ -668,6 +780,5 @@ export const moderationJob = defineScheduledJob({
   name: 'moderation',
   schedule: '*/15 * * * * *',
   lease: { key: 'moderation:worker:lock' },
-  // 不直接传 runModerationBatch: 作业层会把 ctx 作为第一个参数传进来
-  run: () => runModerationBatch()
+  run: (ctx) => runModerationPool(defaultWorker, ctx)
 })

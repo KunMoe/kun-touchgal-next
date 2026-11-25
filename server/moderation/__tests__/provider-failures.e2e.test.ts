@@ -200,6 +200,28 @@ describe('模型调用失败的分类', () => {
     expect(failure.cause).toMatchObject({ name: 'TimeoutError' })
   })
 
+  // worker 在作业关停的宽限期满时中止在途调用: 不等超时, 抛出的就是中止的原因 (分类表认不出
+  // 它, 不说成依赖的失败; worker 按自己的信号判定是中止, 不看错误的样子)
+  it('调用方的 signal 中止: 不等超时就放弃请求, 抛出中止的原因', async () => {
+    const controller = new AbortController()
+    const reason = new Error('grace expired')
+    const started = Date.now()
+    setTimeout(() => controller.abort(reason), 20)
+
+    const failure = await moderateTextWith(
+      loadModerationPolicy(),
+      'comment',
+      'hang',
+      controller.signal
+    ).then(
+      () => null,
+      (error: unknown) => error
+    )
+
+    expect(failure).toBe(reason)
+    expect(Date.now() - started).toBeLessThan(200)
+  })
+
   it('正文读到一半连接被掐断 → transient', async () => {
     const failure = await failureOf('cut')
 

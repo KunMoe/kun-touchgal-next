@@ -113,10 +113,12 @@ type ChatMessageContent =
       | { type: 'image_url'; image_url: { url: string } }
     >
 
+// signal: 调用方的中止 (作业关停的宽限期满), 与单次调用的超时取先到者
 const requestChatCompletion = async (
   provider: ModerationPolicy['provider'],
   { model, reasoningEffort }: ModerationModelPolicy,
-  messages: Array<{ role: 'system' | 'user'; content: ChatMessageContent }>
+  messages: Array<{ role: 'system' | 'user'; content: ChatMessageContent }>,
+  signal?: AbortSignal
 ): Promise<ModerationAiResult> => {
   // 地址或密钥没配: 与 provider 回 401 一样, 对所有任务同时成立, 不改配置不会好
   if (!provider) {
@@ -131,9 +133,12 @@ const requestChatCompletion = async (
   // 抛的错不该被算到依赖头上
   const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
-    // 单次调用超时: 约束任务处理耗时在锁 TTL 内 (见 MODERATION_AI_TIMEOUT_MS); 超时会
-    // abort 请求与响应体读取, 抛错后由 worker 走退避重试, 而非无限占用 worker
-    signal: AbortSignal.timeout(MODERATION_AI_TIMEOUT_MS),
+    // 单次调用超时: 约束任务处理耗时在认领租约内 (见 MODERATION_AI_TIMEOUT_MS); 超时会
+    // abort 请求与响应体读取, 抛错后由 worker 走退避重试, 而非无限占用槽位
+    signal: AbortSignal.any([
+      AbortSignal.timeout(MODERATION_AI_TIMEOUT_MS),
+      ...(signal ? [signal] : [])
+    ]),
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`
@@ -309,17 +314,23 @@ const requestChatCompletion = async (
 export const moderateText = async (
   policy: ModerationPolicy,
   contentType: Exclude<ModerationContentType, 'avatar'>,
-  userMessage: string
+  userMessage: string,
+  signal?: AbortSignal
 ) => {
   if (!policy.text) {
     throw new ModerationConfigError(
       'MODERATION_AI_TEXT_MODEL is not configured'
     )
   }
-  return requestChatCompletion(policy.provider, policy.text, [
-    { role: 'system', content: MODERATION_TEXT_SYSTEM_PROMPT[contentType] },
-    { role: 'user', content: userMessage }
-  ])
+  return requestChatCompletion(
+    policy.provider,
+    policy.text,
+    [
+      { role: 'system', content: MODERATION_TEXT_SYSTEM_PROMPT[contentType] },
+      { role: 'user', content: userMessage }
+    ],
+    signal
+  )
 }
 
 // 头像任务在取图之前先问这一句: 没配视觉模型的任务注定转人工, 不该先去碰存储
@@ -334,18 +345,24 @@ export const requireVisionModel = (policy: ModerationPolicy) => {
 
 export const moderateImage = async (
   policy: ModerationPolicy,
-  jpegBase64: string
+  jpegBase64: string,
+  signal?: AbortSignal
 ) =>
-  requestChatCompletion(policy.provider, requireVisionModel(policy), [
-    { role: 'system', content: MODERATION_AVATAR_SYSTEM_PROMPT },
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: '请审核这张用户头像' },
-        {
-          type: 'image_url',
-          image_url: { url: `data:image/jpeg;base64,${jpegBase64}` }
-        }
-      ]
-    }
-  ])
+  requestChatCompletion(
+    policy.provider,
+    requireVisionModel(policy),
+    [
+      { role: 'system', content: MODERATION_AVATAR_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '请审核这张用户头像' },
+          {
+            type: 'image_url',
+            image_url: { url: `data:image/jpeg;base64,${jpegBase64}` }
+          }
+        ]
+      }
+    ],
+    signal
+  )

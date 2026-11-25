@@ -742,4 +742,23 @@ describe('失败记账留下的痕迹', () => {
     })
     expect(claimMock).not.toHaveBeenCalled()
   })
+
+  // worker 在作业关停的宽限期满时中止: 两次复制都不再等到各自的 60 秒超时
+  it('头像落地的两次复制都跟着调用方的 signal 中止', async () => {
+    vi.mocked(copyObject).mockClear()
+    const controller = new AbortController()
+
+    await applyModerationVerdict({
+      task: avatarTask(),
+      approved: true,
+      signal: controller.signal
+    })
+    controller.abort()
+
+    const signals = vi
+      .mocked(copyObject)
+      .mock.calls.map(([, , signal]) => signal as AbortSignal)
+    expect(signals).toHaveLength(2)
+    expect(signals.every((signal) => signal.aborted)).toBe(true)
+  })
 })

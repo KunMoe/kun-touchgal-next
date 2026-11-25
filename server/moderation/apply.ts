@@ -44,6 +44,8 @@ export interface ApplyVerdictOptions {
   tokensOut?: number
   // 'pending' for the worker; 'manual' when an admin re-judges
   fromStatus?: 'pending' | 'manual'
+  // worker 用: 中止时放弃头像落地的存储复制 (作业关停的宽限期满)
+  signal?: AbortSignal
 }
 
 // AI failed permanently or is misconfigured: task goes to manual review,
@@ -103,7 +105,8 @@ export const applyModerationVerdict = async (
     model,
     tokensIn,
     tokensOut,
-    fromStatus = 'pending'
+    fromStatus = 'pending',
+    signal
   } = options
 
   const taskStatus = manual ? 'manual' : approved ? 'approved' : 'rejected'
@@ -121,16 +124,17 @@ export const applyModerationVerdict = async (
     if (!avatar) {
       throw new Error(MODERATION_PAYLOAD_UNREADABLE)
     }
+    const copySignal = () =>
+      AbortSignal.any([
+        AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS),
+        ...(signal ? [signal] : [])
+      ])
     try {
-      await copyObject(
-        avatar.pendingKey,
-        avatar.avatarKey,
-        AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
-      )
+      await copyObject(avatar.pendingKey, avatar.avatarKey, copySignal())
       await copyObject(
         avatar.pendingMiniKey,
         avatar.avatarMiniKey,
-        AbortSignal.timeout(MODERATION_S3_TIMEOUT_MS)
+        copySignal()
       )
     } catch (error) {
       // 存储的失败在这里说清范围 (lib/resilience/failure.ts), worker 据此决定算谁的

@@ -297,7 +297,8 @@ describe('processTextTask: 裁决缓存', () => {
     expect(moderateTextMock).toHaveBeenLastCalledWith(
       changed,
       'comment',
-      expect.any(String)
+      expect.any(String),
+      undefined
     )
     expect(store.size).toBe(2)
   })
@@ -335,7 +336,8 @@ describe('processTextTask: 调用模型', () => {
     expect(moderateTextMock).toHaveBeenCalledWith(
       policy,
       'comment',
-      userMessage
+      userMessage,
+      undefined
     )
     expect(userMessage).toBe(
       '{"待审字段":[{"字段":"评论","文本":"一段 需要 审核 的评论"}]}'
@@ -575,9 +577,15 @@ describe('processTextTask: v1 载荷', () => {
       [
         policy,
         'resource',
-        envelope([{ label: '正文', shown: '标题: Patch v1 介绍: 汉化补丁' }])
+        envelope([{ label: '正文', shown: '标题: Patch v1 介绍: 汉化补丁' }]),
+        undefined
       ],
-      [policy, 'bio', envelope([{ label: '正文', shown: '签名 text' }])]
+      [
+        policy,
+        'bio',
+        envelope([{ label: '正文', shown: '签名 text' }]),
+        undefined
+      ]
     ])
   })
 
@@ -587,7 +595,8 @@ describe('processTextTask: v1 载荷', () => {
     expect(moderateTextMock).toHaveBeenCalledWith(
       policy,
       'comment',
-      '{"待审字段":[]}'
+      '{"待审字段":[]}',
+      undefined
     )
   })
 })

@@ -2,13 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { moderation_taskModel } from '~/prisma/generated/prisma/models'
 import { KUN_MODERATION_HEALTH_KEY } from '~/config/redis'
 import {
-  MODERATION_BATCH_SIZE,
   MODERATION_CONCURRENCY,
   MODERATION_LEASE_SECONDS
 } from '~/constants/moderation'
 import { DependencyFailure, classifyHttpStatus } from '~/lib/resilience/failure'
 
-// 批次与失败记账: 取哪些任务、怎么认领、失败算在谁头上。单条任务内部 (黑名单、缓存、
+// 工作池与失败记账: 取哪些任务、怎么认领、失败算在谁头上。单条任务内部 (黑名单、缓存、
 // 送审视图) 由 moderationTask.test.ts 覆盖; 熔断器与记账规则各自的单测在
 // server/moderation/__tests__/{breaker,accounting}.test.ts, 这里看 worker 怎么把它们接起来
 
@@ -60,9 +59,12 @@ vi.mock(import('~/server/moderation/ai'), async (importOriginal) => ({
 import { ModerationConfigError } from '~/server/moderation/ai'
 import {
   createModerationWorker,
-  runModerationBatch
+  runModerationPool
 } from '~/server/tasks/moderationTask'
-import type { ModerationWorker } from '~/server/tasks/moderationTask'
+import type {
+  ModerationPoolContext,
+  ModerationWorker
+} from '~/server/tasks/moderationTask'
 
 const NOW = new Date('2026-11-20T12:00:00.000Z')
 const at = (offsetMs: number) => new Date(NOW.getTime() + offsetMs)
@@ -283,12 +285,27 @@ const breakerLogs = (): BreakerLog[] =>
 const newWorker = (systematic: 'log' | 'enforce' = 'log') =>
   createModerationWorker({ systematic })
 
-// 推进时钟后再跑一批; 取任务与调模型的记录只留这一批的
+// 每条车道一次取的候选数 (moderationTask.ts 的 CANDIDATE_WINDOW)
+const WINDOW = MODERATION_CONCURRENCY * 2
+
+// 作业层交给池的两个信号: 用例中止它们模拟关停开始 (signal) 与宽限期满 (cancelSignal)
+const poolSignals = (): ModerationPoolContext => ({
+  signal: new AbortController().signal,
+  cancelSignal: new AbortController().signal
+})
+
+// 跑一轮池: 没有可开始、也没有在途的任务时返回 (假时钟下, 退避中的任务不会在同一轮里到点)
+const runPool = (
+  worker: ModerationWorker,
+  ctx: ModerationPoolContext = poolSignals()
+) => runModerationPool(worker, ctx)
+
+// 推进时钟后再跑一轮池; 取任务与调模型的记录只留这一轮的
 const runAt = async (worker: ModerationWorker, offsetMs: number) => {
   vi.setSystemTime(at(offsetMs))
   findTasksMock.mockClear()
   moderateTextMock.mockClear()
-  await runModerationBatch(worker)
+  await runPool(worker)
 }
 
 beforeEach(() => {
@@ -394,7 +411,7 @@ const gateModelCalls = () => {
 
 describe('取任务', () => {
   it('按车道各取一次: 待处理、已到重试时刻、租约为空或已过期, 按就绪时刻先后', async () => {
-    await runModerationBatch(newWorker())
+    await runPool(newWorker())
 
     const claimable = {
       status: 'pending',
@@ -405,40 +422,57 @@ describe('取任务', () => {
       {
         where: { ...claimable, content_type: { not: 'avatar' } },
         orderBy: { next_attempt: 'asc' },
-        take: MODERATION_BATCH_SIZE
+        take: WINDOW
       },
       {
         where: { ...claimable, content_type: 'avatar' },
         orderBy: { next_attempt: 'asc' },
-        take: MODERATION_BATCH_SIZE
+        take: WINDOW
       }
     ])
     expect(updateTaskMock).not.toHaveBeenCalled()
   })
 
-  it('两条车道合起来仍只处理一批的量, 就绪早的先', async () => {
-    const late = Array.from({ length: MODERATION_BATCH_SIZE }, () =>
+  it('两条车道的候选合在一起按就绪时刻排, 早的先开始, 一次至多填满空出的槽位', async () => {
+    const late = Array.from({ length: WINDOW }, () =>
       addTask({ next_attempt: at(-1_000) })
     )
-    const avatars = Array.from({ length: 3 }, () =>
-      addAvatarTask({ next_attempt: at(-5_000) })
+    const avatars = Array.from({ length: 3 }, (_, index) =>
+      addAvatarTask({ user_id: 100 + index, next_attempt: at(-5_000) })
     )
+    const call = gateModelCalls()
 
-    await runModerationBatch(newWorker())
+    const pool = runPool(newWorker())
+    await settle()
 
+    // 第一轮: 按就绪时刻取满五个槽位, 头像在前
+    expect(
+      updateCalls()
+        .slice(0, MODERATION_CONCURRENCY)
+        .map(({ where }) => where.id)
+    ).toEqual([...avatars, ...late.slice(0, 2)].map((task) => task.id))
+    // 头像 (模型不拦) 做完, 空出的槽位接着给后面的文本, 不等同一轮的其余任务
+    await vi.waitFor(() =>
+      expect(modelCalledFor()).toEqual(
+        late.slice(0, MODERATION_CONCURRENCY).map((task) => task.id)
+      )
+    )
     expect(avatars.map((task) => rowOf(task).status)).toEqual([
       'approved',
       'approved',
       'approved'
     ])
-    expect(
-      late.filter((task) => rowOf(task).status === 'approved')
-    ).toHaveLength(MODERATION_BATCH_SIZE - 3)
-    expect(late.slice(-3).map((task) => claimsOf(task))).toEqual([[], [], []])
+
+    for (const task of late) {
+      await vi.waitFor(() => expect(modelCalledFor()).toContain(task.id))
+      call(task).succeed()
+    }
+    await pool
+    expect(late.every((task) => rowOf(task).status === 'approved')).toBe(true)
   })
 
-  it('每批上报一次两条车道的状态, 两分钟不续就过期', async () => {
-    await runModerationBatch(newWorker())
+  it('池开始时上报一次两条车道的状态, 两分钟不续就过期', async () => {
+    await runPool(newWorker())
 
     const closed = {
       state: 'closed',
@@ -457,12 +491,12 @@ describe('取任务', () => {
     ])
   })
 
-  // 只在批次开头报的话, 管理端看到的总比实际落后一拍: 探测失败之后还显示「探测中」
-  it('批次结束时再报一次: 这一批把车道打开了, 管理端马上看得到', async () => {
+  // 只在开头报的话, 管理端看到的总比实际落后一拍: 探测失败之后还显示「探测中」
+  it('池结束时再报一次: 这一轮把车道打开了, 管理端马上看得到', async () => {
     addTask()
     failAll(() => httpFailure(401))
 
-    await runModerationBatch(newWorker())
+    await runPool(newWorker())
 
     expect(healthReports().map((report) => report.lanes.text.state)).toEqual([
       'closed',
@@ -470,14 +504,14 @@ describe('取任务', () => {
     ])
   })
 
-  // 一次慢的模型调用可以让批次持续数分钟, 期间状态键 (两分钟过期) 不能断
-  it('批次进行中每 30 秒续报一次, 批次结束后不再报', async () => {
+  // 一次慢的模型调用可以让池持续数分钟, 期间状态键 (两分钟过期) 不能断
+  it('池运行期间每 30 秒续报一次, 结束后不再报', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
     vi.setSystemTime(NOW)
     const task = addTask()
     const call = gateModelCalls()
 
-    const batch = runModerationBatch(newWorker())
+    const pool = runPool(newWorker())
     await settle()
     expect(healthReports()).toHaveLength(1)
 
@@ -486,7 +520,7 @@ describe('取任务', () => {
     expect(healthReports()).toHaveLength(3)
 
     call(task).succeed()
-    await batch
+    await pool
     expect(healthReports()).toHaveLength(4)
 
     await vi.advanceTimersByTimeAsync(120_000)
@@ -497,14 +531,14 @@ describe('取任务', () => {
     const task = addTask()
     setKvMock.mockRejectedValue(new Error('redis down'))
 
-    await runModerationBatch(newWorker())
+    await runPool(newWorker())
 
     expect(rowOf(task).status).toBe('approved')
   })
 })
 
 describe('审核策略', () => {
-  it('每批从环境变量读一次, 这一批的调用用同一份', async () => {
+  it('每一轮取任务时从环境变量读一次, 同一轮的调用用同一份', async () => {
     vi.stubEnv('MODERATION_AI_BASE_URL', 'http://ai.test/v1')
     vi.stubEnv('MODERATION_AI_API_KEY', 'test-key')
     vi.stubEnv('MODERATION_AI_TEXT_MODEL', 'text-model-a')
@@ -513,7 +547,7 @@ describe('审核策略', () => {
     addTask()
 
     try {
-      await runModerationBatch(newWorker())
+      await runPool(newWorker())
     } finally {
       vi.unstubAllEnvs()
     }
@@ -531,7 +565,7 @@ describe('认领', () => {
   it('调模型之前先给这一行盖租约, 认领条件与取任务的谓词相同', async () => {
     const task = addTask()
 
-    await runModerationBatch(newWorker())
+    await runPool(newWorker())
 
     expect(claimsOf(task)).toEqual([
       {
@@ -553,11 +587,15 @@ describe('认领', () => {
     expect(markTaskManualMock).not.toHaveBeenCalled()
   })
 
-  it('没抢到 (另一个 worker 已认领) 就跳过, 不调模型也不记账', async () => {
-    addTask()
-    updateTaskMock.mockResolvedValue({ count: 0 })
+  // 没抢到说明另一个 worker 刚认领了它: 下一轮按同一谓词取不到, 池不在它身上空转
+  it('没抢到 (另一个 worker 已认领) 就跳过, 不调模型也不记账, 也不再取它', async () => {
+    const task = addTask()
+    updateTaskMock.mockImplementationOnce(async () => {
+      rowOf(task).picked_at = new Date()
+      return { count: 0 }
+    })
 
-    await runModerationBatch(newWorker())
+    await runPool(newWorker())
 
     expect(updateTaskMock).toHaveBeenCalledTimes(1)
     expect(moderateTextMock).not.toHaveBeenCalled()
@@ -573,7 +611,7 @@ describe('回收过期租约', () => {
   it('认领的同一条语句里把 retry 加一, 然后照常处理', async () => {
     const task = addTask({ picked_at: stale() })
 
-    await runModerationBatch(newWorker())
+    await runPool(newWorker())
 
     expect(claimsOf(task).map(({ data }) => data)).toEqual([
       { picked_at: NOW, retry: { increment: 1 } }
@@ -585,7 +623,7 @@ describe('回收过期租约', () => {
     const task = addTask({ picked_at: stale() })
     failAll(() => new Error('render crashed'))
 
-    await runModerationBatch(newWorker())
+    await runPool(newWorker())
 
     expect(accountingOf(task).map(({ data }) => data)).toEqual([
       {
@@ -601,7 +639,7 @@ describe('回收过期租约', () => {
   it('回收把预算用完: 转人工, 不再调模型', async () => {
     const task = addTask({ picked_at: stale(), retry: 2 })
 
-    await runModerationBatch(newWorker())
+    await runPool(newWorker())
 
     expect(markTaskManualMock).toHaveBeenCalledTimes(1)
     expect(markTaskManualMock).toHaveBeenCalledWith(task.id, {
@@ -640,7 +678,7 @@ describe('并发与分组', () => {
     )
     const model = holdModelCalls()
 
-    const batch = runModerationBatch(newWorker())
+    const batch = runPool(newWorker())
     await model.settle()
     expect(model.releases).toHaveLength(MODERATION_CONCURRENCY)
 
@@ -669,7 +707,7 @@ describe('并发与分组', () => {
     otherRating.payload = plain('评价', otherRating.id)
     const model = holdModelCalls()
 
-    const batch = runModerationBatch(newWorker())
+    const batch = runPool(newWorker())
     await model.settle()
 
     // patch 3 的第二条要等第一条结算; patch 4 不受它影响
@@ -697,7 +735,7 @@ describe('并发与分组', () => {
       return applyUpdate(args)
     })
 
-    await expect(runModerationBatch(newWorker())).resolves.toBeUndefined()
+    await expect(runPool(newWorker())).resolves.toBeUndefined()
 
     expect(rowOf(healthy).status).toBe('approved')
     expect(consoleErrorSpy).toHaveBeenCalledWith(
@@ -782,14 +820,14 @@ describe('供应商整体不可用', () => {
 
     await runAt(worker, 15_000)
 
-    expect(fetchedLanes()).toEqual([
-      { lane: 'avatar', take: MODERATION_BATCH_SIZE }
-    ])
+    // 每一轮都只取头像车道
+    expect(fetchedLanes()[0]).toEqual({ lane: 'avatar', take: WINDOW })
+    expect(fetchedLanes().every(({ lane }) => lane === 'avatar')).toBe(true)
     expect(moderateTextMock).not.toHaveBeenCalled()
     expect(rowOf(avatar).status).toBe('approved')
   })
 
-  it('到点后只取一条去探测; 探测失败重新打开且不扣这条任务, 探测成功后恢复整批处理', async () => {
+  it('到点后只取一条去探测; 探测失败重新打开且不扣这条任务, 探测成功后接着处理积压', async () => {
     const worker = newWorker()
     Array.from({ length: 4 }, () => addTask())
     failAll(() => httpFailure(503))
@@ -813,18 +851,13 @@ describe('供应商整体不可用', () => {
       next_attempt: at(90_000)
     })
 
-    // 第二次探测: 供应商恢复
+    // 第二次探测: 供应商恢复。探测成功后同一轮池接着取满槽位处理积压
     recover()
     await runAt(worker, 90_000)
-    expect(modelCalledFor()).toHaveLength(1)
+    expect(fetchedLanes()[0]).toEqual({ lane: 'text', take: 1 })
+    expect(fetchedLanes()).toContainEqual({ lane: 'text', take: WINDOW })
+    expect(modelCalledFor()).toHaveLength(4)
     expect(worker.breakers.text.snapshot().state).toBe('closed')
-
-    // 之后整批照常
-    await runAt(worker, 105_000)
-    expect(fetchedLanes()).toContainEqual({
-      lane: 'text',
-      take: MODERATION_BATCH_SIZE
-    })
     expect(rows.every((row) => row.status === 'approved')).toBe(true)
     expect(markTaskManualMock).not.toHaveBeenCalled()
   })
@@ -857,9 +890,12 @@ describe('供应商整体不可用', () => {
       orderBy: { next_attempt: 'desc' },
       take: 1
     })
-    expect(modelCalledFor()).toEqual([healthy.id])
+    // 探测落在后到的正常内容上, 车道闭合; 之后同一轮池接着去碰那一波 (它们再把车道打开)
+    expect(modelCalledFor()[0]).toBe(healthy.id)
     expect(rowOf(healthy).status).toBe('approved')
-    expect(worker.breakers.text.snapshot().state).toBe('closed')
+    expect(breakerLogs().map(({ from, to }) => `${from}→${to}`)).toContain(
+      'half_open→closed'
+    )
   })
 
   // 故障结束后队列里可能只剩失败过的任务: 它们也得能当探测, 否则积压永远不动
@@ -874,12 +910,13 @@ describe('供应商整体不可用', () => {
     await runAt(worker, 30_000)
 
     // 先问有没有没失败过的, 没有再按就绪时刻取; 两次都只取一条
-    expect(fetchedLanes()).toEqual([
+    expect(fetchedLanes().slice(0, 3)).toEqual([
       { lane: 'text', take: 1 },
-      { lane: 'avatar', take: MODERATION_BATCH_SIZE },
+      { lane: 'avatar', take: WINDOW },
       { lane: 'text', take: 1 }
     ])
-    expect(modelCalledFor()).toEqual([tasks[3].id])
+    // 探测成功后同一轮接着处理同样到点的另一条
+    expect(modelCalledFor()).toEqual([tasks[3].id, tasks[4].id])
     expect(worker.breakers.text.snapshot().state).toBe('closed')
   })
 
@@ -978,7 +1015,7 @@ describe('探测名额', () => {
     expect(worker.breakers.text.snapshot().state).toBe('closed')
   }
 
-  it('没有可认领的任务: 归还, 下一批还能探测', async () => {
+  it('没有可认领的任务: 归还, 下一轮还能探测', async () => {
     const worker = await openThenWait()
 
     await runAt(worker, 30_000)
@@ -1043,21 +1080,27 @@ describe('探测名额', () => {
     await probeAgainAt(worker, 45_000)
   })
 
-  // 另一条车道排在前面的任务占满了批次, 探测的那一条没进这一批
-  it('探测的那条被两条车道的合并截掉: 归还, 下一批照样去探测', async () => {
+  // 另一条车道排在前面的任务占满了槽位, 探测的那一条这一轮开始不了
+  it('探测的那条这一轮开始不了 (槽位被更早的任务占满): 归还, 下一轮照样去探测', async () => {
     const worker = await openThenWait()
-    Array.from({ length: MODERATION_BATCH_SIZE }, (_, index) =>
+    const avatars = Array.from({ length: WINDOW }, (_, index) =>
       addAvatarTask({ user_id: 200 + index, next_attempt: at(1_000) })
     )
     const cut = addTask({ next_attempt: at(29_000) })
+    const releaseProbe = vi.spyOn(worker.breakers.text, 'releaseProbe')
 
     await runAt(worker, 30_000)
-    expect(fetchedLanes()).toContainEqual({ lane: 'text', take: 1 })
-    expect(claimsOf(cut)).toEqual([])
-    expect(worker.breakers.text.snapshot().state).toBe('half_open')
 
-    await runAt(worker, 45_000)
-    expect(fetchedLanes()).toContainEqual({ lane: 'text', take: 1 })
+    // 第一轮取到了它 (探测只取一条), 但五个槽位给了就绪更早的头像: 名额当场归还
+    expect(fetchedLanes()[0]).toEqual({ lane: 'text', take: 1 })
+    expect(releaseProbe).toHaveBeenCalled()
+    // 之后的某一轮槽位够了, 它作为探测开始, 车道闭合; 它在全部头像之后才被认领
+    const claimOrder = updateCalls()
+      .filter(({ data }) => data.picked_at instanceof Date)
+      .map(({ where }) => where.id)
+    expect(claimOrder.indexOf(cut.id)).toBeGreaterThan(
+      Math.max(...avatars.map((task) => claimOrder.indexOf(task.id)))
+    )
     expect(rowOf(cut).status).toBe('approved')
     expect(worker.breakers.text.snapshot().state).toBe('closed')
   })
@@ -1094,38 +1137,54 @@ describe('探测名额', () => {
 
     await runAt(worker, 30_000)
     expect(worker.breakers.text.snapshot().state).toBe('closed')
-    expect(rowOf(poison)).toMatchObject({
-      status: 'pending',
-      retry: 0,
-      defer_count: 0,
-      failure_kind: 'bad_output',
-      next_attempt: at(30_000)
-    })
-
-    await runAt(worker, 45_000)
-    expect(rowOf(poison)).toMatchObject({ retry: 1, next_attempt: at(50_000) })
+    // 探测的那一次不扣、立即可再取; 同一轮池里它在闭合的车道上又失败一次, 照常扣
+    expect(accountingOf(poison).map(({ data }) => data)).toEqual([
+      {
+        failure_kind: 'bad_output',
+        next_attempt: at(30_000),
+        picked_at: null
+      },
+      {
+        retry: 1,
+        failure_kind: 'bad_output',
+        next_attempt: at(35_000),
+        picked_at: null
+      }
+    ])
+    expect(rowOf(poison)).toMatchObject({ retry: 1, defer_count: 0 })
     expect(worker.breakers.text.snapshot().state).toBe('closed')
   })
 
   // 车道打开之前就发出的调用可以拖到探测期间才返回: 它不是探测的结果
   it('探测进行中, 更早的在途调用失败了: 不算探测失败, 车道等探测自己的结果', async () => {
+    // 池在没有可开始的任务时按 15 秒一次重新取: 用假定时器推进
+    vi.useFakeTimers({
+      toFake: [
+        'Date',
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval'
+      ]
+    })
+    vi.setSystemTime(NOW)
     const worker = newWorker()
     const opener = addTask()
     const slow = addTask()
     const call = gateModelCalls()
 
-    const first = runModerationBatch(worker)
+    const pool = runPool(worker)
     await settle()
     call(opener).fail(httpFailure(401))
     await settle()
     expect(worker.breakers.text.snapshot().state).toBe('open')
 
-    // 第一批还没结束 (slow 仍在途), 到点后另一批放出探测
+    // slow 仍在途; 到点后池的下一次查看放出探测
     vi.setSystemTime(at(30_000))
     const probe = addTask({ next_attempt: at(1_000) })
-    const second = runModerationBatch(worker)
-    await settle()
+    await vi.advanceTimersByTimeAsync(15_000)
     expect(worker.breakers.text.snapshot().state).toBe('half_open')
+    expect(modelCalledFor()).toContain(probe.id)
 
     call(slow).fail(httpFailure(503))
     await settle()
@@ -1133,17 +1192,23 @@ describe('探测名额', () => {
       state: 'half_open',
       opens: 1
     })
-    // 它的失败不扣预算, 等车道的探测时刻 (已到) 之后再试
+    // 它的失败不扣预算, 等车道的探测时刻之后再试: 探测时刻已过, 即现在
     expect(rowOf(slow)).toMatchObject({
       status: 'pending',
       retry: 0,
       defer_count: 0,
-      next_attempt: at(30_000)
+      next_attempt: at(45_000)
     })
 
     call(probe).succeed()
-    await Promise.all([first, second])
+    await settle()
     expect(worker.breakers.text.snapshot().state).toBe('closed')
+    // 车道闭合后池接着取到 slow
+    await vi.waitFor(() =>
+      expect(modelCalledFor().filter((id) => id === slow.id)).toHaveLength(2)
+    )
+    call(slow).succeed()
+    await pool
     expect(breakerLogs().map(({ from, to }) => `${from}→${to}`)).toEqual([
       'closed→open',
       'open→half_open',
@@ -1154,7 +1219,11 @@ describe('探测名额', () => {
   it('探测的那条没抢到认领: 归还', async () => {
     const worker = await openThenWait()
     const taken = addTask({ next_attempt: at(29_000) })
-    updateTaskMock.mockImplementationOnce(async () => ({ count: 0 }))
+    // 另一个 worker 抢先认领了它
+    updateTaskMock.mockImplementationOnce(async () => {
+      rowOf(taken).picked_at = new Date()
+      return { count: 0 }
+    })
 
     await runAt(worker, 30_000)
     expect(rowOf(taken).status).toBe('pending')
@@ -1169,22 +1238,22 @@ describe('探测名额', () => {
     findTasksMock.mockRejectedValueOnce(new Error('db down'))
 
     vi.setSystemTime(at(30_000))
-    await expect(runModerationBatch(worker)).rejects.toThrow('db down')
+    await expect(runPool(worker)).rejects.toThrow('db down')
 
     await probeAgainAt(worker, 45_000)
   })
 
-  it('探测的那条还没轮到批次就中断了 (读黑名单失败): 归还', async () => {
+  it('探测的那条还没开始就中断了 (读黑名单失败): 归还', async () => {
     const worker = await openThenWait()
     // 黑名单在进程内缓存一分钟 (模块级, 跨用例保留): 挑一个任何用例都没到过的时刻,
-    // 保证这一批要重新读库
+    // 保证这一轮要重新读库
     const later = 36_000_000
     rowOf(rows[0]).next_attempt = at(later * 2)
     const waiting = addTask({ next_attempt: at(later) })
     findBlacklistMock.mockRejectedValueOnce(new Error('db down'))
 
     vi.setSystemTime(at(later))
-    await expect(runModerationBatch(worker)).rejects.toThrow('db down')
+    await expect(runPool(worker)).rejects.toThrow('db down')
     expect(rowOf(waiting).status).toBe('pending')
 
     await runAt(worker, later + 15_000)
@@ -1295,12 +1364,11 @@ describe('这条内容自己的失败', () => {
       next_attempt: at(90_000)
     })
 
-    // 模型恢复: 探测成功即闭合, 积压的任务照常处理完, 没有一条转人工
+    // 模型恢复: 探测成功即闭合, 同一轮池接着把积压的任务处理完, 没有一条转人工
     recover()
     await runAt(worker, 90_000)
-    expect(modelCalledFor()).toEqual([tasks[6].id])
+    expect(modelCalledFor()[0]).toBe(tasks[6].id)
     expect(worker.breakers.text.snapshot().state).toBe('closed')
-    await runAt(worker, 105_000)
     expect(rows.every((row) => row.status === 'approved')).toBe(true)
     expect(markTaskManualMock).not.toHaveBeenCalled()
   })
@@ -1465,5 +1533,223 @@ describe('头像车道', () => {
       failure_kind: 'bad_output'
     })
     expect(worker.breakers.avatar.snapshot().state).toBe('closed')
+  })
+})
+
+describe('连续工作池', () => {
+  // 改造前批次以「全体结束」为屏障: 一次挂起的调用让整条队列停到它超时
+  it('一次慢的模型调用只占一个槽位: 其余任务连续处理完, 新到的任务在下一次查看时被取到', async () => {
+    vi.useFakeTimers({
+      toFake: [
+        'Date',
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval'
+      ]
+    })
+    vi.setSystemTime(NOW)
+    const slow = addTask()
+    const others = Array.from({ length: MODERATION_CONCURRENCY + 3 }, () =>
+      addTask()
+    )
+    const { promise: slowAnswer, resolve: answerSlow } =
+      Promise.withResolvers<ReturnType<typeof verdict>>()
+    modelBehaviour = async (taskId) =>
+      taskId === slow.id ? slowAnswer : verdict()
+
+    const pool = runPool(newWorker())
+    await vi.waitFor(() =>
+      expect(others.every((task) => rowOf(task).status === 'approved')).toBe(
+        true
+      )
+    )
+    expect(rowOf(slow).status).toBe('pending')
+
+    const late = addTask({ next_attempt: new Date() })
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(rowOf(late).status).toBe('approved')
+
+    answerSlow(verdict())
+    await pool
+    expect(rowOf(slow).status).toBe('approved')
+  })
+
+  // 库此刻写不进去 (只读、磁盘满) 时, 每个空出的槽位都会立即再开一轮, 在库上空转
+  it('一条任务的写库失败: 池不再取新任务, 在途的做完后返回', async () => {
+    const call = gateModelCalls()
+    const tasks = Array.from({ length: MODERATION_CONCURRENCY + 1 }, () =>
+      addTask()
+    )
+    const [broken] = tasks
+    const applyUpdate = updateTaskMock.getMockImplementation()!
+    updateTaskMock.mockImplementation(async (args: UpdateArgs) => {
+      if (args.where.id === broken.id && args.data.picked_at === null) {
+        throw new Error('db down')
+      }
+      return applyUpdate(args)
+    })
+
+    const pool = runPool(newWorker())
+    await settle()
+    expect(modelCalledFor()).toHaveLength(MODERATION_CONCURRENCY)
+    call(broken).fail(new Error('render crashed'))
+    await settle()
+    for (const task of tasks.slice(1, MODERATION_CONCURRENCY)) {
+      call(task).succeed()
+    }
+    await pool
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      'Moderation worker crashed:',
+      expect.objectContaining({ message: 'db down' })
+    )
+    expect(claimsOf(tasks[MODERATION_CONCURRENCY])).toEqual([])
+    expect(
+      tasks
+        .slice(1, MODERATION_CONCURRENCY)
+        .every((task) => rowOf(task).status === 'approved')
+    ).toBe(true)
+  })
+
+  it('要求停下 (关停开始、租约丢失): 不再取新任务, 在途的照常做完后才返回', async () => {
+    const stop = new AbortController()
+    const call = gateModelCalls()
+    const tasks = Array.from({ length: MODERATION_CONCURRENCY + 1 }, () =>
+      addTask()
+    )
+    let returned = false
+
+    const pool = runPool(newWorker(), {
+      signal: stop.signal,
+      cancelSignal: new AbortController().signal
+    }).then(() => {
+      returned = true
+    })
+    await settle()
+    stop.abort()
+    call(tasks[0]).succeed()
+    await settle()
+
+    expect(returned).toBe(false)
+    expect(claimsOf(tasks[MODERATION_CONCURRENCY])).toEqual([])
+    for (const task of tasks.slice(1, MODERATION_CONCURRENCY)) {
+      call(task).succeed()
+    }
+    await pool
+    expect(
+      tasks
+        .slice(0, MODERATION_CONCURRENCY)
+        .every((task) => rowOf(task).status === 'approved')
+    ).toBe(true)
+    expect(rowOf(tasks[MODERATION_CONCURRENCY]).status).toBe('pending')
+  })
+
+  // 模型的 mock 一直挂着, 直到交给它的 signal 中止
+  const hangUntilAborted = () =>
+    moderateTextMock.mockImplementation(
+      (_policy, _type, _message, signal: AbortSignal) =>
+        new Promise((_, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason)
+          }
+          signal.addEventListener('abort', () => reject(signal.reason))
+        })
+    )
+
+  // 关停的顺序: 先 signal (不再取新的), 宽限期满再 cancelSignal (放弃在途的)
+  const shutDown = async (stop: AbortController, cancel: AbortController) => {
+    stop.abort()
+    await settle()
+    cancel.abort(new Error('grace expired'))
+  }
+
+  it('宽限期满 (cancelSignal 中止): 在途的模型调用随之放弃, 认领清掉, 不扣预算、不进熔断器', async () => {
+    const worker = newWorker()
+    const task = addTask({ retry: 1, defer_count: 2 })
+    hangUntilAborted()
+    const stop = new AbortController()
+    const cancel = new AbortController()
+
+    const pool = runPool(worker, {
+      signal: stop.signal,
+      cancelSignal: cancel.signal
+    })
+    await settle()
+    expect(claimsOf(task)).toHaveLength(1)
+    await shutDown(stop, cancel)
+    await pool
+
+    const [[, , , signal]] = moderateTextMock.mock.calls
+    expect((signal as AbortSignal).aborted).toBe(true)
+    expect(accountingOf(task)).toEqual([
+      { where: { id: task.id, status: 'pending' }, data: { picked_at: null } }
+    ])
+    expect(rowOf(task)).toMatchObject({
+      status: 'pending',
+      retry: 1,
+      defer_count: 2,
+      failure_kind: '',
+      picked_at: null
+    })
+    expect(worker.breakers.text.snapshot()).toMatchObject({
+      state: 'closed',
+      lastError: ''
+    })
+    expect(markTaskManualMock).not.toHaveBeenCalled()
+  })
+
+  it('头像任务的取图、模型调用与落地复制都拿到同一个可中止的信号', async () => {
+    const avatar = addAvatarTask()
+    const cancel = new AbortController()
+
+    await runPool(newWorker(), {
+      signal: new AbortController().signal,
+      cancelSignal: cancel.signal
+    })
+    cancel.abort()
+
+    const [[, s3Signal]] = getFileFromS3Mock.mock.calls
+    const [[, , modelSignal]] = moderateImageMock.mock.calls
+    const [[{ signal: copySignal }]] = applyModerationVerdictMock.mock.calls
+    expect((s3Signal as AbortSignal).aborted).toBe(true)
+    expect(modelSignal).toBe(cancel.signal)
+    expect(copySignal).toBe(cancel.signal)
+    expect(rowOf(avatar).status).toBe('approved')
+  })
+
+  it('探测的那条被宽限期满中止: 归还名额, 不算探测失败', async () => {
+    const worker = newWorker()
+    const opener = addTask()
+    failOnly([opener], () => httpFailure(401))
+    await runAt(worker, 0)
+    rowOf(opener).next_attempt = at(3_600_000)
+    const probe = addTask({ next_attempt: at(29_000) })
+    hangUntilAborted()
+    const stop = new AbortController()
+    const cancel = new AbortController()
+
+    vi.setSystemTime(at(30_000))
+    const pool = runPool(worker, {
+      signal: stop.signal,
+      cancelSignal: cancel.signal
+    })
+    await settle()
+    expect(claimsOf(probe)).toHaveLength(1)
+    await shutDown(stop, cancel)
+    await pool
+
+    expect(worker.breakers.text.snapshot()).toMatchObject({
+      state: 'half_open',
+      opens: 1
+    })
+    expect(rowOf(probe)).toMatchObject({
+      status: 'pending',
+      retry: 0,
+      defer_count: 0,
+      picked_at: null
+    })
+    // 名额已归还: 下一次问门立即又能探测
+    expect(worker.breakers.text.admit()).toBe('probe')
   })
 })
