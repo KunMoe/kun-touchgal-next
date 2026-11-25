@@ -9,11 +9,8 @@ export interface KunViewer {
   role: number
 }
 
-// 可见性的口径在 utils/content/policy.ts, 谓词在 server/content/visibility.ts。下面两个名字
-// 留给既有调用方 (评论与评价同口径)
-export const getCommentRatingVisibilityWhere = (viewer: KunViewer | null) =>
-  visibleWhere('comment', viewer)
-
+// 可见性的口径在 utils/content/policy.ts, 谓词在 server/content/visibility.ts。这个名字
+// 留给既有调用方
 export const getResourceVisibilityWhere = (viewer: KunViewer | null) =>
   visibleWhere('resource', viewer)
 

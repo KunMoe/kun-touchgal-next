@@ -1,12 +1,10 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
 import { getUserInfoSchema } from '~/validations/user'
-import {
-  getCommentRatingVisibilityWhere,
-  type KunViewer
-} from '~/app/api/utils/contentVisibility'
+import type { KunViewer } from '~/app/api/utils/contentVisibility'
 import type { UserRating } from '~/types/api/user'
 import { PatchRefSelectField } from '~/constants/api/select'
+import { visibleWhere } from '~/server/content/visibility'
 
 export const getUserPatchRating = async (
   input: z.infer<typeof getUserInfoSchema>,
@@ -14,7 +12,7 @@ export const getUserPatchRating = async (
 ) => {
   const { uid, page, limit } = input
   const offset = (page - 1) * limit
-  const visibilityWhere = getCommentRatingVisibilityWhere(viewer)
+  const visibilityWhere = visibleWhere('rating', viewer)
 
   const [data, total] = await Promise.all([
     prisma.patch_rating.findMany({

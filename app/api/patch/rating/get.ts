@@ -1,12 +1,10 @@
 import * as z from 'zod'
 import { kunId, kunLimit, kunPage } from '~/validations/primitives'
 import { prisma } from '~/prisma/index'
-import {
-  getCommentRatingVisibilityWhere,
-  type KunViewer
-} from '~/app/api/utils/contentVisibility'
+import type { KunViewer } from '~/app/api/utils/contentVisibility'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { KunPatchRating } from '~/types/api/galgame'
+import { visibleWhere } from '~/server/content/visibility'
 
 export const getPatchRatingSchema = z.object({
   patchId: kunId('游戏 ID'),
@@ -28,7 +26,7 @@ export const getPatchRating = async (
   const where: Prisma.patch_ratingWhereInput = {
     patch_id: patchId,
     AND: [
-      getCommentRatingVisibilityWhere(viewer),
+      visibleWhere('rating', viewer),
       ...(onlyWithShortSummary
         ? [
             {

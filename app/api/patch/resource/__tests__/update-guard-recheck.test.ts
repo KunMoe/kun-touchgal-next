@@ -311,6 +311,42 @@ describe('更新资源在行锁下复检守卫', () => {
     )
   })
 
+  // 后台入口 (scope 'admin') 不走前台策略: 隐藏的资源在快照与行锁下都能改, 也不查在途任务
+  it.each([1, 2, 3])(
+    '后台入口: 快照与锁下都是 status=%i 也照常保存',
+    async (status) => {
+      resourceFindUniqueMock.mockResolvedValue(buildSnapshot({ status }))
+      transactionQueryRawMock.mockResolvedValue([
+        { status, section: 'galgame' }
+      ])
+      transactionResourceUpdateMock.mockResolvedValue(buildUpdated({ status }))
+
+      const result = await updatePatchResource(
+        buildInput(),
+        kunTestActor({ uid: 9, role: 4 }),
+        'admin'
+      )
+
+      expect(typeof result).not.toBe('string')
+      expect(transactionResourceUpdateMock).toHaveBeenCalled()
+      expect(hasPendingModerationMock).not.toHaveBeenCalled()
+    }
+  )
+
+  it('后台入口: 锁下行已被删除时照样拒绝', async () => {
+    resourceFindUniqueMock.mockResolvedValue(buildSnapshot({ status: 1 }))
+    transactionQueryRawMock.mockResolvedValue([])
+
+    const result = await updatePatchResource(
+      buildInput(),
+      kunTestActor({ uid: 9, role: 4 }),
+      'admin'
+    )
+
+    expect(result).toBe('未找到该资源')
+    expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
+  })
+
   it('快照公开但锁下已转人工审批, 非特权作者被拒', async () => {
     resourceFindUniqueMock.mockResolvedValue(buildSnapshot())
     transactionQueryRawMock.mockResolvedValue([

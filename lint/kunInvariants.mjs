@@ -1438,7 +1438,8 @@ export const KUN_INVARIANTS = [
       kind: 'syntax',
       selectors: [
         `Property${keyIs("'status'")} > Literal.value[raw=/^[0-9]$/]`,
-        `Property${keyIs("'status'")} > ConditionalExpression > Literal[raw=/^[0-9]$/]`,
+        // 三元的分支值, 嵌套的三元也算 (status: a ? 2 : b ? 3 : 0)
+        `Property${keyIs("'status'")} > ConditionalExpression :matches(Literal.consequent, Literal.alternate)[raw=/^[0-9]$/]`,
         `Property${keyIs("'status'")} > ObjectExpression > Property > Literal.value[raw=/^[0-9]$/]`,
         `Property${keyIs("'status'")} > ObjectExpression > Property > ArrayExpression > Literal[raw=/^[0-9]$/]`,
         "BinaryExpression[operator=/^[!=]==?$/]:matches([left.property.name='status'], [left.expression.property.name='status']) > Literal.right[raw=/^[0-9]$/]",
@@ -1453,6 +1454,7 @@ export const KUN_INVARIANTS = [
         'export const w = { patch_id: 1, status: { in: [0, 1] } }',
         'export const w = { status: { not: 2 } }',
         'export const d = (intercept: boolean) => ({ status: intercept ? 1 : 0 })',
+        'export const d = (a: boolean, b: boolean) => ({ status: a ? RESOURCE_STATUS.awaitingApproval : b ? 3 : RESOURCE_STATUS.public })',
         'export const f = (r: { status: number }) => r.status === 1',
         'export const f = (r: { status: number }) => 2 !== r.status',
         'export const f = (r?: { status: number }) => r?.status === 3',

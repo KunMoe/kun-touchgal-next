@@ -3,10 +3,7 @@ import { convert } from 'html-to-text'
 import { prisma } from '~/prisma/index'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { getPatchCommentSchema } from '~/validations/patch'
-import {
-  getCommentRatingVisibilityWhere,
-  type KunViewer
-} from '~/app/api/utils/contentVisibility'
+import type { KunViewer } from '~/app/api/utils/contentVisibility'
 import { withPatchCommentPageCache } from './cache'
 import {
   persistCommentHtml,
@@ -94,7 +91,7 @@ const resolveCurrentPage = async (
       parent_id: null,
       resource_id: resourceId,
       AND: [
-        getCommentRatingVisibilityWhere(viewer),
+        visibleWhere('comment', viewer),
         {
           OR: [
             { created: { gt: rootComment.created } },
@@ -121,7 +118,7 @@ const buildCommentPage = async (
   currentPage: number,
   viewer: KunViewer
 ): Promise<{ comments: PatchComment[]; total: number }> => {
-  const visibilityWhere = getCommentRatingVisibilityWhere(viewer)
+  const visibilityWhere = visibleWhere('comment', viewer)
 
   const commentSelect = {
     id: true,

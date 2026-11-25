@@ -38,8 +38,12 @@ import { RenderCell } from './RenderCell'
 import { useDebounce } from 'use-debounce'
 import { KunPagination } from '~/components/kun/Pagination'
 import type { AdminResource } from '~/types/api/admin'
+import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
 type ResourceSearchType = 'content' | 'info' | 'user'
+// 批量修改只在公开与隐藏之间切换, 待初审 / 待审是系统态
+type ResourceHiddenStatus =
+  typeof RESOURCE_STATUS.public | typeof RESOURCE_STATUS.hidden
 
 const columns = [
   { name: '资源标题', id: 'name' },
@@ -168,7 +172,7 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
     list.refresh({ background: true })
   }
 
-  const handleBatchStatus = async (status: 0 | 1) => {
+  const handleBatchStatus = async (status: ResourceHiddenStatus) => {
     setBatchHiding(true)
     const ids = [...selection.ids]
 
@@ -178,7 +182,7 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
         { resourceIds: ids.join(','), status }
       )
 
-      const actionLabel = status === 0 ? '恢复' : '隐藏'
+      const actionLabel = status === RESOURCE_STATUS.public ? '恢复' : '隐藏'
       if (typeof res === 'string') {
         // 失败时保留选中, 可以直接重试
         toast.error(res)
@@ -233,12 +237,20 @@ export const Resource = ({ initialResources, initialTotal }: Props) => {
                 </DropdownTrigger>
                 <DropdownMenu
                   aria-label="批量修改资源状态"
-                  onAction={(key) => handleBatchStatus(Number(key) as 0 | 1)}
+                  onAction={(key) =>
+                    handleBatchStatus(Number(key) as ResourceHiddenStatus)
+                  }
                 >
-                  <DropdownItem key="1" startContent={<EyeOff size={14} />}>
+                  <DropdownItem
+                    key={RESOURCE_STATUS.hidden}
+                    startContent={<EyeOff size={14} />}
+                  >
                     隐藏
                   </DropdownItem>
-                  <DropdownItem key="0" startContent={<Eye size={14} />}>
+                  <DropdownItem
+                    key={RESOURCE_STATUS.public}
+                    startContent={<Eye size={14} />}
+                  >
                     恢复
                   </DropdownItem>
                 </DropdownMenu>

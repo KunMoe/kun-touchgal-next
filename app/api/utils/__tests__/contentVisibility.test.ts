@@ -9,12 +9,11 @@ vi.mock('~/app/api/utils/pendingResourceCache', () => ({
 }))
 
 import {
-  getCommentRatingVisibilityWhere,
   getListResourceStatusWhere,
   getResourceVisibilityWhere,
   shouldBypassSharedCache
 } from '~/app/api/utils/contentVisibility'
-import { visibleSql } from '~/server/content/visibility'
+import { visibleSql, visibleWhere } from '~/server/content/visibility'
 import { isContentVisible } from '~/utils/content/policy'
 
 describe('shouldBypassSharedCache', () => {
@@ -107,7 +106,7 @@ describe('待审内容可见性的角色边界 (content.viewPending)', () => {
       false
     )
     expect(isContentVisible('comment', pendingBy(7), viewer)).toBe(true)
-    expect(getCommentRatingVisibilityWhere(viewer)).toEqual({
+    expect(visibleWhere('comment', viewer)).toEqual({
       OR: [{ status: 0 }, { status: 1, user_id: 7 }]
     })
     expect(getResourceVisibilityWhere(viewer)).toEqual({
@@ -124,7 +123,7 @@ describe('待审内容可见性的角色边界 (content.viewPending)', () => {
     const viewer = { uid: 7, role }
 
     expect(isContentVisible('comment', pendingBy(OTHER_UID), viewer)).toBe(true)
-    expect(getCommentRatingVisibilityWhere(viewer)).toEqual({
+    expect(visibleWhere('comment', viewer)).toEqual({
       status: { in: [0, 1] }
     })
     expect(getResourceVisibilityWhere(viewer)).toEqual({

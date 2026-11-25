@@ -16,6 +16,11 @@ import {
 } from '~/constants/moderation'
 import { kunPasswordRegex } from '~/utils/validate'
 import { KUN_ROLE } from '~/constants/role'
+import {
+  COMMENT_STATUS,
+  RATING_STATUS,
+  RESOURCE_STATUS
+} from '~/constants/contentStatus'
 
 export const adminReportTargetTypeSchema = z.enum(['comment', 'rating'])
 
@@ -170,7 +175,11 @@ export const adminDeleteResourceSchema = z.union([
 // 待初次审核 (2) / 待审核 (3) 为系统态, 不可通过此接口设置
 export const adminUpdateResourceHiddenSchema = z.object({
   resourceIds: adminResourceIdsSchema,
-  status: z.union([z.literal(0), z.literal(1)])
+  // 只在公开与隐藏之间切换: 入口据此选迁移 (utils/content/transitions.ts 的 hide / unhide)
+  status: z.union([
+    z.literal(RESOURCE_STATUS.public),
+    z.literal(RESOURCE_STATUS.hidden)
+  ])
 })
 
 export const adminReportPaginationSchema = adminPaginationSchema.extend({
@@ -432,12 +441,18 @@ export const adminHandleAppealSchema = z.object({
 // admin 仅在正常 (0) 与隐藏 (2) 间切换; 待审核 (1) 为系统态, 不手动设置
 export const adminUpdateCommentShadowBanSchema = z.object({
   commentId: kunId('评论 ID'),
-  status: z.union([z.literal(0), z.literal(2)])
+  status: z.union([
+    z.literal(COMMENT_STATUS.public),
+    z.literal(COMMENT_STATUS.hidden)
+  ])
 })
 
 export const adminUpdateRatingShadowBanSchema = z.object({
   ratingId: kunId('评价 ID'),
-  status: z.union([z.literal(0), z.literal(2)])
+  status: z.union([
+    z.literal(RATING_STATUS.public),
+    z.literal(RATING_STATUS.hidden)
+  ])
 })
 
 export const adminGetFullCommentSchema = z.object({
