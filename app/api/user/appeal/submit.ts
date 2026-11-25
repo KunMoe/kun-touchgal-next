@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import type { KunTx } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { KunTxContext } from '~/server/db/tx'
@@ -74,7 +75,7 @@ const lockContentForAppeal = async (
   contentType: string,
   contentId: number,
   uid: number,
-  tx: Prisma.TransactionClient
+  tx: KunTx
 ) => {
   if (contentType === 'comment') {
     const rows = await tx.$queryRaw<{ id: number }[]>`

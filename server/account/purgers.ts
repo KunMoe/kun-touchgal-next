@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import type { KunTx } from '~/prisma/index'
 import { deletePatchById } from '~/app/api/patch/delete'
 import { deleteResource } from '~/app/api/admin/resource/delete'
 import { deleteComment } from '~/app/api/admin/comment/delete'
@@ -20,7 +21,7 @@ import type { PurgedUserReference } from './userReferences'
 // 并发删掉) 时不报错, 下一轮重查即可。deadline 是这次请求的预算截止时刻, 慢的清除器在批内也看它。
 // 清除器调用的服务都不锁 user 行: 被删用户的 user 行只由收尾事务锁 (见 deleteAccount.ts)
 export type PurgeCountDb = Pick<
-  Prisma.TransactionClient,
+  KunTx,
   'patch' | 'patch_resource' | 'patch_comment' | 'patch_rating'
 >
 

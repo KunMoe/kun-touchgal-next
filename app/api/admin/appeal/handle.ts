@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import type { KunTx } from '~/prisma/index'
 import type { moderation_appealModel } from '~/prisma/generated/prisma/models'
 import { adminHandleAppealSchema } from '~/validations/admin'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
@@ -26,7 +27,6 @@ import { getAppealEditableLinkFields } from '~/utils/appealPayload'
 import { APPEAL_APPROVED_LINK, APPEAL_RESULT_NOTICE } from '~/constants/appeal'
 import { MODERATION_CONTENT_TYPE_MAP } from '~/constants/moderation'
 import type { AppealLink, AppealPayload } from '~/types/api/appeal'
-import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { KunTxContext } from '~/server/db/tx'
 import {
   COMMENT_TRANSITIONS,
@@ -42,7 +42,7 @@ const APPEAL_UNRENDERABLE =
 // 申诉处理认领了申诉行去等内容行, 并发的删除锁着内容行去等申诉行, 两边互等成死锁。
 // 行已不存在时什么也锁不到, 由后面的认领与守卫给出结果
 const lockAppealedContent = async (
-  tx: Prisma.TransactionClient,
+  tx: KunTx,
   type: string,
   contentId: number
 ) => {

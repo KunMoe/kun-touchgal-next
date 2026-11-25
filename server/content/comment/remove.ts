@@ -7,7 +7,7 @@ import { lockPatchRows } from '~/server/content/patchLock'
 import { COMMENT_STATUS } from '~/constants/contentStatus'
 import type { CommentStatus } from '~/constants/contentStatus'
 import type { ContentGuard, SkippedContent } from '~/server/content/guard'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import type { KunTxContext } from '~/server/db/tx'
 
 // 评论的物理删除。两段式: plan 只加锁和读取, execute 按固定顺序清理并删除。
@@ -38,7 +38,7 @@ export interface CommentRemovalPlan {
 // 后代时, 子树只算一次。
 // 根先锁、子树后锁, 所以加锁顺序不是全局升序: 两个批次的根互为对方子树里的行时
 // (一批删 A 与它的孙评论, 另一批删夹在中间的那条) 仍会互等, 由数据库判死锁回滚其一
-const lockSubtree = (tx: Prisma.TransactionClient, rootIds: number[]) =>
+const lockSubtree = (tx: KunTx, rootIds: number[]) =>
   tx.$queryRaw<CommentRemovalPlan['subtree']>`
     WITH RECURSIVE subtree AS (
       SELECT id

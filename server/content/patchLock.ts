@@ -1,4 +1,4 @@
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 
 // 按 id 升序锁 patch 行, 须在锁完内容行之后、第一条会触发计数触发器的写语句之前调用。
 //
@@ -9,10 +9,7 @@ import type { Prisma } from '~/prisma/generated/prisma/client'
 //
 // 用 FOR NO KEY UPDATE: 与触发器里的 UPDATE 同级; FOR UPDATE 会和并发 INSERT 经外键对
 // patch 行取的 FOR KEY SHARE 冲突。顶层 SELECT 的加锁节点在排序之上, 先排后锁
-export const lockPatchRows = async (
-  tx: Prisma.TransactionClient,
-  patchIds: number[]
-) => {
+export const lockPatchRows = async (tx: KunTx, patchIds: number[]) => {
   if (!patchIds.length) {
     return
   }

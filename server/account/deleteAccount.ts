@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import type { KunTx } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import {
   applyKunCredentialChange,
@@ -18,7 +19,6 @@ import { invalidatePatchCommentCache } from '~/app/api/patch/comment/cache'
 import { recordKunChanges } from '~/server/cache/publish'
 import { COMMENT_STATUS, RESOURCE_STATUS } from '~/constants/contentStatus'
 import { ACCOUNT_PURGERS, ACCOUNT_PURGE_ORDER } from './purgers'
-import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { KunActor } from '~/constants/role'
 import type {
   AdminUserDeletionRemaining,
@@ -58,7 +58,7 @@ const ACCOUNT_FINALIZE_ROUNDS = 3
 
 type CascadeProjection = {
   // 收尾事务里、user 行锁下收集受影响的 patch
-  collect(tx: Prisma.TransactionClient, uid: number): Promise<number[]>
+  collect(tx: KunTx, uid: number): Promise<number[]>
 } &
   // 报告给缓存规划器的变更, 由它决定提交后失效什么
   (

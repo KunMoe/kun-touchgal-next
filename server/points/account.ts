@@ -1,6 +1,6 @@
 import { POINT_RULES } from '~/constants/points'
 import { randomNormalInt } from '~/utils/random'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 
 // user.moemoepoint 的唯一写者 (lint kun/inv-points-01 执法), 数值取自 constants/points.ts。
 // 每个函数固定一种 Prisma 调用形状:
@@ -13,7 +13,7 @@ import type { Prisma } from '~/prisma/generated/prisma/client'
 //   daily_image_count) 写在同一条语句里: 拆开后改名撞唯一索引会白扣, 签到会重复领
 // - 余额不设下限, 库里也不加 CHECK: 取消点赞、收回奖励与后台调分都是无守卫的负向写入
 // 提交之后的会话失效留在调用点
-type PointDb = Prisma.TransactionClient
+type PointDb = KunTx
 
 export type PointCreditReason = 'resource_publish' | 'like_received'
 

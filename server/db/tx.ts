@@ -2,6 +2,7 @@ import { prisma } from '~/prisma/index'
 import { isPrismaTransactionConflict } from './txErrors'
 import { translateDbViolation } from './violations'
 import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import type { KunViolationMap } from './violations'
 
 // 事务执行器: app / server / lib 下只有这里调用 prisma.$transaction (kun/inv-tx-01)。
@@ -27,7 +28,8 @@ const isCommittedFailure = (value: unknown): value is KunCommittedFailure =>
   typeof value === 'object' && value !== null && committedFailure in value
 
 export interface KunTxContext {
-  readonly tx: Prisma.TransactionClient
+  // 带全局 omit 的类型 (prisma/columnPolicy.ts): 被隐藏的列在事务里同样要显式取回
+  readonly tx: KunTx
   // 回滚本次事务, kunTx 以 message 作为结果返回
   fail(message: string): never
   // 唯一的「失败但提交」写法: 把它的返回值 return 出去, 事务照常提交、提交后副作用照常

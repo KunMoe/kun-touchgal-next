@@ -5,7 +5,8 @@ import {
   reissueKunSessionToken
 } from './session'
 import { invalidateUserSession } from './sessionCache'
-import type { Prisma, PrismaClient } from '~/prisma/generated/prisma/client'
+import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import type { KunGalgamePayload } from './session'
 
 // 账号安全事件与它们的吊销策略。「哪个事件吊销什么」只写在 KUN_SECURITY_POLICY 这一张表里:
@@ -90,7 +91,7 @@ export const KUN_SECURITY_POLICY = {
   'ban-detected': { bumpStamp: false, current: 'none', redis: 'all' }
 } as const satisfies Record<KunSecurityEvent, KunSecurityPolicy>
 
-type KunUserWriter = Pick<PrismaClient | Prisma.TransactionClient, 'user'>
+type KunUserWriter = Pick<KunTx, 'user'>
 
 // 写凭据或安全属性的唯一入口 (server/auth 之外对这几列的字面量写入由 lint 拦住)。
 // 平铺 WHERE 的 updateMany: 调用方的前置条件 (旧邮箱、旧哈希、2FA 状态) 放在 where 里,

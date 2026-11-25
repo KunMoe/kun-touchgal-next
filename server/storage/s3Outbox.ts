@@ -1,5 +1,5 @@
 import { prisma } from '~/prisma/index'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import { deleteFileFromS3 } from '~/lib/s3'
 import { withTaskLock } from '~/server/tasks/withTaskLock'
 import { isS3ObjectReferenced } from './references'
@@ -19,7 +19,7 @@ const OUTBOX_LOCK_TTL_SECONDS = 300
 // 合并只会让删除提前, 不会推迟一个已经要求立即删除的对象。时刻在库里按 UTC 墙钟算 (不传 JS Date,
 // 原生 SQL 的 Date 参数与无时区列的换算见 prisma-pg-timestamptz 的坑)
 export const enqueueS3Deletion = async (
-  client: Prisma.TransactionClient,
+  client: KunTx,
   keys: string[],
   options: { delayMs?: number } = {}
 ) => {

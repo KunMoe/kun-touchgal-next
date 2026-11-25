@@ -1,8 +1,8 @@
 import { prisma } from '~/prisma/index'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import type { CreateMessageType } from '~/types/api/message'
 
-type MessageClient = Prisma.TransactionClient | typeof prisma
+type MessageClient = KunTx
 
 export const createMessage = async (
   data: CreateMessageType,

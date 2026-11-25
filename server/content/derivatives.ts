@@ -1,6 +1,6 @@
 import { deletePendingModerationTasks } from '~/server/moderation/submit'
 import { deletePendingAppeals } from '~/server/moderation/appeal'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 
 // 内容行删除之后, 清掉指向它们、还没有结论的审核任务与申诉 (已有结论的留作历史)。
 // 两张表的 content_id 都没有外键, 级联删除带不走, 须用删除前收集的 id。
@@ -9,7 +9,7 @@ import type { Prisma } from '~/prisma/generated/prisma/client'
 // app/api/patch/comment/notifications.ts。整游戏的级联删除 (含删号时删掉其建档的游戏) 不清
 // 评论通知, 那里留下的通知死链已裁定另案处理; 删号对其余评论走后台删除服务, 通知照常清
 export const purgeContentDerivatives = async (
-  tx: Prisma.TransactionClient,
+  tx: KunTx,
   ids: { comment?: number[]; rating?: number[]; resource?: number[] }
 ) => {
   const kinds = ['comment', 'rating', 'resource'] as const
@@ -34,7 +34,7 @@ export const purgeContentDerivatives = async (
 export type OpenTasksPolicy = 'cancel-keep-dry-run' | 'keep'
 
 export const settleOpenTasks = async (
-  tx: Prisma.TransactionClient,
+  tx: KunTx,
   kind: 'comment' | 'rating' | 'resource',
   ids: number[],
   policy: OpenTasksPolicy

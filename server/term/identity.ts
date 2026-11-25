@@ -1,5 +1,6 @@
 import { aliasLookupForms, aliasLookupFormsOf } from '~/utils/term/normalize'
 import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 
 // 写入时「一个输入串指向哪个词条 (标签 / 会社)、没有时怎样新建」只在这里: 手动标签、外部来源
 // 的标签与会社、管理端的查重都经它, 不在入口各写一份比较规则。读侧的检索条件在 ./match.ts
@@ -11,7 +12,7 @@ export interface TermRef {
 }
 
 // 完整客户端与事务客户端都能传: 调用方决定这些语句在不在它的事务里
-type Db = Prisma.TransactionClient
+type Db = KunTx
 
 interface TermFilter {
   // name 精确等于其中之一

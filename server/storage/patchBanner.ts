@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import type { KunTx } from '~/prisma/index'
 import { deleteFileFromS3, uploadImageToS3 } from '~/lib/s3'
 import { kunTx } from '~/server/db/tx'
 import { recordKunChanges } from '~/server/cache/publish'
@@ -16,7 +17,6 @@ import {
   patchBannerKeysFromPointer,
   patchBannerLegacyKeys
 } from './imageObjects'
-import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { PatchBannerSet } from './imageObjects'
 
 // 封面的「当前版本」只由 patch.banner 指针裁决。一个版本是 server/storage/imageObjects.ts 给出的
@@ -53,7 +53,7 @@ export const putPatchBannerSet = async (
 // 旧版本还被缓存里的页面引用), 不传即立即 (删游戏)。指针认不出 (外站地址、换过域名的存量) 时不入队,
 // 只记一行: 留下孤儿, 不冒删错的险
 export const enqueuePatchBannerDeletion = async (
-  client: Prisma.TransactionClient,
+  client: KunTx,
   patchId: number,
   pointer: string,
   options: { delayMs?: number } = {}

@@ -1,4 +1,5 @@
 import { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import { RATING_STATUS } from '~/constants/contentStatus'
 import { statusSql } from '~/server/content/visibility'
 
@@ -8,7 +9,7 @@ const RATING_STAT_LOCK_NAMESPACE = 481002
 
 const recomputePatchRatingStatsLocked = async (
   patchIds: number[],
-  tx: Prisma.TransactionClient
+  tx: KunTx
 ) => {
   // 批量调用按 patch ID 的固定顺序取锁, 避免重叠批次形成锁顺序反转
   await tx.$executeRaw`
@@ -94,7 +95,7 @@ const recomputePatchRatingStatsLocked = async (
 
 export const recomputePatchRatingStats = async (
   patchIds: number[],
-  tx: Prisma.TransactionClient
+  tx: KunTx
 ) => {
   const uniquePatchIds = [...new Set(patchIds)].sort((a, b) => a - b)
   if (!uniquePatchIds.length) {
@@ -104,7 +105,5 @@ export const recomputePatchRatingStats = async (
   return recomputePatchRatingStatsLocked(uniquePatchIds, tx)
 }
 
-export const recomputePatchRatingStat = (
-  patchId: number,
-  tx: Prisma.TransactionClient
-) => recomputePatchRatingStats([patchId], tx)
+export const recomputePatchRatingStat = (patchId: number, tx: KunTx) =>
+  recomputePatchRatingStats([patchId], tx)

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '~/prisma/generated/prisma/client'
+import type { ITXClientDenyList } from '@prisma/client/runtime/client'
 import type pg from 'pg'
 
 // 名字必须由 SQL 文本确定性派生: pg 按 name 在每条连接上缓存已 Parse 的语句且从不
@@ -14,3 +15,9 @@ export const statementNameGenerator = (query: { sql: string }) =>
 // 各自把池交进来, adapter 的选项只在这里写一次, 测试录到的 SQL 才与线上同源
 export const createKunPrismaClient = (pool: pg.Pool) =>
   new PrismaClient({ adapter: new PrismaPg(pool, { statementNameGenerator }) })
+
+// 带全局 omit 的客户端类型。KunTx 是事务回调拿到的客户端: 运行时的 tx 同样带全局 omit,
+// 而 Prisma 自带的 Prisma.TransactionClient 是不带 omit 的默认类型, 事务内读被隐藏的列
+// 会被它放过。需要「顶层客户端或事务」的 helper 参数一律写 KunTx (KunDb 也能赋给它)
+export type KunDb = ReturnType<typeof createKunPrismaClient>
+export type KunTx = Omit<KunDb, ITXClientDenyList>

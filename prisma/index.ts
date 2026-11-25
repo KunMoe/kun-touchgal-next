@@ -20,4 +20,5 @@ const pool = new pg.Pool({
 
 const prisma = createKunPrismaClient(pool)
 
+export type { KunDb, KunTx } from '~/prisma/createClient'
 export { isPrismaTransactionConflict, prisma, statementNameGenerator }

@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import type { KunTx } from '~/prisma/index'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import {
   createTotpKey,
@@ -8,7 +9,6 @@ import {
 } from './secondFactor'
 import { consumeStepUpBackupCode } from './stepUp'
 import { applyKunCredentialChange } from './securityEvents'
-import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { StepUpPassed } from './stepUp'
 
 // 2FA 的三次状态迁移 (生成待确认的密钥 → 确认启用 → 关闭)。应用对 enable_2fa、
@@ -113,7 +113,7 @@ export const disableTwoFactor = async (
   by:
     | StepUpPassed<'twoFactor.disable'>
     | { kind: 'admin-override'; adminUid: number; uid: number },
-  tx: Prisma.TransactionClient,
+  tx: KunTx,
   currentStamp?: number
 ): Promise<
   | { outcome: 'disabled'; stamp: Date | null }

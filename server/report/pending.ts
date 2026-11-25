@@ -1,8 +1,8 @@
 import { prisma } from '~/prisma/index'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import type { AdminReportTargetType } from '~/types/api/admin'
 
-type ReportClient = Prisma.TransactionClient | typeof prisma
+type ReportClient = KunTx
 
 // 删除评论/评分时清理其尚未处理的举报, 已处理的举报保留作历史记录。
 // patch_report.comment_id / rating_id 是 ON DELETE SET NULL; 删除前清理

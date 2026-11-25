@@ -2,9 +2,9 @@ import { randomBytes } from 'crypto'
 import { deleteFileFromS3 } from '~/lib/s3'
 import { acquireKvLock, releaseKvLock } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
+import type { KunTx } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { lockPatchRows } from '~/server/content/patchLock'
-import type { Prisma } from '~/prisma/generated/prisma/client'
 import {
   enqueueS3Deletion,
   kickS3DeletionDrain
@@ -134,7 +134,7 @@ export const resolveS3Key = (
 // 接受 id 数组: 管理端批量删除在一个事务里清理整批, 三条语句取代逐资源 N+1
 // (user_message.link 无索引, 前缀删除是全表扫描, 合并成一条 OR 只扫一遍)
 export const cleanupResourceCommentDerivatives = async (
-  tx: Prisma.TransactionClient,
+  tx: KunTx,
   resourceId: number | number[]
 ) => {
   const resourceIds = Array.isArray(resourceId) ? resourceId : [resourceId]
@@ -167,7 +167,7 @@ export const cleanupResourceCommentDerivatives = async (
 }
 
 export const enqueueResourceLinkDeletions = async (
-  client: Prisma.TransactionClient,
+  client: KunTx,
   links: {
     content: string
     patchId: number
@@ -233,7 +233,7 @@ const PATCH_TYPE_LOCK_NAMESPACE = 481001
 
 const recalcPatchTypeLocked = async (
   patchId: number,
-  tx: Prisma.TransactionClient
+  tx: KunTx
 ): Promise<string> => {
   // pg_advisory_xact_lock: 事务级通告锁, 提交/回滚时自动释放. 使同一 patch 的
   // 「读全部可见资源 → 写 type/language/platform」原子化, 消除重叠事务 (审核重叠批次、
@@ -277,7 +277,7 @@ const recalcPatchTypeLocked = async (
 // 超集), 但会让通告锁跑在 autocommit 连接上、语句结束即释放 → 序列化静默失效, 切勿传入
 export const recalcPatchType = async (
   patchId: number,
-  tx?: Prisma.TransactionClient
+  tx?: KunTx
 ): Promise<string> => {
   if (!tx) {
     // 不传 tx 的兜底: 自开事务, 提交后再失效缓存 (与传 tx 时调用方报告的 patch 变更等价)

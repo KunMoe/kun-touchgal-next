@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import type { KunTx } from '~/prisma/index'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import { MODERATION_MAX_PENDING_PER_USER } from '~/constants/moderation'
 import type {
@@ -13,7 +14,7 @@ import { encodeModerationPayload } from './taskCodec'
 import type { ModerationTaskBody, TextTaskExtras } from './taskCodec'
 import type { KunActor } from '~/constants/role'
 
-type ModerationClient = Prisma.TransactionClient | typeof prisma
+type ModerationClient = KunTx
 
 export interface ModerationPreScreen {
   // create a moderation task for the worker

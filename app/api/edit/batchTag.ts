@@ -6,7 +6,7 @@ import {
   tagTerms
 } from '~/server/term/identity'
 import { normalizeStringArray } from '~/utils/normalizeStringArray'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 
 // 手动标签的一次修改意图: 按 id 移除、按名新增。不携带「现存标签的全集」, 所以表单基线
 // 陈旧、名字在往返中被改写都不会变成关联的增删; 两项都为空就是不动, 「清空」要把现存
@@ -19,7 +19,7 @@ export interface ManualTagChange {
 // 首参是事务客户端: 现在由下面的 saveManualTagChange 单独开事务调用, 以后要并进
 // 「一次保存一个事务」只需改调用点
 export const applyManualTagChange = async (
-  tx: Prisma.TransactionClient,
+  tx: KunTx,
   patchId: number,
   change: ManualTagChange,
   uid: number

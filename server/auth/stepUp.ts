@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import type { KunTx } from '~/prisma/index'
 import { verifyPassword } from './algorithm'
 import { reserveAttempt, settleSuccess } from './attemptBudget'
 import { stepUpPasswordDims } from './budgets'
@@ -7,7 +8,6 @@ import {
   verifySecondFactor
 } from './secondFactor'
 import { consumeTwoFactorBackupCode } from './twoFactorBackupCode'
-import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { SecondFactorProof } from './secondFactor'
 
 // 已登录用户改动账户安全属性之前「再证明一次你是你」。哪种操作要哪些因子只写在这张表里,
@@ -173,7 +173,7 @@ export const STEP_UP_BACKUP_CODE_GONE = '2FA 验证码无效'
 // 被别的请求先用掉了, 调用方应让事务失败 (文案用 STEP_UP_BACKUP_CODE_GONE)
 export const consumeStepUpBackupCode = async (
   passed: StepUpPassed<SensitiveAction>,
-  tx: Prisma.TransactionClient
+  tx: KunTx
 ) =>
   !passed.backupCode ||
   consumeTwoFactorBackupCode(passed.uid, passed.backupCode, tx)

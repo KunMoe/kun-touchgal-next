@@ -1,4 +1,4 @@
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 
 // 删除评论 (及级联带走的整棵回复子树) 前, 清理指向这些评论的全部站内信。
@@ -16,7 +16,7 @@ import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 //                 但 sender 恒为评论作者
 // 须在评论行删除之前、与删除同一事务内调用; unique_id 按行取以支持跨补丁批量删除
 export const cleanupCommentNotifications = async (
-  tx: Prisma.TransactionClient,
+  tx: KunTx,
   commentIds: number[]
 ) => {
   const rows = await tx.patch_comment.findMany({

@@ -1,5 +1,5 @@
 import { prisma } from '~/prisma/index'
-import { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { classifyHttpStatus } from '~/lib/resilience/failure'
 import { withTaskLock } from '~/server/tasks/withTaskLock'
@@ -235,7 +235,7 @@ type EnqueueMode = 'write' | 'reconcile'
 // client 传业务写所在事务的 tx，使入队与补丁变更原子提交（C-full，关闭“提交后再
 // 入队”的崩溃丢失窗口）；传顶层 prisma 则独立自动提交（queueSearchSync 兜底路径）。
 export const enqueueSearchOutbox = async (
-  client: Prisma.TransactionClient,
+  client: KunTx,
   patchId: number,
   options?: { mode?: EnqueueMode }
 ) => {
@@ -252,7 +252,7 @@ export const enqueueSearchOutbox = async (
 // 'reconcile' (对账发现漂移) 只换发 seq：处理中的 drain 不会按旧读数删掉这一行，但已退避或
 // 隔离的行保持原样，确定性失败的文档不会每晚被拉回重试
 export const enqueueSearchOutboxBatch = async (
-  client: Prisma.TransactionClient,
+  client: KunTx,
   patchIds: number[],
   { mode = 'write' }: { mode?: EnqueueMode } = {}
 ) => {

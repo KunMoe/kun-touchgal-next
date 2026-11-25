@@ -1,9 +1,9 @@
 import { prisma } from '~/prisma/index'
-import type { Prisma } from '~/prisma/generated/prisma/client'
+import type { KunTx } from '~/prisma/index'
 import type { AppealContentType } from '~/constants/appeal'
 import type { AppealLink } from '~/types/api/appeal'
 
-type ModerationClient = Prisma.TransactionClient | typeof prisma
+type ModerationClient = KunTx
 
 // 申诉页与管理端展示资源链接时读取的列, 与 AppealLink 的键一一对应
 export const APPEAL_LINK_SELECT = {
