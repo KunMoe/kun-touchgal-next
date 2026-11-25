@@ -6,8 +6,8 @@ import { sealLegacyTotpSecrets } from '~/server/auth/twoFactorState'
 // 默认 dry-run 只数不写; 加 --apply 才写库。重复执行无害 (已是密文的行跳过)。
 //   pnpm exec esno scripts/encryptTotpSecrets.ts
 //   pnpm exec esno scripts/encryptTotpSecrets.ts --apply
-// 先决条件: 读密文的版本已在生产稳定运行至少一个发布周期 (回填之后回滚到它之前的版本,
-// 2FA 登录全部失败), KEK 已离线备份
+// 先决条件: 读密文的版本已在生产稳定运行至少一个发布周期, KEK 已离线备份。那个版本上线之后
+// 新绑定的种子就已是密文, 回滚下限从上线起就是它; 回填只是把下限扩到全部 2FA 用户
 
 const apply = process.argv.slice(2).includes('--apply')
 

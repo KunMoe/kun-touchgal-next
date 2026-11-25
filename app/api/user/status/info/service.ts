@@ -14,7 +14,8 @@ export const getUserProfile = async (
   const [data, userFavoritePatchCount, followRelation] = await Promise.all([
     prisma.user.findUnique({
       where: { id: input.id },
-      // 邮箱只回给本人: 他人视角不读这一列 (prisma/columnPolicy.ts 的全局 omit)
+      // 邮箱只回给本人: 他人视角不读这一列 (prisma/columnPolicy.ts 的全局 omit)。omit 的值不是
+      // 字面量, 结果类型里 email 恒在, 他人视角运行时却是 undefined, 由下面的 isSelf 三元式兜住
       omit: { email: !isSelf },
       include: {
         _count: {
