@@ -123,48 +123,20 @@ export const adjustPoints = async (
   return moemoepoint
 }
 
-declare const lockedPointAccountsBrand: unique symbol
-
-// 已在当前事务里加了行锁的账户。品牌只存在于编译期, 唯一的构造点是 lockPointAccounts:
-// 收回奖励必须先拿到它, 「先锁账户」因此写进了签名
-export type LockedPointAccounts = { readonly uids: ReadonlySet<number> } & {
-  readonly [lockedPointAccountsBrand]: true
-}
-
-// 锁序是「账户 → 内容行」: 收回奖励要写 user 行, 若在内容行之后才锁, 会与先锁账户再锁
-// 内容的事务 (前台删资源、审核裁决) 互等。所以要在当前事务里任何内容行锁之前调用。
-// 去重升序加锁: 批量持锁的入口之间方向一致
-export const lockPointAccounts = async (
-  tx: PointDb,
-  uids: readonly number[]
-): Promise<LockedPointAccounts> => {
-  const ids = [...new Set(uids)].sort((a, b) => a - b)
-  if (ids.length) {
-    await tx.$executeRaw`
-      SELECT id
-      FROM "user"
-      WHERE id = ANY(${ids}::int[])
-      ORDER BY id
-      FOR NO KEY UPDATE`
-  }
-  return { uids: new Set(ids) } as unknown as LockedPointAccounts
-}
-
 export type PointRevokeReason = 'resource_publish'
 
 // 收回奖励: ownerIds 每个元素收回一份 (同一作者删了几个资源就出现几次), 按作者升序写。
-// 不在令牌里的作者说明调用方漏锁, 抛错让整笔回滚。返回被收回的作者 (升序去重)
+// user 行是最后一层锁: 调用方要在内容行与 patch 行都锁好、删除之后再调, 锁序是
+// 内容行 → patch 行 → user 行, 与点赞 (资源行经外键 → 作者 user 行)、发布资源 (patch 行经
+// 计数触发器 → user 行) 同向。若先锁 user 行, 两者在真库上都会与删除互等 (docs/tasks/t30)。
+// 审核裁决对资源只取 user 行的 FOR KEY SHARE, 与这里的写不冲突。返回被收回的作者 (升序去重)
 export const revokeCredits = async (
   tx: PointDb,
-  accounts: LockedPointAccounts,
   reason: PointRevokeReason,
   ownerIds: readonly number[]
 ): Promise<number[]> => {
   const units = new Map<number, number>()
   for (const uid of ownerIds) {
-    if (!accounts.uids.has(uid)) {
-      throw new Error(`收回萌萌点之前没有锁住账户 ${uid}`)
-    }
     units.set(uid, (units.get(uid) ?? 0) + 1)
   }
   const uids = [...units.keys()].sort((a, b) => a - b)

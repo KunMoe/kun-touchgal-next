@@ -8,7 +8,6 @@ import {
   claimCheckIn,
   creditGalgamePublish,
   creditPoints,
-  lockPointAccounts,
   reverseCredit,
   revokeCredits,
   spendOnConversation,
@@ -22,8 +21,6 @@ const db = {
   $executeRaw: vi.fn()
 }
 const tx = db as unknown as Prisma.TransactionClient
-const sqlOf = (call: unknown[]) =>
-  (call[0] as string[]).join('?').replace(/\s+/g, ' ').trim()
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -149,41 +146,20 @@ describe('后台调分', () => {
   })
 })
 
-describe('收回奖励必须先锁账户', () => {
-  it('去重升序加锁', async () => {
-    const accounts = await lockPointAccounts(tx, [9, 7, 9])
-
-    expect(db.$executeRaw.mock.calls.map(sqlOf)).toEqual([
-      'SELECT id FROM "user" WHERE id = ANY(?::int[]) ORDER BY id FOR NO KEY UPDATE'
-    ])
-    expect(db.$executeRaw.mock.calls[0][1]).toEqual([7, 9])
-    expect([...accounts.uids]).toEqual([7, 9])
-  })
-
-  it('没有作者时不发语句', async () => {
-    await lockPointAccounts(tx, [])
-
-    expect(db.$executeRaw).not.toHaveBeenCalled()
-  })
-
-  it('按作者合并、升序扣回, 返回被收回的作者', async () => {
-    const accounts = await lockPointAccounts(tx, [7, 9])
-
+describe('收回奖励', () => {
+  it('按作者合并、升序扣回, 不另外加锁, 返回被收回的作者', async () => {
     await expect(
-      revokeCredits(tx, accounts, 'resource_publish', [9, 7, 7])
+      revokeCredits(tx, 'resource_publish', [9, 7, 7])
     ).resolves.toEqual([7, 9])
     expect(db.user.update.mock.calls).toEqual([
       [{ where: { id: 7 }, data: { moemoepoint: { increment: -6 } } }],
       [{ where: { id: 9 }, data: { moemoepoint: { increment: -3 } } }]
     ])
+    expect(db.$executeRaw).not.toHaveBeenCalled()
   })
 
-  it('令牌里没有的作者: 抛错, 一条都不写', async () => {
-    const accounts = await lockPointAccounts(tx, [7])
-
-    await expect(
-      revokeCredits(tx, accounts, 'resource_publish', [7, 9])
-    ).rejects.toThrow('没有锁住账户 9')
+  it('没有作者时不写', async () => {
+    await expect(revokeCredits(tx, 'resource_publish', [])).resolves.toEqual([])
     expect(db.user.update).not.toHaveBeenCalled()
   })
 })

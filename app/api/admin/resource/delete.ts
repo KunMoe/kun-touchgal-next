@@ -5,7 +5,6 @@ import { sanitizeResourceLinksForAuditLog } from '~/app/api/patch/resource/_help
 import { kunTx } from '~/server/db/tx'
 import {
   executeResourceRemoval,
-  lockResourceOwnerAccounts,
   planResourceRemoval
 } from '~/server/content/resource/remove'
 import { truncateLogContent } from '~/app/api/admin/_log'
@@ -60,24 +59,23 @@ const buildDeleteLogContent = (
 
 export const deleteResource = async (
   input: z.infer<typeof adminDeleteResourceSchema>,
-  uid: number
+  uid: number,
+  // 后台删除收回作者的发布奖励; 删号的清除器不收回 (清除器调用的服务都不碰 user 行,
+  // 见 server/account/deleteAccount.ts)。没有默认值: 每个调用方都要表态
+  options: { refundPublishReward: boolean }
 ) => {
   const admin = await prisma.user.findUnique({ where: { id: uid } })
   if (!admin) {
     return '未找到该管理员'
   }
 
-  // 后台删除不设守卫 (隐藏、待审的资源都能删), 收回作者的发布奖励: 作者行先于资源行锁,
-  // 与前台删除同向。与批量隐藏等入口在行锁上互等时数据库会判死锁回滚其中一方, 事务整体
-  // 回滚、无副作用, 重放即可
+  // 后台删除不设守卫 (隐藏、待审的资源都能删)。与批量隐藏等入口在行锁上互等时数据库会判
+  // 死锁回滚其中一方, 事务整体回滚、无副作用, 重放即可
   return kunTx(
     'admin.resource.delete',
     async (ctx) => {
       const plan = await planResourceRemoval(ctx, input.resourceIds, {
-        refundPublishReward: await lockResourceOwnerAccounts(
-          ctx,
-          input.resourceIds
-        )
+        refundPublishReward: options.refundPublishReward
       })
       if (!plan.rows.length) {
         ctx.fail('未找到对应的资源')

@@ -7,7 +7,6 @@ import { kunTx } from '~/server/db/tx'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import {
   executeResourceRemoval,
-  lockResourceOwnerAccounts,
   planResourceRemoval
 } from '~/server/content/resource/remove'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
@@ -40,7 +39,7 @@ const declinePatchResource = async (
     // S3 对象也随出箱清掉, 不可恢复)。未通过时什么都不清理, 也不收回发布奖励
     const plan = await planResourceRemoval(ctx, [resourceId], {
       guard: { statusIn: [RESOURCE_STATUS.awaitingApproval] },
-      refundPublishReward: await lockResourceOwnerAccounts(ctx, [resourceId])
+      refundPublishReward: true
     })
     if (!plan.rows.length) {
       ctx.fail('当前资源状态无需审核')

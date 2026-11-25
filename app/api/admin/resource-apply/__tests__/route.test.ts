@@ -8,7 +8,6 @@ const {
   transactionMock,
   planResourceRemovalMock,
   executeResourceRemovalMock,
-  lockOwnersMock,
   transitionResourcesMock,
   createLogMock,
   createMessageMock,
@@ -21,7 +20,6 @@ const {
   transactionMock: vi.fn(),
   planResourceRemovalMock: vi.fn(),
   executeResourceRemovalMock: vi.fn(),
-  lockOwnersMock: vi.fn(),
   transitionResourcesMock: vi.fn(),
   createLogMock: vi.fn(),
   createMessageMock: vi.fn(),
@@ -65,7 +63,6 @@ vi.mock('~/app/api/utils/message', () => ({
 // 删除与状态迁移的锁、清理顺序、聚合重算、出箱与缓存失效由命令自己的测试覆盖;
 // 这里只看入口怎么用它们
 vi.mock('~/server/content/resource/remove', () => ({
-  lockResourceOwnerAccounts: lockOwnersMock,
   planResourceRemoval: planResourceRemovalMock,
   executeResourceRemoval: executeResourceRemovalMock
 }))
@@ -97,8 +94,6 @@ const pendingResource = {
 }
 
 const txContext = expect.objectContaining({ tx: transactionClient })
-// 作者账户锁的令牌; 真实的加锁由命令自己的测试覆盖
-const ownerAccounts = { uids: new Set([7]) }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -107,17 +102,10 @@ beforeEach(() => {
   verifyHeaderCookieMock.mockResolvedValue({ uid: 99, role: 4 })
   findResourceMock.mockResolvedValue(pendingResource)
   findAdminMock.mockResolvedValue({ id: 99, name: 'admin' })
-  lockOwnersMock.mockImplementation(async () => {
-    events.push('lock-owners')
-    return ownerAccounts
-  })
-  planResourceRemovalMock.mockImplementation(async () => {
-    events.push('plan')
-    return {
-      rows: [{ id: 3 }],
-      skipped: [],
-      refundPublishReward: ownerAccounts
-    }
+  planResourceRemovalMock.mockResolvedValue({
+    rows: [{ id: 3 }],
+    skipped: [],
+    refundPublishReward: true
   })
   executeResourceRemovalMock.mockResolvedValue({ deletedIds: [3] })
   transitionResourcesMock.mockResolvedValue([{ id: 3, from: 2 }])
@@ -138,11 +126,10 @@ describe('resource-apply decline', () => {
     const response = await declinePut(request)
 
     expect(await response.json()).toEqual({})
-    // 回归护栏: 守卫必须是「仍待初审 (2)」; 收回发布奖励, 作者账户在资源行之前锁
-    expect(lockOwnersMock).toHaveBeenCalledWith(txContext, [3])
+    // 回归护栏: 守卫必须是「仍待初审 (2)」, 且收回发布奖励
     expect(planResourceRemovalMock).toHaveBeenCalledWith(txContext, [3], {
       guard: { statusIn: [2] },
-      refundPublishReward: ownerAccounts
+      refundPublishReward: true
     })
     expect(executeResourceRemovalMock).toHaveBeenCalledWith(
       txContext,
@@ -158,7 +145,7 @@ describe('resource-apply decline', () => {
     })
     expect(createMessageMock.mock.calls[0][1]).toBe(transactionClient)
     expect(createLogMock).toHaveBeenCalledTimes(1)
-    expect(events).toEqual(['lock-owners', 'plan', 'transaction-commit'])
+    expect(events).toEqual(['transaction-commit'])
     expect(invalidateUnreadMock).toHaveBeenCalledWith(7)
   })
 

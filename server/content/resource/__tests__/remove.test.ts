@@ -64,7 +64,6 @@ vi.mock('~/server/storage/s3Outbox', async (importOriginal) => ({
 import { kunTx } from '~/server/db/tx'
 import {
   executeResourceRemoval,
-  lockResourceOwnerAccounts,
   planResourceRemoval
 } from '~/server/content/resource/remove'
 import type {
@@ -78,8 +77,6 @@ import {
 } from './removalFixture'
 import type { ResourceRowFixture } from './removalFixture'
 
-const USER_LOCK =
-  '$executeRaw: SELECT id FROM "user" WHERE id = ANY(?::int[]) ORDER BY id FOR NO KEY UPDATE'
 const RESOURCE_LOCK =
   '$queryRaw: SELECT id FROM patch_resource WHERE id = ANY(?::int[]) ORDER BY id FOR UPDATE'
 const PATCH_LOCK =
@@ -89,22 +86,14 @@ const row = resourceRow
 const seed = (rows: ResourceRowFixture[], commentedIds: number[] = []) =>
   seedResourceRemoval(rec, rows, commentedIds)
 
-// 入口收回奖励的写法: 锁内容行之前先取作者账户锁, 再交给命令
 const remove = (
   ids: number[],
-  {
-    refundPublishReward,
-    ...options
-  }: { guard?: ResourceRemovalGuard; refundPublishReward: boolean } = {
+  options: { guard?: ResourceRemovalGuard; refundPublishReward: boolean } = {
     refundPublishReward: false
   }
 ) =>
   kunTx('probe', async (ctx) => {
-    const plan = await planResourceRemoval(ctx, ids, {
-      ...options,
-      refundPublishReward:
-        refundPublishReward && (await lockResourceOwnerAccounts(ctx, ids))
-    })
+    const plan = await planResourceRemoval(ctx, ids, options)
     const result = await executeResourceRemoval(ctx, plan)
     return { plan, ...result }
   }) as Promise<{ plan: ResourceRemovalPlan; deletedIds: number[] }>
@@ -239,18 +228,20 @@ describe('资源删除的语句顺序', () => {
 })
 
 describe('收回发布奖励', () => {
-  // 锁序 user → 资源行, 与审核裁决一致; 资源行在前会与它互等
-  it('收回奖励时先读作者、锁作者行, 再锁资源行, 删除之后才扣分', async () => {
+  // 作者的 user 行是最后一层锁: 内容行 → patch 行 → user 行, 与点赞、发布资源同向。
+  // 先锁 user 行会与两者在真库上互等 (docs/tasks/t30 的实测)
+  it('不预先锁作者行: 先锁资源行与 patch 行, 删除之后才扣分', async () => {
     seed([row(1)])
 
     await remove([1], { refundPublishReward: true })
 
     const labels = shortLabels()
     expect(labels.slice(0, 3)).toEqual([
+      RESOURCE_LOCK,
       'patch_resource.findMany',
-      USER_LOCK,
-      RESOURCE_LOCK
+      'patch.lock'
     ])
+    expect(labels.some((label) => label.includes('FROM "user"'))).toBe(false)
     expect(labels.indexOf('patch_resource.deleteMany')).toBeLessThan(
       labels.indexOf('user.update')
     )
@@ -265,20 +256,17 @@ describe('收回发布奖励', () => {
 
     await remove([1, 2, 3], { refundPublishReward: true })
 
-    // 作者去重升序加锁
-    expect(rec.argsOf(USER_LOCK)).toEqual([[[7, 9]]])
     expect(rec.argsOf('user.update')).toEqual([
       { where: { id: 7 }, data: { moemoepoint: { increment: -6 } } },
       { where: { id: 9 }, data: { moemoepoint: { increment: -3 } } }
     ])
   })
 
-  it('不收回时不锁作者行、不扣分', async () => {
+  it('不收回时不扣分', async () => {
     seed([row(1)])
 
     await remove([1], { refundPublishReward: false })
 
-    expect(rec.labels()).not.toContain(USER_LOCK)
     expect(rec.labels()).not.toContain('user.update')
     expect(userSessionMock).not.toHaveBeenCalled()
   })
@@ -293,12 +281,7 @@ describe('收回发布奖励', () => {
     })
 
     expect(plan.skipped).toEqual([{ id: 1, reason: 'status', status: 1 }])
-    expect(rec.labels()).toEqual([
-      'patch_resource.findMany',
-      USER_LOCK,
-      RESOURCE_LOCK,
-      'patch_resource.findMany'
-    ])
+    expect(rec.labels()).toEqual([RESOURCE_LOCK, 'patch_resource.findMany'])
     expect(userSessionMock).not.toHaveBeenCalled()
   })
 })
@@ -423,7 +406,7 @@ describe('提交后的副作用', () => {
 
     const result = await kunTx('probe', async (ctx) => {
       const plan = await planResourceRemoval(ctx, [1], {
-        refundPublishReward: await lockResourceOwnerAccounts(ctx, [1])
+        refundPublishReward: true
       })
       await executeResourceRemoval(ctx, plan)
       return ctx.fail('后续步骤失败')

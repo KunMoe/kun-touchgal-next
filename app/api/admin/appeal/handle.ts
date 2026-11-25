@@ -19,7 +19,6 @@ import {
 import { transitionRatings } from '~/server/content/rating/transition'
 import {
   executeResourceRemoval,
-  lockResourceOwnerAccounts,
   planResourceRemoval
 } from '~/server/content/resource/remove'
 import { transitionResources } from '~/server/content/resource/transition'
@@ -228,11 +227,6 @@ const rejectAppeal = async (
     'admin.appeal.reject',
     async (ctx) => {
       const { tx } = ctx
-      // 驳回资源的申诉会删掉资源并收回作者的发布奖励: 作者行要在锁资源行之前锁
-      // (锁序 user → 资源行, 与前台删除、审核裁决同向)
-      const ownerAccounts =
-        type === 'resource' &&
-        (await lockResourceOwnerAccounts(ctx, [contentId]))
       await lockAppealedContent(tx, type, contentId)
       const claim = await tx.moderation_appeal.updateMany({
         where: { id: appeal.id, status: 'pending' },
@@ -266,7 +260,7 @@ const rejectAppeal = async (
       } else {
         const plan = await planResourceRemoval(ctx, [contentId], {
           guard: { statusIn: RESOURCE_TRANSITIONS.appealApprove.from },
-          refundPublishReward: ownerAccounts
+          refundPublishReward: true
         })
         if (plan.rows.length) {
           await executeResourceRemoval(ctx, plan)

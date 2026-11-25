@@ -93,7 +93,10 @@ export const ACCOUNT_PURGERS: Record<PurgedUserReference, AccountPurger> = {
         })
       )
       if (ids.length) {
-        await deleteResource({ resourceIds: ids }, actor.uid)
+        // 不收回发布奖励: 被删用户的 user 行在收尾时整行删除
+        await deleteResource({ resourceIds: ids }, actor.uid, {
+          refundPublishReward: false
+        })
       }
       return ids
     }

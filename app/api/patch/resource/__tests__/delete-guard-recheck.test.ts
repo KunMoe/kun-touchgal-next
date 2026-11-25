@@ -83,9 +83,6 @@ const snapshot = (status = 0) => ({ id: 1, user_id: 7, status })
 const expectNoWrites = () => {
   // 守卫没过时一条写入都没有: 没有扣分, 也就不需要靠回滚把它撤回来
   expect(shortResourceLabels(rec)).toEqual([
-    // 读作者 → 锁作者行 → 锁资源行 → 锁下重读
-    'patch_resource.findMany',
-    'lock user',
     'lock resource',
     'patch_resource.findMany'
   ])
@@ -184,11 +181,7 @@ describe('删除资源在行锁下复检守卫', () => {
     )
 
     expect(result).toBe('未找到对应的资源')
-    // 读作者时行已不在, 不锁任何账户
-    expect(shortResourceLabels(rec)).toEqual([
-      'patch_resource.findMany',
-      'lock resource'
-    ])
+    expect(shortResourceLabels(rec)).toEqual(['lock resource'])
     expect(kickS3Mock).not.toHaveBeenCalled()
   })
 
@@ -209,9 +202,9 @@ describe('删除资源在行锁下复检守卫', () => {
 })
 
 describe('删除资源收回发布奖励', () => {
-  // 锁序 user → 资源行与审核裁决一致 (承重, 不可调序): 资源行锁在前会与裁决的
-  // user 先行锁互等
-  it('先锁作者行再锁资源行, 删除之后扣 3 萌萌点并失效作者会话', async () => {
+  // 作者的 user 行是最后一层锁 (资源行 → patch 行 → user 行), 与点赞、发布资源同向;
+  // 审核裁决对资源只取 user 行的 FOR KEY SHARE, 不与扣分冲突
+  it('先锁资源行, 删除之后扣 3 萌萌点并失效作者会话, 不预先锁作者行', async () => {
     seed(snapshot(), [resourceRow(1)])
 
     const result = await deleteResource(
@@ -221,11 +214,11 @@ describe('删除资源收回发布奖励', () => {
 
     expect(result).toEqual({})
     const labels = shortResourceLabels(rec)
-    expect(labels.slice(0, 3)).toEqual([
-      'patch_resource.findMany',
-      'lock user',
-      'lock resource'
+    expect(labels.slice(0, 2)).toEqual([
+      'lock resource',
+      'patch_resource.findMany'
     ])
+    expect(labels).not.toContain('lock user')
     expect(labels.indexOf('patch_resource.deleteMany')).toBeLessThan(
       labels.indexOf('user.update')
     )

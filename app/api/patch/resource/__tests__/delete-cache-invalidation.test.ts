@@ -137,7 +137,9 @@ describe('删除资源按删除瞬间状态分派缓存失效', () => {
   it('管理员删除同样按锁下重读的删除瞬间状态判定', async () => {
     seed(2, [resourceRow(1)])
 
-    await adminDeleteResource({ resourceIds: [1] }, 9)
+    await adminDeleteResource({ resourceIds: [1] }, 9, {
+      refundPublishReward: true
+    })
 
     expect(resourceDetailMock.mock.calls).toEqual([[10]])
     expect(pendingResourceMock).not.toHaveBeenCalled()
@@ -182,7 +184,9 @@ describe('资源删除以锁下重读的 links 入队 S3 删除', () => {
       resourceRow(1, { name: 'renamed', links: [resourceLink(5, 's3')] })
     ])
 
-    await adminDeleteResource({ resourceIds: [1] }, 9)
+    await adminDeleteResource({ resourceIds: [1] }, 9, {
+      refundPublishReward: true
+    })
 
     expect(s3EnqueuedKeys(rec)).toEqual([['k-5']])
     expect(logContent()).toContain('renamed')
@@ -202,9 +206,6 @@ describe('资源删除的清理顺序', () => {
     await deleteResource({ resourceId: 1 }, kunTestActor({ uid: 7, role: 2 }))
 
     expect(shortResourceLabels(rec)).toEqual([
-      // 收回奖励的入口先读作者、锁作者行
-      'patch_resource.findMany',
-      'lock user',
       'lock resource',
       'patch_resource.findMany',
       'lock patch',

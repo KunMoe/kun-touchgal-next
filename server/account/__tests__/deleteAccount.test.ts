@@ -281,6 +281,10 @@ describe('deleteAccount', () => {
     ])
     // 后台删除服务以操作者身份写各自的审计日志
     expect(mocks.deleteResource.mock.calls[0][1]).toBe(admin.uid)
+    // 删号不收回发布奖励: 清除器调用的服务都不碰 user 行
+    expect(
+      mocks.deleteResource.mock.calls.map(([, , options]) => options)
+    ).toEqual(Array(3).fill({ refundPublishReward: false }))
     const steps = events.filter((e) =>
       /^(patch|resource|comment|rating):/.test(e)
     )

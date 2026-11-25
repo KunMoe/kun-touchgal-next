@@ -59,7 +59,6 @@ vi.mock('~/server/moderation/submit', () => ({
 }))
 
 vi.mock('~/server/content/resource/remove', () => ({
-  lockResourceOwnerAccounts: vi.fn(),
   planResourceRemoval: planRemovalMock,
   executeResourceRemoval: executeRemovalMock
 }))

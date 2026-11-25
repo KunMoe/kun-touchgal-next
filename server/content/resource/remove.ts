@@ -15,12 +15,11 @@ import { purgeContentDerivatives } from '~/server/content/derivatives'
 import { recordContentChanges } from '~/server/content/changes'
 import { applyContentGuard } from '~/server/content/guard'
 import { lockPatchRows } from '~/server/content/patchLock'
-import { lockPointAccounts, revokeCredits } from '~/server/points/account'
+import { revokeCredits } from '~/server/points/account'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import type { ResourceStatus } from '~/constants/contentStatus'
 import type { ContentGuard, SkippedContent } from '~/server/content/guard'
 import type { KunTxContext } from '~/server/db/tx'
-import type { LockedPointAccounts } from '~/server/points/account'
 
 // 资源的物理删除。两段式: plan 只加锁和读取, execute 按固定顺序清理并删除。
 // 入口夹在两段之间做自己的事 (判定结果、取审计所需的数据), 并把 skipped 映射成自己的文案
@@ -35,24 +34,7 @@ export interface ResourceRemovalPlan {
   // 锁下通过守卫的资源, 连同锁下重读的链接: 删除瞬间的真实集合
   rows: ResourceRow[]
   skipped: SkippedResource[]
-  refundPublishReward: LockedPointAccounts | false
-}
-
-// 收回发布奖励要写作者的 user 行, 锁序是 user → 资源行 (审核裁决也是这个方向), 所以入口
-// 要在锁任何内容行之前调它, 把结果交给 planResourceRemoval。作者读自事务快照, 不加锁也准:
-// 资源的 user_id 建好后不再改, 只会随资源删除消失
-export const lockResourceOwnerAccounts = async (
-  { tx }: KunTxContext,
-  ids: number[]
-): Promise<LockedPointAccounts> => {
-  const owners = await tx.patch_resource.findMany({
-    where: { id: { in: ids } },
-    select: { user_id: true }
-  })
-  return lockPointAccounts(
-    tx,
-    owners.map((owner) => owner.user_id)
-  )
+  refundPublishReward: boolean
 }
 
 export const planResourceRemoval = async (
@@ -60,9 +42,9 @@ export const planResourceRemoval = async (
   ids: number[],
   options: {
     guard?: ResourceRemovalGuard
-    // 收回发布奖励时传 lockResourceOwnerAccounts 的结果, 不收回传 false。没有默认值:
-    // 每个入口都要表态。实际扣分留到 execute, 守卫没过就不会发生
-    refundPublishReward: LockedPointAccounts | false
+    // 是否收回发布奖励。没有默认值: 每个入口都要表态。扣分在 execute 里删除之后才写,
+    // 守卫没过就不会发生; 作者的 user 行是最后一层锁 (见 revokeCredits), 这里不预先锁
+    refundPublishReward: boolean
   }
 ): Promise<ResourceRemovalPlan> => {
   // 升序锁资源行: 与编辑、审核裁决的 FOR UPDATE 互斥, 批与批之间不会在资源行上反序
@@ -112,7 +94,6 @@ export const executeResourceRemoval = async (
   if (plan.refundPublishReward) {
     const owners = await revokeCredits(
       tx,
-      plan.refundPublishReward,
       'resource_publish',
       plan.rows.map((row) => row.user_id)
     )

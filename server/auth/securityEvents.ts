@@ -109,7 +109,8 @@ export const applyKunCredentialChange = async (
   }: {
     uid: number
     event: KunSecurityEvent
-    data: Prisma.userUpdateManyMutationInput
+    // 萌萌点只由 server/points 写 (kun/inv-points-01): 写入体里带着它 (含经展开带进来的) 编译不过
+    data: Prisma.userUpdateManyMutationInput & { moemoepoint?: never }
     where?: Prisma.userWhereInput
     currentStamp?: number
   }

@@ -1487,7 +1487,7 @@ export const KUN_INVARIANTS = [
     statement:
       'user.moemoepoint 只由 server/points/account.ts 写: 模块外写入调用 (update / updateMany / upsert / create 及嵌套写) 的写入体里不得出现 moemoepoint 键, applyKunCredentialChange 的写入体也不得带它, 原生 SQL 不得在 SET 或 INSERT 列清单里写它; 发放、扣费、收回与后台调分都调 server/points 的函数, 数值取自 constants/points.ts',
     reason:
-      '扣费必须把余额守卫写进条件更新的 WHERE (CAS), 只做增量不写绝对值, 与改名 / 签到标记写在同一条语句里。这套纪律原先只在注释与记忆文件里, 新写者生来就违反它: 私聊扣费 9a266466 上线时是事务外读加裸 decrement, 后台调分 0b7afaac 是按列表快照整值覆盖。user 表写入体是变量或带展开的写法由 inv-auth-04 拦; 把写入体先放进变量再传给 applyKunCredentialChange、解构出 delegate 再调都看不到',
+      '扣费必须把余额守卫写进条件更新的 WHERE (CAS), 只做增量不写绝对值, 与改名 / 签到标记写在同一条语句里。这套纪律原先只在注释与记忆文件里, 新写者生来就违反它: 私聊扣费 9a266466 上线时是事务外读加裸 decrement, 后台调分 0b7afaac 是按列表快照整值覆盖。user 表写入体是变量或带展开的写法由 inv-auth-04 拦, 经展开带进 applyKunCredentialChange 的由它写入体的类型 (moemoepoint?: never) 拦; 看不到的: 解构出 delegate 或用计算属性取方法再调、拼接出来的 SQL 字符串、.tsx 文件',
     removeWhen: '萌萌点改由流水表记账, 余额列不再由应用层直接写',
     files: [
       'app/**/*.ts',

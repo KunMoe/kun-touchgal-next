@@ -90,6 +90,9 @@ const defaultRows = () => [
   resourceRow(3, { user_id: 7, patch_id: 20, status: 1, links: [] })
 ]
 
+// 后台路由收回发布奖励; 删号的清除器传 false
+const REFUND = { refundPublishReward: true }
+
 const logContent = () =>
   (rec.argsOf('admin_log.create')[0] as { data: { content: string } }).data
     .content
@@ -104,20 +107,17 @@ beforeEach(() => {
 describe('deleteResource 批量删除', () => {
   it('一条升序 FOR UPDATE 锁全部行, 单次 deleteMany, 派生清理整批一次', async () => {
     await expect(
-      deleteResource({ resourceIds: [3, 1, 2] }, 99)
+      deleteResource({ resourceIds: [3, 1, 2] }, 99, REFUND)
     ).resolves.toEqual({ count: 3 })
 
     expect(rec.attempts).toHaveLength(1)
-    const lock = rec.labels()[2]
+    const lock = rec.labels()[0]
     expect(lock).toBe(
       '$queryRaw: SELECT id FROM patch_resource WHERE id = ANY(?::int[]) ORDER BY id FOR UPDATE'
     )
     expect(rec.argsOf(lock)).toEqual([[[3, 1, 2]]])
-    // 后台删除收回发布奖励: 先读作者、升序锁作者行, 再锁资源行 (与前台删除同向)
-    expect(rec.argsOf(rec.labels()[1])).toEqual([[[5, 6, 7]]])
+    // 后台删除收回发布奖励, 不预先锁作者行: user 行是最后一层锁
     expect(shortResourceLabels(rec)).toEqual([
-      'patch_resource.findMany',
-      'lock user',
       'lock resource',
       // 锁下重读的集合 (而非入参) 是删除与派生清理的事实源
       'patch_resource.findMany',
@@ -169,7 +169,7 @@ describe('deleteResource 批量删除', () => {
       resourceRow(3, { patch_id: 20, links: [resourceLink(31, 's3')] })
     ])
 
-    await deleteResource({ resourceIds: [1, 2, 3] }, 99)
+    await deleteResource({ resourceIds: [1, 2, 3] }, 99, REFUND)
 
     expect(
       rec
@@ -185,7 +185,7 @@ describe('deleteResource 批量删除', () => {
   })
 
   it('提交后失效沿用单删闸门: 仅 status=0 的 patch 失效详情, section=patch 才失效列表, 2/3 失效作者 pending', async () => {
-    await deleteResource({ resourceIds: [1, 2, 3] }, 99)
+    await deleteResource({ resourceIds: [1, 2, 3] }, 99, REFUND)
 
     expect(patchContentMock.mock.calls).toEqual([['patch-10'], ['patch-20']])
     // 资源 3 (补丁 20) 删除时 status=1, 不在详情集合里
@@ -203,7 +203,9 @@ describe('deleteResource 批量删除', () => {
       resourceRow(2, { user_id: 6, status: 3 })
     ])
 
-    await expect(deleteResource({ resourceIds: [1, 2] }, 99)).resolves.toEqual({
+    await expect(
+      deleteResource({ resourceIds: [1, 2] }, 99, REFUND)
+    ).resolves.toEqual({
       count: 2
     })
 
@@ -212,18 +214,25 @@ describe('deleteResource 批量删除', () => {
     expect(pendingResourceMock.mock.calls).toEqual([[6]])
   })
 
+  it('删号的清除器不收回: 不扣分、不失效作者会话', async () => {
+    await expect(
+      deleteResource({ resourceIds: [1, 2, 3] }, 99, {
+        refundPublishReward: false
+      })
+    ).resolves.toEqual({ count: 3 })
+
+    expect(rec.labels()).not.toContain('user.update')
+    expect(userSessionMock).not.toHaveBeenCalled()
+  })
+
   it('锁到 0 行返回业务错误且无任何写入', async () => {
     seedResourceRemoval(rec, [])
 
-    await expect(deleteResource({ resourceIds: [1, 2, 3] }, 99)).resolves.toBe(
-      '未找到对应的资源'
-    )
+    await expect(
+      deleteResource({ resourceIds: [1, 2, 3] }, 99, REFUND)
+    ).resolves.toBe('未找到对应的资源')
 
-    // 读作者时一行都没有: 不锁账户、不扣分
-    expect(shortResourceLabels(rec)).toEqual([
-      'patch_resource.findMany',
-      'lock resource'
-    ])
+    expect(shortResourceLabels(rec)).toEqual(['lock resource'])
     expect(patchContentMock).not.toHaveBeenCalled()
     expect(kickSearchMock).not.toHaveBeenCalled()
     expect(kickS3Mock).not.toHaveBeenCalled()
@@ -234,7 +243,9 @@ describe('deleteResource 批量删除', () => {
       resourceRow(1, { links: [resourceLink(11, 's3')] })
     ])
 
-    await expect(deleteResource({ resourceIds: [1] }, 99)).resolves.toEqual({
+    await expect(
+      deleteResource({ resourceIds: [1] }, 99, REFUND)
+    ).resolves.toEqual({
       count: 1
     })
 
@@ -255,7 +266,7 @@ describe('deleteResource 批量删除', () => {
       ids.map((id) => resourceRow(id, { links: [resourceLink(id * 10, 's3')] }))
     )
 
-    await deleteResource({ resourceIds: ids }, 99)
+    await deleteResource({ resourceIds: ids }, 99, REFUND)
 
     const content = logContent()
     expect(content).toContain('管理员 admin 批量删除了 12 条资源')
@@ -267,7 +278,7 @@ describe('deleteResource 批量删除', () => {
   })
 
   it('事务超时上调至 60s, 整批共用一个事务', async () => {
-    await deleteResource({ resourceIds: [1, 2, 3] }, 99)
+    await deleteResource({ resourceIds: [1, 2, 3] }, 99, REFUND)
 
     expect(rec.attempts).toHaveLength(1)
     expect(rec.attempts[0].options).toEqual({ timeout: 60000 })
@@ -284,7 +295,7 @@ describe('deleteResource 批量删除', () => {
     })
 
     await expect(
-      deleteResource({ resourceIds: [1, 2, 3] }, 99)
+      deleteResource({ resourceIds: [1, 2, 3] }, 99, REFUND)
     ).resolves.toEqual({ count: 3 })
 
     expect(rec.attempts.map((attempt) => attempt.committed)).toEqual([
@@ -302,7 +313,7 @@ describe('deleteResource 批量删除', () => {
     })
 
     await expect(
-      deleteResource({ resourceIds: [1, 2, 3] }, 99)
+      deleteResource({ resourceIds: [1, 2, 3] }, 99, REFUND)
     ).rejects.toThrow('boom')
 
     expect(rec.attempts).toHaveLength(1)
@@ -315,7 +326,7 @@ describe('deleteResource 批量删除', () => {
     })
 
     await expect(
-      deleteResource({ resourceIds: [1, 2, 3] }, 99)
+      deleteResource({ resourceIds: [1, 2, 3] }, 99, REFUND)
     ).rejects.toThrow('deadlock detected')
 
     expect(rec.attempts).toHaveLength(3)
@@ -325,7 +336,7 @@ describe('deleteResource 批量删除', () => {
   it('管理员不存在', async () => {
     rec.on('user.findUnique', null)
 
-    expect(await deleteResource({ resourceIds: [1] }, 99)).toBe(
+    expect(await deleteResource({ resourceIds: [1] }, 99, REFUND)).toBe(
       '未找到该管理员'
     )
     expect(rec.attempts).toHaveLength(0)

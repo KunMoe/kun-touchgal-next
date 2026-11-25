@@ -31,5 +31,6 @@ export const DELETE = kunRoute.delete({
   auth: 'user',
   capability: 'admin.access',
   input: adminDeleteResourceSchema,
-  handler: ({ input, actor }) => deleteResource(input, actor.uid)
+  handler: ({ input, actor }) =>
+    deleteResource(input, actor.uid, { refundPublishReward: true })
 })

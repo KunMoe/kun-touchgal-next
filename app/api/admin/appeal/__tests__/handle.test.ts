@@ -18,7 +18,6 @@ const {
   executeRatingRemovalMock,
   planResourceRemovalMock,
   executeResourceRemovalMock,
-  lockOwnersMock,
   transitionCommentsMock,
   transitionRatingsMock,
   transitionResourcesMock,
@@ -41,7 +40,6 @@ const {
   executeRatingRemovalMock: vi.fn(),
   planResourceRemovalMock: vi.fn(),
   executeResourceRemovalMock: vi.fn(),
-  lockOwnersMock: vi.fn(),
   transitionCommentsMock: vi.fn(),
   transitionRatingsMock: vi.fn(),
   transitionResourcesMock: vi.fn(),
@@ -49,8 +47,6 @@ const {
 }))
 
 const events: string[] = []
-// 作者账户锁的令牌; 真实的加锁由命令自己的测试覆盖
-const ownerAccounts = { uids: new Set([7]) }
 const transactionClient = {
   $executeRaw: executeRawMock,
   moderation_appeal: { updateMany: claimAppealMock },
@@ -91,7 +87,6 @@ vi.mock('~/server/content/rating/remove', () => ({
 }))
 
 vi.mock('~/server/content/resource/remove', () => ({
-  lockResourceOwnerAccounts: lockOwnersMock,
   planResourceRemoval: planResourceRemovalMock,
   executeResourceRemoval: executeResourceRemovalMock
 }))
@@ -157,7 +152,6 @@ beforeEach(() => {
     refundPublishReward: false
   })
   executeResourceRemovalMock.mockResolvedValue({ deletedIds: [5] })
-  lockOwnersMock.mockResolvedValue(ownerAccounts)
   transitionCommentsMock.mockResolvedValue([{ id: 5, from: 2 }])
   transitionRatingsMock.mockResolvedValue([{ id: 5, from: 2 }])
   transitionResourcesMock.mockResolvedValue([{ id: 5, from: 1 }])
@@ -196,8 +190,7 @@ describe('handleAppeal 预检', () => {
 })
 
 // 删除命令的顺序是「内容行 → 待处理的申诉」。申诉处理若先认领申诉行再去锁内容行,
-// 与并发的删除就各拿一把、互等对方那把。驳回资源的申诉还要收回作者的发布奖励, 作者行
-// 排在内容行之前 (user → 资源行, 与前台删除同向)
+// 与并发的删除就各拿一把、互等对方那把
 describe('handleAppeal 锁序', () => {
   it.each([
     ['rating', 'patch_rating', { text: 'restored' }],
@@ -215,18 +208,8 @@ describe('handleAppeal 锁序', () => {
       for (const approve of [true, false]) {
         executeRawMock.mockClear()
         claimAppealMock.mockClear()
-        lockOwnersMock.mockClear()
 
         expect(await handleAppeal({ appealId: 1, approve }, 99)).toEqual({})
-
-        if (type === 'resource' && !approve) {
-          expect(lockOwnersMock).toHaveBeenCalledWith(txContext, [5])
-          expect(lockOwnersMock.mock.invocationCallOrder[0]).toBeLessThan(
-            executeRawMock.mock.invocationCallOrder[0]
-          )
-        } else {
-          expect(lockOwnersMock).not.toHaveBeenCalled()
-        }
 
         expect(executeRawMock).toHaveBeenCalledTimes(1)
         const [template, contentId] = executeRawMock.mock.calls[0]
@@ -663,7 +646,7 @@ describe('handleAppeal reject', () => {
       // 守卫: 行锁下仍是隐藏态 (resource 为 1) 才删; 收回发布奖励
       expect(planResourceRemovalMock).toHaveBeenCalledWith(txContext, [5], {
         guard: { statusIn: [1] },
-        refundPublishReward: ownerAccounts
+        refundPublishReward: true
       })
       expect(executeResourceRemovalMock).toHaveBeenCalledWith(
         txContext,
