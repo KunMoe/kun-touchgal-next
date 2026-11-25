@@ -75,6 +75,13 @@ const leaseStaleBefore = (now: Date) =>
 // 推进时钟, 最后看每一行停在什么状态
 
 type Row = moderation_taskModel
+// 取候选时排除在途任务的 id 与序列化键 (busyExclusions)
+type Exclusion = {
+  id?: { in: number[] }
+  content_type?: string | { in: string[] }
+  patch_id?: null | { in: number[] }
+  user_id?: { in: number[] }
+}
 type Where = {
   id?: number
   status?: string
@@ -82,14 +89,32 @@ type Where = {
   OR?: [{ picked_at: null }, { picked_at: { lt: Date } }]
   content_type?: string | { not: string }
   failure_kind?: string
+  NOT?: Exclusion[]
 }
 type UpdateArgs = { where: Where; data: Record<string, unknown> }
 
 let rows: Row[] = []
 let nextTaskId = 1
 
+const excludedBy = (row: Row, exclusion: Exclusion) =>
+  (exclusion.id === undefined || exclusion.id.in.includes(row.id)) &&
+  (exclusion.content_type === undefined ||
+    (typeof exclusion.content_type === 'string'
+      ? row.content_type === exclusion.content_type
+      : exclusion.content_type.in.includes(row.content_type))) &&
+  (exclusion.patch_id === undefined ||
+    (exclusion.patch_id === null
+      ? row.patch_id === null
+      : row.patch_id !== null &&
+        exclusion.patch_id.in.includes(row.patch_id))) &&
+  (exclusion.user_id === undefined ||
+    exclusion.user_id.in.includes(row.user_id))
+
 const matches = (row: Row, where: Where) => {
   if (where.id !== undefined && row.id !== where.id) {
+    return false
+  }
+  if (where.NOT?.some((exclusion) => excludedBy(row, exclusion))) {
     return false
   }
   if (where.status !== undefined && row.status !== where.status) {
@@ -1080,29 +1105,31 @@ describe('探测名额', () => {
     await probeAgainAt(worker, 45_000)
   })
 
-  // 另一条车道排在前面的任务占满了槽位, 探测的那一条这一轮开始不了
-  it('探测的那条这一轮开始不了 (槽位被更早的任务占满): 归还, 下一轮照样去探测', async () => {
+  // 池里通常一次只空出一个槽位: 探测按就绪时刻排的话, 另一条车道有积压时它会一轮轮被归还,
+  // 整条车道停在 half_open
+  it('探测的那条优先占用空出的槽位: 另一条车道就绪更早的积压挡不住它', async () => {
     const worker = await openThenWait()
-    const avatars = Array.from({ length: WINDOW }, (_, index) =>
+    Array.from({ length: WINDOW }, (_, index) =>
       addAvatarTask({ user_id: 200 + index, next_attempt: at(1_000) })
     )
-    const cut = addTask({ next_attempt: at(29_000) })
-    const releaseProbe = vi.spyOn(worker.breakers.text, 'releaseProbe')
+    const probe = addTask({ next_attempt: at(29_000) })
 
     await runAt(worker, 30_000)
 
-    // 第一轮取到了它 (探测只取一条), 但五个槽位给了就绪更早的头像: 名额当场归还
     expect(fetchedLanes()[0]).toEqual({ lane: 'text', take: 1 })
-    expect(releaseProbe).toHaveBeenCalled()
-    // 之后的某一轮槽位够了, 它作为探测开始, 车道闭合; 它在全部头像之后才被认领
+    // 30 秒这一轮池里的认领顺序 (openThenWait 在 0 秒认领过 opener)
     const claimOrder = updateCalls()
-      .filter(({ data }) => data.picked_at instanceof Date)
+      .filter(
+        ({ data }) =>
+          data.picked_at instanceof Date && data.picked_at >= at(30_000)
+      )
       .map(({ where }) => where.id)
-    expect(claimOrder.indexOf(cut.id)).toBeGreaterThan(
-      Math.max(...avatars.map((task) => claimOrder.indexOf(task.id)))
-    )
-    expect(rowOf(cut).status).toBe('approved')
+    expect(claimOrder[0]).toBe(probe.id)
+    expect(rowOf(probe).status).toBe('approved')
     expect(worker.breakers.text.snapshot().state).toBe('closed')
+    expect(rows.every((row) => row.status === 'approved' || row.id === 1)).toBe(
+      true
+    )
   })
 
   // 模型答复了, 文本车道的依赖就是好的; 之后落库失败是这条任务自己的事
@@ -1576,7 +1603,7 @@ describe('连续工作池', () => {
   })
 
   // 库此刻写不进去 (只读、磁盘满) 时, 每个空出的槽位都会立即再开一轮, 在库上空转
-  it('一条任务的写库失败: 池不再取新任务, 在途的做完后返回', async () => {
+  it('一条任务的写库失败: 暂停期间不取新任务, 在途的做完、没有在途的就返回', async () => {
     const call = gateModelCalls()
     const tasks = Array.from({ length: MODERATION_CONCURRENCY + 1 }, () =>
       addTask()
@@ -1751,5 +1778,155 @@ describe('连续工作池', () => {
     })
     // 名额已归还: 下一次问门立即又能探测
     expect(worker.breakers.text.admit()).toBe('probe')
+  })
+})
+
+describe('连续工作池: 复核补充', () => {
+  const fakeAllTimers = () => {
+    vi.useFakeTimers({
+      toFake: [
+        'Date',
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval'
+      ]
+    })
+    vi.setSystemTime(NOW)
+  }
+
+  // 只暂停一个查看周期: 一次瞬时的库错误不该让池停到最慢的在途调用结束
+  it('写库失败后暂停 15 秒, 慢调用仍在途时到点的任务照常开始', async () => {
+    fakeAllTimers()
+    const slow = addTask()
+    const broken = addTask()
+    const call = gateModelCalls()
+    const applyUpdate = updateTaskMock.getMockImplementation()!
+    updateTaskMock.mockImplementation(async (args: UpdateArgs) => {
+      if (args.where.id === broken.id && args.data.picked_at === null) {
+        throw new Error('db down')
+      }
+      return applyUpdate(args)
+    })
+
+    const pool = runPool(newWorker())
+    await settle()
+    call(broken).fail(new Error('render crashed'))
+    await settle()
+    const waiting = addTask({ next_attempt: new Date() })
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(claimsOf(waiting)).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await settle()
+    expect(claimsOf(waiting)).toHaveLength(1)
+    call(waiting).succeed()
+    call(slow).succeed()
+    await pool
+    expect(rowOf(waiting).status).toBe('approved')
+  })
+
+  it('取候选时有在途任务、取的期间又有任务结束: 空出的槽位不等下一次查看就补上', async () => {
+    fakeAllTimers()
+    const first = Array.from({ length: MODERATION_CONCURRENCY }, () =>
+      addTask()
+    )
+    const call = gateModelCalls()
+    const pool = runPool(newWorker())
+    await settle()
+    const later = Array.from({ length: 3 }, () => addTask())
+
+    // 下一次取候选停在半路, 其间再有两条结束
+    const fetchTasks = findTasksMock.getMockImplementation()!
+    const { promise: fetchGate, resolve: openFetch } =
+      Promise.withResolvers<void>()
+    findTasksMock.mockImplementationOnce(async (args) => {
+      await fetchGate
+      return fetchTasks(args)
+    })
+    const fetchesBefore = fetchCalls().length
+    call(first[0]).succeed()
+    await settle()
+    call(first[1]).succeed()
+    call(first[2]).succeed()
+    await settle()
+    openFetch()
+    await settle()
+
+    // 同一轮里按取完之后的空槽数一次补满, 不再多取一轮 (两条车道各一次查询)
+    expect(later.map((task) => claimsOf(task).length)).toEqual([1, 1, 1])
+    expect(fetchCalls().length - fetchesBefore).toBe(2)
+    for (const task of [...first.slice(3), ...later]) {
+      call(task).succeed()
+    }
+    await pool
+  })
+
+  it('取候选的途中被要求停下: 这一轮取到的不再开始', async () => {
+    const stop = new AbortController()
+    const task = addTask()
+    const fetchTasks = findTasksMock.getMockImplementation()!
+    findTasksMock.mockImplementation(async (args) => {
+      stop.abort()
+      return fetchTasks(args)
+    })
+
+    await runPool(newWorker(), {
+      signal: stop.signal,
+      cancelSignal: new AbortController().signal
+    })
+
+    expect(claimsOf(task)).toEqual([])
+    expect(moderateTextMock).not.toHaveBeenCalled()
+  })
+
+  // 现在认领与取候选的谓词相同, 没认领到的行下一轮取不到; 这里假设它们哪天不一致
+  it('认领一直抢不到、行又一直取得到: 池结束这一轮, 不在库上空转', async () => {
+    addTask()
+    updateTaskMock.mockResolvedValue({ count: 0 })
+
+    await runPool(newWorker())
+
+    expect(fetchCalls()).toHaveLength(2)
+    expect(updateTaskMock).toHaveBeenCalledTimes(1)
+    expect(moderateTextMock).not.toHaveBeenCalled()
+  })
+
+  // 新作发售时同一 patch 积压一串评价: 同一 patch 只能一条在途, 它们不该把别的内容挡在窗口外
+  it('一个热点占满候选窗口: 它只占一个槽位, 后面的内容在同一轮里接着开始', async () => {
+    const plain = (id: number) => ({
+      v: 2,
+      segments: [{ label: '评价', kind: 'plain', value: textOf(id) }],
+      name: 'n'
+    })
+    const hot = Array.from({ length: WINDOW + 2 }, (_, index) => {
+      const task = addTask({
+        content_type: 'rating',
+        patch_id: 3,
+        next_attempt: at(-60_000 + index)
+      })
+      task.payload = plain(task.id)
+      return task
+    })
+    const comment = addTask()
+    const call = gateModelCalls()
+
+    const pool = runPool(newWorker())
+    await settle()
+
+    expect(modelCalledFor()).toEqual([hot[0].id, comment.id])
+    // 第二轮的查询排除了在途的 patch
+    expect(fetchCalls()[2].where).toMatchObject({
+      NOT: expect.arrayContaining([
+        { content_type: { in: ['resource', 'rating'] }, patch_id: { in: [3] } }
+      ])
+    })
+    call(comment).succeed()
+    for (const task of hot) {
+      await vi.waitFor(() => expect(modelCalledFor()).toContain(task.id))
+      call(task).succeed()
+    }
+    await pool
+    expect(rows.every((row) => row.status === 'approved')).toBe(true)
   })
 })

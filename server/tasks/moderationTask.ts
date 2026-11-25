@@ -369,19 +369,20 @@ const releaseClaim = (taskId: number) =>
   })
 
 // 处理单条任务: 成功即落裁决, 失败按 accounting.ts 记账. 各任务的 apply 是独立事务,
-// 缓存与黑名单为共享只读, 因此可安全并发。只有写库失败 (认领、记账、转人工) 才会抛出
+// 缓存与黑名单为共享只读, 因此可安全并发。只有写库失败 (认领、记账、转人工) 才会抛出。
+// 返回这一行是否由它认领: 没认领到 (被车道挡住、被别人抢先) 不算工作池的进展
 const processTask = async (
   worker: ModerationWorker,
   task: moderation_taskModel,
   context: TaskContext
-) => {
+): Promise<boolean> => {
   const breaker = worker.breakers[laneOf(task)]
 
   // 车道门: 正在处理的其它任务可能刚把车道打开, 所以取任务时问过一次, 认领之前再问
   // 一次。不放行的任务留在 pending、不认领, 车道恢复后照常被取到
   const admission = context.probe ? 'probe' : breaker.admit()
   if (admission === 'blocked') {
-    return
+    return false
   }
   let holdsProbe = admission === 'probe'
 
@@ -406,7 +407,7 @@ const processTask = async (
       }
     })
     if (claim.count === 0) {
-      return
+      return false
     }
 
     // 回收已耗尽重试预算: 该任务每次处理都让 worker 崩溃, 转人工而非再次重跑
@@ -415,7 +416,7 @@ const processTask = async (
         kind: 'crash_loop',
         reason: '多次处理未完成, 已转人工复核'
       })
-      return
+      return true
     }
 
     // 依赖都答复了: 车道闭合。探测的结果由此了结; 之后这条任务再失败 (落库出错)
@@ -445,7 +446,7 @@ const processTask = async (
       // 按我们自己的信号判, 不看错误的样子: 中止之后抛出的是什么都不算这条任务的
       if (context.cancelSignal.aborted) {
         await releaseClaim(task.id)
-        return
+        return true
       }
 
       // 这一类模型没配 (例如刻意不配视觉模型): 不是故障, 不进熔断器, 直接转人工
@@ -454,7 +455,7 @@ const processTask = async (
           kind: 'misconfigured',
           reason: error.message
         })
-        return
+        return true
       }
 
       const failure = describeFailure(error)
@@ -471,6 +472,7 @@ const processTask = async (
       )
       console.error(`Moderation task ${task.id} attempt failed:`, error)
     }
+    return true
   } finally {
     // 拿了探测名额却没有调到依赖 (没抢到认领、命中黑名单或缓存、转人工、被中止): 归还,
     // 否则车道会停在 half_open 直到名额的占用期满
@@ -524,16 +526,65 @@ const getBlacklistEntries = async (): Promise<ModerationBlacklistEntry[]> => {
   return entries
 }
 
-// 每条车道一次取多少条候选: 槽位数的两倍, 跳过同键在途的之后通常还够填满空出的槽位
+// 每条车道一次取多少条候选: 槽位数的两倍, 同一轮里同键的只能开始一条, 余量用来填满空槽
 const CANDIDATE_WINDOW = MODERATION_CONCURRENCY * 2
 
-// 按车道取候选: 一条车道被挡住时另一条照常取, 不被排在前面的对方任务占满。content_type 只是
-// 过滤条件, 仍走 [status, next_attempt] 索引。返回按就绪时刻排好的候选, 已替 probe 车道排最前
-// 的那一条登记探测名额; report 为真时先上报一次车道状态 (池的第一轮)
+// 在途任务的 id 与序列化键 (serializationKey) 在查询里的写法: 取候选时排除, 一个积压很多的
+// 热点 (新作发售时同一 patch 的一串评价) 只占一条在途, 不占满候选窗口、把别的内容挡在外面。
+// 在途的行本来就因认领 (picked_at) 取不到, 排除 id 只为认领还没落库的那一刻
+const busyExclusions = (
+  tasks: moderation_taskModel[]
+): Prisma.moderation_taskWhereInput[] => {
+  const patchIds = new Set<number>()
+  const unscopedTypes = new Set<string>()
+  const userIds = new Set<number>()
+  for (const task of tasks) {
+    switch (task.content_type) {
+      case 'resource':
+      case 'rating':
+        if (task.patch_id === null) {
+          unscopedTypes.add(task.content_type)
+        } else {
+          patchIds.add(task.patch_id)
+        }
+        break
+      case 'avatar':
+      case 'bio':
+        userIds.add(task.user_id)
+    }
+  }
+  return [
+    ...(tasks.length ? [{ id: { in: tasks.map((task) => task.id) } }] : []),
+    ...(patchIds.size
+      ? [
+          {
+            content_type: { in: ['resource', 'rating'] },
+            patch_id: { in: [...patchIds] }
+          }
+        ]
+      : []),
+    ...[...unscopedTypes].map((contentType) => ({
+      content_type: contentType,
+      patch_id: null
+    })),
+    ...(userIds.size
+      ? [
+          {
+            content_type: { in: ['avatar', 'bio'] },
+            user_id: { in: [...userIds] }
+          }
+        ]
+      : [])
+  ]
+}
+
+// 按车道取候选: 一条车道被挡住时另一条照常取, 不被排在前面的对方任务占满。content_type 与
+// 在途键的排除只是过滤条件, 仍走 [status, next_attempt] 索引。返回按就绪时刻排好的候选, 已替
+// probe 车道排最前的那一条登记探测名额; report 为真时先上报一次车道状态 (池的第一轮)
 const fetchCandidates = async (
   worker: ModerationWorker,
   leaseStaleBefore: Date,
-  { report }: { report: boolean }
+  { report, busy }: { report: boolean; busy: moderation_taskModel[] }
 ) => {
   const admissions = {
     text: worker.breakers.text.admit(),
@@ -555,6 +606,7 @@ const fetchCandidates = async (
     return admissions[lane] === 'probe' ? 1 : 0
   }
   const now = new Date()
+  const exclusions = busyExclusions(busy)
   const fetchLane = async (lane: ModerationLane) => {
     const take = takeOf(lane)
     if (take === 0) {
@@ -562,7 +614,8 @@ const fetchCandidates = async (
     }
     const where: Prisma.moderation_taskWhereInput = {
       ...claimablePredicate(now, leaseStaleBefore),
-      content_type: lane === 'avatar' ? 'avatar' : { not: 'avatar' }
+      content_type: lane === 'avatar' ? 'avatar' : { not: 'avatar' },
+      ...(exclusions.length ? { NOT: exclusions } : {})
     }
     if (admissions[lane] === 'probe') {
       // 探测要回答的是「依赖现在好了吗」, 所以挑最不可能自己有毛病的那一条: 还没失败过
@@ -628,38 +681,8 @@ const fetchCandidates = async (
 const HEALTH_HEARTBEAT_MS = 30 * 1000
 
 // 没有可开始的任务、又有任务在途时, 最长隔这么久再取一次 (与 cron 一拍同长): 新到的任务
-// 不必等在途的慢调用结束
+// 不必等在途的慢调用结束。写库失败或取候选出错之后也暂停这么久
 const POOL_POLL_MS = 15 * 1000
-
-interface InFlightTask {
-  key: string
-  done: Promise<void>
-}
-
-// 等到一条在途任务结束、到了下一次查看的时刻、或 signal 中止, 先到者为准
-const waitForSlot = async (
-  inFlight: Map<number, InFlightTask>,
-  signal: AbortSignal
-) => {
-  if (signal.aborted) {
-    return
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let wake = () => {}
-  try {
-    await Promise.race([
-      ...[...inFlight.values()].map(({ done }) => done),
-      new Promise<void>((resolve) => {
-        wake = () => resolve()
-        timer = setTimeout(wake, POOL_POLL_MS)
-        signal.addEventListener('abort', wake, { once: true })
-      })
-    ])
-  } finally {
-    clearTimeout(timer)
-    signal.removeEventListener('abort', wake)
-  }
-}
 
 export interface ModerationPoolContext {
   // 租约丢失或作业运行时开始关停时中止: 不再取新的任务, 在途的做完
@@ -668,104 +691,209 @@ export interface ModerationPoolContext {
   cancelSignal: AbortSignal
 }
 
-// 连续工作池: 槽位 (MODERATION_CONCURRENCY) 空出来就取下一条, 不等同一轮的其余任务 —— 一次
-// 慢的模型调用只占一个槽位, 不拖住整条队列。没有可开始的任务、也没有在途任务时返回, 作业层的
-// 下一拍再来。同一个序列化键至多一条在途。
-// 任何一条任务的写库失败 (认领、记账、转人工) 都让池停止取新任务、等在途的结束后返回: 库此刻
-// 写不进去时, 每个立即空出的槽位都会马上再开一轮, 在库上空转; 停下来就回到每拍至多一轮。
+// 连续工作池: 槽位 (MODERATION_CONCURRENCY) 空出来就取下一轮候选, 不等其余在途的任务 —— 一次
+// 慢的模型调用只占一个槽位, 不拖住整条队列。同一个序列化键至多一条在途。没有可开始、也没有
+// 在途的任务时返回, 作业层的下一拍再来。
+// 只有「认领到并做完」的任务算进展, 唤醒池去取下一轮; 一轮开始的任务若都没认领到 (被车道挡住、
+// 被别人抢先), 下一轮至少隔 POOL_POLL_MS。现在认领与取候选用的是同一个谓词, 没认领到的行
+// 下一轮本就取不到; 有了这条, 两者哪天不一致, 池也不会按库的往返速度空转。
+// 写库失败 (认领、记账、转人工) 或取候选出错时暂停 POOL_POLL_MS 不取新任务, 在途的照常: 库此刻
+// 写不进去 (只读、磁盘满) 时每 15 秒至多试一轮, 而不是每个空出的槽位立刻再开一轮; 瞬时的库错误
+// 也只停这么久, 不必等最慢的在途调用。暂停时没有在途的就返回 (取候选出错则抛给作业层)。
 // 导出只为测试: 生产里只由下面的作业在租约内调用
 export const runModerationPool = async (
   worker: ModerationWorker,
   { signal, cancelSignal }: ModerationPoolContext
 ) => {
-  const inFlight = new Map<number, InFlightTask>()
-  let crashed = false
+  const inFlight = new Map<
+    number,
+    { task: moderation_taskModel; done: Promise<void> }
+  >()
   let rounds = 0
   let startedAny = false
+  let progress = 0
+  let wake: (() => void) | null = null
+  let pausedUntil = 0
+  const stopped = () => signal.aborted || cancelSignal.aborted
+
+  // 一轮: 取候选、挑出能开始的、开始它们。返回开始了几条, 以及有没有候选因同键已被这一轮
+  // 挑走而开始不了 (crowded: 窗口被一个热点占着, 后面的内容这一轮看不到)
+  const startRound = async () => {
+    // 早于此刻的租约视为过期 (worker 崩溃), 连同未认领的行一起纳入候选; 认领时按行
+    // 二次校验租约, 避免与仍在处理该行的其它 worker 撞车
+    const leaseStaleBefore = new Date(
+      Date.now() - MODERATION_LEASE_SECONDS * 1000
+    )
+    const { tasks, probeTaskIds } = await fetchCandidates(
+      worker,
+      leaseStaleBefore,
+      {
+        report: rounds++ === 0,
+        busy: [...inFlight.values()].map(({ task }) => task)
+      }
+    )
+    const releaseProbes = (candidates: moderation_taskModel[]) => {
+      for (const task of candidates) {
+        if (probeTaskIds.delete(task.id)) {
+          worker.breakers[laneOf(task)].releaseProbe()
+        }
+      }
+    }
+
+    // 空槽数在取候选之后算: 取的期间可能又有任务结束。探测的那一条先占槽位 (它一条就能放开
+    // 整条车道), 其余按就绪时刻; 同一轮里同键的只开始一条
+    const free = MODERATION_CONCURRENCY - inFlight.size
+    const busyKeys = new Set(
+      [...inFlight.values()].map(({ task }) => serializationKey(task))
+    )
+    const picked: moderation_taskModel[] = []
+    let crowded = false
+    for (const task of [
+      ...tasks.filter((task) => probeTaskIds.has(task.id)),
+      ...tasks.filter((task) => !probeTaskIds.has(task.id))
+    ]) {
+      const key = serializationKey(task)
+      if (picked.length >= free || inFlight.has(task.id)) {
+        continue
+      }
+      if (busyKeys.has(key)) {
+        crowded = true
+        continue
+      }
+      busyKeys.add(key)
+      picked.push(task)
+    }
+    // 探测的那条这一轮开始不了: 归还, 下一轮再探
+    releaseProbes(tasks.filter((task) => !picked.includes(task)))
+    if (!picked.length) {
+      return { started: 0, crowded }
+    }
+
+    let shared: Omit<TaskContext, 'probe'>
+    try {
+      // blacklist 仅文本任务需要: 纯头像的一轮跳过查询, 其余走进程内缓存
+      const needsBlacklist = picked.some(
+        (task) => task.content_type !== 'avatar'
+      )
+      shared = {
+        policy: loadModerationPolicy(),
+        blacklistEntries: needsBlacklist ? await getBlacklistEntries() : [],
+        leaseStaleBefore,
+        cancelSignal
+      }
+    } catch (error) {
+      releaseProbes(picked)
+      throw error
+    }
+    // 取候选期间被要求停下: 这一轮的不再开始
+    if (stopped()) {
+      releaseProbes(picked)
+      return { started: 0, crowded: false }
+    }
+
+    startedAny = true
+    for (const task of picked) {
+      const done = processTask(worker, task, {
+        ...shared,
+        probe: probeTaskIds.has(task.id)
+      })
+        .catch((error) => {
+          pausedUntil = Date.now() + POOL_POLL_MS
+          console.error('Moderation worker crashed:', error)
+          return false
+        })
+        .then((claimed) => {
+          inFlight.delete(task.id)
+          if (claimed) {
+            progress++
+          }
+          // 在途的全部结束也唤醒: 池据此决定接着取还是返回
+          if (claimed || inFlight.size === 0) {
+            wake?.()
+          }
+        })
+      inFlight.set(task.id, { task, done })
+    }
+    return { started: picked.length, crowded }
+  }
+
+  // 等到有进展、在途的全部结束、到了下一次查看的时刻 (暂停中则到暂停结束)、或被要求停下,
+  // 先到者为准; seen 之后已经有进展、或已经没有在途的就不等
+  const waitForProgress = async (seen: number) => {
+    if (progress !== seen || inFlight.size === 0 || stopped()) {
+      return
+    }
+    const delay =
+      pausedUntil > Date.now() ? pausedUntil - Date.now() : POOL_POLL_MS
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let resolveWait = () => {}
+    try {
+      await new Promise<void>((resolve) => {
+        resolveWait = () => resolve()
+        wake = resolveWait
+        timer = setTimeout(resolveWait, delay)
+        signal.addEventListener('abort', resolveWait, { once: true })
+        cancelSignal.addEventListener('abort', resolveWait, { once: true })
+      })
+    } finally {
+      wake = null
+      clearTimeout(timer)
+      signal.removeEventListener('abort', resolveWait)
+      cancelSignal.removeEventListener('abort', resolveWait)
+    }
+  }
+
+  // 池运行期间的心跳: 池可以连续运行很久 (一次慢的模型调用就是数分钟), 期间车道状态的键
+  // 不能过期
   const heartbeat = setInterval(
     () => void reportHealth(worker),
     HEALTH_HEARTBEAT_MS
   )
   try {
+    // 两次等待之间, 因窗口被热点占着而立即追加的轮数
+    let crowdedRounds = 0
     // 宽限期满之前 signal 总是先中止; 也看 cancelSignal, 免得刚清掉认领的任务又被取回来
-    while (!signal.aborted && !cancelSignal.aborted && !crashed) {
-      const free = MODERATION_CONCURRENCY - inFlight.size
-      if (free > 0) {
-        // 早于此刻的租约视为过期 (worker 崩溃), 连同未认领的行一起纳入候选; 认领时按行
-        // 二次校验租约, 避免与仍在处理该行的其它 worker 撞车
-        const leaseStaleBefore = new Date(
-          Date.now() - MODERATION_LEASE_SECONDS * 1000
-        )
-        const { tasks, probeTaskIds } = await fetchCandidates(
-          worker,
-          leaseStaleBefore,
-          { report: rounds++ === 0 }
-        )
-
-        // 就绪早的先; 跳过在途的 (认领还没落库的那一刻仍取得到) 与同键在途的
-        const busyKeys = new Set([...inFlight.values()].map(({ key }) => key))
-        const picked: moderation_taskModel[] = []
-        for (const task of tasks) {
-          const key = serializationKey(task)
-          if (
-            picked.length < free &&
-            !inFlight.has(task.id) &&
-            !busyKeys.has(key)
-          ) {
-            busyKeys.add(key)
-            picked.push(task)
-          } else if (probeTaskIds.delete(task.id)) {
-            // 探测的那条这一轮开始不了 (槽位已满、同键在途): 归还, 下一轮再探
-            worker.breakers[laneOf(task)].releaseProbe()
-          }
-        }
-
-        if (picked.length) {
-          let shared: Omit<TaskContext, 'probe'>
-          try {
-            // blacklist 仅文本任务需要: 纯头像的一轮跳过查询, 其余走进程内缓存
-            const needsBlacklist = picked.some(
-              (task) => task.content_type !== 'avatar'
-            )
-            shared = {
-              policy: loadModerationPolicy(),
-              blacklistEntries: needsBlacklist
-                ? await getBlacklistEntries()
-                : [],
-              leaseStaleBefore,
-              cancelSignal
-            }
-          } catch (error) {
-            for (const task of picked) {
-              if (probeTaskIds.has(task.id)) {
-                worker.breakers[laneOf(task)].releaseProbe()
-              }
-            }
+    while (!stopped()) {
+      const seen = progress
+      if (Date.now() >= pausedUntil && inFlight.size < MODERATION_CONCURRENCY) {
+        let round = { started: 0, crowded: false }
+        try {
+          round = await startRound()
+        } catch (error) {
+          if (inFlight.size === 0) {
             throw error
           }
-          startedAny = true
-          for (const task of picked) {
-            const done = processTask(worker, task, {
-              ...shared,
-              probe: probeTaskIds.has(task.id)
-            })
-              .catch((error) => {
-                crashed = true
-                console.error('Moderation worker crashed:', error)
-              })
-              .finally(() => {
-                inFlight.delete(task.id)
-              })
-            inFlight.set(task.id, { key: serializationKey(task), done })
-          }
-        } else if (inFlight.size === 0) {
+          pausedUntil = Date.now() + POOL_POLL_MS
+          // eslint-disable-next-line no-console
+          console.error('Moderation pool round failed:', error)
+        }
+        if (round.started === 0 && inFlight.size === 0) {
           return
         }
+        // 窗口被一个热点占着、还有空槽: 刚开始的那条已在途, 下一轮在查询里排除它的键, 看得到
+        // 后面的内容, 不等就再取一轮。每次等待之间至多 MODERATION_CONCURRENCY 轮, 有界
+        if (
+          round.crowded &&
+          round.started > 0 &&
+          inFlight.size < MODERATION_CONCURRENCY &&
+          crowdedRounds < MODERATION_CONCURRENCY
+        ) {
+          crowdedRounds++
+          continue
+        }
+      } else if (inFlight.size === 0) {
+        return
       }
-      await waitForSlot(inFlight, signal)
+      crowdedRounds = 0
+      await waitForProgress(seen)
+      // 这一轮开始的任务都没认领到 (被车道挡住、被别人抢先)、也没有别的在途: 结束这一轮池,
+      // 下一拍再来, 不在同一批行上立即重来
+      if (progress === seen && inFlight.size === 0) {
+        return
+      }
     }
   } finally {
-    // 不管为什么结束 (队列空、要求停下、写库失败、取任务出错), 都等在途的做完再返回:
+    // 不管为什么结束 (队列空、要求停下、暂停中没有在途、取候选出错), 都等在途的做完再返回:
     // 返回之后租约就释放了
     await Promise.allSettled([...inFlight.values()].map(({ done }) => done))
     clearInterval(heartbeat)
