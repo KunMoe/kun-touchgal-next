@@ -4,11 +4,11 @@ import {
   setCachedUnread
 } from '~/app/api/message/unread/cache'
 import { kunRecordCacheOutcome } from '~/server/cache/stats'
-import type { MessageUnreadStatus } from '~/types/api/message'
+import type { UnreadSnapshot } from '~/types/api/message'
 
 export const getUnreadMessageStatus = async (
   uid: number
-): Promise<MessageUnreadStatus> => {
+): Promise<UnreadSnapshot> => {
   const startedAt = performance.now()
   let readFailed = false
   const cached = await getCachedUnread(uid).catch(() => {
@@ -24,6 +24,9 @@ export const getUnreadMessageStatus = async (
     return cached
   }
 
+  // 快照的时刻取查询开始之前, 随缓存条目一起存: 它反映的库状态不早于这个时刻。不能在返回时
+  // 打戳 —— invalidateUnread 失败会被吞掉, 那时读到的陈旧缓存会显得比实时值还新
+  const asOf = Date.now()
   const queryStartedAt = performance.now()
   const [unreadNotification, unreadConversation] = await Promise.all([
     prisma.user_message.findFirst({
@@ -43,9 +46,10 @@ export const getUnreadMessageStatus = async (
 
   const sourceMs = performance.now() - queryStartedAt
 
-  const status: MessageUnreadStatus = {
+  const status: UnreadSnapshot = {
     hasUnreadNotification: !!unreadNotification,
-    hasUnreadConversation: !!unreadConversation
+    hasUnreadConversation: !!unreadConversation,
+    asOf
   }
 
   await setCachedUnread(uid, status).catch(() => undefined)

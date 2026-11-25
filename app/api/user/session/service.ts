@@ -11,11 +11,13 @@ import {
   setCachedUserSession
 } from '~/server/auth/sessionCache'
 import type { UserSession, UserState } from '~/types/api/session'
-import type { MessageUnreadStatus } from '~/types/api/message'
+import type { UnreadSnapshot } from '~/types/api/message'
 
-const emptyUnreadStatus: MessageUnreadStatus = {
+// 未读查不到时给最旧的空快照: 不会盖掉客户端已有的任何未读状态
+const emptyUnreadStatus: UnreadSnapshot = {
   hasUnreadNotification: false,
-  hasUnreadConversation: false
+  hasUnreadConversation: false,
+  asOf: 0
 }
 
 const logSessionError = (message: string, error: unknown) => {

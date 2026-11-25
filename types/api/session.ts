@@ -1,4 +1,4 @@
-import type { MessageUnreadStatus } from './message'
+import type { UnreadSnapshot } from './message'
 
 // 登录、注册、2FA 第二步与 /api/user/session 回给客户端的用户状态 (客户端存进 userStore)
 export interface UserState {
@@ -31,7 +31,7 @@ export interface KunGalgameStatelessPayload {
 
 export interface UserSession {
   user: UserState
-  unread: MessageUnreadStatus
+  unread: UnreadSnapshot
 }
 
 export interface LoginSession {

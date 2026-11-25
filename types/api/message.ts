@@ -22,3 +22,9 @@ export interface MessageUnreadStatus {
   hasUnreadNotification: boolean
   hasUnreadConversation: boolean
 }
+
+// 服务端算出的未读快照。asOf 是算这份快照的查询开始的时刻 (服务端毫秒时间戳), 客户端只让
+// 不早于当前值的快照落地 (store/session.ts 的 applyUnreadSnapshot)。缓存里没有它的旧条目按 0 算
+export interface UnreadSnapshot extends MessageUnreadStatus {
+  asOf: number
+}

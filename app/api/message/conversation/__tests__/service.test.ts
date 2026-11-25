@@ -10,7 +10,8 @@ const {
   conversationFindManyMock,
   conversationCountMock,
   conversationCreateMock,
-  invalidateUserSessionMock
+  invalidateUserSessionMock,
+  getUnreadMock
 } = vi.hoisted(() => ({
   txState: { committed: false },
   userFindUniqueMock: vi.fn(),
@@ -20,7 +21,8 @@ const {
   conversationFindManyMock: vi.fn(),
   conversationCountMock: vi.fn(),
   conversationCreateMock: vi.fn(),
-  invalidateUserSessionMock: vi.fn()
+  invalidateUserSessionMock: vi.fn(),
+  getUnreadMock: vi.fn()
 }))
 
 vi.mock('~/prisma/index', () => ({
@@ -51,6 +53,10 @@ vi.mock('~/prisma/index', () => ({
 
 vi.mock('~/app/api/user/session/cache', () => ({
   invalidateUserSession: invalidateUserSessionMock
+}))
+
+vi.mock('~/app/api/message/unread/service', () => ({
+  getUnreadMessageStatus: getUnreadMock
 }))
 
 import {
@@ -275,6 +281,23 @@ describe('getConversations', () => {
     vi.resetAllMocks()
   })
 
+  // P28-03: 列表页曾用本页的 unreadCount 推导全局私聊红点, 未读会话不在本页时把红点清掉
+  it('顺带返回该用户的全局未读快照, 与本页有没有未读会话无关', async () => {
+    conversationFindManyMock.mockResolvedValue([])
+    conversationCountMock.mockResolvedValue(31)
+    const unread = {
+      hasUnreadNotification: true,
+      hasUnreadConversation: true,
+      asOf: 42
+    }
+    getUnreadMock.mockResolvedValue(unread)
+
+    const result = await getConversations({ page: 2, limit: 30 }, UID)
+
+    expect(getUnreadMock).toHaveBeenCalledWith(UID)
+    expect(result.unread).toEqual(unread)
+  })
+
   it('lastMessage 预览在查询谓词里过滤已删除消息', async () => {
     conversationFindManyMock.mockResolvedValue([
       {
@@ -290,6 +313,11 @@ describe('getConversations', () => {
       }
     ])
     conversationCountMock.mockResolvedValue(1)
+    getUnreadMock.mockResolvedValue({
+      hasUnreadNotification: false,
+      hasUnreadConversation: true,
+      asOf: 1
+    })
 
     const result = await getConversations({ page: 1, limit: 10 }, UID)
 

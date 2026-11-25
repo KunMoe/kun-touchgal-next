@@ -271,9 +271,11 @@ describe('GET /api/user/session', () => {
     const response = await GET(request(token))
 
     expect(response.status).toBe(200)
+    // 时刻为 0: 客户端已有的未读快照都不会被这份兜底盖掉
     expect((await response.json()).unread).toEqual({
       hasUnreadNotification: false,
-      hasUnreadConversation: false
+      hasUnreadConversation: false,
+      asOf: 0
     })
   })
 })

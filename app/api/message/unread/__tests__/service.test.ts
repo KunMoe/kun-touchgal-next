@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   getKvMock,
@@ -51,19 +51,26 @@ describe('getUnreadMessageStatus', () => {
     conversationFindFirstMock.mockResolvedValue(null)
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('returns cached status without querying postgres', async () => {
     getKvMock.mockResolvedValue(
       JSON.stringify({
         hasUnreadNotification: true,
-        hasUnreadConversation: false
+        hasUnreadConversation: false,
+        asOf: 1234
       })
     )
 
     const status = await getUnreadMessageStatus(UID)
 
+    // 命中缓存时的时刻是算出那份快照的时刻, 不是这次读到它的时刻
     expect(status).toEqual({
       hasUnreadNotification: true,
-      hasUnreadConversation: false
+      hasUnreadConversation: false,
+      asOf: 1234
     })
     expect(messageFindFirstMock).not.toHaveBeenCalled()
     expect(conversationFindFirstMock).not.toHaveBeenCalled()
@@ -71,16 +78,37 @@ describe('getUnreadMessageStatus', () => {
     expect(recordedOutcomes()).toEqual([['message:unread', 'hit']])
   })
 
+  it('caches written before snapshots carried a time read as the oldest', async () => {
+    getKvMock.mockResolvedValue(
+      JSON.stringify({
+        hasUnreadNotification: false,
+        hasUnreadConversation: true
+      })
+    )
+
+    expect(await getUnreadMessageStatus(UID)).toEqual({
+      hasUnreadNotification: false,
+      hasUnreadConversation: true,
+      asOf: 0
+    })
+  })
+
   it('queries postgres and writes through on cache miss', async () => {
+    vi.useFakeTimers({ now: 5000 })
     getKvMock.mockResolvedValue(null)
-    messageFindFirstMock.mockResolvedValue({ id: 1 })
+    // 时刻取在查询开始之前: 查询期间时钟走了也不变
+    messageFindFirstMock.mockImplementation(async () => {
+      vi.setSystemTime(9000)
+      return { id: 1 }
+    })
     conversationFindFirstMock.mockResolvedValue(null)
 
     const status = await getUnreadMessageStatus(UID)
 
     expect(status).toEqual({
       hasUnreadNotification: true,
-      hasUnreadConversation: false
+      hasUnreadConversation: false,
+      asOf: 5000
     })
     expect(messageFindFirstMock).toHaveBeenCalledTimes(1)
     expect(conversationFindFirstMock).toHaveBeenCalledTimes(1)
@@ -97,7 +125,7 @@ describe('getUnreadMessageStatus', () => {
 
     const status = await getUnreadMessageStatus(UID)
 
-    expect(status).toEqual({
+    expect(status).toMatchObject({
       hasUnreadNotification: false,
       hasUnreadConversation: false
     })
