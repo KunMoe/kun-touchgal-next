@@ -49,6 +49,8 @@ export const getUserInfo = async (
       take: limit,
       skip: offset,
       orderBy: { created: 'desc' },
+      // 后台用户列表展示邮箱: 显式取回全局 omit 隐藏的列 (prisma/columnPolicy.ts)
+      omit: { email: false },
       include: {
         _count: {
           select: {

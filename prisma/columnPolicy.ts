@@ -48,7 +48,7 @@ export const USER_COLUMN_CLASS = {
   updated: 'internal'
 } as const satisfies Record<Prisma.UserScalarFieldEnum, ColumnClass>
 
-const HIDDEN_CLASSES = ['secret'] as const
+const HIDDEN_CLASSES = ['contact', 'secret', 'telemetry'] as const
 type HiddenClass = (typeof HIDDEN_CLASSES)[number]
 
 type HiddenOf<T extends Record<string, ColumnClass>> = {

@@ -31,7 +31,8 @@ const resetPassword = async (
 
   const payload: ForgotPasswordResetPayload = JSON.parse(stored)
   const user = await prisma.user.findUnique({
-    where: { id: payload.uid }
+    where: { id: payload.uid },
+    select: { id: true, email: true }
   })
   if (!user || user.email.toLowerCase() !== payload.email.toLowerCase()) {
     return INVALID_LINK_MESSAGE

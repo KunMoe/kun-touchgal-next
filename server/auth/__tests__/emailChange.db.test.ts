@@ -49,7 +49,8 @@ describe.skipIf(!dbContractUrl)(
 
     const newUser = async (email = address('a')) => {
       const user = await prisma.user.create({
-        data: { name: randomUUID().slice(0, 17), email, password: 'x' }
+        data: { name: randomUUID().slice(0, 17), email, password: 'x' },
+        omit: { email: false }
       })
       createdUserIds.push(user.id)
       return user
@@ -81,7 +82,12 @@ describe.skipIf(!dbContractUrl)(
     }
 
     const emailOf = async (uid: number) =>
-      (await prisma.user.findUniqueOrThrow({ where: { id: uid } })).email
+      (
+        await prisma.user.findUniqueOrThrow({
+          where: { id: uid },
+          select: { email: true }
+        })
+      ).email
 
     const ledgerOf = (uid: number) =>
       prisma.user_email_change.findMany({

@@ -7,9 +7,12 @@ import type { KunTx } from '~/prisma/index'
 // 验证不了运行时的 omit; 这里用录制客户端 (真实的查询编译器) 看 Prisma 实际发出的 SQL。
 
 const HIDDEN_USER_COLUMNS = [
+  'email',
   'password',
   'two_factor_secret',
-  'two_factor_backup'
+  'two_factor_backup',
+  'ip',
+  'last_login_time'
 ] as const
 
 const recorder = createSqlRecorder()
@@ -92,7 +95,10 @@ describe('Prisma 发出的 SQL', () => {
     })
     const [read] = recorder.take()
     expect(read.sql).toContain(quoted('password'))
-    expectHidden(read.sql, ['two_factor_secret', 'two_factor_backup'])
+    expectHidden(
+      read.sql,
+      HIDDEN_USER_COLUMNS.filter((column) => column !== 'password')
+    )
   })
 
   it('oidc_client 整行读取不含 client_secret, 显式取回才有', async () => {

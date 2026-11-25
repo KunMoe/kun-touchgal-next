@@ -180,7 +180,10 @@ describe('POST /api/forgot/reset', () => {
       await expect(verifyPassword(NEW_PASSWORD, stored)).resolves.toBe(true)
       // 新密码与安全戳在同一条语句里写入 (重置之后签发早于它的令牌一律作废)
       expect(db.queries).toEqual([
-        `findUnique ${JSON.stringify({ where: { id: UID } })}`,
+        `findUnique ${JSON.stringify({
+          where: { id: UID },
+          select: { id: true, email: true }
+        })}`,
         'updateMany ["password","security_stamp"]'
       ])
       expect(db.users.get(UID)!.security_stamp).toBeInstanceOf(Date)

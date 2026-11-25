@@ -13,6 +13,8 @@ export const getUserProfile = async (
   const [data, userFavoritePatchCount, followRelation] = await Promise.all([
     prisma.user.findUnique({
       where: { id: input.id },
+      // 邮箱只回给本人: 他人视角不读这一列 (prisma/columnPolicy.ts 的全局 omit)
+      omit: { email: !isSelf },
       include: {
         _count: {
           select: {

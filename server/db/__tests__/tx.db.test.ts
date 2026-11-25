@@ -36,7 +36,8 @@ describe.skipIf(!dbContractUrl)('kunTx on real PostgreSQL', () => {
         name: randomUUID().slice(0, 17),
         email: `${randomUUID()}@example.com`,
         password: 'hash'
-      }
+      },
+      omit: { email: false }
     })
     createdUserIds.push(user.id)
     return user
