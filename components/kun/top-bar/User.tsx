@@ -1,17 +1,25 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
-import toast from 'react-hot-toast'
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { NavbarContent, NavbarItem } from '@heroui/navbar'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { Button } from '@heroui/button'
 import { Skeleton } from '@heroui/skeleton'
-import { useUserStore } from '~/store/userStore'
+import {
+  getKunUserSnapshot,
+  rehydrateKunUserStore,
+  useUserStore
+} from '~/store/userStore'
 import { useMessageStore } from '~/store/messageStore'
 import { useSettingStore } from '~/store/settingStore'
-import { useRouter } from '@bprogress/next/app'
+import {
+  keepKunStoredSession,
+  markKunSessionGuest,
+  markNotificationsSeen,
+  reconcileKunSession
+} from '~/store/session'
+import { useKunSignOut } from '~/hooks/useKunSession'
 import { ThemeSwitcher } from './ThemeSwitcher'
 import { useMounted } from '~/hooks/useMounted'
 import { KunSearch } from './Search'
@@ -19,6 +27,7 @@ import { UserMessageBell } from './UserMessageBell'
 import { Tooltip } from '@heroui/tooltip'
 import { RandomGalgameButton } from '~/components/home/carousel/RandomGalgameButton'
 import { buildKunLoginHref } from '~/utils/loginRedirect'
+import { deriveTopBarView } from './topBarView'
 import type { UserSession } from '~/types/api/session'
 
 interface Props {
@@ -131,40 +140,24 @@ const KunTopBarGuestEntry = () => {
 }
 
 export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
-  const router = useRouter()
-  const { user, setUser, logout } = useUserStore(
-    useShallow((state) => ({
-      user: state.user,
-      setUser: state.setUser,
-      logout: state.logout
-    }))
+  const status = useUserStore((state) => state.status)
+  const hasUnread = useMessageStore(
+    (state) => state.hasUnreadNotification || state.hasUnreadConversation
   )
-  const {
-    hasUnreadNotification,
-    hasUnreadConversation,
-    setHasUnreadNotification,
-    setUnreadMessageStatus,
-    resetUnreadMessageStatus
-  } = useMessageStore(
-    useShallow((state) => ({
-      hasUnreadNotification: state.hasUnreadNotification,
-      hasUnreadConversation: state.hasUnreadConversation,
-      setHasUnreadNotification: state.setHasUnreadNotification,
-      setUnreadMessageStatus: state.setUnreadMessageStatus,
-      resetUnreadMessageStatus: state.resetUnreadMessageStatus
-    }))
-  )
-  const resetSettings = useSettingStore((state) => state.resetData)
+  const signOut = useKunSignOut()
   const isMounted = useMounted()
   const dropdownModule = useSyncExternalStore(
     subscribeUserDropdown,
     getUserDropdownModule,
     getServerUserDropdownModule
   )
-  const missingSessionCheckedRef = useRef(false)
-  // 骨架只等首次判定访客身份, 判定的每个出口都置真且不再回落: 根布局在软导航里不重渲染,
-  // initialSession 一直是整页加载时的值, 之后的站内登录 / 登出只改 store 里的 user
-  const [isSessionReady, setIsSessionReady] = useState(false)
+  // 骨架只等首次判定访客身份 (store 的 status 离开 pending 之后不再回去): 根布局在软导航里
+  // 不重渲染, initialSession 一直是整页加载时的值, 之后的站内登入 / 登出只改 store
+  const view = deriveTopBarView({
+    isMounted,
+    isSessionPending: !!isSessionPending,
+    status
+  })
 
   useEffect(() => {
     if (!isMounted || !initialSession) {
@@ -181,9 +174,7 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
         return
       }
 
-      setUser(initialSession.user)
-      setUnreadMessageStatus(initialSession.unread)
-      setIsSessionReady(true)
+      reconcileKunSession(initialSession)
     }
 
     void hydrateSession()
@@ -191,63 +182,49 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
     return () => {
       cancelled = true
     }
-  }, [initialSession, isMounted, setUnreadMessageStatus, setUser])
+  }, [initialSession, isMounted])
 
+  // 首屏没有会话: 整页加载时判定一次; 同一文档里 router.refresh 带回的会话从有变成没有时
+  // (status 仍是 authenticated) 也会再走一遍, 由回查决定是否登出
   useEffect(() => {
-    if (
-      !isMounted ||
-      isSessionPending ||
-      initialSession ||
-      missingSessionCheckedRef.current
-    ) {
+    if (!isMounted || isSessionPending || initialSession) {
       return
     }
 
-    missingSessionCheckedRef.current = true
     let cancelled = false
     const handleMissingSession = async () => {
       await useSettingStore.persist.rehydrate()
       const hasStoredUser = hasPersistedUserStore()
       if (hasStoredUser) {
-        await useUserStore.persist.rehydrate()
+        await rehydrateKunUserStore()
       }
       if (cancelled) {
         return
       }
 
-      const currentUser = hasStoredUser
-        ? useUserStore.getState().user
-        : { uid: 0 }
-      if (currentUser.uid) {
-        const [sessionCheck] = await Promise.all([
-          fetchCurrentSession(),
-          ensureUserDropdownModule()
-        ])
-        if (cancelled) {
-          return
-        }
-        if (sessionCheck.status === 'valid') {
-          setUser(sessionCheck.session.user)
-          setUnreadMessageStatus(sessionCheck.session.unread)
-          setIsSessionReady(true)
-          return
-        }
-        if (sessionCheck.status === 'unreachable') {
-          setIsSessionReady(true)
-          return
-        }
-
-        toast.error('用户登录失效')
-        logout()
-        resetUnreadMessageStatus()
-        resetSettings()
-        setIsSessionReady(true)
-        router.push(
-          buildKunLoginHref(window.location.pathname, window.location.search)
-        )
+      const currentUser = hasStoredUser ? getKunUserSnapshot() : { uid: 0 }
+      if (!currentUser.uid) {
+        markKunSessionGuest()
         return
       }
-      setIsSessionReady(true)
+
+      const [sessionCheck] = await Promise.all([
+        fetchCurrentSession(),
+        ensureUserDropdownModule()
+      ])
+      if (cancelled) {
+        return
+      }
+      if (sessionCheck.status === 'valid') {
+        reconcileKunSession(sessionCheck.session)
+        return
+      }
+      if (sessionCheck.status === 'unreachable') {
+        keepKunStoredSession()
+        return
+      }
+
+      signOut('expired')
     }
 
     void handleMissingSession()
@@ -255,32 +232,19 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
     return () => {
       cancelled = true
     }
-  }, [
-    setUnreadMessageStatus,
-    setUser,
-    initialSession,
-    isSessionPending,
-    isMounted,
-    logout,
-    resetSettings,
-    resetUnreadMessageStatus,
-    router
-  ])
+  }, [initialSession, isSessionPending, isMounted, signOut])
 
-  const hasUnread = hasUnreadNotification || hasUnreadConversation
-  const isUserReady = isMounted && isSessionReady && !!user.name
-
-  // 站内登录 (登录页 setUser) 等不经过上面两条会话路径的翻转, 以及加载失败后的重试
+  // 站内登录 (登录页 signInKunSession) 等不经过上面两条会话路径的翻转, 以及加载失败后的重试
   useEffect(() => {
-    if (!isUserReady || dropdownModule) {
+    if (view !== 'user' || dropdownModule) {
       return
     }
     void ensureUserDropdownModule()
-  }, [dropdownModule, isUserReady])
+  }, [dropdownModule, view])
 
   return (
     <NavbarContent as="div" className="items-center" justify="end">
-      {(!isMounted || !isSessionReady) && (
+      {view === 'skeleton' && (
         <>
           <Skeleton className="hidden rounded-lg lg:flex">
             <div className="w-32 h-10 rounded-lg bg-default-300" />
@@ -291,7 +255,7 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
         </>
       )}
 
-      {isMounted && isSessionReady && !user.name && <KunTopBarGuestEntry />}
+      {view === 'guest' && <KunTopBarGuestEntry />}
 
       <KunSearch />
 
@@ -301,11 +265,11 @@ export const KunTopBarUser = ({ initialSession, isSessionPending }: Props) => {
 
       <ThemeSwitcher />
 
-      {isUserReady && (
+      {view === 'user' && (
         <>
           <UserMessageBell
             hasUnreadMessages={hasUnread}
-            setReadMessage={() => setHasUnreadNotification(false)}
+            setReadMessage={markNotificationsSeen}
           />
 
           {dropdownModule ? (

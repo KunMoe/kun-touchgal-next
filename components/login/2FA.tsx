@@ -4,7 +4,7 @@ import { type FormEvent, useEffect, useState, useTransition } from 'react'
 import { useRouter } from '@bprogress/next/app'
 import { Button, Input } from '@heroui/react'
 import toast from 'react-hot-toast'
-import { useUserStore } from '~/store/userStore'
+import { signInKunSession } from '~/store/session'
 import {
   isKunTransportFailure,
   kunFetchGet,
@@ -19,7 +19,6 @@ export const TwoFactor = () => {
   const [token, setToken] = useState('')
   const [isUsingBackupCode, setIsUsingBackupCode] = useState(false)
   const router = useRouter()
-  const setUser = useUserStore((state) => state.setUser)
   const [isPending, startTransition] = useTransition()
 
   useEffect(() => {
@@ -52,7 +51,7 @@ export const TwoFactor = () => {
       if (typeof response === 'string') {
         toast.error(response)
       } else {
-        setUser(response)
+        signInKunSession(response)
         toast.success('验证成功，欢迎回来！')
         router.push(resolveKunLoginRedirect(window.location.search))
       }

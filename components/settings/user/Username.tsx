@@ -1,10 +1,10 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
 import { Card, CardBody, CardFooter, CardHeader } from '@heroui/card'
 import { Input } from '@heroui/input'
 import { Button } from '@heroui/button'
 import { useUserStore } from '~/store/userStore'
+import { patchKunUser } from '~/store/session'
 import { useState } from 'react'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
@@ -25,9 +25,7 @@ import {
 } from '~/constants/points'
 
 export const Username = () => {
-  const { user, setUser } = useUserStore(
-    useShallow((state) => ({ user: state.user, setUser: state.setUser }))
-  )
+  const user = useUserStore((state) => state.user)
   // draft 为 null 表示尚未编辑, 此时显示 store 里的当前用户名. 不能用 useState(user.name)
   // 做初值: user store 在顶栏 effect 里 post-mount 才水合, 硬刷新时首帧 user.name 为 ''
   const [draft, setDraft] = useState<string | null>(null)
@@ -59,10 +57,9 @@ export const Username = () => {
         )
         kunErrorHandler(res, () => {
           toast.success('更新用户名成功')
-          setUser({
-            ...user,
+          patchKunUser({
             name: nextName,
-            moemoepoint: user.moemoepoint - POINT_RULES.rename.cost
+            moemoepointDelta: -POINT_RULES.rename.cost
           })
           setDraft(null)
         })

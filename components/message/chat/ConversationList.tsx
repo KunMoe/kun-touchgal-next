@@ -7,14 +7,16 @@ import { KunNull } from '~/components/kun/Null'
 import { KunPagination } from '~/components/kun/Pagination'
 import { ConversationCard } from './ConversationCard'
 import { kunFetchGet } from '~/utils/kunFetch'
-import { useMessageStore } from '~/store/messageStore'
+import { applyUnreadSnapshot } from '~/store/session'
 import { useKunPagedList } from '~/hooks/useKunPagedList'
 import type { KunListQuery } from '~/utils/list/kunListMachine'
 import type { Conversation } from '~/types/api/conversation'
+import type { UnreadSnapshot } from '~/types/api/message'
 
 interface Props {
   initialConversations: Conversation[]
   total: number
+  initialUnread: UnreadSnapshot
 }
 
 const fetchConversationPage = async (query: KunListQuery) => {
@@ -22,17 +24,25 @@ const fetchConversationPage = async (query: KunListQuery) => {
     KunResponse<{
       conversations: Conversation[]
       total: number
+      unread: UnreadSnapshot
     }>
   >('/message/conversation', {
     page: query.page,
     limit: query.limit
   })
-  return typeof response === 'string'
-    ? response
-    : { items: response.conversations, total: response.total }
+  if (typeof response === 'string') {
+    return response
+  }
+  // 未读是全局的, 与这一页落不落地无关; 先后由快照的时刻裁决
+  applyUnreadSnapshot(response.unread)
+  return { items: response.conversations, total: response.total }
 }
 
-export const ConversationList = ({ initialConversations, total }: Props) => {
+export const ConversationList = ({
+  initialConversations,
+  total,
+  initialUnread
+}: Props) => {
   const list = useKunPagedList<Conversation, KunListQuery>({
     query: { page: 1, limit: 30 },
     initial: { items: initialConversations, total },
@@ -40,25 +50,10 @@ export const ConversationList = ({ initialConversations, total }: Props) => {
     fetchPage: fetchConversationPage
   })
   const loading = list.status === 'loading'
-  const setHasUnreadConversation = useMessageStore(
-    (state) => state.setHasUnreadConversation
-  )
-
-  const syncConversationUnreadStatus = (items: Conversation[]) => {
-    setHasUnreadConversation(items.some((conv) => conv.unreadCount > 0))
-  }
-
-  // 每次取数落地后按落地的这一页重算未读, 失败不算落地。挂载时 items 就是 SSR 首屏,
-  // 与下面按 initialConversations 的同步重复一次, 结果相同
-  useEffect(() => {
-    if (list.status === 'ready') {
-      syncConversationUnreadStatus(list.items)
-    }
-  }, [list.items, list.status])
 
   useEffect(() => {
-    syncConversationUnreadStatus(initialConversations)
-  }, [initialConversations])
+    applyUnreadSnapshot(initialUnread)
+  }, [initialUnread])
 
   return (
     <div className="space-y-4">

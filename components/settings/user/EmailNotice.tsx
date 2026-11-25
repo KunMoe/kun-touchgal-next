@@ -1,17 +1,15 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
 import { Card, CardBody, CardFooter, CardHeader } from '@heroui/card'
 import { useUserStore } from '~/store/userStore'
+import { patchKunUser } from '~/store/session'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 import { Switch } from '@heroui/react'
 
 export const EmailNotice = () => {
-  const { user, setUser } = useUserStore(
-    useShallow((state) => ({ user: state.user, setUser: state.setUser }))
-  )
+  const user = useUserStore((state) => state.user)
 
   const handleToggleEmailNotice = async (value: boolean) => {
     if (!user.uid) {
@@ -25,7 +23,7 @@ export const EmailNotice = () => {
         { enableEmailNotice: value }
       )
       kunErrorHandler(res, () => {
-        setUser({ ...user, enableEmailNotice: value })
+        patchKunUser({ enableEmailNotice: value })
         toast.success(value ? '开启邮件通知成功' : '关闭邮件通知成功')
       })
     } catch {

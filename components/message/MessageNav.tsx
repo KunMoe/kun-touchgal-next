@@ -1,6 +1,5 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
 import { useEffect } from 'react'
 import { kunFetchPut } from '~/utils/kunFetch'
 import { Button } from '@heroui/react'
@@ -10,7 +9,8 @@ import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { useMessageStore } from '~/store/messageStore'
-import type { MessageUnreadStatus } from '~/types/api/message'
+import { applyUnreadSnapshot } from '~/store/session'
+import type { UnreadSnapshot } from '~/types/api/message'
 
 const notificationSubTypes = [
   { type: 'notice', label: '全部消息', icon: Bell, href: '/message/notice' },
@@ -39,16 +39,11 @@ export const MessageNav = () => {
   )
   const isChatSection = pathname.startsWith('/message/chat')
 
-  const {
-    hasUnreadNotification,
-    hasUnreadConversation,
-    setUnreadMessageStatus
-  } = useMessageStore(
-    useShallow((state) => ({
-      hasUnreadNotification: state.hasUnreadNotification,
-      hasUnreadConversation: state.hasUnreadConversation,
-      setUnreadMessageStatus: state.setUnreadMessageStatus
-    }))
+  const hasUnreadNotification = useMessageStore(
+    (state) => state.hasUnreadNotification
+  )
+  const hasUnreadConversation = useMessageStore(
+    (state) => state.hasUnreadConversation
   )
 
   useEffect(() => {
@@ -58,15 +53,15 @@ export const MessageNav = () => {
 
     const readAllMessage = async () => {
       const res =
-        await kunFetchPut<KunResponse<MessageUnreadStatus>>('/message/read')
+        await kunFetchPut<KunResponse<UnreadSnapshot>>('/message/read')
       if (typeof res === 'string') {
         toast.error(res)
       } else {
-        setUnreadMessageStatus(res)
+        applyUnreadSnapshot(res)
       }
     }
     readAllMessage()
-  }, [isNotificationSection, setUnreadMessageStatus])
+  }, [isNotificationSection])
 
   return (
     <Card className="w-full lg:w-1/4">

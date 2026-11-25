@@ -7,7 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Button, Input, Link, useDisclosure } from '@heroui/react'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { loginSchema } from '~/validations/auth'
-import { useUserStore } from '~/store/userStore'
+import { signInKunSession } from '~/store/session'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { resolveKunLoginRedirect } from '~/utils/loginRedirect'
 import { useRouter } from '@bprogress/next/app'
@@ -21,7 +21,6 @@ type LoginFormData = z.infer<typeof loginSchema>
 export const LoginForm = () => {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [isPending, startTransition] = useTransition()
-  const setUser = useUserStore((state) => state.setUser)
   const router = useRouter()
 
   const { control, watch, reset } = useForm<LoginFormData>({
@@ -47,7 +46,7 @@ export const LoginForm = () => {
           router.push(`/login/2fa${window.location.search}`)
         } else {
           const state = value as UserState
-          setUser(state)
+          signInKunSession(state)
           reset()
           toast.success('登录成功!')
           router.push(resolveKunLoginRedirect(window.location.search))

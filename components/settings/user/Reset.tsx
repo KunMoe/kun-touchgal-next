@@ -18,6 +18,7 @@ import toast from 'react-hot-toast'
 import { useState } from 'react'
 import { isKunTransportFailure, kunFetchPost } from '~/utils/kunFetch'
 import { useSettingStore } from '~/store/settingStore'
+import { endKunClientSession } from '~/store/session'
 
 export const Reset = () => {
   const { isOpen, onOpen, onClose } = useDisclosure()
@@ -25,6 +26,8 @@ export const Reset = () => {
   const [loading, setLoading] = useState(false)
 
   const handleResetData = async () => {
+    // 先清内存里的三个 store 再清存储: 清理本身会把访客状态写进存储, 放在后面就会写回
+    endKunClientSession()
     localStorage.clear()
     useSettingStore.persist.clearStorage()
     onClose()

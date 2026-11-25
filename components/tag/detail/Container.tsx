@@ -1,6 +1,5 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
 import { useEffect, useRef, useState } from 'react'
 import { useDebounce } from 'use-debounce'
 import dynamic from 'next/dynamic'
@@ -21,6 +20,7 @@ import { DeleteTagModal } from './DeleteTagModal'
 import { KunUser } from '~/components/kun/floating-card/KunUser'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
 import { useUserStore } from '~/store/userStore'
+import { patchKunUser } from '~/store/session'
 import { can } from '~/constants/permission'
 import { DELETED_USER_NAME } from '~/constants/user'
 import { useSearchParams } from 'next/navigation'
@@ -68,9 +68,7 @@ export const TagDetailContainer = ({
   filterEndYear
 }: Props) => {
   const isMounted = useMounted()
-  const { user, setUser } = useUserStore(
-    useShallow((state) => ({ user: state.user, setUser: state.setUser }))
-  )
+  const user = useUserStore((state) => state.user)
   const searchParams = useSearchParams()
   const [page, setPage] = useState(toNumberParam(searchParams.get('page'), 1))
   const [selectedType, setSelectedType] = useState(
@@ -227,7 +225,7 @@ export const TagDetailContainer = ({
         return
       }
 
-      setUser({ ...user, blockedTagIds: response.blockedTagIds })
+      patchKunUser({ blockedTagIds: response.blockedTagIds })
 
       if (isBlocked) {
         toast.success(`已取消屏蔽标签「${tag.name}」`)

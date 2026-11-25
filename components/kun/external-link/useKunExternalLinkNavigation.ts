@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useUserStore } from '~/store/userStore'
+import { getKunUserSnapshot } from '~/store/userStore'
 import {
   getHttpUrlHostname,
   isHostnameExcluded,
@@ -23,7 +23,7 @@ const getExternalLinkNavigation = (
     return null
   }
 
-  const { enableRedirect, excludedDomains } = useUserStore.getState().user
+  const { enableRedirect, excludedDomains } = getKunUserSnapshot()
   const hostname = getHttpUrlHostname(safeHref)
   const isExcludedDomain = hostname
     ? isHostnameExcluded(hostname, excludedDomains)

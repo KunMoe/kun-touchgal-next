@@ -1,10 +1,10 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
 import { Card, CardBody, CardFooter, CardHeader } from '@heroui/card'
 import { Textarea } from '@heroui/input'
 import { Button } from '@heroui/button'
 import { useUserStore } from '~/store/userStore'
+import { patchKunUser } from '~/store/session'
 import { useModerationPending } from '~/hooks/useModerationPending'
 import { useState } from 'react'
 import { kunFetchPost } from '~/utils/kunFetch'
@@ -13,9 +13,7 @@ import { bioSchema } from '~/validations/user'
 import toast from 'react-hot-toast'
 
 export const Bio = () => {
-  const { user, setUser } = useUserStore(
-    useShallow((state) => ({ user: state.user, setUser: state.setUser }))
-  )
+  const user = useUserStore((state) => state.user)
   // draft 为 null 表示尚未编辑, 此时显示 store 里的当前签名 (初值不能取 user.bio, 原因见 Username.tsx)
   const [draft, setDraft] = useState<string | null>(null)
   const bio = draft ?? user.bio
@@ -42,7 +40,7 @@ export const Bio = () => {
         kunErrorHandler(res, (value) => {
           toast.success('更新签名成功')
           // 保存按钮以 bio === user.bio 判未修改: 请求前乐观写 store 会让失败后二者相等, 按钮锁死无法重试
-          setUser({ ...user, bio: nextBio })
+          patchKunUser({ bio: nextBio })
           setDraft(null)
           markPending(!!value.pending)
         })

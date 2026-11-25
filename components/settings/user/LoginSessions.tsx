@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { useRouter } from '@bprogress/next/app'
 import {
   Button,
   Card,
@@ -34,9 +33,7 @@ import toast from 'react-hot-toast'
 import { kunFetchDelete, kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
 import { formatDate } from '~/utils/time'
 import { KunTimeAgo } from '~/components/kun/TimeAgo'
-import { useUserStore } from '~/store/userStore'
-import { useMessageStore } from '~/store/messageStore'
-import { useSettingStore } from '~/store/settingStore'
+import { useKunSignOut } from '~/hooks/useKunSession'
 import { cn } from '~/utils/cn'
 import type {
   LoginSession,
@@ -276,12 +273,7 @@ const LoginSessionCard = ({
 }
 
 export const LoginSessions = () => {
-  const router = useRouter()
-  const logout = useUserStore((state) => state.logout)
-  const resetUnreadMessageStatus = useMessageStore(
-    (state) => state.resetUnreadMessageStatus
-  )
-  const resetSettings = useSettingStore((state) => state.resetData)
+  const signOut = useKunSignOut()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [sessions, setSessions] = useState<LoginSession[]>([])
   const [loading, setLoading] = useState(false)
@@ -358,11 +350,7 @@ export const LoginSessions = () => {
       }
 
       if (response.revokedCurrent) {
-        logout()
-        resetUnreadMessageStatus()
-        resetSettings()
-        toast.success('当前登录会话已撤销, 请重新登录')
-        router.push('/login')
+        signOut('revoked')
         return
       }
 

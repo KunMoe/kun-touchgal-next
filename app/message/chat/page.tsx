@@ -18,6 +18,7 @@ export default async function Kun() {
     <ConversationList
       initialConversations={response.conversations}
       total={response.total}
+      initialUnread={response.unread}
     />
   )
 }

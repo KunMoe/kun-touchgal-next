@@ -1,6 +1,5 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
 import {
   Dropdown,
   DropdownItem,
@@ -28,16 +27,15 @@ import {
   UserRound
 } from 'lucide-react'
 import { useUserStore } from '~/store/userStore'
-import { useSettingStore } from '~/store/settingStore'
+import { patchKunUser } from '~/store/session'
+import { useKunSignOut } from '~/hooks/useKunSession'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from '@bprogress/next/app'
 import { isKunTransportFailure, kunFetchPost } from '~/utils/kunFetch'
 import toast from 'react-hot-toast'
 import { showKunSooner } from '~/components/kun/Sooner'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
-import { buildKunLoginHref } from '~/utils/loginRedirect'
 import { NSFWSwitcher } from './NSFWSwitcher'
-import { useMessageStore } from '~/store/messageStore'
 
 const NESTED_DROPDOWN_EXIT_MS = 50
 const OPEN_OVERLAY_MENU_SELECTOR =
@@ -50,17 +48,8 @@ interface OutsidePointerContext {
 
 export const UserDropdown = () => {
   const router = useRouter()
-  const { user, setUser, logout } = useUserStore(
-    useShallow((state) => ({
-      user: state.user,
-      setUser: state.setUser,
-      logout: state.logout
-    }))
-  )
-  const resetSettings = useSettingStore((state) => state.resetData)
-  const resetUnreadMessageStatus = useMessageStore(
-    (state) => state.resetUnreadMessageStatus
-  )
+  const user = useUserStore((state) => state.user)
+  const signOut = useKunSignOut()
   const [loading, setLoading] = useState(false)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [isNsfwDropdownOpen, setIsNsfwDropdownOpen] = useState(false)
@@ -257,13 +246,7 @@ export const UserDropdown = () => {
       toast.error(res)
       return
     }
-    logout()
-    resetUnreadMessageStatus()
-    resetSettings()
-    router.push(
-      buildKunLoginHref(window.location.pathname, window.location.search)
-    )
-    toast.success('您已经成功登出!')
+    signOut('manual')
   }
 
   const [checking, setChecking] = useState(false)
@@ -284,10 +267,9 @@ export const UserDropdown = () => {
           ? `签到成功! 您今天获得了 ${value.randomMoemoepoints} 萌萌点`
           : '您的运气不好...今天没有获得萌萌点...'
       )
-      setUser({
-        ...user,
+      patchKunUser({
         dailyCheckIn: 1,
-        moemoepoint: user.moemoepoint + value.randomMoemoepoints
+        moemoepointDelta: value.randomMoemoepoints
       })
     })
     setChecking(false)

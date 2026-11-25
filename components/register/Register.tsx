@@ -14,7 +14,7 @@ import {
 import { ChevronDown } from 'lucide-react'
 import { kunFetchPost } from '~/utils/kunFetch'
 import type { registerSchema } from '~/validations/auth'
-import { useUserStore } from '~/store/userStore'
+import { signInKunSession } from '~/store/session'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 import { EmailVerification } from '~/components/kun/verification-code/Code'
@@ -26,7 +26,6 @@ import type { UserState } from '~/types/api/session'
 type RegisterFormData = z.infer<typeof registerSchema>
 
 export const RegisterForm = () => {
-  const setUser = useUserStore((state) => state.setUser)
   const router = useRouter()
   const [isAgree, setIsAgree] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -65,7 +64,7 @@ export const RegisterForm = () => {
     setLoading(false)
 
     kunErrorHandler(res, (value) => {
-      setUser(value)
+      signInKunSession(value)
       reset()
       setEmailLocal('')
       setEmailDomain(KUN_EMAIL_DOMAIN_WHITELIST[0])

@@ -1,6 +1,5 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useDebounce } from 'use-debounce'
@@ -12,6 +11,7 @@ import { Search } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { kunFetchDelete, kunFetchGet, kunFetchPost } from '~/utils/kunFetch'
 import { useUserStore } from '~/store/userStore'
+import { patchKunUser } from '~/store/session'
 import type { Tag } from '~/types/api/tag'
 
 interface UpdateBlockedTagResponse {
@@ -29,9 +29,7 @@ interface BlockedTagsProps {
 }
 
 export const BlockedTags = ({ isActive = true }: BlockedTagsProps) => {
-  const { user, setUser } = useUserStore(
-    useShallow((state) => ({ user: state.user, setUser: state.setUser }))
-  )
+  const user = useUserStore((state) => state.user)
   const [blockedTags, setBlockedTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(false)
   const [updatingId, setUpdatingId] = useState(0)
@@ -169,7 +167,7 @@ export const BlockedTags = ({ isActive = true }: BlockedTagsProps) => {
         return
       }
 
-      setUser({ ...user, blockedTagIds: response.blockedTagIds })
+      patchKunUser({ blockedTagIds: response.blockedTagIds })
       setBlockedTags((prev) => [...prev, tag])
       setSearchQuery('')
       setSearchResults([])
@@ -195,7 +193,7 @@ export const BlockedTags = ({ isActive = true }: BlockedTagsProps) => {
         return
       }
 
-      setUser({ ...user, blockedTagIds: response.blockedTagIds })
+      patchKunUser({ blockedTagIds: response.blockedTagIds })
       setBlockedTags((prev) => prev.filter((item) => item.id !== tag.id))
       toast.success(`已取消屏蔽标签「${tag.name}」`)
     } catch {

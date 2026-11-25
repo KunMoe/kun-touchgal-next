@@ -3,10 +3,10 @@
 import { useRef, useState } from 'react'
 import type { ChangeEvent, KeyboardEvent } from 'react'
 import dynamic from 'next/dynamic'
-import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@heroui/react'
 import { useDisclosure } from '@heroui/react'
 import { useUserStore } from '~/store/userStore'
+import { patchKunUser } from '~/store/session'
 import { useModerationPending } from '~/hooks/useModerationPending'
 import { Camera } from 'lucide-react'
 
@@ -16,9 +16,7 @@ const AvatarCropModal = dynamic(
 )
 
 export const AvatarCrop = () => {
-  const { user, setUser } = useUserStore(
-    useShallow((state) => ({ user: state.user, setUser: state.setUser }))
-  )
+  const user = useUserStore((state) => state.user)
   const { isOpen, onOpen, onClose } = useDisclosure()
   const inputRef = useRef<HTMLInputElement>(null)
   const [image, setImage] = useState<string | null>(null)
@@ -53,7 +51,7 @@ export const AvatarCrop = () => {
     pending?: boolean
   ) => {
     setCroppedImage(croppedImage)
-    setUser({ ...user, avatar })
+    patchKunUser({ avatar })
     markPending(!!pending)
   }
 

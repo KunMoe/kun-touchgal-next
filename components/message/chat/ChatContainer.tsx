@@ -13,14 +13,14 @@ import { KunAvatar } from '~/components/kun/floating-card/KunAvatar'
 import { kunFetchGet, kunFetchPut } from '~/utils/kunFetch'
 import { kunDocumentTitle } from '~/utils/pageMetadata'
 import { useUserStore } from '~/store/userStore'
-import { useMessageStore } from '~/store/messageStore'
+import { applyUnreadSnapshot } from '~/store/session'
 import { useKunInfiniteList } from '~/hooks/useKunInfiniteList'
 import toast from 'react-hot-toast'
 import type {
   MessageUpdateData,
   PrivateMessage
 } from '~/types/api/conversation'
-import type { MessageUnreadStatus } from '~/types/api/message'
+import type { UnreadSnapshot } from '~/types/api/message'
 
 interface Props {
   conversationId: number
@@ -77,9 +77,6 @@ export const ChatContainer = ({
   const loading = list.status === 'loading'
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const user = useUserStore((state) => state.user)
-  const setUnreadMessageStatus = useMessageStore(
-    (state) => state.setUnreadMessageStatus
-  )
   const isInitialMount = useRef(true)
   // 加载更早的一页时记下滚动高度, 那一页落地后按增量把视口留在原来那条消息上
   const scrollAnchorRef = useRef<number | null>(null)
@@ -149,15 +146,15 @@ export const ChatContainer = ({
 
   useEffect(() => {
     const markAsRead = async () => {
-      const response = await kunFetchPut<KunResponse<MessageUnreadStatus>>(
+      const response = await kunFetchPut<KunResponse<UnreadSnapshot>>(
         `/message/conversation/${conversationId}/read`
       )
       if (typeof response !== 'string') {
-        setUnreadMessageStatus(response)
+        applyUnreadSnapshot(response)
       }
     }
     markAsRead()
-  }, [conversationId, setUnreadMessageStatus])
+  }, [conversationId])
 
   useEffect(() => {
     if (isInitialMount.current) {

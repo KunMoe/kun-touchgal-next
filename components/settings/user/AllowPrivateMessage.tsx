@@ -1,17 +1,15 @@
 'use client'
 
-import { useShallow } from 'zustand/react/shallow'
 import { Card, CardBody, CardFooter, CardHeader } from '@heroui/card'
 import { useUserStore } from '~/store/userStore'
+import { patchKunUser } from '~/store/session'
 import { kunFetchPost } from '~/utils/kunFetch'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import toast from 'react-hot-toast'
 import { Switch } from '@heroui/react'
 
 export const AllowPrivateMessage = () => {
-  const { user, setUser } = useUserStore(
-    useShallow((state) => ({ user: state.user, setUser: state.setUser }))
-  )
+  const user = useUserStore((state) => state.user)
 
   const handleToggleAllowPrivateMessage = async (value: boolean) => {
     if (!user.uid) {
@@ -25,7 +23,7 @@ export const AllowPrivateMessage = () => {
         { allowPrivateMessage: value }
       )
       kunErrorHandler(res, () => {
-        setUser({ ...user, allowPrivateMessage: value })
+        patchKunUser({ allowPrivateMessage: value })
         toast.success(value ? '已允许接收私信' : '已关闭接收私信')
       })
     } catch {
