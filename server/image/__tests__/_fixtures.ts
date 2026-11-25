@@ -1,3 +1,4 @@
+import { crc32, deflateSync } from 'node:zlib'
 import sharp from 'sharp'
 
 import { MAX_QUEUE_DEPTH, withEncodeSlot } from '~/server/image/encodeLimit'
@@ -24,6 +25,31 @@ export const createPng = async (width: number, height: number) =>
 
 // 56MP, 超过 MAX_IMAGE_PIXELS (50MP); 纯色所以文件很小, 正是「像素炸弹」的形状
 export const createPixelBomb = () => createPng(8000, 7000)
+
+// 只有文件头声明 20000×20000 (400MP) 的 PNG: 超过 sharp 默认的约 268MP 输入上限
+export const createDeclaredHugePng = () => {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type), data])
+    const length = Buffer.alloc(4)
+    length.writeUInt32BE(data.length)
+    const crc = Buffer.alloc(4)
+    crc.writeUInt32BE(crc32(body))
+    return Buffer.concat([length, body, crc])
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(20000, 0)
+  header.writeUInt32BE(20000, 4)
+  header[8] = 8 // 位深
+  header[9] = 2 // RGB
+  return toArrayBuffer(
+    Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      chunk('IHDR', header),
+      chunk('IDAT', deflateSync(Buffer.alloc(64))),
+      chunk('IEND', Buffer.alloc(0))
+    ])
+  )
+}
 
 // 文件头完整、像素数据只剩一半: metadata() 能读出尺寸, 真正解码时才抛错
 export const createTruncatedPng = async () => {

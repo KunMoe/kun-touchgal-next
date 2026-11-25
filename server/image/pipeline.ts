@@ -59,7 +59,9 @@ export const admitImage = async (
   }
   let metadata: Metadata
   try {
-    metadata = await sharp(input).metadata()
+    // 只读文件头。关掉 sharp 默认的约 268MP 上限: 否则声明尺寸更大的炸弹在这一步就抛错, 被当成
+    // 认不出的文件, 而不是落到下面的像素检查
+    metadata = await sharp(input, { limitInputPixels: false }).metadata()
   } catch {
     return new ImageRejection('无法识别的图片文件', false)
   }
@@ -122,9 +124,10 @@ export const encodeVariants = async <K extends string>(
     if (error instanceof EncodeBusyError) {
       return new ImageRejection(error.message, false)
     }
-    // 槽里只有 sharp: 文件头通过了准入、像素数据解不开 (截断、损坏)。解码成本已经花了
+    // 槽里只有 sharp: 文件头通过了准入、像素数据解不开 (截断、损坏), 或编码器拒绝输出 (如只限宽的
+    // 原图变体高过 AVIF 的尺寸上限)。成本已经花了, 计费; 分不清输入问题与服务端故障, 留日志
     // eslint-disable-next-line no-console
-    console.warn('图片解码失败, 按损坏的图片拒绝:', error)
-    return new ImageRejection('图片已损坏或无法解码', true)
+    console.warn('图片解码或编码失败, 按无法处理的图片拒绝:', error)
+    return new ImageRejection('图片已损坏或无法处理', true)
   }
 }

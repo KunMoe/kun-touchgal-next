@@ -4,7 +4,8 @@ import sharp from 'sharp'
 import { encodePatchBanner } from '../_upload'
 import {
   createSvg,
-  createTruncatedPng
+  createTruncatedPng,
+  saturateEncodeQueue
 } from '~/server/image/__tests__/_fixtures'
 
 const createPng = async (
@@ -48,9 +49,21 @@ describe('encodePatchBanner', () => {
   it('像素数据损坏时返回文案, 不抛错', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(await encodePatchBanner(await createTruncatedPng())).toBe(
-      '图片已损坏或无法解码'
+      '图片已损坏或无法处理'
     )
     vi.restoreAllMocks()
+  })
+
+  it('编码排队已满时返回限流提示', async () => {
+    const image = await createPng(400, 300)
+    const release = await saturateEncodeQueue()
+    try {
+      expect(await encodePatchBanner(image, image)).toBe(
+        '服务器繁忙, 请稍后重试'
+      )
+    } finally {
+      await release()
+    }
   })
 
   it('正常图片编出三个变体, full 变体被限制在 3840 宽以内', async () => {

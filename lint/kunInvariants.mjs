@@ -1595,8 +1595,11 @@ export const KUN_INVARIANTS = [
     enforce: {
       kind: 'syntax',
       selectors: [
-        "ImportDeclaration[source.value='sharp'][importKind!='type']",
+        // 全部成员都带 type 的行内写法与整句 import type 一样会被整句擦除, 不报
+        "ImportDeclaration[source.value='sharp'][importKind!='type'][specifiers.length=0]",
+        "ImportDeclaration[source.value='sharp'][importKind!='type'] > :matches(ImportDefaultSpecifier, ImportNamespaceSpecifier, ImportSpecifier[importKind!='type'])",
         "ImportExpression[source.value='sharp']",
+        "ImportExpression[source.type='TemplateLiteral'][source.expressions.length=0][source.quasis.0.value.cooked='sharp']",
         "ExportNamedDeclaration[source.value='sharp'][exportKind!='type']",
         "ExportAllDeclaration[source.value='sharp']",
         "CallExpression[callee.name='require'][arguments.0.value='sharp']"
@@ -1607,14 +1610,18 @@ export const KUN_INVARIANTS = [
       bad: [
         "import sharp from 'sharp'",
         "import * as sharp from 'sharp'",
+        "import 'sharp'",
+        "import sharp, { type Metadata } from 'sharp'",
         "export const load = () => import('sharp')",
+        'export const load = () => import(`sharp`)',
         "export { default } from 'sharp'",
         "const sharp = require('sharp')"
       ],
       good: [
         "import { admitImage, encodeVariants } from '~/server/image/pipeline'",
         "import { transcodeTrustedAvifToJpeg } from '~/server/image/transcode'",
-        "import type { Metadata } from 'sharp'"
+        "import type { Metadata } from 'sharp'",
+        "import { type Metadata } from 'sharp'"
       ]
     }
   }

@@ -7,6 +7,7 @@ import {
   encodeVariants
 } from '~/server/image/pipeline'
 import {
+  createDeclaredHugePng,
   createDisguisedSvg,
   createGarbage,
   createHeic,
@@ -79,6 +80,12 @@ describe('admitImage', () => {
     )
   }, 30000)
 
+  it('声明尺寸超过 sharp 默认输入上限的炸弹同样按尺寸拒绝', async () => {
+    expect(await admitImage(createDeclaredHugePng())).toEqual(
+      new ImageRejection('图片尺寸过大', false)
+    )
+  })
+
   it('放行时带出原始字节与尺寸', async () => {
     const input = await createPng(320, 200)
     const image = await admit(input)
@@ -119,7 +126,7 @@ describe('encodeVariants', () => {
       await encodeVariants(image, {
         only: { width: 64, height: 64, quality: 50, maxMB: 1 }
       })
-    ).toEqual(new ImageRejection('图片已损坏或无法解码', true))
+    ).toEqual(new ImageRejection('图片已损坏或无法处理', true))
     expect(warn).toHaveBeenCalledTimes(1)
     warn.mockRestore()
   })

@@ -145,7 +145,7 @@ describe('POST /api/user/image', () => {
   it('文件头完整、像素数据损坏: 已经花了解码成本, 返回文案且不退额度', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(await (await postImage(await createTruncatedPng())).json()).toBe(
-      '图片已损坏或无法解码'
+      '图片已损坏或无法处理'
     )
     expect(quotaCalls('increment')).toBe(1)
     expect(quotaCalls('decrement')).toBe(0)

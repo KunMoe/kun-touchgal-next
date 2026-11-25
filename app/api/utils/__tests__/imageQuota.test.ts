@@ -113,6 +113,16 @@ describe('withDailyImageQuota', () => {
     expect([claimed(), refunded()]).toEqual([1, 0])
   })
 
+  it('不计费的拒绝退还失败时照样返回文案', async () => {
+    updateManyMock
+      .mockResolvedValueOnce({ count: 1 })
+      .mockRejectedValueOnce(new Error('db down'))
+
+    expect(
+      await withDailyImageQuota(7, async () => new ImageRejection('忙', false))
+    ).toBe('忙')
+  })
+
   it('work 抛错: 退还后原样抛出, 退还自己失败不盖住原始错误', async () => {
     updateManyMock
       .mockResolvedValueOnce({ count: 1 })

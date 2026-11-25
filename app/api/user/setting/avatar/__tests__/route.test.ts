@@ -207,6 +207,14 @@ describe('POST /api/user/setting/avatar', () => {
     )
   })
 
+  it('准入排在送审预检之后: 预检拒绝时先回预检文案', async () => {
+    preScreenMediaMock.mockResolvedValue('您有太多内容正在审核中')
+
+    expect(await (await postAvatar(createGarbage())).json()).toBe(
+      '您有太多内容正在审核中'
+    )
+  })
+
   it('额度用尽时直接拒绝, 不编码也不写入', async () => {
     userUpdateManyMock.mockResolvedValue({ count: 0 })
 
@@ -236,7 +244,7 @@ describe('POST /api/user/setting/avatar', () => {
   it('文件头完整、像素数据损坏: 已经花了解码成本, 返回文案且不退额度', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(await (await postAvatar(await createTruncatedPng())).json()).toBe(
-      '图片已损坏或无法解码'
+      '图片已损坏或无法处理'
     )
     expect(quotaCalls('increment')).toBe(1)
     expect(quotaCalls('decrement')).toBe(0)
