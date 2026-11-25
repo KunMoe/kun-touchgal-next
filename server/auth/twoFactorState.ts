@@ -3,7 +3,9 @@ import type { KunTx } from '~/prisma/index'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import {
   createTotpKey,
+  isSealedTotpSecret,
   issueBackupCodes,
+  sealTotpSecret,
   SECOND_FACTOR_FAILURE_MESSAGE,
   verifyEnrollmentCode
 } from './secondFactor'
@@ -43,7 +45,7 @@ export const beginEnrollment = async (
     event: '2fa-secret-staged',
     where: { enable_2fa: false },
     data: {
-      two_factor_secret: key.secret,
+      two_factor_secret: key.stored,
       two_factor_backup: [],
       enable_2fa: false
     }
@@ -134,4 +136,56 @@ export const disableTwoFactor = async (
   return updated.count === 1
     ? { outcome: 'disabled', stamp: updated.stamp }
     : { outcome: 'not-enabled' }
+}
+
+// 把存量的明文 TOTP 种子改存密文 (scripts/encryptTotpSecrets.ts 调用)。按 id 分批扫描有种子的行,
+// 以读到的明文为条件逐行写入: 扫描之后被重新绑定或关闭了 2FA 的行命中 0 行, 不会被覆盖。
+// apply 为 false 时只数不写。已是密文的行跳过, 重复执行无害
+export const sealLegacyTotpSecrets = async ({
+  apply,
+  batchSize = 500
+}: {
+  apply: boolean
+  batchSize?: number
+}) => {
+  let pending = 0
+  let sealed = 0
+  let changed = 0
+  let cursorId = 0
+
+  while (true) {
+    const batch = await prisma.user.findMany({
+      where: { id: { gt: cursorId }, two_factor_secret: { not: '' } },
+      select: { id: true, two_factor_secret: true },
+      orderBy: { id: 'asc' },
+      take: batchSize
+    })
+    if (batch.length === 0) {
+      break
+    }
+    cursorId = batch[batch.length - 1].id
+
+    for (const row of batch) {
+      if (isSealedTotpSecret(row.two_factor_secret)) {
+        continue
+      }
+      pending++
+      if (!apply) {
+        continue
+      }
+      const updated = await applyKunCredentialChange(prisma, {
+        uid: row.id,
+        event: '2fa-secret-sealed',
+        where: { two_factor_secret: row.two_factor_secret },
+        data: { two_factor_secret: sealTotpSecret(row.two_factor_secret) }
+      })
+      if (updated.count) {
+        sealed++
+      } else {
+        changed++
+      }
+    }
+  }
+
+  return { pending, sealed, changed }
 }

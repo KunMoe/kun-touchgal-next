@@ -33,6 +33,9 @@ import {
   verifySecondFactor
 } from '~/server/auth/secondFactor'
 import { hashTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'
+import { createSecretBox } from '~/lib/crypto/secretBox'
+
+const totpBox = createSecretBox('KUN_TWO_FACTOR_SECRET_ENC_KEY')
 
 // 不借 time2fa 自己来当答案: 按 RFC 4226 / 6238 用 node:crypto 独立算一遍
 // (HMAC-SHA1、动态截断、6 位、30 秒步长), 身份验证器应用算出来的就是这个值
@@ -73,6 +76,10 @@ beforeEach(() => {
   vi.stubEnv(
     'KUN_TWO_FACTOR_BACKUP_PEPPER',
     'test-only-two-factor-backup-pepper-1234567890'
+  )
+  vi.stubEnv(
+    'KUN_TWO_FACTOR_SECRET_ENC_KEY',
+    'test-only-two-factor-secret-kek-1234567890'
   )
   vi.spyOn(console, 'error').mockImplementation(() => {})
   reserveAttemptMock.mockResolvedValue({ allowed: true, remaining: [9, 4] })
@@ -174,6 +181,29 @@ describe('checkTotp', () => {
       checkTotp(7, SECRET, referenceCode(SECRET, STEP))
     ).rejects.toThrow('redis unavailable')
   })
+
+  // 库里存的是密文; 回填之前的存量明文 (上面几例) 照样能校验
+  it('checks a code against a sealed secret', async () => {
+    const stored = totpBox.seal(SECRET)
+
+    await expect(
+      checkTotp(7, stored, referenceCode(SECRET, STEP))
+    ).resolves.toBe('ok')
+    await expect(checkTotp(7, stored, '000000')).resolves.toBe('invalid')
+  })
+
+  it('throws instead of answering when the sealed secret cannot be opened', async () => {
+    const stored = totpBox.seal(SECRET)
+    vi.stubEnv(
+      'KUN_TWO_FACTOR_SECRET_ENC_KEY',
+      'another-kek-that-is-long-enough-123'
+    )
+
+    await expect(
+      checkTotp(7, stored, referenceCode(SECRET, STEP))
+    ).rejects.toThrow()
+    expect(setKvIfAbsentMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('verifySecondFactor', () => {
@@ -240,6 +270,19 @@ describe('verifySecondFactor', () => {
       reason: 'replayed'
     })
 
+    expect(settleSuccessMock).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the stored secret cannot be opened', async () => {
+    findUniqueMock.mockResolvedValue({
+      ...enabledUser,
+      two_factor_secret: totpBox.seal(SECRET).slice(0, -2)
+    })
+
+    await expect(verifySecondFactor(7, totp(), ctx)).resolves.toEqual({
+      ok: false,
+      reason: 'unavailable'
+    })
     expect(settleSuccessMock).not.toHaveBeenCalled()
   })
 
@@ -373,6 +416,10 @@ describe('issuing', () => {
     expect(
       matchTotpStep(key.secret, referenceCode(key.secret, STEP), NOW)
     ).toBe(STEP)
+    // 落库的是密文, 明文只在 secret 与 url 里给用户看一次
+    expect(key.stored).toMatch(/^gcm:/)
+    expect(key.stored).not.toContain(key.secret)
+    expect(totpBox.open(key.stored)).toBe(key.secret)
   })
 
   it('returns ten 10-digit backup codes and stores only their hashes', () => {

@@ -73,6 +73,7 @@ describe('KUN_SECURITY_POLICY', () => {
       'email-changed': { bumpStamp: true, current: 'keep', redis: 'others' },
       'email-reverted': { bumpStamp: true, current: 'none', redis: 'all' },
       '2fa-secret-staged': { bumpStamp: false, current: 'none', redis: 'none' },
+      '2fa-secret-sealed': { bumpStamp: false, current: 'none', redis: 'none' },
       '2fa-enabled': { bumpStamp: true, current: 'keep', redis: 'others' },
       '2fa-disabled': { bumpStamp: true, current: 'keep', redis: 'others' },
       '2fa-disabled-by-admin': {

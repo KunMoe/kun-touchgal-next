@@ -32,6 +32,7 @@ import {
 } from '~/app/api/user/setting/__tests__/_credentialFakes'
 import { POST as enable } from '~/app/api/user/setting/2fa/enable/route'
 import { POST } from '~/app/api/user/setting/2fa/save-secret/route'
+import { createSecretBox } from '~/lib/crypto/secretBox'
 
 const { db, session } = fakes
 const UID = 7
@@ -50,6 +51,11 @@ const post = (body: unknown = { currentPassword: PASSWORD }) =>
 
 const read = async (response: Response) => response.json()
 
+const storedSecret = () =>
+  createSecretBox('KUN_TWO_FACTOR_SECRET_ENC_KEY').open(
+    db.user(UID)!.two_factor_secret
+  )
+
 beforeAll(async () => {
   passwordHash = await hashPassword(PASSWORD)
 })
@@ -60,6 +66,10 @@ beforeEach(() => {
   vi.stubEnv(
     'KUN_TWO_FACTOR_BACKUP_PEPPER',
     'test-only-two-factor-backup-pepper-1234567890'
+  )
+  vi.stubEnv(
+    'KUN_TWO_FACTOR_SECRET_ENC_KEY',
+    'test-only-two-factor-secret-kek-1234567890'
   )
   fakes.reset()
   db.insertUser(
@@ -177,9 +187,11 @@ describe('POST /api/user/setting/2fa/save-secret', () => {
     expect(body.qrCodeUrl).toMatch(/^data:image\/png;base64,/)
     expect(db.user(UID)).toMatchObject({
       enable_2fa: false,
-      two_factor_secret: body.secret,
+      two_factor_secret: expect.stringMatching(/^gcm:/),
       two_factor_backup: []
     })
+    // 库里存的是密文, 返回给用户的是它的明文
+    expect(storedSecret()).toBe(body.secret)
   })
 
   it('replaces the pending secret when called again', async () => {
@@ -187,7 +199,7 @@ describe('POST /api/user/setting/2fa/save-secret', () => {
     const second = await read(await post())
 
     expect(second.secret).not.toBe(first.secret)
-    expect(db.user(UID)?.two_factor_secret).toBe(second.secret)
+    expect(storedSecret()).toBe(second.secret)
   })
 
   it('answers a state-changed message when 2FA turns on between the read and the write', async () => {
@@ -215,9 +227,7 @@ describe('POST /api/user/setting/2fa/save-secret', () => {
     )
 
     expect((await read(response)).backupCode).toHaveLength(10)
-    expect(db.user(UID)).toMatchObject({
-      enable_2fa: true,
-      two_factor_secret: secret
-    })
+    expect(db.user(UID)?.enable_2fa).toBe(true)
+    expect(storedSecret()).toBe(secret)
   })
 })

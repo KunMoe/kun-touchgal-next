@@ -13,6 +13,7 @@ const validEnv = {
   JWT_AUD: 'aud',
   JWT_SECRET: 'secret',
   KUN_TWO_FACTOR_BACKUP_PEPPER: 'p'.repeat(32),
+  KUN_TWO_FACTOR_SECRET_ENC_KEY: 't'.repeat(32),
   KUN_CAP_SECRET: 's'.repeat(32),
   KUN_EMAIL_UNSUBSCRIBE_SECRET: 'u'.repeat(32),
   NODE_ENV: 'production',

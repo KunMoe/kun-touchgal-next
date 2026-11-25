@@ -66,3 +66,25 @@ export const KUN_GLOBAL_OMIT = {
   user: hiddenOf(USER_COLUMN_CLASS),
   oidc_client: { client_secret: true }
 } as const satisfies Prisma.GlobalOmitConfig
+
+// 秘密列怎样落库, 一处可查。hash: 只能比对 (密码); hmac: 带 pepper 的 HMAC, 只能比对
+// (备份码); aead: 可还原的密文 (lib/crypto/secretBox.ts), 校验时要明文 (TOTP 种子、
+// client_secret_basic)。分级表里新增 secret 类的列, 要先在这里写出它的落库方式
+type SecretStorage = 'hash' | 'hmac' | 'aead'
+type UserSecretColumn = {
+  [
+    K in keyof typeof USER_COLUMN_CLASS
+  ]: (typeof USER_COLUMN_CLASS)[K] extends 'secret' ? K : never
+}[keyof typeof USER_COLUMN_CLASS]
+
+export const SECRET_STORAGE = {
+  user: {
+    password: 'hash',
+    two_factor_backup: 'hmac',
+    two_factor_secret: 'aead'
+  },
+  oidc_client: { client_secret: 'aead' }
+} as const satisfies {
+  user: Record<UserSecretColumn, SecretStorage>
+  oidc_client: Record<keyof typeof KUN_GLOBAL_OMIT.oidc_client, SecretStorage>
+}

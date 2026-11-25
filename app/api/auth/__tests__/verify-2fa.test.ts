@@ -204,6 +204,23 @@ describe('POST /api/auth/verify-2fa', () => {
     expect(cookieDeleteMock).toHaveBeenCalled()
   })
 
+  it('reads the seed explicitly and hands the stored value to checkTotp as is', async () => {
+    checkTotpMock.mockResolvedValue('ok')
+
+    await POST(createRequest())
+
+    // 种子被全局 omit 隐藏 (prisma/columnPolicy.ts), 要显式取回; 解密在 checkTotp 里
+    expect(findUniqueMock).toHaveBeenCalledWith({
+      where: { id: 7 },
+      omit: { two_factor_secret: false }
+    })
+    expect(checkTotpMock).toHaveBeenCalledWith(
+      7,
+      'ABCDEFGHIJKLMN12',
+      expect.any(String)
+    )
+  })
+
   it('consumes the challenge before issuing the access session', async () => {
     checkTotpMock.mockResolvedValue('ok')
 

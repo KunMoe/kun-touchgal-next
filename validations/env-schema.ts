@@ -19,6 +19,9 @@ const rawEnvSchema = z.object({
   JWT_AUD: z.string(),
   JWT_SECRET: z.string(),
   KUN_TWO_FACTOR_BACKUP_PEPPER: z.string().min(32),
+  // TOTP 种子落库加密的 KEK (server/auth/secondFactor.ts)。丢失或改动后所有 2FA 用户都无法
+  // 登录, 只能由管理员逐个关闭 2FA, 务必离线备份
+  KUN_TWO_FACTOR_SECRET_ENC_KEY: z.string().min(32),
   KUN_CAP_SECRET: z.string().min(32),
   KUN_EMAIL_UNSUBSCRIBE_SECRET: z.string().min(32),
 

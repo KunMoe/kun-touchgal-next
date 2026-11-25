@@ -1,6 +1,7 @@
 import { generateBackupCodes, generateConfig, Hotp, Totp } from 'time2fa'
 import { prisma } from '~/prisma/index'
 import { setKvIfAbsent } from '~/lib/redis'
+import { createSecretBox } from '~/lib/crypto/secretBox'
 import { reserveAttempt, settleSuccess } from './attemptBudget'
 import { stepUpSecondFactorDims } from './budgets'
 import {
@@ -24,6 +25,14 @@ const USED_STEP_TTL_SECONDS = 120
 // 存量的 6 位码继续可用, 校验层两种长度都收 (validations/secondFactor.ts)
 const BACKUP_CODE_COUNT = 10
 const BACKUP_CODE_LENGTH = 10
+
+// TOTP 种子加密落库 (库只读泄露时不交出可用的第二因子)。只在生成时 seal (createTotpKey)、
+// 校验时 open (checkTotp); 存量明文没有前缀, open 原样返回, 回填前后都能校验。
+// 空串表示没有种子, 不加密
+const totpSecretBox = createSecretBox('KUN_TWO_FACTOR_SECRET_ENC_KEY')
+
+export const isSealedTotpSecret = totpSecretBox.isSealed
+export const sealTotpSecret = totpSecretBox.seal
 
 export const SECOND_FACTOR_FAILURE_MESSAGE = {
   invalid: '验证码无效',
@@ -65,13 +74,14 @@ export const matchTotpStep = (
   return null
 }
 
-// 校验并登记时间步。Redis 异常直接抛出: 登记不了就无法防重放, 调用方不得放行
+// 校验并登记时间步。storedSecret 是库里 two_factor_secret 的原值 (密文或存量明文)。
+// Redis 异常与解密失败直接抛出: 登记不了就无法防重放, 解不开就无从校验, 调用方不得放行
 export const checkTotp = async (
   uid: number,
-  secret: string,
+  storedSecret: string,
   code: string
 ): Promise<'ok' | 'invalid' | 'replayed'> => {
-  const step = matchTotpStep(secret, code, Date.now())
+  const step = matchTotpStep(totpSecretBox.open(storedSecret), code, Date.now())
   if (step === null) {
     return 'invalid'
   }
@@ -118,12 +128,12 @@ const withinStepUpBudget = async (
 
 const checkTotpResult = async (
   uid: number,
-  secret: string,
+  storedSecret: string,
   code: string
 ): Promise<SecondFactorResult> => {
   let outcome
   try {
-    outcome = await checkTotp(uid, secret, code)
+    outcome = await checkTotp(uid, storedSecret, code)
   } catch (error) {
     return unavailable('totp', error)
   }
@@ -163,17 +173,21 @@ export const verifySecondFactor = (
     return checkTotpResult(uid, user.two_factor_secret, proof.code)
   })
 
-// 启用之前确认用户的身份验证器已经装上这把密钥: 密钥还没生效, 由调用方读出后传入
+// 启用之前确认用户的身份验证器已经装上这把密钥: 密钥还没生效, 由调用方把库里存的值原样传入
 export const verifyEnrollmentCode = (
   uid: number,
-  secret: string,
+  storedSecret: string,
   code: string,
   ctx: Pick<SecondFactorContext, 'ip'>
-) => withinStepUpBudget(uid, ctx.ip, () => checkTotpResult(uid, secret, code))
+) =>
+  withinStepUpBudget(uid, ctx.ip, () =>
+    checkTotpResult(uid, storedSecret, code)
+  )
 
+// TOTP 种子唯一的生成点: secret 与 url 只在生成时给用户看一次 (二维码), stored 是落库的密文
 export const createTotpKey = (issuer: string, user: string) => {
   const { secret, url } = Totp.generateKey({ issuer, user })
-  return { secret, url }
+  return { secret, url, stored: totpSecretBox.seal(secret) }
 }
 
 // 备份码唯一的生成点: plain 只在启用时给用户看一次, stored 是落库的 HMAC

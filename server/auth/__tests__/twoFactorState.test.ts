@@ -32,6 +32,7 @@ import {
   TWO_FACTOR_STATE_CHANGED
 } from '~/server/auth/twoFactorState'
 import { hashTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'
+import { createSecretBox } from '~/lib/crypto/secretBox'
 import type { StepUpPassed } from '~/server/auth/stepUp'
 
 // 品牌值只有 requireStepUp 造得出来; 这里测的是它之后的状态迁移
@@ -47,6 +48,10 @@ beforeEach(() => {
   vi.stubEnv(
     'KUN_TWO_FACTOR_BACKUP_PEPPER',
     'test-only-two-factor-backup-pepper-1234567890'
+  )
+  vi.stubEnv(
+    'KUN_TWO_FACTOR_SECRET_ENC_KEY',
+    'test-only-two-factor-secret-kek-1234567890'
   )
   verifyEnrollmentCodeMock.mockResolvedValue({ ok: true })
 })
@@ -66,12 +71,18 @@ describe('beginEnrollment', () => {
       secret: expect.stringMatching(/^[A-Z2-7]{16}$/),
       authUrl: expect.stringContaining('otpauth://totp/')
     })
+    const { secret } = key as { secret: string }
     expect(fakes.db.user(7)).toMatchObject({
       enable_2fa: false,
-      two_factor_secret: (key as { secret: string }).secret,
+      two_factor_secret: expect.stringMatching(/^gcm:/),
       two_factor_backup: []
     })
-    expect((key as { secret: string }).secret).not.toBe('OLDSECRETOLDSECR')
+    // 库里存的是密文, 返回给用户的是它的明文
+    const stored = fakes.db.user(7)!.two_factor_secret
+    expect(createSecretBox('KUN_TWO_FACTOR_SECRET_ENC_KEY').open(stored)).toBe(
+      secret
+    )
+    expect(secret).not.toBe('OLDSECRETOLDSECR')
   })
 
   it('refuses to replace the secret of an account that already has 2FA on', async () => {

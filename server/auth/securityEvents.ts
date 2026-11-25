@@ -24,6 +24,7 @@ export type KunSecurityEvent =
   | 'email-changed'
   | 'email-reverted'
   | '2fa-secret-staged'
+  | '2fa-secret-sealed'
   | '2fa-enabled'
   | '2fa-disabled'
   | '2fa-disabled-by-admin'
@@ -54,6 +55,9 @@ export const KUN_SECURITY_POLICY = {
   'email-reverted': { bumpStamp: true, current: 'none', redis: 'all' },
   // 只生成待确认的密钥: 2FA 还没生效, 不动会话
   '2fa-secret-staged': { bumpStamp: false, current: 'none', redis: 'none' },
+  // 存量明文 TOTP 种子改存密文 (scripts/encryptTotpSecrets.ts): 种子没变, 不动任何会话。
+  // 会话缓存里没有种子, 写完不必 finishKunSecurityEvent
+  '2fa-secret-sealed': { bumpStamp: false, current: 'none', redis: 'none' },
   '2fa-enabled': { bumpStamp: true, current: 'keep', redis: 'others' },
   '2fa-disabled': { bumpStamp: true, current: 'keep', redis: 'others' },
   '2fa-disabled-by-admin': { bumpStamp: false, current: 'none', redis: 'all' },
