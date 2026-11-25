@@ -120,6 +120,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
 })
 
 describe('POST /api/user/setting/avatar', () => {
@@ -198,6 +199,14 @@ describe('POST /api/user/setting/avatar', () => {
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 
+  it('准入排在审核闸门之后: 已有头像在审核中时先回审核提示', async () => {
+    hasPendingModerationMock.mockResolvedValue(true)
+
+    expect(await (await postAvatar(createGarbage())).json()).toBe(
+      '您提交的头像正在审核中, 暂时无法更换'
+    )
+  })
+
   it('额度用尽时直接拒绝, 不编码也不写入', async () => {
     userUpdateManyMock.mockResolvedValue({ count: 0 })
 
@@ -208,28 +217,29 @@ describe('POST /api/user/setting/avatar', () => {
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 
-  it('像素炸弹: 拒绝且不写入, 抢占的额度退还', async () => {
+  it('像素炸弹: 准入就拒绝, 不扣额度也不写入', async () => {
     expect(await (await postAvatar(await createPixelBomb())).json()).toBe(
       '图片尺寸过大'
     )
-    expect(quotaCalls('increment')).toBe(1)
-    expect(quotaCalls('decrement')).toBe(1)
+    expect(userUpdateManyMock).not.toHaveBeenCalled()
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   }, 30000)
 
-  it('认不出的字节: 拒绝且不写入, 抢占的额度退还', async () => {
+  it('认不出的字节: 准入就拒绝, 不扣额度也不写入', async () => {
     expect(await (await postAvatar(createGarbage())).json()).toBe(
       '无法识别的图片文件'
     )
-    expect(quotaCalls('increment')).toBe(1)
-    expect(quotaCalls('decrement')).toBe(1)
+    expect(userUpdateManyMock).not.toHaveBeenCalled()
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 
-  it('文件头完整、像素数据损坏: 解码抛错, 退还额度后原样抛出', async () => {
-    await expect(postAvatar(await createTruncatedPng())).rejects.toThrow()
+  it('文件头完整、像素数据损坏: 已经花了解码成本, 返回文案且不退额度', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await (await postAvatar(await createTruncatedPng())).json()).toBe(
+      '图片已损坏或无法解码'
+    )
     expect(quotaCalls('increment')).toBe(1)
-    expect(quotaCalls('decrement')).toBe(1)
+    expect(quotaCalls('decrement')).toBe(0)
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 

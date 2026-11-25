@@ -12,9 +12,12 @@ vi.mock('~/prisma/index', () => ({
 
 import {
   DAILY_IMAGE_LIMIT,
+  DAILY_IMAGE_QUOTA_EXHAUSTED,
   claimDailyImageQuota,
-  refundDailyImageQuota
+  refundDailyImageQuota,
+  withDailyImageQuota
 } from '../imageQuota'
+import { ImageRejection } from '~/server/image/pipeline'
 
 describe('claimDailyImageQuota', () => {
   beforeEach(() => {
@@ -65,5 +68,61 @@ describe('refundDailyImageQuota', () => {
     updateManyMock.mockResolvedValue({ count: 0 })
 
     await expect(refundDailyImageQuota(7)).resolves.toBeUndefined()
+  })
+})
+
+describe('withDailyImageQuota', () => {
+  const claimed = () =>
+    updateManyMock.mock.calls.filter(
+      ([args]) => args.data.daily_image_count.increment === 1
+    ).length
+  const refunded = () =>
+    updateManyMock.mock.calls.filter(
+      ([args]) => args.data.daily_image_count.decrement === 1
+    ).length
+
+  beforeEach(() => {
+    updateManyMock.mockReset()
+    updateManyMock.mockResolvedValue({ count: 1 })
+  })
+
+  it('成功: 额度落定, 原样返回 work 的结果', async () => {
+    expect(await withDailyImageQuota(7, async () => 'ok' as const)).toBe('ok')
+    expect([claimed(), refunded()]).toEqual([1, 0])
+  })
+
+  it('抢不到: 返回限额文案, 不调 work', async () => {
+    updateManyMock.mockResolvedValue({ count: 0 })
+    const work = vi.fn()
+
+    expect(await withDailyImageQuota(7, work)).toBe(DAILY_IMAGE_QUOTA_EXHAUSTED)
+    expect(DAILY_IMAGE_QUOTA_EXHAUSTED).toContain(String(DAILY_IMAGE_LIMIT))
+    expect(work).not.toHaveBeenCalled()
+  })
+
+  it('不计费的拒绝 (排队忙) 退还, 计费的 (解码失败、超限) 不退, 都返回文案', async () => {
+    expect(
+      await withDailyImageQuota(7, async () => new ImageRejection('忙', false))
+    ).toBe('忙')
+    expect([claimed(), refunded()]).toEqual([1, 1])
+
+    updateManyMock.mockClear()
+    expect(
+      await withDailyImageQuota(7, async () => new ImageRejection('坏图', true))
+    ).toBe('坏图')
+    expect([claimed(), refunded()]).toEqual([1, 0])
+  })
+
+  it('work 抛错: 退还后原样抛出, 退还自己失败不盖住原始错误', async () => {
+    updateManyMock
+      .mockResolvedValueOnce({ count: 1 })
+      .mockRejectedValueOnce(new Error('db down'))
+
+    await expect(
+      withDailyImageQuota(7, async () => {
+        throw new Error('s3 down')
+      })
+    ).rejects.toThrow('s3 down')
+    expect([claimed(), refunded()]).toEqual([1, 1])
   })
 })

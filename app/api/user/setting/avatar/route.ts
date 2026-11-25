@@ -16,10 +16,8 @@ import {
   hasPendingModeration,
   preScreenMedia
 } from '~/server/moderation/submit'
-import {
-  claimDailyImageQuota,
-  refundDailyImageQuota
-} from '~/app/api/utils/imageQuota'
+import { withDailyImageQuota } from '~/app/api/utils/imageQuota'
+import { ImageRejection, admitImage } from '~/server/image/pipeline'
 import type { KunActor } from '~/constants/role'
 
 const getAvatarUrls = (uid: number) => {
@@ -55,6 +53,12 @@ const updateUserAvatar = async (actor: KunActor, avatar: ArrayBuffer) => {
     return moderation
   }
 
+  // 准入在抢额度之前: 认不出、不收的格式与像素炸弹不扣额度, 也不进编码队列
+  const admitted = await admitImage(avatar)
+  if (admitted instanceof ImageRejection) {
+    return admitted.message
+  }
+
   // 审核拦截时用每次上传唯一的暂存 key, 使送审读取与 apply 复制绑定同一不可变对象,
   // 并发双上传各写各的 key, 无从互相覆盖; 留档 key 复用同一 nonce, 便于按对象追溯
   const nonce = randomUUID()
@@ -62,22 +66,10 @@ const updateUserAvatar = async (actor: KunActor, avatar: ArrayBuffer) => {
     ? getUserAvatarPendingKeys(uid, nonce)
     : undefined
 
-  // 编码前原子抢占每日额度: 抢不到直接拒绝, 不进入编码 / 上传 (限制 "已承诺的总工作量").
-  // 取代原先 "先读计数判断再递增" 的两步写法, 杜绝并发下的 TOCTOU 越额
-  if (!(await claimDailyImageQuota(uid))) {
-    return '您今日上传的图片已达到 50 张限额'
-  }
-
-  // 抢占后编码 / 上传失败则退还额度; 上传成功则额度落定 (S3 资源已消耗)
-  let res: string | undefined
-  try {
-    res = await uploadUserAvatar(avatar, uid, pendingKeys)
-  } catch (error) {
-    await refundDailyImageQuota(uid)
-    throw error
-  }
+  const res = await withDailyImageQuota(uid, () =>
+    uploadUserAvatar(admitted, uid, pendingKeys)
+  )
   if (typeof res === 'string') {
-    await refundDailyImageQuota(uid)
     return res
   }
 

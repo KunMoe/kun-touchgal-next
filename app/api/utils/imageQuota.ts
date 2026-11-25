@@ -1,8 +1,11 @@
 import { prisma } from '~/prisma/index'
+import { ImageRejection } from '~/server/image/pipeline'
 
 // 每日单用户图片上传额度上限. 抽为常量, 使原子抢占与各入口错误文案共用同一阈值,
 // 避免像 H-03 那样在多个上传入口各自硬编码 "50" 而漂移
 export const DAILY_IMAGE_LIMIT = 50
+
+export const DAILY_IMAGE_QUOTA_EXHAUSTED = `您今日上传的图片已达到 ${DAILY_IMAGE_LIMIT} 张限额`
 
 // 原子抢占一个每日图片额度: 单条 updateMany 在数据库层同时完成
 // "daily_image_count < 上限" 判定与 +1, 二者不可被并发请求穿插.
@@ -27,4 +30,33 @@ export const refundDailyImageQuota = async (uid: number): Promise<void> => {
     where: { id: uid, daily_image_count: { gte: 1 } },
     data: { daily_image_count: { decrement: 1 } }
   })
+}
+
+// 图床与头像共用的额度包装: 抢占 → work → 按结果落定或退还。work 在调用方准入之后、只做编码与写入:
+// - 抢不到: 返回限额文案, 不调 work
+// - 返回 ImageRejection: 不计费的 (排队忙) 退还, 计费的 (解码失败、编码后超限) 不退, 都返回文案
+// - 抛错: 这时只剩 S3 等基础设施错误, 退还后原样抛出; 退还自己失败不盖住原始错误
+// 形状照抄 patch/resource/_helper.ts 的退还路径
+export const withDailyImageQuota = async <T>(
+  uid: number,
+  work: () => Promise<T | ImageRejection>
+): Promise<T | string> => {
+  if (!(await claimDailyImageQuota(uid))) {
+    return DAILY_IMAGE_QUOTA_EXHAUSTED
+  }
+
+  let res: T | ImageRejection
+  try {
+    res = await work()
+  } catch (error) {
+    await refundDailyImageQuota(uid).catch(() => undefined)
+    throw error
+  }
+  if (res instanceof ImageRejection) {
+    if (!res.billable) {
+      await refundDailyImageQuota(uid).catch(() => undefined)
+    }
+    return res.message
+  }
+  return res
 }

@@ -1,10 +1,6 @@
 import { copyObject, uploadImageToS3 } from '~/lib/s3'
-import {
-  ImageRejection,
-  admitImage,
-  encodeVariants
-} from '~/server/image/pipeline'
-import type { VariantPlan } from '~/server/image/pipeline'
+import { ImageRejection, encodeVariants } from '~/server/image/pipeline'
+import type { AdmittedImage, VariantPlan } from '~/server/image/pipeline'
 import { MODERATION_S3_TIMEOUT_MS } from '~/constants/moderation'
 import {
   getUserAvatarKeys,
@@ -39,21 +35,17 @@ export const archiveAvatarForModeration = async (
   }
 }
 
+// 准入与额度归路由 (avatar/route.ts)
 export const uploadUserAvatar = async (
-  image: ArrayBuffer,
+  image: AdmittedImage,
   uid: number,
   // 审核开启时先上传到唯一暂存 key (getUserAvatarPendingKeys), 通过后由 apply.ts
   // 复制到正式 key; 不传则直接写正式 key
   pendingKeys?: { pendingKey: string; pendingMiniKey: string }
 ) => {
-  const admitted = await admitImage(image)
-  if (admitted instanceof ImageRejection) {
-    return admitted.message
-  }
-
-  const encoded = await encodeVariants(admitted, AVATAR_PLAN)
+  const encoded = await encodeVariants(image, AVATAR_PLAN)
   if (encoded instanceof ImageRejection) {
-    return encoded.message
+    return encoded
   }
   const { avatar, miniAvatar } = encoded
 

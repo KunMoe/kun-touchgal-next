@@ -15,6 +15,7 @@ import {
   archiveAvatarForModeration,
   uploadUserAvatar
 } from '~/app/api/user/setting/_upload'
+import { ImageRejection, admitImage } from '~/server/image/pipeline'
 
 const createPng = async (
   width: number,
@@ -65,27 +66,18 @@ describe('archiveAvatarForModeration', () => {
   })
 })
 
+// 准入 (空文件、格式、像素炸弹) 与额度在路由: avatar/__tests__/route.test.ts、server/image/__tests__/pipeline.test.ts
 describe('uploadUserAvatar', () => {
   beforeEach(() => {
     uploadImageToS3Mock.mockReset()
     uploadImageToS3Mock.mockResolvedValue(undefined)
   })
 
-  it('原图像素数超过上限时前置拒绝, 不触发编码与上传', async () => {
-    const bomb = await createPng(8000, 7000) // 56M > 50M 上限
-    const res = await uploadUserAvatar(bomb, 1)
-    expect(res).toBe('图片尺寸过大')
-    expect(uploadImageToS3Mock).not.toHaveBeenCalled()
-  }, 30000)
-
-  it('空文件返回错误', async () => {
-    const res = await uploadUserAvatar(new ArrayBuffer(0), 1)
-    expect(res).toBe('上传文件不能为空')
-    expect(uploadImageToS3Mock).not.toHaveBeenCalled()
-  })
-
   it('正常图片编码并上传头像与 mini 两个变体', async () => {
-    const image = await createPng(512, 512)
+    const image = await admitImage(await createPng(512, 512))
+    if (image instanceof ImageRejection) {
+      throw new Error(image.message)
+    }
     const res = await uploadUserAvatar(image, 42)
     expect(res).toBeUndefined()
     expect(uploadImageToS3Mock).toHaveBeenCalledTimes(2)

@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
 
 import { encodePatchBanner } from '../_upload'
+import {
+  createSvg,
+  createTruncatedPng
+} from '~/server/image/__tests__/_fixtures'
 
 const createPng = async (
   width: number,
@@ -32,6 +36,21 @@ describe('encodePatchBanner', () => {
 
   it('空文件返回错误', async () => {
     expect(await encodePatchBanner(new ArrayBuffer(0))).toBe('上传文件不能为空')
+  })
+
+  // 封面不计额度, 这两种失败原先一个照常渲染、一个抛成 500
+  it('不收的格式在原图上也拒绝', async () => {
+    expect(
+      await encodePatchBanner(await createPng(400, 300), createSvg())
+    ).toBe('不支持该图片格式, 仅支持 jpg、png、webp、avif、gif')
+  })
+
+  it('像素数据损坏时返回文案, 不抛错', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await encodePatchBanner(await createTruncatedPng())).toBe(
+      '图片已损坏或无法解码'
+    )
+    vi.restoreAllMocks()
   })
 
   it('正常图片编出三个变体, full 变体被限制在 3840 宽以内', async () => {

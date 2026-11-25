@@ -93,6 +93,7 @@ export type VariantPlan<K extends string> = Readonly<Record<K, VariantSpec>>
 const BYTES_PER_MB = 1024 * 1024
 
 // 一次调用只占一个编码槽 (有界队列, 满或排队超时即拒绝), 槽内逐个变体从原始字节独立解码。
+// 排队忙不计费; 解码失败与编码后超限计费 (已经花了解码成本, 退额度就能无限重放)。
 // 不复用 .raw() 中间结果: 8-bit 非预乘中转对带 alpha 的图有损 (sharp-raw-roundtrip-alpha-lossy)。
 // 要并行就调用两次 (封面的主图与原图), 不加槽位开关
 export const encodeVariants = async <K extends string>(
@@ -111,7 +112,7 @@ export const encodeVariants = async <K extends string>(
           .avif({ quality })
           .toBuffer()
         if (buffer.length > maxMB * BYTES_PER_MB) {
-          return new ImageRejection('图片体积过大', false)
+          return new ImageRejection('图片体积过大', true)
         }
         encoded[name] = buffer
       }
@@ -121,6 +122,9 @@ export const encodeVariants = async <K extends string>(
     if (error instanceof EncodeBusyError) {
       return new ImageRejection(error.message, false)
     }
-    throw error
+    // 槽里只有 sharp: 文件头通过了准入、像素数据解不开 (截断、损坏)。解码成本已经花了
+    // eslint-disable-next-line no-console
+    console.warn('图片解码失败, 按损坏的图片拒绝:', error)
+    return new ImageRejection('图片已损坏或无法解码', true)
   }
 }

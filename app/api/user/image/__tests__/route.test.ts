@@ -118,37 +118,37 @@ describe('POST /api/user/image', () => {
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 
-  it('像素炸弹: 拒绝且不写入, 抢占的额度退还', async () => {
+  it('像素炸弹: 准入就拒绝, 不扣额度也不写入', async () => {
     expect(await (await postImage(await createPixelBomb())).json()).toBe(
       '图片尺寸过大'
     )
-    expect(quotaCalls('increment')).toBe(1)
-    expect(quotaCalls('decrement')).toBe(1)
+    expect(userUpdateManyMock).not.toHaveBeenCalled()
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   }, 30000)
 
-  it('认不出的字节: 拒绝且不写入, 抢占的额度退还', async () => {
+  it('认不出的字节: 准入就拒绝, 不扣额度也不写入', async () => {
     expect(await (await postImage(createGarbage())).json()).toBe(
       '无法识别的图片文件'
     )
-    expect(quotaCalls('increment')).toBe(1)
-    expect(quotaCalls('decrement')).toBe(1)
+    expect(userUpdateManyMock).not.toHaveBeenCalled()
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 
-  it('SVG: 拒绝且不写入, 抢占的额度退还', async () => {
+  it('SVG: 准入就拒绝, 不扣额度也不写入', async () => {
     expect(await (await postImage(createSvg())).json()).toBe(
       '不支持该图片格式, 仅支持 jpg、png、webp、avif、gif'
     )
-    expect(quotaCalls('increment')).toBe(1)
-    expect(quotaCalls('decrement')).toBe(1)
+    expect(userUpdateManyMock).not.toHaveBeenCalled()
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 
-  it('文件头完整、像素数据损坏: 解码抛错, 退还额度后原样抛出', async () => {
-    await expect(postImage(await createTruncatedPng())).rejects.toThrow()
+  it('文件头完整、像素数据损坏: 已经花了解码成本, 返回文案且不退额度', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await (await postImage(await createTruncatedPng())).json()).toBe(
+      '图片已损坏或无法解码'
+    )
     expect(quotaCalls('increment')).toBe(1)
-    expect(quotaCalls('decrement')).toBe(1)
+    expect(quotaCalls('decrement')).toBe(0)
     expect(uploadImageToS3Mock).not.toHaveBeenCalled()
   })
 

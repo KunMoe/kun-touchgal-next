@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
 
 import {
@@ -14,6 +14,7 @@ import {
   createPng,
   createSvg,
   createTiff,
+  createTruncatedPng,
   saturateEncodeQueue
 } from './_fixtures'
 
@@ -102,13 +103,25 @@ describe('encodeVariants', () => {
     expect([wide.width, wide.height]).toEqual([1000, 500])
   })
 
-  it('任何一个变体超过体积上限都拒绝', async () => {
+  it('任何一个变体超过体积上限都拒绝并计费', async () => {
     const image = await admit(await createPng(400, 300))
     const res = await encodeVariants(image, {
       first: { width: 400, height: 300, quality: 50, maxMB: 1 },
       second: { width: 400, height: 300, quality: 50, maxMB: 0.0001 }
     })
-    expect(res).toEqual(new ImageRejection('图片体积过大', false))
+    expect(res).toEqual(new ImageRejection('图片体积过大', true))
+  })
+
+  it('像素数据解不开时拒绝并计费, 不抛错', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const image = await admit(await createTruncatedPng())
+    expect(
+      await encodeVariants(image, {
+        only: { width: 64, height: 64, quality: 50, maxMB: 1 }
+      })
+    ).toEqual(new ImageRejection('图片已损坏或无法解码', true))
+    expect(warn).toHaveBeenCalledTimes(1)
+    warn.mockRestore()
   })
 
   it('编码排队已满时拒绝, 不计费', async () => {
