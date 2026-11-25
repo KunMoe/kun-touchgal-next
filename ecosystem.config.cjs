@@ -37,10 +37,16 @@ module.exports = {
       watch: false,
       max_memory_restart: '1G',
       script: standaloneServer,
+      // PM2 停进程先发 SIGINT, 这么久还没退出才 SIGKILL (默认 1.6 秒)。须大于作业关停的宽限期
+      // 加收尾 (server/cron.ts 的 KUN_JOB_SHUTDOWN_GRACE_MS)
+      kill_timeout: 30000,
       env: {
         ...commonEnv,
         PORT: 3001,
-        KUN_ENABLE_CRON: 'true'
+        KUN_ENABLE_CRON: 'true',
+        // 信号交给作业层 (server/cron.ts): 不设的话 Next 收到信号关掉 HTTP 就直接退出, 在途
+        // 作业被当成崩溃。只能加在 cron 进程上: web 进程设了它, 收到信号时不会先关 HTTP
+        NEXT_MANUAL_SIG_HANDLE: 'true'
       }
     }
   ]

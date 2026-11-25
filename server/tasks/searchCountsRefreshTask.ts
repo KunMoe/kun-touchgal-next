@@ -1,4 +1,3 @@
-import cron from 'node-cron'
 import { prisma } from '~/prisma'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { getKvHashAll, setKvHashFields } from '~/lib/redis'
@@ -6,6 +5,7 @@ import {
   SEARCH_COUNT_FIELDS,
   type GalgameSearchCountsDoc
 } from '~/server/search/document'
+import { defineScheduledJob } from '~/server/jobs/registry'
 import { withSearchWriter, type SearchWriter } from '~/server/search/sync'
 
 const COUNTS_REFRESH_BATCH_SIZE = 2000
@@ -86,9 +86,10 @@ export const refreshSearchCounts = async ({
 
 // 与出箱的 drain 共用写锁：持锁期间 drain 不运行。锁被占着时等一会儿，等不到才本轮跳过
 // (30 分钟后再来)，跳过要留日志：索引里的计数会因此多陈旧 30 分钟
-export const searchCountsRefreshTask = cron.createTask(
-  '*/30 * * * *',
-  async () => {
+export const searchCountsRefreshJob = defineScheduledJob({
+  name: 'search_counts_refresh',
+  schedule: '*/30 * * * *',
+  run: async () => {
     if (!getMeiliClient()) {
       return
     }
@@ -99,10 +100,7 @@ export const searchCountsRefreshTask = cron.createTask(
         return true
       },
       { waitMs: COUNTS_REFRESH_LOCK_WAIT_MS }
-    ).catch((error) => {
-      console.error('搜索计数快照刷新失败:', error)
-      return true
-    })
+    )
     if (!ran) {
       // eslint-disable-next-line no-console
       console.warn(
@@ -110,4 +108,4 @@ export const searchCountsRefreshTask = cron.createTask(
       )
     }
   }
-)
+})

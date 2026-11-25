@@ -7,7 +7,8 @@ import { kunReportDeployChain, kunRunDeployChain } from './deployChain'
 const activeDistDir = '.next'
 const stagedDistDir = '.next-deploy'
 const previousDistDir = '.next-previous'
-const appNames = ['kun-touchgal-next', 'kun-touchgal-next-cron']
+const cronAppName = 'kun-touchgal-next-cron'
+const appNames = ['kun-touchgal-next', cronAppName]
 
 const runCommand = (command: string, env: NodeJS.ProcessEnv = process.env) => {
   execSync(command, { stdio: 'inherit', env })
@@ -23,18 +24,28 @@ const captureCommand = (command: string) => {
   return output
 }
 
-const isApplicationRunning = () =>
-  appNames.some((appName) =>
-    execSync(`pm2 pid ${appName}`, { encoding: 'utf8' })
-      .trim()
-      .split(/\s+/)
-      .some((pid) => Number(pid) > 0)
-  )
+const isAppRunning = (appName: string) =>
+  execSync(`pm2 pid ${appName}`, { encoding: 'utf8' })
+    .trim()
+    .split(/\s+/)
+    .some((pid) => Number(pid) > 0)
+
+const isApplicationRunning = () => appNames.some(isAppRunning)
+
+// cron 进程先单独停: 它收到信号后等在途作业最多约 25 秒 (ecosystem 的 kill_timeout), 这段时间
+// web 仍在服务旧版本。pnpm stop 按 ecosystem 并发删两个进程、等两者都退出才返回, 不先停 cron
+// 的话这段等待会叠进 web 的停机窗口
+const stopApplications = () => {
+  if (isAppRunning(cronAppName)) {
+    runCommand(`pm2 delete ${cronAppName}`)
+  }
+  runCommand('pnpm stop')
+}
 
 const activateStagedBuild = () => {
   const wasRunning = isApplicationRunning()
   if (wasRunning) {
-    runCommand('pnpm stop')
+    stopApplications()
   }
 
   rmSync(previousDistDir, { recursive: true, force: true })
@@ -48,7 +59,7 @@ const activateStagedBuild = () => {
     runCommand('pnpm start')
   } catch (error) {
     if (isApplicationRunning()) {
-      runCommand('pnpm stop')
+      stopApplications()
     }
     rmSync(activeDistDir, { recursive: true, force: true })
     if (hadActiveBuild) {

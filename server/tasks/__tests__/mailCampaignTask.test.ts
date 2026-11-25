@@ -1,14 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { createTaskMock, runCampaignStepMock, withTaskLockMock } = vi.hoisted(
-  () => ({
-    createTaskMock: vi.fn(),
-    runCampaignStepMock: vi.fn(),
-    withTaskLockMock: vi.fn()
-  })
-)
-
-vi.mock('node-cron', () => ({ default: { createTask: createTaskMock } }))
+const { runCampaignStepMock, withTaskLockMock } = vi.hoisted(() => ({
+  runCampaignStepMock: vi.fn(),
+  withTaskLockMock: vi.fn()
+}))
 
 vi.mock('~/server/mail/campaign', () => ({
   runCampaignStep: runCampaignStepMock
@@ -18,19 +13,18 @@ vi.mock('~/server/tasks/withTaskLock', () => ({
   withTaskLock: withTaskLockMock
 }))
 
-import '~/server/tasks/mailCampaignTask'
+import { mailCampaignJob } from '~/server/tasks/mailCampaignTask'
 import {
   MAIL_CAMPAIGN_MIN_BATCH_INTERVAL_MS,
   MAIL_CAMPAIGN_STEP_BUDGET_MS
 } from '~/constants/admin'
 import { SEND_EMAIL_TIMEOUT_MS } from '~/app/api/utils/sendKunEmail'
 
-// 模块加载时登记的那一次, 先留下来: 下面每个用例都会清空 mock 的调用记录
-const [schedule, tick, options] = createTaskMock.mock.calls[0] as [
-  string,
-  () => Promise<void>,
-  { noOverlap?: boolean }
-]
+const tick = () =>
+  mailCampaignJob.run({
+    signal: new AbortController().signal,
+    cancelSignal: new AbortController().signal
+  })
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -39,9 +33,9 @@ beforeEach(() => {
 })
 
 describe('mailCampaignTask', () => {
-  it('每分钟一拍, 上一拍没结束时不叠下一拍', () => {
-    expect(schedule).toBe('* * * * *')
-    expect(options).toEqual({ noOverlap: true })
+  // 上一拍没结束时不叠下一拍由作业层保证 (server/jobs/__tests__/registry.test.ts)
+  it('每分钟一拍', () => {
+    expect(mailCampaignJob.schedule).toBe('* * * * *')
   })
 
   // 一拍最坏的情形: 预算快用完时又开了一批, 这一批里有邮件一直等到超时
@@ -92,13 +86,10 @@ describe('mailCampaignTask', () => {
     expect(runCampaignStepMock).not.toHaveBeenCalled()
   })
 
-  it('推进抛错时只记日志, 不让异常逃出定时任务', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  // 作业层按作业名记下它 (server/jobs/registry.ts), 不逃出定时器
+  it('推进抛错时交给作业层', async () => {
     runCampaignStepMock.mockRejectedValue(new Error('db down'))
 
-    await expect(tick()).resolves.toBeUndefined()
-
-    expect(error).toHaveBeenCalledOnce()
-    error.mockRestore()
+    await expect(tick()).rejects.toThrow('db down')
   })
 })

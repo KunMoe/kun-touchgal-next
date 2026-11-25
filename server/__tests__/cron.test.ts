@@ -8,31 +8,50 @@ vi.mock('~/server/search/indexAdmin', () => ({
   ensureSearchIndex: ensureSearchIndexMock
 }))
 
-// 各定时任务只需要能 start
-const { taskStartMock } = vi.hoisted(() => ({ taskStartMock: vi.fn() }))
-const task = () => ({ start: taskStartMock })
-vi.mock('~/server/tasks/resetDailyTask', () => ({ resetDailyTask: task() }))
-vi.mock('~/server/tasks/flushPatchViewsTask', () => ({
-  flushPatchViewsTask: task()
+const { startJobRuntimeMock, stopMock } = vi.hoisted(() => ({
+  startJobRuntimeMock: vi.fn(),
+  stopMock: vi.fn()
 }))
-vi.mock('~/server/tasks/moderationTask', () => ({ moderationTask: task() }))
-vi.mock('~/server/tasks/searchOutboxTask', () => ({
-  searchOutboxTask: task()
-}))
-vi.mock('~/server/tasks/searchCountsRefreshTask', () => ({
-  searchCountsRefreshTask: task()
-}))
-vi.mock('~/server/tasks/searchReconcileTask', () => ({
-  searchReconcileTask: task()
-}))
-vi.mock('~/server/tasks/s3DeletionOutboxTask', () => ({
-  s3DeletionOutboxTask: task()
-}))
-vi.mock('~/server/tasks/mailCampaignTask', () => ({
-  mailCampaignTask: task()
+vi.mock('~/server/jobs/registry', () => ({
+  startJobRuntime: startJobRuntimeMock,
+  JOB_CANCEL_SETTLE_MS: 5_000
 }))
 
-import { checkSearchIndexOnStartup, setKUNGalgameTask } from '~/server/cron'
+// 各作业的 spec 只看名字 (server/cron.ts 静态导入它们, 须在 hoisted 里定义)
+const { job } = vi.hoisted(() => ({ job: (name: string) => ({ name }) }))
+vi.mock('~/server/tasks/resetDailyTask', () => ({
+  resetDailyJob: job('reset_daily')
+}))
+vi.mock('~/server/tasks/flushPatchViewsTask', () => ({
+  flushPatchViewsJob: job('flush_patch_views')
+}))
+vi.mock('~/server/tasks/moderationTask', () => ({
+  moderationJob: job('moderation')
+}))
+vi.mock('~/server/tasks/searchOutboxTask', () => ({
+  searchOutboxJob: job('search_outbox')
+}))
+vi.mock('~/server/tasks/searchCountsRefreshTask', () => ({
+  searchCountsRefreshJob: job('search_counts_refresh')
+}))
+vi.mock('~/server/tasks/searchReconcileTask', () => ({
+  searchReconcileJob: job('search_reconcile')
+}))
+vi.mock('~/server/tasks/s3DeletionOutboxTask', () => ({
+  s3DeletionOutboxJob: job('s3_deletion_outbox')
+}))
+vi.mock('~/server/tasks/mailCampaignTask', () => ({
+  mailCampaignJob: job('mail_campaign')
+}))
+
+import { createRequire } from 'node:module'
+import { JOB_CANCEL_SETTLE_MS } from '~/server/jobs/registry'
+import {
+  KUN_JOB_SHUTDOWN_GRACE_MS,
+  checkSearchIndexOnStartup,
+  handleKunJobShutdownSignals,
+  startKunJobs
+} from '~/server/cron'
 
 const report = (overrides: Record<string, unknown> = {}) => ({
   created: false,
@@ -54,14 +73,19 @@ describe('checkSearchIndexOnStartup 启动时只读比对索引定义', () => {
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
-  it('启动定时任务时调用一次', async () => {
+  it('启动作业运行时之后调用一次; 重复启动拿到同一个运行时', async () => {
     ensureSearchIndexMock.mockResolvedValue(report())
+    startJobRuntimeMock.mockResolvedValue({ stop: stopMock })
 
-    await setKUNGalgameTask()
+    const runtime = await startKunJobs()
     await vi.waitFor(() =>
       expect(ensureSearchIndexMock).toHaveBeenCalledWith({ mode: 'check' })
     )
-    expect(taskStartMock).toHaveBeenCalledTimes(8)
+    expect(startJobRuntimeMock).toHaveBeenCalledOnce()
+    expect(startJobRuntimeMock.mock.calls[0][0]).toHaveLength(8)
+
+    await expect(startKunJobs()).resolves.toBe(runtime)
+    expect(startJobRuntimeMock).toHaveBeenCalledOnce()
   })
 
   afterEach(() => {
@@ -123,5 +147,65 @@ describe('checkSearchIndexOnStartup 启动时只读比对索引定义', () => {
     await checkSearchIndexOnStartup()
 
     expect(errorSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('关停契约', () => {
+  interface PmApp {
+    name: string
+    kill_timeout?: number
+    env: Record<string, unknown>
+  }
+  const { apps } = createRequire(import.meta.url)(
+    '../../ecosystem.config.cjs'
+  ) as { apps: PmApp[] }
+  const appOf = (name: string) => apps.find((app) => app.name === name)!
+
+  // PM2 停进程先发 SIGINT, 过了 kill_timeout 还没退出就 SIGKILL: 宽限期加收尾必须在它之内
+  it('cron 进程的 kill_timeout 容得下作业的宽限期与收尾', () => {
+    expect(appOf('kun-touchgal-next-cron').kill_timeout).toBeGreaterThan(
+      KUN_JOB_SHUTDOWN_GRACE_MS + JOB_CANCEL_SETTLE_MS
+    )
+  })
+
+  // web 进程设了它, Next 不再在收到信号时关 HTTP
+  it('只有 cron 进程把信号交给作业层', () => {
+    expect(appOf('kun-touchgal-next-cron').env.NEXT_MANUAL_SIG_HANDLE).toBe(
+      'true'
+    )
+    expect(appOf('kun-touchgal-next').env).not.toHaveProperty(
+      'NEXT_MANUAL_SIG_HANDLE'
+    )
+  })
+
+  it('收到信号先关停作业再退出, 退出码为 128 + 信号编号', async () => {
+    const handlers = new Map<string, (signal: NodeJS.Signals) => void>()
+    const once = vi.spyOn(process, 'once').mockImplementation(((
+      event: string,
+      handler: () => void
+    ) => {
+      handlers.set(event, handler)
+      return process
+    }) as typeof process.once)
+    const exit = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((() => undefined) as typeof process.exit)
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { promise: stopped, resolve: finishStop } =
+      Promise.withResolvers<void>()
+    stopMock.mockReset().mockReturnValue(stopped)
+
+    handleKunJobShutdownSignals({ stop: stopMock })
+    expect([...handlers.keys()].sort()).toEqual(['SIGINT', 'SIGTERM'])
+
+    handlers.get('SIGTERM')!('SIGTERM')
+    expect(stopMock).toHaveBeenCalledExactlyOnceWith(KUN_JOB_SHUTDOWN_GRACE_MS)
+    await Promise.resolve()
+    expect(exit).not.toHaveBeenCalled()
+
+    finishStop()
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledExactlyOnceWith(143))
+    once.mockRestore()
+    exit.mockRestore()
   })
 })

@@ -1,4 +1,3 @@
-import cron from 'node-cron'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { prisma } from '~/prisma'
 import {
@@ -6,6 +5,7 @@ import {
   acknowledgePatchViewBufferEntries,
   checkoutPatchViewBuffer
 } from '~/app/api/patch/views/buffer'
+import { defineScheduledJob } from '~/server/jobs/registry'
 import { withTaskLock } from './withTaskLock'
 
 const FLUSH_BATCH_SIZE = 1000
@@ -49,15 +49,16 @@ export const flushPatchViews = async () => {
   await acknowledgePatchViewBuffer(buffer.key)
 }
 
-export const flushPatchViewsTask = cron.createTask('*/2 * * * *', async () => {
-  await withTaskLock(
-    {
-      key: FLUSH_LOCK_KEY,
-      ttlSeconds: FLUSH_LOCK_TTL_SECONDS,
-      taskName: 'flushPatchViewsTask'
-    },
-    flushPatchViews
-  ).catch((error) => {
-    console.error('Error flushing patch views to DB:', error)
-  })
+export const flushPatchViewsJob = defineScheduledJob({
+  name: 'flush_patch_views',
+  schedule: '*/2 * * * *',
+  run: () =>
+    withTaskLock(
+      {
+        key: FLUSH_LOCK_KEY,
+        ttlSeconds: FLUSH_LOCK_TTL_SECONDS,
+        taskName: 'flushPatchViewsTask'
+      },
+      flushPatchViews
+    )
 })

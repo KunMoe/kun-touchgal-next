@@ -6,8 +6,9 @@ export async function register() {
     sharp.concurrency(1)
 
     if (process.env.KUN_ENABLE_CRON === 'true') {
-      const { setKUNGalgameTask } = await import('./server/cron')
-      await setKUNGalgameTask()
+      const { handleKunJobShutdownSignals, startKunJobs } =
+        await import('./server/cron')
+      handleKunJobShutdownSignals(await startKunJobs())
     }
   }
 }

@@ -37,17 +37,10 @@ vi.mock('~/server/search/sync', () => ({
   withSearchWriter: withSearchWriterMock
 }))
 
-// 取出 cron 回调直接调用
-vi.mock('node-cron', () => ({
-  default: {
-    createTask: (_expression: string, run: () => Promise<void>) => ({ run })
-  }
-}))
-
 import {
   refreshSearchCounts,
   countsFingerprint,
-  searchCountsRefreshTask
+  searchCountsRefreshJob
 } from '~/server/tasks/searchCountsRefreshTask'
 
 const writer = { renew: renewMock, applyCounts: applyCountsMock }
@@ -114,20 +107,21 @@ beforeEach(() => {
   getMeiliClientMock.mockReset().mockReturnValue({})
 })
 
-describe('searchCountsRefreshTask 与出箱共用写锁', () => {
+describe('searchCountsRefreshJob 与出箱共用写锁', () => {
+  const runTask = () =>
+    searchCountsRefreshJob.run({
+      signal: new AbortController().signal,
+      cancelSignal: new AbortController().signal
+    })
+
   it('未配置 Meili 时直接返回，不抢锁、不读库', async () => {
     getMeiliClientMock.mockReturnValue(null)
 
-    await (
-      searchCountsRefreshTask as unknown as { run: () => Promise<void> }
-    ).run()
+    await runTask()
 
     expect(withSearchWriterMock).not.toHaveBeenCalled()
     expect(patchFindManyMock).not.toHaveBeenCalled()
   })
-
-  const runTask = () =>
-    (searchCountsRefreshTask as unknown as { run: () => Promise<void> }).run()
 
   it('经写锁运行, 锁被占着时等 drain 放锁 (两者在同一秒触发)', async () => {
     mockRowsOnce([makeRow(1)])
@@ -155,19 +149,14 @@ describe('searchCountsRefreshTask 与出箱共用写锁', () => {
     warnSpy.mockRestore()
   })
 
-  it('刷新出错只记 error, 不当成没等到锁', async () => {
+  // 出错交给作业层按作业名记录 (server/jobs/registry.ts)
+  it('刷新出错原样抛给作业层, 不当成没等到锁', async () => {
     withSearchWriterMock.mockRejectedValue(new Error('boom'))
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    await runTask()
+    await expect(runTask()).rejects.toThrow('boom')
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      '搜索计数快照刷新失败:',
-      expect.any(Error)
-    )
     expect(warnSpy).not.toHaveBeenCalled()
-    errorSpy.mockRestore()
     warnSpy.mockRestore()
   })
 })

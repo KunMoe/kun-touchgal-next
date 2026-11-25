@@ -1,5 +1,5 @@
 import { prisma } from '~/prisma'
-import cron from 'node-cron'
+import { defineScheduledJob } from '~/server/jobs/registry'
 import { withTaskLock } from './withTaskLock'
 import { invalidateAllUserSessions } from '~/app/api/user/session/cache'
 
@@ -27,14 +27,17 @@ export const resetDailyStats = async () => {
   await invalidateAllUserSessions()
 }
 
-export const resetDailyTask = cron.createTask('0 0 * * *', async () => {
-  await withTaskLock(
-    {
-      key: RESET_DAILY_LOCK_KEY,
-      ttlSeconds: RESET_DAILY_LOCK_TTL_SECONDS,
-      taskName: 'resetDailyTask',
-      releaseOnComplete: false
-    },
-    resetDailyStats
-  )
+export const resetDailyJob = defineScheduledJob({
+  name: 'reset_daily',
+  schedule: '0 0 * * *',
+  run: () =>
+    withTaskLock(
+      {
+        key: RESET_DAILY_LOCK_KEY,
+        ttlSeconds: RESET_DAILY_LOCK_TTL_SECONDS,
+        taskName: 'resetDailyTask',
+        releaseOnComplete: false
+      },
+      resetDailyStats
+    )
 })

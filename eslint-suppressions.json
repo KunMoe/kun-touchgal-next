@@ -440,34 +440,14 @@
       "count": 2
     }
   },
-  "server/tasks/flushPatchViewsTask.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "server/tasks/moderationTask.ts": {
     "no-console": {
-      "count": 4
-    }
-  },
-  "server/tasks/s3DeletionOutboxTask.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "server/tasks/searchCountsRefreshTask.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "server/tasks/searchOutboxTask.ts": {
-    "no-console": {
-      "count": 1
+      "count": 3
     }
   },
   "server/tasks/searchReconcileTask.ts": {
     "no-console": {
-      "count": 2
+      "count": 1
     }
   },
   "server/tasks/withTaskLock.ts": {

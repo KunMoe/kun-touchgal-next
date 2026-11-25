@@ -1,4 +1,3 @@
-import cron from 'node-cron'
 import { prisma } from '~/prisma'
 import type { moderation_taskModel } from '~/prisma/generated/prisma/models'
 import type { Prisma } from '~/prisma/generated/prisma/client'
@@ -62,6 +61,7 @@ import {
   decodeModerationTask
 } from '~/server/moderation/taskCodec'
 import { buildAuditView } from '~/server/moderation/view'
+import { defineScheduledJob } from '~/server/jobs/registry'
 import { withTaskLock } from './withTaskLock'
 
 const MODERATION_LOCK_KEY = 'moderation:worker:lock'
@@ -668,16 +668,17 @@ export const runModerationBatch = async (
   }
 }
 
-export const moderationTask = cron.createTask('*/15 * * * * *', async () => {
-  await withTaskLock(
-    {
-      key: MODERATION_LOCK_KEY,
-      ttlSeconds: MODERATION_LOCK_TTL_SECONDS,
-      taskName: 'moderationTask'
-    },
-    // 不直接传 runModerationBatch: withTaskLock 会把续租函数作为第一个参数传进来
-    () => runModerationBatch()
-  ).catch((error) => {
-    console.error('Error running moderation batch:', error)
-  })
+export const moderationJob = defineScheduledJob({
+  name: 'moderation',
+  schedule: '*/15 * * * * *',
+  run: () =>
+    withTaskLock(
+      {
+        key: MODERATION_LOCK_KEY,
+        ttlSeconds: MODERATION_LOCK_TTL_SECONDS,
+        taskName: 'moderationTask'
+      },
+      // 不直接传 runModerationBatch: withTaskLock 会把续租函数作为第一个参数传进来
+      () => runModerationBatch()
+    )
 })

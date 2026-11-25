@@ -1,5 +1,5 @@
-import cron from 'node-cron'
 import { MAIL_CAMPAIGN_STEP_BUDGET_MS } from '~/constants/admin'
+import { defineScheduledJob } from '~/server/jobs/registry'
 import { runCampaignStep } from '~/server/mail/campaign'
 import { withTaskLock } from './withTaskLock'
 
@@ -9,11 +9,12 @@ const MAIL_CAMPAIGN_LOCK_KEY = 'mail:campaign:lock'
 const MAIL_CAMPAIGN_LOCK_TTL_SECONDS = 120
 
 // 每分钟推进一次进行中的群发任务。没有任务时只是一次按 status 的索引查询。
-// noOverlap 与任务锁都只是不让两拍叠在一起; 真叠了也只多发一批, 由推进游标的条件更新兜底
-export const mailCampaignTask = cron.createTask(
-  '* * * * *',
-  async () => {
-    await withTaskLock(
+// 作业层在进程内不让两拍叠在一起, 任务锁管跨进程; 真叠了也只多发一批, 由推进游标的条件更新兜底
+export const mailCampaignJob = defineScheduledJob({
+  name: 'mail_campaign',
+  schedule: '* * * * *',
+  run: () =>
+    withTaskLock(
       {
         key: MAIL_CAMPAIGN_LOCK_KEY,
         ttlSeconds: MAIL_CAMPAIGN_LOCK_TTL_SECONDS,
@@ -29,10 +30,5 @@ export const mailCampaignTask = cron.createTask(
           console.log(`[kun-mail-campaign] ${JSON.stringify(result)}`)
         }
       }
-    ).catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error('[kun-mail-campaign] 推进群发任务失败:', error)
-    })
-  },
-  { noOverlap: true }
-)
+    )
+})
