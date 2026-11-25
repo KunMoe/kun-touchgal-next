@@ -172,9 +172,11 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
                 isDisabled={superAdminTarget}
                 onChange={(e) => handleChange('email', e.target.value)}
               />
+              {/* 再点一次已选项不清空: 清空后 Number('') 是 0, 状态 0 即解封 */}
               <Select
                 label="角色"
                 selectedKeys={[String(formUser.role)]}
+                disallowEmptySelection
                 isDisabled={superAdminTarget}
                 onChange={(e) => handleChange('role', Number(e.target.value))}
               >
@@ -185,6 +187,7 @@ export const UserEdit = ({ initialUser, onUpdated }: Props) => {
               <Select
                 label="状态"
                 selectedKeys={[String(formUser.status)]}
+                disallowEmptySelection
                 isDisabled={superAdminTarget}
                 onChange={(e) => handleChange('status', Number(e.target.value))}
                 disabledKeys={['1']}
