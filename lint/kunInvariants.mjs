@@ -1641,7 +1641,8 @@ export const KUN_INVARIANTS = [
         /(^|\/)store\/(userStore|messageStore)(\.[cm]?[jt]sx?)?$/,
         /^\.{1,2}\/(.*\/)?(userStore|messageStore)(\.[cm]?[jt]sx?)?$/
       ],
-      importNames: ['kunUserStore', 'kunUnreadStore', '*']
+      importNames: ['kunUserStore', 'kunUnreadStore', '*'],
+      allowTypeImports: true
     },
     examples: {
       file: 'components/kun/KunInvariantExample.tsx',
@@ -1656,7 +1657,8 @@ export const KUN_INVARIANTS = [
         "import { useUserStore, getKunUserSnapshot } from '~/store/userStore'",
         "import { useMessageStore } from '~/store/messageStore'",
         "import { patchKunUser, signInKunSession } from '~/store/session'",
-        "import type { KunSessionStatus } from '~/store/userStore'"
+        "import type { KunSessionStatus } from '~/store/userStore'",
+        "import type { kunUserStore } from '~/store/userStore'"
       ]
     }
   },
@@ -1664,16 +1666,19 @@ export const KUN_INVARIANTS = [
     id: 'inv-session-02',
     aliases: ['T37'],
     statement:
-      'patchKunUser 的参数只写行内对象字面量, 只放这次改了的字段, 不得带展开 (萌萌点只写增量 moemoepointDelta)',
+      'patchKunUser 的参数只写行内对象字面量, 只放这次改了的字段, 不得带展开 (萌萌点只写增量 moemoepointDelta); 只按原名直接调用: 不改名导入、不对 store/session 做命名空间导入、不把它当值传递',
     reason:
-      '合并发生在 store 的 set 里、基于当前状态, 两个在途的保存请求先后落地才不会互相回滚。把组件里拿到的 user (点击那一帧的快照) 展开进参数, 等于又把整份旧值写回去 (P31-01 的写法)。参数类型里 uid / role / moemoepoint 是 never, 整份 UserState 的展开编译不过; 但 TS 不对展开进来的其余属性做多余属性检查, 去掉这三个键再展开、或者先拼好对象再传进来, 类型系统都拦不住',
+      '合并发生在 store 的 set 里、基于当前状态, 两个在途的保存请求先后落地才不会互相回滚。把组件里拿到的 user (点击那一帧的快照) 展开进参数, 等于又把整份旧值写回去 (P31-01 的写法)。参数类型里 uid / role / moemoepoint 是 never, 整份 UserState 的展开编译不过; 但 TS 不对展开进来的其余属性做多余属性检查, 去掉这三个键再展开、或者先拼好对象再传进来, 类型系统都拦不住。本条按调用点上的名字认, 所以改名导入、命名空间导入 (session.patchKunUser) 与当值传递 (.call、赋给别的变量) 一并禁止, 否则换个名字就绕开了',
     removeWhen: 'patchKunUser 被删除, 或改成按字段的具名命令',
-    ignores: ['**/__tests__/**'],
+    ignores: ['store/session.ts', '**/__tests__/**'],
     enforce: {
       kind: 'syntax',
       selectors: [
         "CallExpression[callee.name='patchKunUser'] > ObjectExpression > SpreadElement",
-        "CallExpression[callee.name='patchKunUser'] > :not(ObjectExpression).arguments"
+        "CallExpression[callee.name='patchKunUser'] > :not(ObjectExpression).arguments",
+        // esquery 的正则不收转义的斜杠, 用 . 代替路径分隔符
+        "ImportDeclaration[source.value=/store.session(\\.[cm]?[jt]sx?)?$/] > :matches(ImportNamespaceSpecifier, ImportSpecifier[imported.name='patchKunUser'][local.name!='patchKunUser'])",
+        "Identifier[name='patchKunUser']:not(CallExpression > Identifier.callee, ImportSpecifier > Identifier)"
       ]
     },
     examples: {
@@ -1683,13 +1688,21 @@ export const KUN_INVARIANTS = [
         "export const run = (rest: any) => patchKunUser({ bio: 'x', ...rest })",
         'export const run = (rest: any) => patchKunUser(rest)',
         'export const run = (draft: any) => patchKunUser({ ...draft } as any)',
-        "export const run = (on: boolean) => patchKunUser(on ? { bio: 'a' } : { bio: 'b' })"
+        "export const run = (on: boolean) => patchKunUser(on ? { bio: 'a' } : { bio: 'b' })",
+        "import { patchKunUser as patch } from '~/store/session'",
+        "import * as session from '~/store/session'",
+        "import * as session from '../../store/session.ts'",
+        'export const run = () => { const patch = patchKunUser; return patch }',
+        "export const run = () => patchKunUser.call(null, { bio: 'x' })"
       ],
       good: [
         "export const run = () => patchKunUser({ bio: 'x' })",
         'export const run = (name: string) => patchKunUser({ name, moemoepointDelta: -30 })',
         'export const run = (res: { blockedTagIds: number[] }) => patchKunUser({ blockedTagIds: res.blockedTagIds })',
-        "export const run = (user: any) => setDraft({ ...user, bio: 'x' })"
+        "export const run = (user: any) => setDraft({ ...user, bio: 'x' })",
+        "import { patchKunUser, signInKunSession } from '~/store/session'",
+        "export const run = () => patchKunUser?.({ bio: 'x' })",
+        "import * as auth from '~/server/auth/session'"
       ]
     }
   }

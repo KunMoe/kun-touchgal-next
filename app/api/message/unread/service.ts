@@ -6,6 +6,13 @@ import {
 import { kunRecordCacheOutcome } from '~/server/cache/stats'
 import type { UnreadSnapshot } from '~/types/api/message'
 
+// 未读查不到时给的空快照。时刻为 0: 客户端已有的任何未读状态都不会被它盖掉
+export const KUN_UNREAD_UNAVAILABLE: UnreadSnapshot = {
+  hasUnreadNotification: false,
+  hasUnreadConversation: false,
+  asOf: 0
+}
+
 export const getUnreadMessageStatus = async (
   uid: number
 ): Promise<UnreadSnapshot> => {

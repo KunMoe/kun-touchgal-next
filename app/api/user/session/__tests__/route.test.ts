@@ -32,7 +32,12 @@ vi.mock('~/server/auth/sessionActivity', () => ({
   updateUserLastLoginTime: vi.fn()
 }))
 vi.mock('~/app/api/message/unread/service', () => ({
-  getUnreadMessageStatus: getUnreadMock
+  getUnreadMessageStatus: getUnreadMock,
+  KUN_UNREAD_UNAVAILABLE: {
+    hasUnreadNotification: false,
+    hasUnreadConversation: false,
+    asOf: 0
+  }
 }))
 
 import {

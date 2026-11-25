@@ -6,7 +6,6 @@ import {
   createConversationSchema
 } from '~/validations/conversation'
 import { invalidateUserSession } from '~/app/api/user/session/cache'
-import { getUnreadMessageStatus } from '~/app/api/message/unread/service'
 import { kunTx } from '~/server/db/tx'
 import { spendOnConversation } from '~/server/points/account'
 import { can } from '~/constants/permission'
@@ -25,9 +24,7 @@ export const getConversations = async (
   const { page, limit } = input
   const offset = (page - 1) * limit
 
-  // 未读顺带返回: 列表页据此刷新导航与顶栏的红点。不能从本页的 unreadCount 推导 ——
-  // 未读会话不在本页时, 那样会把全局红点清掉
-  const [data, total, unread] = await Promise.all([
+  const [data, total] = await Promise.all([
     prisma.user_conversation.findMany({
       where: {
         OR: [{ user_a_id: uid }, { user_b_id: uid }]
@@ -54,8 +51,7 @@ export const getConversations = async (
       where: {
         OR: [{ user_a_id: uid }, { user_b_id: uid }]
       }
-    }),
-    getUnreadMessageStatus(uid)
+    })
   ])
 
   const conversations: Conversation[] = data.map((conv) => ({
@@ -69,7 +65,7 @@ export const getConversations = async (
         : conv.user_b_unread_count
   }))
 
-  return { conversations, total, unread }
+  return { conversations, total }
 }
 
 export const checkConversation = async (

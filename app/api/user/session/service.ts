@@ -4,21 +4,16 @@ import { resolveKunSiteSession } from '~/server/auth/session'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import { touchUserLastActiveTime } from '~/server/auth/sessionActivity'
 import { getUserStatus } from '~/app/api/user/status/service'
-import { getUnreadMessageStatus } from '~/app/api/message/unread/service'
+import {
+  getUnreadMessageStatus,
+  KUN_UNREAD_UNAVAILABLE
+} from '~/app/api/message/unread/service'
 import {
   getCachedUserSession,
   getUserSessionCacheScope,
   setCachedUserSession
 } from '~/server/auth/sessionCache'
 import type { UserSession, UserState } from '~/types/api/session'
-import type { UnreadSnapshot } from '~/types/api/message'
-
-// 未读查不到时给最旧的空快照: 不会盖掉客户端已有的任何未读状态
-const emptyUnreadStatus: UnreadSnapshot = {
-  hasUnreadNotification: false,
-  hasUnreadConversation: false,
-  asOf: 0
-}
 
 const logSessionError = (message: string, error: unknown) => {
   // eslint-disable-next-line no-console
@@ -69,7 +64,7 @@ export const resolveUserSessionByToken = async (
   try {
     const [user, unread] = await Promise.all([
       getUserState(uid),
-      getUnreadMessageStatus(uid).catch(() => emptyUnreadStatus)
+      getUnreadMessageStatus(uid).catch(() => KUN_UNREAD_UNAVAILABLE)
     ])
     return user
       ? { kind: 'authenticated', session: { user, unread } }
