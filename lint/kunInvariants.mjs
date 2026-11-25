@@ -1581,6 +1581,42 @@ export const KUN_INVARIANTS = [
         'export const run = (bridge: { req: { push: (v: null) => void } }) => bridge.req.push(null)'
       ]
     }
+  },
+  {
+    id: 'inv-image-01',
+    aliases: ['T34'],
+    statement:
+      'sharp 只许 server/image/ 导入 (静态、动态 import 与 require 都算, 纯类型导入除外), 上传图片经 pipeline.ts 的 admitImage → encodeVariants',
+    reason:
+      '像素前置、有界编码槽和逐变体体积上限曾是「加/改任何 sharp() 解码入口时逐条对照」的人工规则, 漏过入口: 像素守卫先只加在建游戏一处, 两天后才补上图床和头像, 头像小图一直没有体积上限。现在 encodeVariants 只收 admitImage 产出的 AdmittedImage, 但在别处直接 sharp(buffer) 就绕开了这一切; 服务端自产图片的转码走 transcode.ts',
+    removeWhen: '服务端不再用 sharp 解码图片',
+    // instrumentation.ts 只设 sharp.concurrency(1); 测试要用 sharp 造夹具、读产物
+    ignores: ['server/image/**', 'instrumentation.ts', '**/__tests__/**'],
+    enforce: {
+      kind: 'syntax',
+      selectors: [
+        "ImportDeclaration[source.value='sharp'][importKind!='type']",
+        "ImportExpression[source.value='sharp']",
+        "ExportNamedDeclaration[source.value='sharp'][exportKind!='type']",
+        "ExportAllDeclaration[source.value='sharp']",
+        "CallExpression[callee.name='require'][arguments.0.value='sharp']"
+      ]
+    },
+    examples: {
+      file: 'app/api/kunInvariantExample.ts',
+      bad: [
+        "import sharp from 'sharp'",
+        "import * as sharp from 'sharp'",
+        "export const load = () => import('sharp')",
+        "export { default } from 'sharp'",
+        "const sharp = require('sharp')"
+      ],
+      good: [
+        "import { admitImage, encodeVariants } from '~/server/image/pipeline'",
+        "import { transcodeTrustedAvifToJpeg } from '~/server/image/transcode'",
+        "import type { Metadata } from 'sharp'"
+      ]
+    }
   }
 ]
 

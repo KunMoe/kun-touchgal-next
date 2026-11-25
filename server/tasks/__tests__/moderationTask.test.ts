@@ -11,7 +11,7 @@ const {
   getKvMock,
   setKvMock,
   getFileFromS3Mock,
-  withEncodeSlotMock,
+  transcodeMock,
   moderateTextMock,
   moderateImageMock,
   applyModerationVerdictMock,
@@ -20,7 +20,7 @@ const {
   getKvMock: vi.fn(),
   setKvMock: vi.fn(),
   getFileFromS3Mock: vi.fn(),
-  withEncodeSlotMock: vi.fn(),
+  transcodeMock: vi.fn(),
   moderateTextMock: vi.fn(),
   moderateImageMock: vi.fn(),
   applyModerationVerdictMock: vi.fn(),
@@ -28,12 +28,11 @@ const {
 }))
 
 vi.mock('node-cron', () => ({ default: { createTask: vi.fn() } }))
-vi.mock('sharp', () => ({ default: vi.fn() }))
 vi.mock('~/prisma', () => ({ prisma: {} }))
 vi.mock('~/lib/redis', () => ({ getKv: getKvMock, setKv: setKvMock }))
 vi.mock('~/lib/s3', () => ({ getFileFromS3: getFileFromS3Mock }))
-vi.mock('~/server/image/encodeLimit', () => ({
-  withEncodeSlot: withEncodeSlotMock
+vi.mock('~/server/image/transcode', () => ({
+  transcodeTrustedAvifToJpeg: transcodeMock
 }))
 vi.mock('~/server/tasks/withTaskLock', () => ({ withTaskLock: vi.fn() }))
 vi.mock('~/server/moderation/apply', () => ({
@@ -531,7 +530,7 @@ describe('车道健康的信号', () => {
       MODERATION_AI_VISION_MODEL: 'vision-model'
     } as unknown as NodeJS.ProcessEnv)
     getFileFromS3Mock.mockResolvedValue(Buffer.from('avatar'))
-    withEncodeSlotMock.mockResolvedValue(Buffer.from('jpeg'))
+    transcodeMock.mockResolvedValue(Buffer.from('jpeg'))
     moderateImageMock.mockResolvedValue(aiResult({ pass: true }))
     applyModerationVerdictMock.mockImplementation(async () => {
       expect(laneHealthy).not.toHaveBeenCalled()

@@ -9,8 +9,8 @@ const MAX_CONCURRENT_ENCODE = 2
 export const MAX_QUEUE_DEPTH = 32
 export const QUEUE_TIMEOUT_MS = 10_000
 
-// 队列已满或排队超时的信号: 调用方 (withEncodeSlotOrBusy) 据此返回限流提示而非
-// 让异常冒泡成 500. 与业务错误一样属于"字符串即错误"约定的一部分.
+// 队列已满或排队超时的信号: 上传管线 (pipeline.ts 的 encodeVariants) 据此返回限流提示,
+// 不让异常冒泡成 500. 这个模块只在 server/image 内部使用, 是唯一持有编码状态的地方
 export class EncodeBusyError extends Error {
   constructor(message = '服务器繁忙, 请稍后重试') {
     super(message)
@@ -69,20 +69,5 @@ export const withEncodeSlot = async <T>(task: () => Promise<T>): Promise<T> => {
     return await task()
   } finally {
     release()
-  }
-}
-
-// withEncodeSlot 的"返回字符串即错误"封装: 队列满 / 排队超时时不把 EncodeBusyError
-// 抛到路由 (会变 500), 而是返回中文限流提示, 契合上传 service 层 `T | string` 约定.
-export const withEncodeSlotOrBusy = async <T>(
-  task: () => Promise<T>
-): Promise<T | string> => {
-  try {
-    return await withEncodeSlot(task)
-  } catch (error) {
-    if (error instanceof EncodeBusyError) {
-      return error.message
-    }
-    throw error
   }
 }

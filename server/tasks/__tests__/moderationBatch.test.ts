@@ -37,11 +37,6 @@ const {
 }))
 
 vi.mock('node-cron', () => ({ default: { createTask: vi.fn() } }))
-vi.mock('sharp', () => ({
-  default: () => ({
-    jpeg: () => ({ toBuffer: async () => Buffer.from('jpeg') })
-  })
-}))
 vi.mock('~/prisma', () => ({
   prisma: {
     moderation_task: { findMany: findTasksMock, updateMany: updateTaskMock },
@@ -50,8 +45,8 @@ vi.mock('~/prisma', () => ({
 }))
 vi.mock('~/lib/redis', () => ({ getKv: getKvMock, setKv: setKvMock }))
 vi.mock('~/lib/s3', () => ({ getFileFromS3: getFileFromS3Mock }))
-vi.mock('~/server/image/encodeLimit', () => ({
-  withEncodeSlot: (encode: () => unknown) => encode()
+vi.mock('~/server/image/transcode', () => ({
+  transcodeTrustedAvifToJpeg: async () => Buffer.from('jpeg')
 }))
 vi.mock('~/server/tasks/withTaskLock', () => ({ withTaskLock: vi.fn() }))
 vi.mock('~/server/moderation/apply', () => ({

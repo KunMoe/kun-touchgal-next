@@ -1,5 +1,4 @@
 import cron from 'node-cron'
-import sharp from 'sharp'
 import { prisma } from '~/prisma'
 import type { moderation_taskModel } from '~/prisma/generated/prisma/models'
 import type { Prisma } from '~/prisma/generated/prisma/client'
@@ -9,7 +8,7 @@ import {
   DependencyFailure,
   toDependencyFailure
 } from '~/lib/resilience/failure'
-import { withEncodeSlot } from '~/server/image/encodeLimit'
+import { transcodeTrustedAvifToJpeg } from '~/server/image/transcode'
 import { KUN_MODERATION_VERDICT_CACHE_KEY } from '~/config/redis'
 import {
   MODERATION_BATCH_SIZE,
@@ -233,9 +232,7 @@ export const processAvatarTask = async (
     throw toDependencyFailure('s3', error)
   }
   // vision APIs handle jpeg far more reliably than avif
-  const jpeg = await withEncodeSlot(() =>
-    sharp(buffer).jpeg({ quality: 85 }).toBuffer()
-  )
+  const jpeg = await transcodeTrustedAvifToJpeg(buffer)
   const result = await moderateImage(policy, jpeg.toString('base64'))
   await applyAiResult(task, result)
   laneHealthy()

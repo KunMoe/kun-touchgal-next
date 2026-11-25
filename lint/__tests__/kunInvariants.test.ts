@@ -272,6 +272,30 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
     }
   })
 
+  // 解码入口只在 server/image; 业务目录 (路由、定时任务、脚本) 一律不许直接拿 sharp 去解码
+  it('inv-image-01 只放过 server/image、instrumentation.ts 与测试', async () => {
+    const reportsAt = (file: string) =>
+      reportsOf(eslint, "import sharp from 'sharp'", file, 'kun/inv-image-01')
+
+    for (const file of [
+      'app/api/user/image/_upload.ts',
+      'app/api/edit/_upload.ts',
+      'server/tasks/moderationTask.ts',
+      'server/storage/patchBanner.ts',
+      'scripts/kunInvariantExample.ts'
+    ]) {
+      expect((await reportsAt(file)).length, file).toBeGreaterThan(0)
+    }
+    for (const file of [
+      'server/image/pipeline.ts',
+      'server/image/transcode.ts',
+      'instrumentation.ts',
+      'app/api/edit/__tests__/_upload.test.ts'
+    ]) {
+      expect(await reportsAt(file), file).toEqual([])
+    }
+  })
+
   // 这正是不用核心 no-restricted-* 承载不变量的原因: flat config 里后出现的同名规则
   // 带选项即整体替换。每条不变量各占一个 id 之后, 别人再怎么用核心规则都盖不到它
   it('后来的核心 no-restricted-* 块覆盖不了已登记的不变量', async () => {
