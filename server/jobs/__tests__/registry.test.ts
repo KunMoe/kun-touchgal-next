@@ -56,9 +56,13 @@ import {
   JobRuntimeCancelledError,
   JobRuntimeStoppedError,
   defineScheduledJob,
-  startJobRuntime
+  startJobRuntime as startRuntime
 } from '~/server/jobs/registry'
-import type { JobContext } from '~/server/jobs/registry'
+import type { JobContext, ScheduledJobSpec } from '~/server/jobs/registry'
+
+const TIMEZONE = 'Asia/Singapore'
+const startJobRuntime = (specs: ScheduledJobSpec[]) =>
+  startRuntime(specs, { timezone: TIMEZONE })
 
 let errorSpy: ReturnType<typeof vi.spyOn>
 let warnSpy: ReturnType<typeof vi.spyOn>
@@ -99,7 +103,7 @@ const heldJob = (name: string) => {
 }
 
 describe('启动', () => {
-  it('每个作业一个节拍, 带上作业名与表达式, 并全部启动', async () => {
+  it('每个作业一个节拍, 带上作业名、表达式与时区, 并全部启动', async () => {
     await startJobRuntime([
       defineScheduledJob({ name: 'a', schedule: '0 0 * * *', run: vi.fn() }),
       defineScheduledJob({
@@ -112,8 +116,8 @@ describe('启动', () => {
     expect(
       createdTasks.map(({ schedule, options }) => [schedule, options])
     ).toEqual([
-      ['0 0 * * *', { name: 'a' }],
-      ['*/15 * * * * *', { name: 'b' }]
+      ['0 0 * * *', { name: 'a', timezone: TIMEZONE }],
+      ['*/15 * * * * *', { name: 'b', timezone: TIMEZONE }]
     ])
     expect(
       createdTasks.every((task) => task.start.mock.calls.length === 1)

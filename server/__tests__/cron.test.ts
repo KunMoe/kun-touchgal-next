@@ -83,6 +83,10 @@ describe('checkSearchIndexOnStartup 启动时只读比对索引定义', () => {
     )
     expect(startJobRuntimeMock).toHaveBeenCalledOnce()
     expect(startJobRuntimeMock.mock.calls[0][0]).toHaveLength(8)
+    // 与生产服务器一致的 UTC+8: 每日重置在 0 点、对账在 5 点, 不随进程的 TZ 变
+    expect(startJobRuntimeMock.mock.calls[0][1]).toEqual({
+      timezone: 'Asia/Singapore'
+    })
 
     await expect(startKunJobs()).resolves.toBe(runtime)
     expect(startJobRuntimeMock).toHaveBeenCalledOnce()

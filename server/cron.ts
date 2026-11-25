@@ -21,6 +21,10 @@ export const KUN_JOBS = [
   mailCampaignJob
 ]
 
+// 作业的时区: 与生产服务器一致 (UTC+8, 所有者 2026-11-26 确认), 钉住之后每日重置 (0 点) 与
+// 对账 (5 点) 的时刻不随进程的 TZ 变。改它就是改这些作业在几点跑
+export const KUN_JOB_TIMEZONE = 'Asia/Singapore'
+
 // 关停的宽限期: 收到信号后等在途作业这么久, 再中止它们的在途调用 (再留 JOB_CANCEL_SETTLE_MS
 // 收尾)。两者之和必须小于 ecosystem.config.cjs 里 cron 进程的 kill_timeout, 否则 PM2 先发
 // SIGKILL (server/__tests__/cron.test.ts 钉住)
@@ -55,7 +59,9 @@ export const checkSearchIndexOnStartup = async () => {
 // 每个进程只启动一次: 重复调用拿到同一个运行时, 启动失败后可以重试
 export const startKunJobs = () => {
   globalJobState.__kunJobRuntime ??= (async () => {
-    const runtime = await startJobRuntime(KUN_JOBS)
+    const runtime = await startJobRuntime(KUN_JOBS, {
+      timezone: KUN_JOB_TIMEZONE
+    })
     void checkSearchIndexOnStartup().catch((error) => {
       // eslint-disable-next-line no-console
       console.error('[kun-search] 启动时比对索引定义失败:', error)

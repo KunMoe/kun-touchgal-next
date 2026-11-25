@@ -17,7 +17,7 @@ export interface JobContext {
 export interface ScheduledJobSpec {
   // 日志里的作业名, 各作业不得重复
   name: string
-  // node-cron 表达式, 按进程所在时区
+  // node-cron 表达式, 按 startJobRuntime 的 timezone 算
   schedule: string
   // 跨进程互斥: 持租约执行 (心跳续租, 见 lease.ts), 抢不到这一拍就跳过。stallMs 是没有进展
   // (ctx.progress) 多久之后放弃租约, 默认 DEFAULT_LEASE_STALL_MS
@@ -66,8 +66,10 @@ const settlesWithin = async (promise: Promise<unknown>, ms: number) => {
   }
 }
 
+// timezone: 所有作业的 cron 表达式按它算 (IANA 名), 与进程的 TZ 无关
 export const startJobRuntime = async (
-  specs: readonly ScheduledJobSpec[]
+  specs: readonly ScheduledJobSpec[],
+  { timezone }: { timezone: string }
 ): Promise<JobRuntime> => {
   const names = new Set<string>()
   for (const { name, lease, slotMarker } of specs) {
@@ -138,7 +140,8 @@ export const startJobRuntime = async (
 
   const tasks = specs.map((spec) => {
     const task = cron.createTask(spec.schedule, tick(spec), {
-      name: spec.name
+      name: spec.name,
+      timezone
     })
     // 到点时事件循环被同步代码堵住或进程过忙, 那一拍被跳过
     task.on('execution:missed', (context) => {
