@@ -2,15 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   getKvMock,
-  setKvMock,
-  delKvMock,
+  evalKvScriptMock,
   messageFindFirstMock,
   conversationFindFirstMock,
   recordOutcomeMock
 } = vi.hoisted(() => ({
   getKvMock: vi.fn(),
-  setKvMock: vi.fn(),
-  delKvMock: vi.fn(),
+  evalKvScriptMock: vi.fn(),
   messageFindFirstMock: vi.fn(),
   conversationFindFirstMock: vi.fn(),
   recordOutcomeMock: vi.fn()
@@ -18,8 +16,7 @@ const {
 
 vi.mock('~/lib/redis', () => ({
   getKv: getKvMock,
-  setKv: setKvMock,
-  delKv: delKvMock
+  evalKvScript: evalKvScriptMock
 }))
 
 vi.mock('~/prisma/index', () => ({
@@ -45,8 +42,7 @@ const recordedOutcomes = () =>
 describe('getUnreadMessageStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    setKvMock.mockResolvedValue(undefined)
-    delKvMock.mockResolvedValue(undefined)
+    evalKvScriptMock.mockResolvedValue(1)
     messageFindFirstMock.mockResolvedValue(null)
     conversationFindFirstMock.mockResolvedValue(null)
   })
@@ -74,7 +70,7 @@ describe('getUnreadMessageStatus', () => {
     })
     expect(messageFindFirstMock).not.toHaveBeenCalled()
     expect(conversationFindFirstMock).not.toHaveBeenCalled()
-    expect(setKvMock).not.toHaveBeenCalled()
+    expect(evalKvScriptMock).not.toHaveBeenCalled()
     expect(recordedOutcomes()).toEqual([['message:unread', 'hit']])
   })
 
@@ -112,10 +108,11 @@ describe('getUnreadMessageStatus', () => {
     })
     expect(messageFindFirstMock).toHaveBeenCalledTimes(1)
     expect(conversationFindFirstMock).toHaveBeenCalledTimes(1)
-    expect(setKvMock).toHaveBeenCalledWith(
-      CACHE_KEY,
-      JSON.stringify(status),
-      30
+    // 写回经「只让更新的条目写进去」的脚本, 带上快照的时刻 (契约见 cache.redis.test.ts)
+    expect(evalKvScriptMock).toHaveBeenCalledWith(
+      expect.stringContaining('cjson.decode'),
+      [CACHE_KEY],
+      [JSON.stringify(status), 5000, 30, 0]
     )
     expect(recordedOutcomes()).toEqual([['message:unread', 'miss']])
   })
@@ -140,17 +137,43 @@ describe('getUnreadMessageStatus', () => {
 
     expect(messageFindFirstMock).toHaveBeenCalledTimes(1)
   })
+
+  it('reads an invalidation tombstone as a miss', async () => {
+    getKvMock.mockResolvedValue(JSON.stringify({ invalidated: true, asOf: 7 }))
+
+    await getUnreadMessageStatus(UID)
+
+    expect(messageFindFirstMock).toHaveBeenCalledTimes(1)
+    expect(recordedOutcomes()).toEqual([['message:unread', 'miss']])
+  })
 })
 
 describe('invalidateUnread', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    delKvMock.mockResolvedValue(undefined)
+    evalKvScriptMock.mockResolvedValue(1)
   })
 
-  it('deletes the per-user unread cache key', async () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // 删键挡不住「查询早于写入提交、晚于失效才写回」的旧值: 键没了它照样写进去
+  it('writes a tombstone stamped with the invalidation time instead of deleting', async () => {
+    vi.useFakeTimers({ now: 4242 })
+
     await invalidateUnread(UID)
 
-    expect(delKvMock).toHaveBeenCalledWith(CACHE_KEY)
+    expect(evalKvScriptMock).toHaveBeenCalledWith(
+      expect.stringContaining('cjson.decode'),
+      [CACHE_KEY],
+      [JSON.stringify({ invalidated: true, asOf: 4242 }), 4242, 30, 1]
+    )
+  })
+
+  it('swallows redis failures', async () => {
+    evalKvScriptMock.mockRejectedValue(new Error('redis down'))
+
+    await expect(invalidateUnread(UID)).resolves.toBeUndefined()
   })
 })
