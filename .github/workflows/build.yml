@@ -1,0 +1,51 @@
+name: Build
+
+# 生产构建在 Linux 上的样子 (Turbopack 的文件追踪、standalone、linux 版 libvips、外部包能否从 standalone
+# 里加载) 先在这里暴露, 不要第一次出现在生产主机上。postbuild 的产物自检 (scripts/release/verify.ts)
+# 随 pnpm build 一起跑。不上传产物: 构建期生成的 Server Actions 密钥与复制进去的 .env 都在产物里。
+# 不挂 push main (main 不触发构建作业): 合入之前走 PR, 发布之前可以手动触发或推标签
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      # .env.example 的占位串短于 dotenv-check 的下限; 进程里已有的值优先于 .env。
+      # KUN_DATABASE_URL 沿用 .env.example 的 localhost:5432, 这里没有库在听: 构建不该连库
+      KUN_CAP_SECRET: ci-build-cap-secret-0123456789abcdef0123456789
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 启用 Corepack
+        run: |
+          npm install -g corepack@latest
+          corepack enable
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: 'pnpm'
+
+      # postinstall 钩子会执行 prisma generate, 它要读 .env
+      - name: 复制 .env.example 为 .env
+        run: cp .env.example .env
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 生产构建与产物自检
+        run: pnpm build
