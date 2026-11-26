@@ -2,7 +2,7 @@
 //
 // 子进程的环境刻意只给 PATH、HOME 与调用方显式传的几项, 不继承部署进程的环境: 这样它与 PM2 拉起的
 // 应用一样只从发布自己的 .env 取配置, .env 写错 (比如 KUN_RELEASE_ID 不对) 在这里就现形。
-// 带着 guard.mjs 跑: 发布里缺的模块若在运行期才被解析到发布之外, 这里报出来。
+// 带着 guard.mjs 跑: 运行期解析到发布之外的模块被拦下 (与生产一样找不到) 并报出来, 预期内的除外。
 // 除了这几条 GET, 不做任何有副作用的事: 不开 cron, 不访问详情页 (会计浏览量), 不发 POST
 import { spawn } from 'child_process'
 import crypto from 'crypto'
@@ -10,7 +10,11 @@ import fs from 'fs'
 import net from 'net'
 import path from 'path'
 import { pathToFileURL } from 'url'
-import { formatKunGuardEscapes, readKunGuardReport } from './verify'
+import {
+  formatKunGuardEscapes,
+  isExpectedKunGuardEscape,
+  readKunGuardReport
+} from './verify'
 
 export interface SmokeCheck {
   path: string
@@ -313,7 +317,9 @@ export const runCanary = async (
         '模块解析守卫没有生效 (没有生成报告文件), 无法确认运行期的解析都在发布里面'
       )
     } else {
-      for (const line of formatKunGuardEscapes(escapes)) {
+      for (const line of formatKunGuardEscapes(
+        escapes.filter((escape) => !isExpectedKunGuardEscape(escape))
+      )) {
         failures.push(`模块解析逃出发布: ${line}`)
       }
     }

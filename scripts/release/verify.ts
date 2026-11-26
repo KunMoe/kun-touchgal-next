@@ -4,7 +4,8 @@
 // 在线进程跑在检出之外的发布目录里: standalone 缺的东西上线后直接崩, 不会再被检出的 node_modules
 // 悄悄补上。外部包 (<distDir>/node_modules/<包>-<hash>, chunk 按这个名字 import / require) 要真的加载
 // 一遍才知道齐不齐: 探测脚本放在 <distDir>/server/ 下, 裸说明符的解析与 chunk 一样; 带着 guard.mjs 跑,
-// 解析落到发布目录之外的每一次都记下来。在检出里构建时, 向上就是检出的 node_modules, 缺失正好暴露成逃逸。
+// 解析落到发布目录之外的每一次都被拦下 (当作找不到) 并记下来。在检出里构建时, 向上就是检出的
+// node_modules, 缺失正好暴露成逃逸, 加载也像在生产上一样失败。
 //
 // 除了探测脚本与守卫报告这两个用完即删的临时文件, 不写任何东西; 探测只加载模块, 不连库、不读 .env
 import { spawnSync } from 'child_process'
@@ -234,6 +235,30 @@ export const readKunGuardReport = (file: string): KunGuardEscape[] | null => {
   return escapes
 }
 
+// 预期内的越界解析。守卫照样拦下它们 (与生产一样找不到), 只是不当成失败; verifyRelease 与
+// runCanary 都按这张表跳过。每一项都要写清为什么在生产上找不到也没关系, 升级相关的包后重新核对
+export const KUN_EXPECTED_GUARD_ESCAPES: readonly {
+  reason: string
+  matches: (escape: KunGuardEscape) => boolean
+}[] = [
+  {
+    // next/dist/server/config.js 的 loadConfig 把 loadWebpackHook() 包在 try/catch 里 (16.4.6 在
+    // 1234 行前后), 注释写着 "this can fail in standalone mode as the files aren't traced/included",
+    // 设了 __NEXT_PRIVATE_STANDALONE_CONFIG (standalone 的 server.js 会设) 时吞掉错误。
+    // loadWebpackHook (next/dist/server/config-utils.js) 用 require.resolve 找
+    // next/dist/compiled/webpack/* 与 next/dist/compiled/@babel/runtime/package.json, 这些只在构建时用,
+    // 不追踪进 standalone。升级 Next 后确认这段 try/catch 还在, 不在就删掉这一项让金丝雀报出来
+    reason: 'Next 在 standalone 里加载 webpack 钩子, 失败被 config.js 吞掉',
+    matches: (escape) =>
+      escape.parent !== null &&
+      escape.parent.endsWith('/next/dist/server/config-utils.js') &&
+      escape.specifier.startsWith('next/dist/compiled/')
+  }
+]
+
+export const isExpectedKunGuardEscape = (escape: KunGuardEscape) =>
+  KUN_EXPECTED_GUARD_ESCAPES.some((entry) => entry.matches(escape))
+
 // 一行一个 (说明符, 落点): 同一个缺失的包常被几处同时引用, 发起方只列第一处与总数
 export const formatKunGuardEscapes = (escapes: readonly KunGuardEscape[]) => {
   const groups = new Map<string, { parents: (string | null)[] }>()
@@ -356,10 +381,14 @@ export const verifyRelease = (
   const { danglingLinks, escapingLinks } = checkLinks(root, realRoot)
   const names = listExternalNames(path.join(root, distDir, 'node_modules'))
   const externals = collectSpecifiers(path.join(root, distDir, 'server'), names)
-  const { loadFailures, escapes } =
+  const probed =
     externals.length > 0
       ? probeExternals(root, distDir, externals)
       : { loadFailures: [], escapes: [] }
+  const { loadFailures } = probed
+  const escapes = probed.escapes.filter(
+    (escape) => !isExpectedKunGuardEscape(escape)
+  )
   return {
     missingFiles,
     danglingLinks,

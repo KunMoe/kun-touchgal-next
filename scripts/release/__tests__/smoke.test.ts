@@ -27,7 +27,14 @@ if (mode === 'crash') {
   process.exit(3)
 }
 if (mode === 'escape') {
-  require('zod')
+  try {
+    require('zod')
+  } catch (error) {
+    console.log('zod ' + error.code)
+  }
+}
+if (mode === 'next-config') {
+  console.log('webpack hook ' + require('next/dist/server/config-utils.js'))
 }
 process.on('SIGTERM', () => {
   if (mode !== 'stubborn') {
@@ -188,15 +195,35 @@ describe('runCanary', () => {
     expect(leftovers()).toEqual([])
   })
 
+  // 仿 Next 的 loadWebpackHook (见 verify.ts 的 KUN_EXPECTED_GUARD_ESCAPES): 拦下, 但不算失败
+  it('does not fail on the expected escape of Next loading its webpack hook', async () => {
+    fs.mkdirSync(path.join(dir, 'node_modules/next/dist/server'), {
+      recursive: true
+    })
+    fs.writeFileSync(
+      path.join(dir, 'node_modules/next/package.json'),
+      '{"name":"next"}'
+    )
+    fs.writeFileSync(
+      path.join(dir, 'node_modules/next/dist/server/config-utils.js'),
+      "try { require.resolve('next/dist/compiled/webpack/webpack-lib') } catch (error) { module.exports = error.code }\n"
+    )
+    const result = await canary('next-config')
+    expect(result).toMatchObject({ ok: true, failures: [] })
+    expect(result.output).toContain('webpack hook MODULE_NOT_FOUND')
+  })
+
   it('kills a server that ignores SIGTERM after the stop timeout', async () => {
     const result = await canary('stubborn', { stopTimeoutMs: 300 })
     expect(result).toMatchObject({ ok: true, failures: [] })
     expect(isAlive(serverPid() as number)).toBe(false)
   })
 
-  // 临时目录在仓库的 node_modules/.cache 下: 发布里没有的 zod 会向上解析进仓库的 node_modules
-  it('reports a module the server resolves from outside the release', async () => {
+  // 临时目录在仓库的 node_modules/.cache 下: 发布里没有的 zod 会向上解析进仓库的 node_modules。
+  // 守卫把它拦成找不到 (与生产上一样), 同时报出来
+  it('blocks and reports a module the server resolves from outside the release', async () => {
     const result = await canary('escape')
+    expect(result.output).toContain('zod MODULE_NOT_FOUND')
     expect(result.ok).toBe(false)
     expect(result.failures).toHaveLength(1)
     expect(result.failures[0]).toMatch(/^模块解析逃出发布: zod → /)
