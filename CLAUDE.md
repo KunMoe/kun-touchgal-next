@@ -25,6 +25,7 @@ pnpm db:verify --prisma  # 只读校验库与迁移 / 快照 / schema 是否一�
 pnpm prisma:push      # prisma db push + generate (只用于本地原型)
 pnpm prisma:generate  # 仅重新生成 client
 pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
+pnpm deploy:build [ref] / deploy:rollback [id] / deploy:list  # 生产发布 (只在生产检出里跑)
 ```
 
 测试框架为 **Vitest**（`vitest.config.ts`），只发现 `**/__tests__/**/*.test.ts`——测试与实现同目录放在 `__tests__/` 下，不要用 `.spec.ts`。改动后的验证基线等同 CI（`.github/workflows/lint-check.yml`，Node 26）：`pnpm prisma:generate` → `pnpm lint` → `pnpm typecheck` → `pnpm test`；涉及路由 / 配置 / Prisma / standalone 时再加跑 `pnpm build`。
@@ -77,6 +78,7 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - 会被写回库的表单不从展示用的缓存预填：Galgame 重写页 `/edit/rewrite/[uniqueId]` 自己经 `getGalgameForRewrite` 读库，表单 store 是用这份基线初始化的页内实例。`PUT /api/edit` 的标签是按 id 的差量（`removeTagIds` + `addTagNames`，只走 `applyManualTagChange`），并带 `baseFingerprint` 做并发检查（规范化与指纹只在 `app/api/edit/_editFields.ts`；事务里锁 patch 行用 `FOR UPDATE`）。建档 / 重写的表单 store 改字段只有 `update(patch | fn)`，`await` 之后写表单用函数式；抓取结果经 `components/edit/form/merge.ts` 的纯函数并入。
 - 共享读缓存的失效知识只在 `server/cache/plan.ts`：写路径在 `kunTx` 回调里用 `recordKunChanges(ctx, changes)` 报告改了哪一行与前后状态（只取行锁下读值或 `RETURNING`），要失效哪些缓存由规划器推导、提交后逐条执行且不抛错；资源族四个失效 helper 只许 `server/cache/**` 引用（`kun/inv-cache-01`）。被内嵌却刻意不精确失效的字段登记在 `KUN_TTL_TOLERATED`（带陈旧上限，TTL 调长超过它测试变红）。
 - 缓存 TTL 常量在 `config/cache.ts`，Redis key 统一经 `lib/redis.ts` 前缀。
+- 在线发布在检出之外（`scripts/release/`，发布根是检出旁边的 `<检出目录名>-releases/`，`current` 软链指向在线的 `releases/<id>/`）：`pnpm deploy:build [ref]` 依次切版本、`pnpm install --frozen-lockfile`、迁移、构建（构建期连不上库、恢复类型检查，postbuild 的 `verifyRelease` 自检软链与外部包）、移进发布根并硬链接旧发布的静态资源、在备用端口上带解析守卫跑金丝雀，都过了才停机切换 `current`，再过健康闸门（每个进程的 Node 等于 `.node-version`、`/api/health` 回这个发布的 id），不过就自动换回上一版。保留 3 个发布，`pnpm deploy:rollback [id]` 不重新构建。`current` 只在 PM2 两个 app 都删掉之后切换，不要手工改它，也不要在生产检出里手工 install / 删 `.next` 来补部署；没有 `current` 时 ecosystem 回退到检出里的旧构建（详见 `AGENTS.md`）。
 - 读缓存的命中 / 回源度量在 `server/cache/stats.ts`（`kunRecordCacheOutcome`，每进程每 5 分钟一行 `kun.cache.stats`，`pnpm cache:stats` 汇总）；补丁详情的直读开关 `KUN_PATCH_DETAIL_CACHE=off` 关掉期间失效调用点照常执行，对照结论出来之前不要删失效点或改成空实现（详见 `AGENTS.md`）。
 - 服务端日志只走 `lib/log.server.ts` 的 `kunLog(事件, 字段, err)`：事件先在 `KUN_LOG_EVENTS` 登记（级别、节流、允许写出的字段由登记表定，没登记的字段运行时丢弃），不往字段里写请求头、cookie、整行 user、邮箱、令牌、中继原始响应体；best-effort 写 `.catch((error) => kunLog(...))`。没接住的请求错误由 `instrumentation.ts` 的 `onRequestError` 记 `request.unhandled`（`kunRoute` 对未知异常原样重抛、不自己记）。`no-console` 是 error，只放行 `scripts/**`、`migration/**`、`validations/dotenv-check.ts` 与测试；客户端 4 处与 `kun.cache.stats` 度量行是写明原因的显式 disable。测试 `vi.mock('~/lib/log.server')` 后断言事件（详见 `AGENTS.md`）。
 - 代码风格（Prettier）：单引号、无分号、2 空格缩进、无尾逗号。
