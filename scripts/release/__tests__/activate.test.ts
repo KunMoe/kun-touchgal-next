@@ -68,6 +68,8 @@ interface WorldOptions {
   failStopAt?: number[]
   failSave?: boolean
   status?: (release: ReleaseId | null) => string
+  // 这个发布的 cron 进程启动之后反复退出、又被 PM2 拉起: 状态一直是 online, 每看一次重启次数加一
+  crashLoop?: (release: ReleaseId | null) => boolean
   // 默认: 进程在跑时回 200 与它启动时 current 指向的发布
   health?: (release: ReleaseId | null, port: number) => KunHealth | null
 }
@@ -85,6 +87,17 @@ const createWorld = (options: WorldOptions = {}) => {
   const violations: string[] = []
   const logs: string[] = []
   const counts = { start: 0, stop: 0 }
+  // 每次启动都分配新的 pm_id (真 PM2 会复用删掉的编号; 闸门每次都新记基线, 两种都一样)
+  let nextPmId = 0
+  const spawn = () =>
+    APPS.flatMap((app) =>
+      Array.from({ length: app.instances }, () => ({
+        pmId: nextPmId++,
+        name: app.name,
+        restarts: 0
+      }))
+    )
+  let instances = running ? spawn() : []
 
   const enter = (method: string, record = true) => {
     if (running && readCurrentReleaseId(layout) !== running.release) {
@@ -105,11 +118,13 @@ const createWorld = (options: WorldOptions = {}) => {
         throw new Error('pnpm stop 失败')
       }
       running = null
+      instances = []
     },
     startAll: () => {
       enter('startAll')
       counts.start += 1
       running = { release: readCurrentReleaseId(layout), node: daemonNode }
+      instances = spawn()
       if (options.failStartAt?.includes(counts.start)) {
         throw new Error('pnpm start 失败')
       }
@@ -119,6 +134,12 @@ const createWorld = (options: WorldOptions = {}) => {
       daemonNode = options.nodeAfterUpdate ?? daemonNode
       if (running) {
         running = { release: readCurrentReleaseId(layout), node: daemonNode }
+        // 恢复出来的进程沿用原来的 pm_id、重启次数还多了一次: 比真 PM2 (重新编号、从 0 数起) 苛刻,
+        // 闸门不在 update 之后重新记基线就会误判
+        instances = instances.map((instance) => ({
+          ...instance,
+          restarts: instance.restarts + 1
+        }))
       }
     },
     save: () => {
@@ -134,13 +155,18 @@ const createWorld = (options: WorldOptions = {}) => {
         return []
       }
       const status = options.status?.(live.release) ?? 'online'
-      return APPS.flatMap((app) =>
-        Array.from({ length: app.instances }, (): KunPm2Process => ({
-          name: app.name,
-          status,
-          nodeVersion: live.node
-        }))
-      )
+      if (options.crashLoop?.(live.release)) {
+        instances = instances.map((instance) =>
+          instance.name.endsWith('-cron')
+            ? { ...instance, restarts: instance.restarts + 1 }
+            : instance
+        )
+      }
+      return instances.map((instance): KunPm2Process => ({
+        ...instance,
+        status,
+        nodeVersion: live.node
+      }))
     }
   }
 
@@ -174,6 +200,7 @@ const createWorld = (options: WorldOptions = {}) => {
     violations,
     logs,
     running: () => running,
+    restarts: () => instances.map((instance) => instance.restarts),
     clock: () => clock
   }
 }
@@ -305,6 +332,8 @@ describe('activateRelease', () => {
       `save@${R2}`
     ])
     expect(world.running()).toEqual({ release: R2, node: EXPECTED_NODE })
+    // 恢复出来的进程带着更多的重启次数, 不算等待期间的重启
+    expect(world.restarts().every((count) => count === 1)).toBe(true)
   })
 
   it('fails and rolls back when pm2 update does not bring the declared Node', async () => {
@@ -340,6 +369,47 @@ describe('activateRelease', () => {
     expect(result).toMatchObject({ ok: false, rolledBackTo: R1 })
     expect(!result.ok && result.reason).toContain('errored')
     expect(world.clock()).toBeLessThan(TIMEOUT_MS)
+  })
+
+  it('fails within a few polls when an app keeps restarting but never reaches errored', async () => {
+    addReleases(R1, R2)
+    switchCurrentRelease(layout, R1)
+    // cron 在 Next 起来之后才退出 (超过 min_uptime): PM2 一直把它拉起, 它的端口一直不应答
+    const world = createWorld({
+      crashLoop: (release) => release === R2,
+      health: (release, port) =>
+        release === R2 && port === 3001 ? null : { status: 200, release }
+    })
+
+    const result = await activateRelease(world.deps, R2)
+
+    expect(result).toMatchObject({ ok: false, id: R2, rolledBackTo: R1 })
+    expect(result).not.toHaveProperty('rollbackFailed')
+    expect(!result.ok && result.reason).toContain(
+      'kun-touchgal-next-cron 在等待期间重启了'
+    )
+    expect(world.clock()).toBeLessThanOrEqual(3000)
+    expect(world.calls).toEqual([
+      `stopAll@${R1}`,
+      `startAll@${R2}`,
+      `stopAll@${R2}`,
+      `startAll@${R1}`,
+      `save@${R1}`
+    ])
+    expect(world.violations).toEqual([])
+  })
+
+  it('reports a rollback target that keeps restarting instead of waiting out the deadline', async () => {
+    addReleases(R1, R2)
+    switchCurrentRelease(layout, R1)
+    const world = createWorld({ crashLoop: () => true, health: () => null })
+
+    const result = await activateRelease(world.deps, R2)
+
+    expect(result).toMatchObject({ ok: false, rolledBackTo: R1 })
+    expect(!result.ok && result.rollbackFailed).toContain('重启了')
+    expect(world.calls.at(-1)).toBe(`save@${R1}`)
+    expect(world.clock()).toBeLessThanOrEqual(6000)
   })
 
   it('treats a throwing start like a failed gate', async () => {

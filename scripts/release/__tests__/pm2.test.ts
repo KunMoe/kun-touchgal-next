@@ -13,11 +13,22 @@ const APPS: KunAppSpec[] = [
   { name: 'kun-touchgal-next-cron', port: 3001, instances: 1 }
 ]
 
-const jlistEntry = (name: string, status: string, nodeVersion?: string) => ({
+const jlistEntry = (
+  pmId: number,
+  name: string,
+  status: string,
+  nodeVersion?: string,
+  restarts?: number
+) => ({
   pid: 1234,
   name,
-  pm_id: 0,
-  pm2_env: { status, node_version: nodeVersion, env: { SECRET: 'x' } }
+  pm_id: pmId,
+  pm2_env: {
+    status,
+    node_version: nodeVersion,
+    restart_time: restarts,
+    env: { SECRET: 'x' }
+  }
 })
 
 // 假的命令执行: 记下每条命令, 按命令返回预设的标准输出
@@ -109,7 +120,9 @@ describe('createKunPm2', () => {
   it('throws when one of our apps is still listed after stopping', () => {
     const shell = createShell({
       'pm2 pid kun-touchgal-next-cron': '\n',
-      'pm2 jlist': JSON.stringify([jlistEntry('kun-touchgal-next', 'stopped')])
+      'pm2 jlist': JSON.stringify([
+        jlistEntry(0, 'kun-touchgal-next', 'stopped')
+      ])
     })
     expect(() =>
       createKunPm2({ repoDir, apps: APPS, ...shell }).stopAll()
@@ -122,21 +135,36 @@ describe('createKunPm2', () => {
         '\u001b[32m[PM2] \u001b[39mSpawning PM2 daemon with pm2_home=/x',
         '\u001b[32m[PM2] \u001b[39mPM2 Successfully daemonized',
         JSON.stringify([
-          jlistEntry('kun-touchgal-next', 'online', '26.12.1'),
-          jlistEntry('kun-touchgal-next', 'launching', '26.12.1'),
-          jlistEntry('someone-else', 'online', '24.0.0'),
-          jlistEntry('kun-touchgal-next-cron', 'online')
+          jlistEntry(3, 'kun-touchgal-next', 'online', '26.12.1', 0),
+          jlistEntry(4, 'kun-touchgal-next', 'launching', '26.12.1', 2),
+          jlistEntry(5, 'someone-else', 'online', '24.0.0', 0),
+          jlistEntry(6, 'kun-touchgal-next-cron', 'online')
         ])
       ].join('\n')
     })
     expect(createKunPm2({ repoDir, apps: APPS, ...shell }).list()).toEqual([
-      { name: 'kun-touchgal-next', status: 'online', nodeVersion: '26.12.1' },
       {
+        pmId: 3,
+        name: 'kun-touchgal-next',
+        status: 'online',
+        nodeVersion: '26.12.1',
+        restarts: 0
+      },
+      {
+        pmId: 4,
         name: 'kun-touchgal-next',
         status: 'launching',
-        nodeVersion: '26.12.1'
+        nodeVersion: '26.12.1',
+        restarts: 2
       },
-      { name: 'kun-touchgal-next-cron', status: 'online', nodeVersion: null }
+      // 没有 node_version / restart_time 的条目
+      {
+        pmId: 6,
+        name: 'kun-touchgal-next-cron',
+        status: 'online',
+        nodeVersion: null,
+        restarts: 0
+      }
     ])
   })
 

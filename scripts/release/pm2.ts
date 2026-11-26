@@ -11,10 +11,14 @@ export interface KunAppSpec {
 }
 
 export interface KunPm2Process {
+  // 同一个进程被 PM2 重启时不变。删掉之后编号会被复用, pm2 update 恢复的进程从 0 重新编号
+  pmId: number
   name: string
   status: string
   // 进程自己的 process.versions.node (不带 v)
   nodeVersion: string | null
+  // PM2 自动重启过它几次 (pm2_env.restart_time); pm2 update 恢复的进程从 0 数起 (实测 6.0.14)
+  restarts: number
 }
 
 export interface KunPm2 {
@@ -108,17 +112,32 @@ export const createKunPm2 = ({
     parseJlist(capture('pm2 jlist')).flatMap((raw) => {
       const entry = raw as {
         name?: unknown
-        pm2_env?: { status?: unknown; node_version?: unknown }
+        pm_id?: unknown
+        pm2_env?: {
+          status?: unknown
+          node_version?: unknown
+          restart_time?: unknown
+        }
       }
-      if (typeof entry.name !== 'string' || !names.has(entry.name)) {
+      if (
+        typeof entry.name !== 'string' ||
+        !names.has(entry.name) ||
+        typeof entry.pm_id !== 'number'
+      ) {
         return []
       }
-      const { status, node_version: nodeVersion } = entry.pm2_env ?? {}
+      const {
+        status,
+        node_version: nodeVersion,
+        restart_time: restarts
+      } = entry.pm2_env ?? {}
       return [
         {
+          pmId: entry.pm_id,
           name: entry.name,
           status: typeof status === 'string' ? status : 'unknown',
-          nodeVersion: typeof nodeVersion === 'string' ? nodeVersion : null
+          nodeVersion: typeof nodeVersion === 'string' ? nodeVersion : null,
+          restarts: typeof restarts === 'number' ? restarts : 0
         }
       ]
     })

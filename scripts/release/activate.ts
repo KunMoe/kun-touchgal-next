@@ -48,24 +48,14 @@ export type ActivationResult =
       rollbackFailed?: string
     }
 
-interface GateClock {
+interface GateWait {
   deps: ActivateDeps
   now: () => number
   pollMs: number
   timeoutSeconds: number
   deadline: number
-}
-
-const startClock = (deps: ActivateDeps): GateClock => {
-  const now = deps.now ?? Date.now
-  const timeoutMs = deps.gateTimeoutMs ?? 120_000
-  return {
-    deps,
-    now,
-    pollMs: deps.pollMs ?? 1000,
-    timeoutSeconds: Math.round(timeoutMs / 1000),
-    deadline: now() + timeoutMs
-  }
+  // 每拿到一次进程列表都过一遍, 有问题时返回原因
+  inspect: (processes: readonly KunPm2Process[]) => string | null
 }
 
 const errorMessage = (error: unknown) =>
@@ -73,13 +63,13 @@ const errorMessage = (error: unknown) =>
 
 const labelOf = (id: ReleaseId | null) => id ?? '检出里的旧构建 (旧布局)'
 
-// 每个 app 都有 instances 个 online 的进程才算起来了。errored 是 PM2 放弃重启之后的终态, 不必等到超时
-const waitOnline = async (
-  clock: GateClock
-): Promise<KunPm2Process[] | string> => {
-  const { pm2, apps, sleep } = clock.deps
-  for (;;) {
-    const processes = pm2.list()
+// 等待期间每看一次进程列表都核对两件事。errored 是 PM2 放弃重启之后的终态。重启次数比第一次看到这个
+// 进程时多, 说明它在等待期间退出过: 起来超过 min_uptime (1 秒) 才退出的进程 (Next 已经启动、在
+// instrumentation 的 register() 里退出) PM2 每次都当成正常重启, 永远到不了 errored, 只看状态会一直
+// 等到时限。基线按 pm_id 记在第一次看到它时, 不假定新起的进程从 0 数起
+const watchProcesses = () => {
+  const firstSeen = new Map<number, number>()
+  return (processes: readonly KunPm2Process[]): string | null => {
     const errored = [
       ...new Set(
         processes
@@ -89,6 +79,51 @@ const waitOnline = async (
     ]
     if (errored.length > 0) {
       return `${errored.join(', ')} 的进程是 errored (PM2 已放弃重启)`
+    }
+    const restarted = new Map<string, number>()
+    for (const proc of processes) {
+      const baseline = firstSeen.get(proc.pmId)
+      if (baseline === undefined) {
+        firstSeen.set(proc.pmId, proc.restarts)
+      } else if (proc.restarts > baseline) {
+        restarted.set(
+          proc.name,
+          (restarted.get(proc.name) ?? 0) + proc.restarts - baseline
+        )
+      }
+    }
+    if (restarted.size === 0) {
+      return null
+    }
+    return `${[...restarted]
+      .map(([name, count]) => `${name} 在等待期间重启了 ${count} 次`)
+      .join(', ')} (启动即退出?)`
+  }
+}
+
+const startWait = (deps: ActivateDeps): GateWait => {
+  const now = deps.now ?? Date.now
+  const timeoutMs = deps.gateTimeoutMs ?? 120_000
+  return {
+    deps,
+    now,
+    pollMs: deps.pollMs ?? 1000,
+    timeoutSeconds: Math.round(timeoutMs / 1000),
+    deadline: now() + timeoutMs,
+    inspect: watchProcesses()
+  }
+}
+
+// 每个 app 都有 instances 个 online 的进程才算起来了
+const waitOnline = async (
+  wait: GateWait
+): Promise<KunPm2Process[] | string> => {
+  const { pm2, apps, sleep } = wait.deps
+  for (;;) {
+    const processes = pm2.list()
+    const broken = wait.inspect(processes)
+    if (broken !== null) {
+      return broken
     }
     const pending = apps.flatMap((app) => {
       const online = processes.filter(
@@ -101,10 +136,10 @@ const waitOnline = async (
     if (pending.length === 0) {
       return processes
     }
-    if (clock.now() >= clock.deadline) {
-      return `${clock.timeoutSeconds} 秒内进程没有全部 online: ${pending.join(', ')}`
+    if (wait.now() >= wait.deadline) {
+      return `${wait.timeoutSeconds} 秒内进程没有全部 online: ${pending.join(', ')}`
     }
-    await sleep(clock.pollMs)
+    await sleep(wait.pollMs)
   }
 }
 
@@ -123,15 +158,21 @@ const describeHealth = (health: KunHealth | null) =>
     : `${health.status}, release=${health.release ?? 'null'}`
 
 // release 为 null 时 (回到旧布局) 有 HTTP 应答就算起来了: 旧构建的 .env 里没有发布 id, 更早的构建
-// 连 /api/health 都没有 (回 404)。只认 200 的话, 旧布局明明在服务也会被报成回滚失败
+// 连 /api/health 都没有 (回 404)。只认 200 的话, 旧布局明明在服务也会被报成回滚失败。
+// 每一轮也看一次进程列表: 一个 app 在反复退出时它的端口永远不应答, 不必等到时限; 别的端口应答了也
+// 不算数, 所以在判定这一轮之前看
 const waitHealthy = async (
-  clock: GateClock,
+  wait: GateWait,
   release: ReleaseId | null
 ): Promise<string | null> => {
-  const { apps, fetchHealth, sleep } = clock.deps
+  const { apps, fetchHealth, pm2, sleep } = wait.deps
   for (const app of apps) {
     for (;;) {
       const health = await fetchHealth(app.port)
+      const broken = wait.inspect(pm2.list())
+      if (broken !== null) {
+        return broken
+      }
       if (
         release === null
           ? health !== null
@@ -139,10 +180,10 @@ const waitHealthy = async (
       ) {
         break
       }
-      if (clock.now() >= clock.deadline) {
-        return `${app.name} (端口 ${app.port}) 的 /api/health ${clock.timeoutSeconds} 秒内${release === null ? '没有应答' : `没有回 200 与 release=${release}`}, 最后一次是 ${describeHealth(health)}`
+      if (wait.now() >= wait.deadline) {
+        return `${app.name} (端口 ${app.port}) 的 /api/health ${wait.timeoutSeconds} 秒内${release === null ? '没有应答' : `没有回 200 与 release=${release}`}, 最后一次是 ${describeHealth(health)}`
       }
-      await sleep(clock.pollMs)
+      await sleep(wait.pollMs)
     }
   }
   return null
@@ -154,10 +195,10 @@ const runGate = async (
   id: ReleaseId
 ): Promise<string | null> => {
   const { pm2, expectedNode, log } = deps
-  const clock = startClock(deps)
+  let wait = startWait(deps)
   log(`启动应用 (${id})`)
   pm2.startAll()
-  let processes = await waitOnline(clock)
+  let processes = await waitOnline(wait)
   if (typeof processes === 'string') {
     return processes
   }
@@ -168,7 +209,9 @@ const runGate = async (
       `进程的 Node 与 .node-version 的 ${expectedNode} 不一致 (${describeNodes(mismatched)}), 执行 pm2 update`
     )
     pm2.update()
-    processes = await waitOnline(clock)
+    // 恢复出来的进程不是原来那些, 重启次数的基线重新记; 时限不重新算
+    wait = { ...wait, inspect: watchProcesses() }
+    processes = await waitOnline(wait)
     if (typeof processes === 'string') {
       return `pm2 update 之后${processes}`
     }
@@ -177,7 +220,7 @@ const runGate = async (
       return `pm2 update 之后进程的 Node 仍与 ${expectedNode} 不一致: ${describeNodes(mismatched)}`
     }
   }
-  return waitHealthy(clock, id)
+  return waitHealthy(wait, id)
 }
 
 const describeCurrent = (layout: ReleaseLayout) => {
@@ -201,7 +244,7 @@ const restore = async (
     switchCurrentRelease(layout, target)
     log(`current → ${labelOf(target)}, 启动应用`)
     pm2.startAll()
-    unhealthy = await waitHealthy(startClock(deps), target)
+    unhealthy = await waitHealthy(startWait(deps), target)
     // pm2 update 之后 dump 里可能没有我们的应用, 起来之后都要存一次
     pm2.save()
   } catch (error) {
