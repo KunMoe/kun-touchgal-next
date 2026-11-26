@@ -32,7 +32,9 @@ vi.mock('~/lib/meilisearch', () => ({
 vi.mock('~/prisma/index', () => ({
   prisma: { patch: { count: patchCountMock } }
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   diffIndexSettings,
   ensureSearchIndex
@@ -500,24 +502,34 @@ describe('ensureSearchIndex', () => {
   })
 
   it('patch 条数逼近 maxTotalHits: 90% 起 warn, 达到上限 error, 都不抛错', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { KUN_LOG_EVENTS } =
+      await vi.importActual<typeof import('~/lib/log.server')>(
+        '~/lib/log.server'
+      )
+    expect(KUN_LOG_EVENTS['search.total_hits_near_limit'].level).toBe('warn')
+    expect(KUN_LOG_EVENTS['search.total_hits_exceeded'].level).toBe('error')
 
     patchCountMock.mockResolvedValue(17999)
     await ensureSearchIndex({ mode: 'check' })
-    expect(warn).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
 
     patchCountMock.mockResolvedValue(18000)
     await expect(ensureSearchIndex({ mode: 'check' })).resolves.toMatchObject({
       patchCount: 18000
     })
-    expect(warn).toHaveBeenCalledTimes(1)
-    expect(error).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.total_hits_near_limit',
+      { patchCount: 18000, maxTotalHits: 20000 }
+    )
 
+    vi.mocked(kunLog).mockClear()
     patchCountMock.mockResolvedValue(20000)
     await expect(ensureSearchIndex({ mode: 'check' })).resolves.toMatchObject({
       patchCount: 20000
     })
-    expect(error).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.total_hits_exceeded',
+      { patchCount: 20000, maxTotalHits: 20000 }
+    )
   })
 })

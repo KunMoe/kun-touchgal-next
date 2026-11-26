@@ -1,3 +1,4 @@
+import { kunLog, type KunLogFields } from '~/lib/log.server'
 import { isMeiliEnabled } from '~/lib/meilisearch'
 import { classifyHttpStatus, type FailureScope } from '~/lib/resilience/failure'
 
@@ -79,19 +80,31 @@ export class MeiliBadRequestError extends Error {
   }
 }
 
+// 日志字段只收原始值: 错误对象上的这几项类型未知, 不是字符串或数字的不写
+const scalar = (value: unknown) =>
+  typeof value === 'string' || typeof value === 'number' ? value : undefined
+
 // 日志只记摘要, 不整份打印错误对象 (MeilisearchApiError 挂着整个 Response)。
 // 有应答时 cause 是 Meilisearch 的错误体; 没拿到应答时 cause 是 fetch 抛的原始错误
-// (TimeoutError / TypeError), 系统错误码 (ECONNREFUSED / ENOTFOUND …) 在它的 cause 上
-export const summarizeMeiliError = (error: unknown) => {
+// (TimeoutError / TypeError), 系统错误码 (ECONNREFUSED / ENOTFOUND …) 在它的 cause 上。
+// 四个 search.* 事件 (请求被拒、没配好、不可用、计数查询失败) 的字段都是这份摘要
+export const summarizeMeiliError = (
+  error: unknown
+): KunLogFields<'search.engine_unavailable'> => {
   const { name, message, response, cause } = shapeOf(error)
   if (response) {
-    return { name, status: response.status, code: cause?.code, message }
+    return {
+      name: scalar(name),
+      status: scalar(response.status),
+      code: scalar(cause?.code),
+      message: scalar(message)
+    }
   }
-  const systemCode = cause?.cause?.code
+  const systemCode = scalar(cause?.cause?.code)
   return {
-    name,
-    message,
-    cause: cause?.name,
+    name: scalar(name),
+    message: scalar(message),
+    cause: scalar(cause?.name),
     ...(systemCode === undefined ? {} : { code: systemCode })
   }
 }
@@ -121,27 +134,16 @@ export const withMeiliEngine = async <M, B>(
     }
     if (scope === 'request') {
       // 调用方只回一句「格式错误」: 哪天某个错误码的归类不对了, 要靠这一行才看得出来
-      // eslint-disable-next-line no-console
-      console.info(
-        '[kun-search] Meilisearch 拒绝了这次请求的参数, 不换引擎:',
-        summarizeMeiliError(error)
-      )
+      kunLog('search.request_rejected', summarizeMeiliError(error))
       throw new MeiliBadRequestError(error)
     }
 
     if (scope === 'misconfigured') {
-      // 降级让页面照常可用, 也让配置问题一直没人发现, 所以按 error 级别记
-      // eslint-disable-next-line no-console
-      console.error(
-        '[kun-search] Meilisearch 与代码不一致 (检查 pnpm search:ensure --check、密钥与地址), 本次改用 basic 引擎:',
-        summarizeMeiliError(error)
-      )
+      // 降级让页面照常可用, 也让配置问题一直没人发现, 所以按 error 级别记。
+      // 排查: pnpm search:ensure --check、密钥与地址
+      kunLog('search.engine_misconfigured', summarizeMeiliError(error))
     } else {
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[kun-search] Meilisearch 不可用, 本次改用 basic 引擎:',
-        summarizeMeiliError(error)
-      )
+      kunLog('search.engine_unavailable', summarizeMeiliError(error))
     }
     return { engine: 'basic', value: await basic() }
   }

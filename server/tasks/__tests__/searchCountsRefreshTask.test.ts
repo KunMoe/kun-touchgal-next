@@ -34,7 +34,9 @@ vi.mock('~/lib/redis', () => ({
 vi.mock('~/server/search/sync', () => ({
   withSearchWriter: withSearchWriterMock
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   refreshSearchCounts,
   countsFingerprint,
@@ -118,6 +120,7 @@ describe('searchCountsRefreshJob 与出箱共用写锁', () => {
   let stop: AbortController
   beforeEach(() => {
     stop = new AbortController()
+    vi.mocked(kunLog).mockClear()
   })
   const runTask = () =>
     searchCountsRefreshJob.run({
@@ -151,37 +154,32 @@ describe('searchCountsRefreshJob 与出箱共用写锁', () => {
   // 关停时不再等锁: 那不是「90 秒内没等到」
   it('关停中返回而没拿到锁: 不记跳过的日志', async () => {
     withSearchWriterMock.mockResolvedValue(undefined)
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     stop.abort()
 
     await runTask()
 
-    expect(warnSpy).not.toHaveBeenCalled()
-    warnSpy.mockRestore()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   it('等不到锁时本轮跳过、不读库, 并留一条日志', async () => {
     withSearchWriterMock.mockResolvedValue(undefined)
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await runTask()
 
     expect(patchFindManyMock).not.toHaveBeenCalled()
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('搜索计数快照刷新跳过')
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.counts_refresh_skipped',
+      { waitSec: 90 }
     )
-    warnSpy.mockRestore()
   })
 
   // 出错交给作业层按作业名记录 (server/jobs/registry.ts)
   it('刷新出错原样抛给作业层, 不当成没等到锁', async () => {
     withSearchWriterMock.mockRejectedValue(new Error('boom'))
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await expect(runTask()).rejects.toThrow('boom')
 
-    expect(warnSpy).not.toHaveBeenCalled()
-    warnSpy.mockRestore()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 })
 

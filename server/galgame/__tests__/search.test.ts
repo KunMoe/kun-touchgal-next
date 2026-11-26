@@ -32,6 +32,7 @@ vi.mock('~/server/search/resolve', () => ({
 vi.mock('~/prisma/index', () => ({
   prisma: { patch: { findMany: patchFindManyMock, count: patchCountMock } }
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 import { searchGalgames, toKeywordSearchSpec } from '~/server/galgame/search'
 import { MeiliBadRequestError } from '~/server/search/failure'
@@ -168,8 +169,6 @@ describe('searchGalgames', () => {
     queryGalgameIdsMock.mockResolvedValue({ ids: [], total: 0 })
     patchFindManyMock.mockResolvedValue([])
     patchCountMock.mockResolvedValue(0)
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
-    vi.spyOn(console, 'error').mockImplementation(() => {})
   })
 
   it('索引给出 id 与总数, 卡片由 PG 按同一视角水合, 响应标明 meili', async () => {

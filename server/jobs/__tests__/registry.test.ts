@@ -50,7 +50,9 @@ vi.mock('~/server/jobs/lease', async (importOriginal) => ({
   withJobLease: withJobLeaseMock,
   claimJobSlot: claimJobSlotMock
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   JOB_CANCEL_SETTLE_MS,
   JobRuntimeCancelledError,
@@ -64,16 +66,14 @@ const TIMEZONE = 'Asia/Singapore'
 const startJobRuntime = (specs: ScheduledJobSpec[]) =>
   startRuntime(specs, { timezone: TIMEZONE })
 
-let errorSpy: ReturnType<typeof vi.spyOn>
-let warnSpy: ReturnType<typeof vi.spyOn>
+// 记下的事件名, 按记录的先后
+const events = () => vi.mocked(kunLog).mock.calls.map(([event]) => event)
 
 beforeEach(() => {
   createdTasks.length = 0
   withJobLeaseMock.mockReset()
   claimJobSlotMock.mockReset()
-  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-  vi.spyOn(console, 'log').mockImplementation(() => {})
+  vi.mocked(kunLog).mockClear()
 })
 
 afterEach(() => {
@@ -152,23 +152,50 @@ describe('启动', () => {
 })
 
 describe('每一拍', () => {
-  it('作业抛错按作业名记一条 error, 不逃出节拍', async () => {
+  it('作业抛错按作业名记一条 error (带这一拍的耗时), 不逃出节拍, 不算完成', async () => {
+    vi.useFakeTimers()
     const error = new Error('db down')
     await startJobRuntime([
       defineScheduledJob({
         name: 'flush',
         schedule: '* * * * *',
         run: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 700))
           throw error
         }
       })
     ])
 
-    await expect(taskOf('flush').tick()).resolves.toBeUndefined()
-    expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
-      '[kun-jobs] flush 执行失败:',
+    const tick = taskOf('flush').tick()
+    await vi.advanceTimersByTimeAsync(700)
+
+    await expect(tick).resolves.toBeUndefined()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'job.failed',
+      { job: 'flush', ms: 700 },
       error
     )
+    expect(events()).not.toContain('job.finished')
+  })
+
+  it('作业正常返回: 按作业名记一条完成, 带这一拍的耗时', async () => {
+    vi.useFakeTimers()
+    await startJobRuntime([
+      defineScheduledJob({
+        name: 'flush',
+        schedule: '* * * * *',
+        run: () => new Promise((resolve) => setTimeout(resolve, 1500))
+      })
+    ])
+
+    const tick = taskOf('flush').tick()
+    await vi.advanceTimersByTimeAsync(1500)
+    await tick
+
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('job.finished', {
+      job: 'flush',
+      ms: 1500
+    })
   })
 
   it('同一个作业上一拍没结束时这一拍跳过, 别的作业照常; 结束后下一拍照常执行', async () => {
@@ -202,11 +229,10 @@ describe('每一拍', () => {
       date: new Date('2026-11-26T00:00:00.000Z')
     })
 
-    expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
-      expect.stringContaining(
-        '[kun-jobs] reset 错过了 2026-11-26T00:00:00.000Z'
-      )
-    )
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('job.tick_missed', {
+      job: 'reset',
+      at: '2026-11-26T00:00:00.000Z'
+    })
   })
 })
 
@@ -241,9 +267,13 @@ describe('租约与时间槽', () => {
       cancelSignal: expect.any(AbortSignal),
       progress: leaseProgress
     })
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('job.finished', {
+      job: 'flush',
+      ms: expect.any(Number)
+    })
   })
 
-  it('抢不到租约: 这一拍不执行, 不记日志', async () => {
+  it('抢不到租约: 这一拍不执行, 不记日志 (既不算完成也不算失败)', async () => {
     withJobLeaseMock.mockResolvedValue({ ran: false })
     const run = vi.fn()
     await startJobRuntime([
@@ -258,7 +288,7 @@ describe('租约与时间槽', () => {
     await taskOf('flush').tick()
 
     expect(run).not.toHaveBeenCalled()
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   it('租约丢失后作业抛出租约 signal 的 reason: 已由租约记过, 这里不再记成失败', async () => {
@@ -281,7 +311,7 @@ describe('租约与时间槽', () => {
 
     await taskOf('flush').tick()
 
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   // 计数刷新的写锁在作业里面拿 (spec 没有 lease): 它丢了抛出的 LeaseLostError 已由 lease.ts 记过
@@ -299,10 +329,10 @@ describe('租约与时间槽', () => {
 
     await taskOf('counts').tick()
 
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
-  it('声明了 slotMarker: 先占标记, 已被占就跳过', async () => {
+  it('声明了 slotMarker: 先占标记, 已被占就跳过 (跳过的一拍不算完成)', async () => {
     claimJobSlotMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
     const run = vi.fn(async () => {})
     const slotMarker = { key: 'cron:reset-daily:lock', ttlSeconds: 3600 }
@@ -321,11 +351,15 @@ describe('租约与时间槽', () => {
     expect(claimJobSlotMock).toHaveBeenCalledWith('reset', slotMarker)
     expect(run).toHaveBeenCalledOnce()
     expect(withJobLeaseMock).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('job.finished', {
+      job: 'reset',
+      ms: expect.any(Number)
+    })
   })
 })
 
 describe('关停', () => {
-  it('先停节拍、中止 signal, 在途作业在宽限期内结束就不中止 cancelSignal', async () => {
+  it('先停节拍、中止 signal, 在途作业在宽限期内结束就不中止 cancelSignal; 被叫停的不算完成', async () => {
     vi.useFakeTimers()
     const job = heldJob('drain')
     const runtime = await startJobRuntime([job.spec])
@@ -343,6 +377,11 @@ describe('关停', () => {
     await stopping
     await tick
     expect(ctx.cancelSignal.aborted).toBe(false)
+    // 收到关停之后才返回: 不一定做完了, 不当心跳记
+    expect(events()).toEqual(['job.shutdown_waiting'])
+    expect(kunLog).toHaveBeenCalledWith('job.shutdown_waiting', {
+      jobs: 'drain'
+    })
   })
 
   it('宽限期满: 中止 cancelSignal, 再等收尾至多 JOB_CANCEL_SETTLE_MS', async () => {
@@ -361,9 +400,9 @@ describe('关停', () => {
 
     await vi.advanceTimersByTimeAsync(1)
     expect(ctx.cancelSignal.reason).toBeInstanceOf(JobRuntimeCancelledError)
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('中止在途作业 moderation')
-    )
+    expect(kunLog).toHaveBeenCalledWith('job.shutdown_grace_expired', {
+      jobs: 'moderation'
+    })
 
     // 作业一直不结束: 收尾时间到了照样返回, 由调用方退出进程
     await vi.advanceTimersByTimeAsync(JOB_CANCEL_SETTLE_MS - 1)
@@ -415,6 +454,6 @@ describe('关停', () => {
     await runtime.stop(20_000)
     await tick
 
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(events()).toEqual(['job.shutdown_waiting'])
   })
 })

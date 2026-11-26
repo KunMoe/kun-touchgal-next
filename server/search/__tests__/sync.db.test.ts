@@ -30,6 +30,8 @@ vi.mock('~/lib/meilisearch', () => ({
       : null
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 // 单测连不上 Redis (vitest.config.ts 的 test.env), 写锁直接放行
 vi.mock('~/server/jobs/lease', () => ({
   withJobLease: async (
@@ -179,7 +181,6 @@ describe.skipIf(!dbContractUrl)('search outbox on real PostgreSQL', () => {
 
     // 被拒的一行: 第 1 次失败之后等 1 分钟。读回的到期时刻与写入时的 JS 时钟同一基准
     // (无时区列存 UTC 墙钟), 所以紧接着的下一轮不会取它
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     meili.deleteTask = {
       status: 'failed',
       error: { code: 'invalid_document_id', type: 'invalid_request' }

@@ -7,7 +7,9 @@ const { runCampaignStepMock } = vi.hoisted(() => ({
 vi.mock('~/server/mail/campaign', () => ({
   runCampaignStep: runCampaignStepMock
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import { mailCampaignJob } from '~/server/tasks/mailCampaignTask'
 import {
   MAIL_CAMPAIGN_MIN_BATCH_INTERVAL_MS,
@@ -81,6 +83,28 @@ describe('mailCampaignTask', () => {
 
     expect(signal.aborted).toBe(true)
     expect(signal.reason).toBe(reason)
+  })
+
+  it('推进了的一拍记一行 (发到哪了、为什么停), 空闲的拍不记', async () => {
+    await tick()
+    expect(kunLog).not.toHaveBeenCalled()
+
+    runCampaignStepMock.mockResolvedValue({
+      kind: 'paused',
+      campaignId: 7,
+      sent: 40,
+      failed: 25,
+      reason: '这一批失败过半'
+    })
+    await tick()
+
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('mail.campaign_step', {
+      kind: 'paused',
+      campaignId: 7,
+      sent: 40,
+      failed: 25,
+      reason: '这一批失败过半'
+    })
   })
 
   // 作业层按作业名记下它 (server/jobs/registry.ts), 不逃出定时器

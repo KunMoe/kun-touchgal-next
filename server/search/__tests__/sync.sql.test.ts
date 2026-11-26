@@ -40,6 +40,8 @@ vi.mock('~/server/jobs/lease', () => ({
   })
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { drainSearchOutbox } from '~/server/search/sync'
 
 const CLAIM = /^SELECT .* FROM "public"\."search_outbox"/
@@ -53,7 +55,6 @@ const claimOne = () =>
 beforeEach(() => {
   recorder.reset()
   meili.task = { status: 'succeeded' }
-  vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
 describe('drainSearchOutbox 发出的 SQL', () => {
@@ -103,7 +104,6 @@ describe('drainSearchOutbox 发出的 SQL', () => {
       status: 'failed',
       error: { code: 'internal', type: 'internal' }
     }
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await drainSearchOutbox()
 

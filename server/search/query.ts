@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { kunLog } from '~/lib/log.server'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { getKv, setKv } from '~/lib/redis'
 import { SEARCH_TOTAL_HITS_CACHE_DURATION } from '~/config/cache'
@@ -43,8 +44,7 @@ const readTotalHitsCache = async (cacheKey: string): Promise<number | null> => {
     const parsed = Number(cached)
     return Number.isFinite(parsed) ? parsed : null
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('读取搜索计数缓存失败:', error)
+    kunLog('cache.degraded', { ns: 'search:total-hits', op: 'read' }, error)
     return null
   }
 }
@@ -53,8 +53,7 @@ const writeTotalHitsCache = async (cacheKey: string, totalHits: number) => {
   try {
     await setKv(cacheKey, String(totalHits), SEARCH_TOTAL_HITS_CACHE_DURATION)
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('写入搜索计数缓存失败:', error)
+    kunLog('cache.degraded', { ns: 'search:total-hits', op: 'write' }, error)
   }
 }
 
@@ -178,12 +177,8 @@ export const queryGalgameIds = async (
   const [res, count] = await Promise.all([mainPromise, countPromise])
 
   if ('error' in count) {
-    // 主查询成功而计数查询单独失败 (它要对全部候选打分, 更容易撞超时)
-    // eslint-disable-next-line no-console
-    console.warn(
-      '[kun-search] 计数查询失败, 总数用主查询的近似值:',
-      summarizeMeiliError(count.error)
-    )
+    // 主查询成功而计数查询单独失败 (它要对全部候选打分, 更容易撞超时), 总数用主查询的近似值
+    kunLog('search.count_query_failed', summarizeMeiliError(count.error))
     // 近似值不入缓存, 避免把偏大的估算固化 60s
     return { ids: res.ids, total: res.totalHits }
   }

@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 import {
   toPatchWhere,
@@ -27,11 +28,12 @@ export const fetchGalgameCardsByIds = async (
 
   const dropped = ids.filter((id) => !rowById.has(id))
   if (dropped.length > 0) {
-    // 索引与库不一致的信号: 持续出现同一批 id 说明这些文档的同步卡住了
-    // eslint-disable-next-line no-console
-    console.warn('[kun-search] 索引命中的作品已不在库里或对此视角不可见:', {
+    // 索引命中的作品已不在库里或对此视角不可见: 索引与库不一致的信号, 持续出现同一批 id
+    // 说明这些文档的同步卡住了
+    kunLog('search.hits_dropped', {
       requested: ids.length,
-      dropped
+      dropped: dropped.length,
+      ids: dropped.join(',')
     })
   }
 

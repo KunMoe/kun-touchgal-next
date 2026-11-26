@@ -1,3 +1,4 @@
+import { kunLog } from '~/lib/log.server'
 import { startJobRuntime } from './jobs/registry'
 import type { JobRuntime } from './jobs/registry'
 import { flushPatchViewsJob } from './tasks/flushPatchViewsTask'
@@ -46,14 +47,15 @@ export const checkSearchIndexOnStartup = async () => {
   }
   const onlyContract =
     !report.missing && report.diffs.every(({ kind }) => kind === 'contract')
-  // eslint-disable-next-line no-console
-  const log = onlyContract ? console.warn : console.error
-  log(
-    '[kun-search] 线上索引的定义与代码不一致, 跑 pnpm search:ensure --check 查看、pnpm search:ensure --apply 下发:',
-    report.missing
-      ? '索引不存在'
-      : report.diffs.map(({ key, kind }) => `${key} (${kind})`).join(', ')
-  )
+  const diffs = report.missing
+    ? ''
+    : report.diffs.map(({ key, kind }) => `${key} (${kind})`).join(', ')
+  // 线上索引的定义与代码不一致: 跑 pnpm search:ensure --check 查看、pnpm search:ensure --apply 下发
+  if (onlyContract) {
+    kunLog('search.index_drift_contract', { diffs })
+  } else {
+    kunLog('search.index_drift', { missing: report.missing, diffs })
+  }
 }
 
 // 每个进程只启动一次: 重复调用拿到同一个运行时, 启动失败后可以重试
@@ -63,8 +65,7 @@ export const startKunJobs = () => {
       timezone: KUN_JOB_TIMEZONE
     })
     void checkSearchIndexOnStartup().catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error('[kun-search] 启动时比对索引定义失败:', error)
+      kunLog('search.index_check_failed', {}, error)
     })
     return runtime
   })().catch((error) => {
@@ -88,13 +89,11 @@ export const handleKunJobShutdownSignals = (runtime: JobRuntime) => {
       return
     }
     stopping = true
-    // eslint-disable-next-line no-console
-    console.log(`[kun-jobs] 收到 ${signal}, 关停作业后退出`)
+    kunLog('job.shutdown_signal', { signal })
     void runtime
       .stop(KUN_JOB_SHUTDOWN_GRACE_MS)
       .catch((error) => {
-        // eslint-disable-next-line no-console
-        console.error('[kun-jobs] 关停作业失败:', error)
+        kunLog('job.shutdown_failed', {}, error)
       })
       .finally(() => process.exit(code))
   }

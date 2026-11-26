@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { GALGAME_INDEX } from './settings'
 import { PATCH_SEARCH_SELECT, patchToSearchDoc } from './document'
@@ -76,11 +77,7 @@ export const detectSearchDrift = async (): Promise<SearchDrift> => {
         const docHash = await patchToSearchDoc(row).then(
           (doc) => doc.docHash,
           (error: unknown) => {
-            // eslint-disable-next-line no-console
-            console.error(
-              `[kun-search] 对账构建 patch ${row.id} 的文档失败, 按过时入箱:`,
-              error instanceof Error ? error.message : error
-            )
+            kunLog('search.reconcile_doc_failed', { patchId: row.id }, error)
             return null
           }
         )

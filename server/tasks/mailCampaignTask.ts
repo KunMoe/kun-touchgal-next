@@ -1,4 +1,5 @@
 import { MAIL_CAMPAIGN_STEP_BUDGET_MS } from '~/constants/admin'
+import { kunLog } from '~/lib/log.server'
 import { defineScheduledJob } from '~/server/jobs/registry'
 import { runCampaignStep } from '~/server/mail/campaign'
 
@@ -17,9 +18,8 @@ export const mailCampaignJob = defineScheduledJob({
       ])
     })
     if (result.kind !== 'idle') {
-      // 每拍一行, 可 grep (pm2 logs | grep kun-mail-campaign): 发到哪了、为什么停
-      // eslint-disable-next-line no-console
-      console.log(`[kun-mail-campaign] ${JSON.stringify(result)}`)
+      // 每拍一行, 可 grep (pm2 logs | grep mail.campaign_step): 发到哪了、为什么停
+      kunLog('mail.campaign_step', { ...result })
     }
   }
 })

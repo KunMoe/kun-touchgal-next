@@ -1,3 +1,4 @@
+import { kunLog } from '~/lib/log.server'
 import { acquireKvLock, releaseKvLock, renewKvLock } from '~/lib/redis'
 
 // 作业租约: Redis 里一把带 TTL 的锁 (SET NX), 持有期间每 TTL/3 心跳续一次, 结束时按 token 释放。
@@ -99,8 +100,8 @@ const acquireLock = async ({
     }
   }
 
-  // eslint-disable-next-line no-console
-  console.error(`[kun-jobs] ${name} 抢锁失败 (Redis 连续出错):`, lastError)
+  // 走到这里只能是 Redis 连续出错 (锁被占着的等待不占次数)
+  kunLog('job.lease_acquire_failed', { job: name }, lastError)
   return null
 }
 
@@ -134,8 +135,7 @@ export const withJobLease = async <T>(
     : lost.signal
   const loseLease = (reason: string) => {
     const error = new LeaseLostError(spec.name, reason)
-    // eslint-disable-next-line no-console
-    console.error(`[kun-jobs] ${error.message}`)
+    kunLog('job.lease_lost', { job: spec.name, reason })
     lost.abort(error)
   }
 
@@ -198,8 +198,7 @@ export const withJobLease = async <T>(
       await releaseKvLock(spec.key, token)
     } catch (error) {
       // 释放不掉也只是让别的进程多等一个 TTL
-      // eslint-disable-next-line no-console
-      console.error(`[kun-jobs] ${spec.name} 释放锁失败:`, error)
+      kunLog('job.lease_release_failed', { job: spec.name }, error)
     }
   }
 }

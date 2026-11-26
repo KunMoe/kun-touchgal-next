@@ -43,8 +43,10 @@ vi.mock('~/server/tasks/s3DeletionOutboxTask', () => ({
 vi.mock('~/server/tasks/mailCampaignTask', () => ({
   mailCampaignJob: job('mail_campaign')
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 import { createRequire } from 'node:module'
+import { kunLog } from '~/lib/log.server'
 import { JOB_CANCEL_SETTLE_MS } from '~/server/jobs/registry'
 import {
   KUN_JOB_SHUTDOWN_GRACE_MS,
@@ -64,13 +66,9 @@ const report = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('checkSearchIndexOnStartup 启动时只读比对索引定义', () => {
-  let errorSpy: ReturnType<typeof vi.spyOn>
-  let warnSpy: ReturnType<typeof vi.spyOn>
-
   beforeEach(() => {
     ensureSearchIndexMock.mockReset()
-    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(kunLog).mockClear()
   })
 
   it('启动作业运行时之后调用一次; 重复启动拿到同一个运行时', async () => {
@@ -102,7 +100,7 @@ describe('checkSearchIndexOnStartup 启动时只读比对索引定义', () => {
     await checkSearchIndexOnStartup()
 
     expect(ensureSearchIndexMock).toHaveBeenCalledWith({ mode: 'check' })
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   it('有差异时记一条 error, 列出键与种类', async () => {
@@ -117,10 +115,10 @@ describe('checkSearchIndexOnStartup 启动时只读比对索引定义', () => {
 
     await checkSearchIndexOnStartup()
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('pnpm search:ensure --apply'),
-      'sortableAttributes (expand), rankingRules (change)'
-    )
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('search.index_drift', {
+      missing: false,
+      diffs: 'sortableAttributes (expand), rankingRules (change)'
+    })
   })
 
   it('只有收缩 (等部署链的 post 阶段下发) 时记 warn, 不记 error', async () => {
@@ -130,10 +128,9 @@ describe('checkSearchIndexOnStartup 启动时只读比对索引定义', () => {
 
     await checkSearchIndexOnStartup()
 
-    expect(errorSpy).not.toHaveBeenCalled()
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.any(String),
-      'filterableAttributes (contract)'
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.index_drift_contract',
+      { diffs: 'filterableAttributes (contract)' }
     )
   })
 
@@ -142,7 +139,20 @@ describe('checkSearchIndexOnStartup 启动时只读比对索引定义', () => {
 
     await checkSearchIndexOnStartup()
 
-    expect(errorSpy).toHaveBeenCalledWith(expect.any(String), '索引不存在')
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('search.index_drift', {
+      missing: true,
+      diffs: ''
+    })
+  })
+
+  it('有扩张 / 变更 / 缺索引记 error, 只有收缩记 warn', async () => {
+    const { KUN_LOG_EVENTS } =
+      await vi.importActual<typeof import('~/lib/log.server')>(
+        '~/lib/log.server'
+      )
+
+    expect(KUN_LOG_EVENTS['search.index_drift'].level).toBe('error')
+    expect(KUN_LOG_EVENTS['search.index_drift_contract'].level).toBe('warn')
   })
 
   it('未配置 Meilisearch 时什么都不记', async () => {
@@ -150,7 +160,7 @@ describe('checkSearchIndexOnStartup 启动时只读比对索引定义', () => {
 
     await checkSearchIndexOnStartup()
 
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 })
 
@@ -195,7 +205,6 @@ describe('关停契约', () => {
     const exit = vi
       .spyOn(process, 'exit')
       .mockImplementation((() => undefined) as typeof process.exit)
-    vi.spyOn(console, 'log').mockImplementation(() => {})
     const { promise: stopped, resolve: finishStop } =
       Promise.withResolvers<void>()
     stopMock.mockReset().mockReturnValue(stopped)
@@ -204,6 +213,9 @@ describe('关停契约', () => {
     expect([...handlers.keys()].sort()).toEqual(['SIGINT', 'SIGTERM'])
 
     handlers.get('SIGTERM')!('SIGTERM')
+    expect(kunLog).toHaveBeenCalledWith('job.shutdown_signal', {
+      signal: 'SIGTERM'
+    })
     expect(stopMock).toHaveBeenCalledExactlyOnceWith(KUN_JOB_SHUTDOWN_GRACE_MS)
     await Promise.resolve()
     expect(exit).not.toHaveBeenCalled()
@@ -226,7 +238,6 @@ describe('关停契约', () => {
     const exit = vi
       .spyOn(process, 'exit')
       .mockImplementation((() => undefined) as typeof process.exit)
-    vi.spyOn(console, 'log').mockImplementation(() => {})
     stopMock.mockReset().mockReturnValue(new Promise(() => {}))
 
     handleKunJobShutdownSignals({ stop: stopMock })

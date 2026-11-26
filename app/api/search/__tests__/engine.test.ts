@@ -38,6 +38,7 @@ vi.mock('~/lib/meilisearch', () => ({
 vi.mock('~/server/search/query', () => ({
   queryGalgameIds: queryGalgameIdsMock
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 import { POST } from '~/app/api/search/route'
 import { meiliApiError, meiliDown } from '~/server/search/__tests__/meiliErrors'
@@ -73,8 +74,6 @@ beforeEach(() => {
   vi.resetAllMocks()
   findManyMock.mockResolvedValue([])
   countMock.mockResolvedValue(0)
-  vi.spyOn(console, 'warn').mockImplementation(() => {})
-  vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
 describe('/api/search POST 引擎选择 (Meilisearch 开启)', () => {

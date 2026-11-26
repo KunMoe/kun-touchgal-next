@@ -14,6 +14,8 @@ import {
 } from '~/lib/__tests__/redisContract'
 import type { RedisContract } from '~/lib/__tests__/redisContract'
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 // 作业租约的三条锁命令在真 Redis 上的语义 (运行方式见 lib/__tests__/redisContract.ts):
 // 续租的 Lua 回的是整数, renewKvLock 靠它分辨「还是自己的锁」; mock 测不出回复的类型
 
@@ -66,7 +68,6 @@ describe.skipIf(!redisContractUrl)('job lease on real Redis', () => {
   })
 
   it('持有期间锁键被删 (驱逐、手工 DEL): 下一次心跳判为丢失, 结束后不会删掉接手者的锁', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     const key = newKey()
     let lost: unknown = null
 

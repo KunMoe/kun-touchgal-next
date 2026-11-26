@@ -30,6 +30,8 @@ vi.mock('~/server/search/sync', () => ({
   enqueueSearchOutboxBatch: enqueueBatchMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 // 真实的构建器; 名字叫 boom 的 patch 构建时抛错 (例如简介嵌套过深撑爆调用栈)
 vi.mock('~/server/search/document', async (importOriginal) => {
   const real = await importOriginal<typeof import('~/server/search/document')>()
@@ -42,6 +44,7 @@ vi.mock('~/server/search/document', async (importOriginal) => {
   }
 })
 
+import { kunLog } from '~/lib/log.server'
 import {
   detectSearchDrift,
   reconcileSearchIndex
@@ -206,7 +209,7 @@ describe('detectSearchDrift 只读检测', () => {
   })
 
   it('一份文档构建抛错只算它过时, 不中止整次检测', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(kunLog).mockClear()
     const ok = payload(3)
     indexHas([
       { id: 1, docHash: 'x' },
@@ -219,7 +222,11 @@ describe('detectSearchDrift 只读检测', () => {
     const drift = await detectSearchDrift()
 
     expect(drift).toEqual({ total: 3, missing: [], extra: [9], stale: [1, 2] })
-    vi.restoreAllMocks()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.reconcile_doc_failed',
+      { patchId: 1 },
+      expect.any(RangeError)
+    )
   })
 
   it('未配置 Meili 时抛错且不触碰数据库', async () => {

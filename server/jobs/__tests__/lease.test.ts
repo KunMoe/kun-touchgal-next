@@ -13,7 +13,9 @@ vi.mock('~/lib/redis', () => ({
   releaseKvLock: releaseKvLockMock,
   renewKvLock: renewKvLockMock
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   DEFAULT_LEASE_STALL_MS,
   DEFAULT_LEASE_TTL_SECONDS,
@@ -26,14 +28,12 @@ import type { JobLease } from '~/server/jobs/lease'
 const spec = { name: 'drain', key: 'k' }
 const HEARTBEAT_MS = (DEFAULT_LEASE_TTL_SECONDS * 1000) / 3
 
-let errorSpy: ReturnType<typeof vi.spyOn>
-
 beforeEach(() => {
   vi.useFakeTimers()
   acquireKvLockMock.mockReset().mockResolvedValue('token')
   releaseKvLockMock.mockReset().mockResolvedValue(undefined)
   renewKvLockMock.mockReset().mockResolvedValue(true)
-  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.mocked(kunLog).mockClear()
 })
 
 afterEach(() => {
@@ -114,8 +114,9 @@ describe('抢锁', () => {
 
     await expect(running).resolves.toEqual({ ran: false })
     expect(acquireKvLockMock).toHaveBeenCalledTimes(4)
-    expect(errorSpy).toHaveBeenCalledWith(
-      '[kun-jobs] drain 抢锁失败 (Redis 连续出错):',
+    expect(kunLog).toHaveBeenCalledWith(
+      'job.lease_acquire_failed',
+      { job: 'drain' },
       expect.any(Error)
     )
   })
@@ -178,9 +179,10 @@ describe('心跳', () => {
     const { signal } = held.lease()
     expect(signal.aborted).toBe(true)
     expect(signal.reason).toBeInstanceOf(LeaseLostError)
-    expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
-      expect.stringContaining('[kun-jobs] drain 的租约已丢失')
-    )
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('job.lease_lost', {
+      job: 'drain',
+      reason: '续租时锁键已不存在或已换了持有者'
+    })
     await vi.advanceTimersByTimeAsync(HEARTBEAT_MS * 3)
     expect(renewKvLockMock).toHaveBeenCalledTimes(2)
 
@@ -234,7 +236,7 @@ describe('心跳', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(held.lease().signal.aborted).toBe(false)
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 })
 
@@ -278,8 +280,9 @@ describe('信号与收尾', () => {
       ran: true,
       value: 1
     })
-    expect(errorSpy).toHaveBeenCalledWith(
-      '[kun-jobs] drain 释放锁失败:',
+    expect(kunLog).toHaveBeenCalledWith(
+      'job.lease_release_failed',
+      { job: 'drain' },
       expect.any(Error)
     )
   })
@@ -317,9 +320,10 @@ describe('停滞看门狗', () => {
     expect(String(signal.reason.message)).toContain('没有进展')
     expect(renewKvLockMock).toHaveBeenCalledTimes(renewsBefore)
     expect(releaseKvLockMock).toHaveBeenCalledExactlyOnceWith('k', 'token')
-    expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
-      expect.stringContaining('[kun-jobs] drain 的租约已丢失')
-    )
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('job.lease_lost', {
+      job: 'drain',
+      reason: expect.stringContaining('没有进展')
+    })
 
     held.finish()
     await held.running

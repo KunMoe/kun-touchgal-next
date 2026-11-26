@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'util'
 import type { EnqueuedTaskPromise, Settings } from 'meilisearch'
+import { kunLog } from '~/lib/log.server'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { prisma } from '~/prisma/index'
 import {
@@ -175,17 +176,19 @@ const PHASE_KINDS: Record<'pre' | 'post', readonly SettingsDiffKind[]> = {
 const TOTAL_HITS_WARN_RATIO = 0.9
 
 const warnTotalHitsHeadroom = (patchCount: number) => {
-  const usage = `patch 条数 ${patchCount} / maxTotalHits ${GALGAME_MAX_TOTAL_HITS}`
   if (patchCount >= GALGAME_MAX_TOTAL_HITS) {
-    // eslint-disable-next-line no-console
-    console.error(
-      `[kun-search] ${usage}: 搜索总数与深分页已被截断, 调大 server/search/settings.ts 的 GALGAME_MAX_TOTAL_HITS 后运行 pnpm search:ensure --apply`
-    )
+    // 搜索总数与深分页已被截断: 调大 server/search/settings.ts 的 GALGAME_MAX_TOTAL_HITS 后
+    // 运行 pnpm search:ensure --apply
+    kunLog('search.total_hits_exceeded', {
+      patchCount,
+      maxTotalHits: GALGAME_MAX_TOTAL_HITS
+    })
   } else if (patchCount >= GALGAME_MAX_TOTAL_HITS * TOTAL_HITS_WARN_RATIO) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[kun-search] ${usage} 已超过 ${TOTAL_HITS_WARN_RATIO * 100}%, 尽快调大 GALGAME_MAX_TOTAL_HITS`
-    )
+    // 逼近上限: 尽快调大 GALGAME_MAX_TOTAL_HITS
+    kunLog('search.total_hits_near_limit', {
+      patchCount,
+      maxTotalHits: GALGAME_MAX_TOTAL_HITS
+    })
   }
 }
 

@@ -1,8 +1,9 @@
 import cron from 'node-cron'
+import { kunLog } from '~/lib/log.server'
 import { LeaseLostError, claimJobSlot, withJobLease } from './lease'
 
 // 进程内的最小作业层: 定时任务只声明 spec (惰性数据, import 时不建定时器), 由 startJobRuntime
-// 统一建节拍、在进程内防重叠、按作业名记错误、优雅关停。node-cron 只当节拍器用
+// 统一建节拍、在进程内防重叠、按作业名记完成与失败 (带耗时)、优雅关停。node-cron 只当节拍器用
 
 export interface JobContext {
   // 运行时开始关停、或作业的租约丢失时中止: 不要再开始新的工作单元 (下一行、下一批、下一条
@@ -98,6 +99,8 @@ export const startJobRuntime = async (
       return
     }
     const execution = (async () => {
+      // 耗时从这一拍开始算, 含占时间槽与抢租约
+      const startedAt = Date.now()
       let { signal } = ctx
       try {
         if (
@@ -108,16 +111,25 @@ export const startJobRuntime = async (
         }
         if (!spec.lease) {
           await spec.run(ctx)
-          return
-        }
-        const { lease } = spec
-        await withJobLease(
-          { name: spec.name, ...lease, signal: ctx.signal },
-          (held) => {
-            signal = held.signal
-            return spec.run({ ...ctx, signal, progress: held.progress })
+        } else {
+          const { lease } = spec
+          const leased = await withJobLease(
+            { name: spec.name, ...lease, signal: ctx.signal },
+            (held) => {
+              signal = held.signal
+              return spec.run({ ...ctx, signal, progress: held.progress })
+            }
+          )
+          // 抢不到租约: 这一拍跳过, 不算完成
+          if (!leased.ran) {
+            return
           }
-        )
+        }
+        // 正常返回才算完成。返回时 signal 已中止 (关停、租约丢失) 说明作业是被叫停的、
+        // 不一定做完了, 不记: 这一行要能当心跳看
+        if (!signal.aborted) {
+          kunLog('job.finished', { job: spec.name, ms: Date.now() - startedAt })
+        }
       } catch (error) {
         // 作业按 signal 的要求中止时抛出的就是 signal 的 reason (关停, 或租约丢失); 作业自己在
         // 里面拿的租约 (计数刷新) 丢了也一样: lease.ts 已经记过, 不再记成失败
@@ -125,8 +137,11 @@ export const startJobRuntime = async (
           !(signal.aborted && error === signal.reason) &&
           !(error instanceof LeaseLostError)
         ) {
-          // eslint-disable-next-line no-console
-          console.error(`[kun-jobs] ${spec.name} 执行失败:`, error)
+          kunLog(
+            'job.failed',
+            { job: spec.name, ms: Date.now() - startedAt },
+            error
+          )
         }
       }
     })()
@@ -145,10 +160,10 @@ export const startJobRuntime = async (
     })
     // 到点时事件循环被同步代码堵住或进程过忙, 那一拍被跳过
     task.on('execution:missed', (context) => {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[kun-jobs] ${spec.name} 错过了 ${context.date.toISOString()} 的一拍 (事件循环被阻塞或进程过忙)`
-      )
+      kunLog('job.tick_missed', {
+        job: spec.name,
+        at: context.date.toISOString()
+      })
     })
     return task
   })
@@ -161,18 +176,14 @@ export const startJobRuntime = async (
     if (running.size === 0) {
       return
     }
-    // eslint-disable-next-line no-console
-    console.log(
-      `[kun-jobs] 关停: 等待在途作业 ${[...running.keys()].join(', ')}`
-    )
+    kunLog('job.shutdown_waiting', { jobs: [...running.keys()].join(',') })
     const settled = Promise.allSettled([...running.values()])
     if (await settlesWithin(settled, graceMs)) {
       return
     }
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[kun-jobs] 关停宽限期满, 中止在途作业 ${[...running.keys()].join(', ')}`
-    )
+    kunLog('job.shutdown_grace_expired', {
+      jobs: [...running.keys()].join(',')
+    })
     cancelController.abort(new JobRuntimeCancelledError())
     await settlesWithin(settled, JOB_CANCEL_SETTLE_MS)
   }

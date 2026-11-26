@@ -12,7 +12,9 @@ vi.mock('~/lib/meilisearch', () => ({
     new Meilisearch({ host: 'http://meili.invalid', apiKey: 'k' })
 }))
 vi.mock('~/lib/redis', () => ({ getKv: vi.fn(), setKv: vi.fn() }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   MeiliBadRequestError,
   MeiliProtocolError,
@@ -195,16 +197,9 @@ describe('classifyMeiliFailure: 判别方式', () => {
 })
 
 describe('withMeiliEngine', () => {
-  let warnSpy: ReturnType<typeof vi.spyOn>
-  let errorSpy: ReturnType<typeof vi.spyOn>
-  let infoSpy: ReturnType<typeof vi.spyOn>
-
   beforeEach(() => {
     vi.resetAllMocks()
     isMeiliEnabledMock.mockReturnValue(true)
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
   })
 
   // 地址指到了别的服务 (回 200 的站点、SPA 兜底页、代理的拦截页): 真实 SDK + 桩掉的 fetch,
@@ -225,11 +220,10 @@ describe('withMeiliEngine', () => {
     )
 
     expect(result).toEqual({ engine: 'basic', value: 'from-basic' })
-    expect(errorSpy).toHaveBeenCalledTimes(1)
-    expect(errorSpy.mock.calls[0][1]).toMatchObject({
-      name: 'MeiliProtocolError'
-    })
-    expect(warnSpy).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.engine_misconfigured',
+      expect.objectContaining({ name: 'MeiliProtocolError' })
+    )
   })
 
   it('索引地址回的是正常的搜索结果: 走 meili', async () => {
@@ -247,7 +241,7 @@ describe('withMeiliEngine', () => {
       engine: 'meili',
       value: { ids: [7, 3], total: 2 }
     })
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   it('未启用时只跑 basic', async () => {
@@ -271,8 +265,7 @@ describe('withMeiliEngine', () => {
       value: 'from-meili'
     })
     expect(basic).not.toHaveBeenCalled()
-    expect(warnSpy).not.toHaveBeenCalled()
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   it('日志摘要带上系统错误码, 拒连与超时分得开', async () => {
@@ -281,7 +274,7 @@ describe('withMeiliEngine', () => {
 
     await withMeiliEngine(meili, basic)
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.any(String), {
+    expect(kunLog).toHaveBeenCalledWith('search.engine_unavailable', {
       name: 'MeilisearchRequestError',
       message: 'Request to http://meili has failed',
       cause: 'TypeError',
@@ -297,13 +290,14 @@ describe('withMeiliEngine', () => {
       engine: 'basic',
       value: 'from-basic'
     })
-    expect(warnSpy).toHaveBeenCalledTimes(1)
-    expect(warnSpy).toHaveBeenCalledWith(expect.any(String), {
-      name: 'MeilisearchRequestError',
-      message: 'Request to http://meili has failed',
-      cause: 'TimeoutError'
-    })
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.engine_unavailable',
+      {
+        name: 'MeilisearchRequestError',
+        message: 'Request to http://meili has failed',
+        cause: 'TimeoutError'
+      }
+    )
   })
 
   it('索引没配好时仍换到 basic, 但记 error', async () => {
@@ -316,14 +310,15 @@ describe('withMeiliEngine', () => {
       engine: 'basic',
       value: 'from-basic'
     })
-    expect(errorSpy).toHaveBeenCalledTimes(1)
-    expect(errorSpy).toHaveBeenCalledWith(expect.any(String), {
-      name: 'MeilisearchApiError',
-      status: 400,
-      code: 'invalid_search_sort',
-      message: 'stub invalid_search_sort'
-    })
-    expect(warnSpy).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.engine_misconfigured',
+      {
+        name: 'MeilisearchApiError',
+        status: 400,
+        code: 'invalid_search_sort',
+        message: 'stub invalid_search_sort'
+      }
+    )
   })
 
   it('请求参数被拒时不换引擎, 抛 MeiliBadRequestError 并带上原错误', async () => {
@@ -338,11 +333,8 @@ describe('withMeiliEngine', () => {
     expect(thrown).toBeInstanceOf(MeiliBadRequestError)
     expect((thrown as Error).cause).toBe(original)
     expect(basic).not.toHaveBeenCalled()
-    expect(warnSpy).not.toHaveBeenCalled()
-    expect(errorSpy).not.toHaveBeenCalled()
     // 调用方只回一句「格式错误」: 这条 info 是唯一能看出哪个错误码被归成了请求错误的地方
-    expect(infoSpy).toHaveBeenCalledTimes(1)
-    expect(infoSpy).toHaveBeenCalledWith(expect.any(String), {
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('search.request_rejected', {
       name: 'MeilisearchApiError',
       status: 400,
       code: 'invalid_search_page',
@@ -357,8 +349,20 @@ describe('withMeiliEngine', () => {
 
     await expect(withMeiliEngine(meili, basic)).rejects.toBe(original)
     expect(basic).not.toHaveBeenCalled()
-    expect(warnSpy).not.toHaveBeenCalled()
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
+  })
+
+  // 级别由日志登记表按事件决定: 没配好按 error 记 (降级让配置问题一直没人发现),
+  // 不可用记 warn, 请求被拒只记 info
+  it('三类失败各记成什么级别', async () => {
+    const { KUN_LOG_EVENTS } =
+      await vi.importActual<typeof import('~/lib/log.server')>(
+        '~/lib/log.server'
+      )
+
+    expect(KUN_LOG_EVENTS['search.engine_misconfigured'].level).toBe('error')
+    expect(KUN_LOG_EVENTS['search.engine_unavailable'].level).toBe('warn')
+    expect(KUN_LOG_EVENTS['search.request_rejected'].level).toBe('info')
   })
 
   it('换到 basic 之后 basic 自己的失败原样抛出', async () => {

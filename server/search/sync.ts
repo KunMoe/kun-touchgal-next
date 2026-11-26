@@ -1,5 +1,6 @@
 import { prisma } from '~/prisma/index'
 import type { KunTx } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { classifyHttpStatus } from '~/lib/resilience/failure'
 import { withJobLease } from '~/server/jobs/lease'
@@ -309,11 +310,8 @@ const applyOutboxRow = async (row: OutboxRow): Promise<RowOutcome> => {
           next_attempt_at: new Date(Date.now() + OUTBOX_ENGINE_RETRY_DELAY_MS)
         }
       })
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[kun-search] Meilisearch 此刻收不了写入, 本轮出箱消费在 patch ${row.patch_id} 处提前结束, 不计失败次数 (总是同一个 patch 时多半是这份文档自己的问题):`,
-        describeError(error)
-      )
+      // 本轮出箱消费在这一行处提前结束。总是同一个 patch 时多半是这份文档自己的问题
+      kunLog('search.outbox_deferred', { patchId: row.patch_id }, error)
       return 'engine-unavailable'
     }
     const attempts = row.attempts + 1
@@ -331,10 +329,10 @@ const applyOutboxRow = async (row: OutboxRow): Promise<RowOutcome> => {
         : attempts >= SEARCH_OUTBOX_MAX_ATTEMPTS
           ? `第 ${attempts} 次, 已隔离, 应用写入再次入队或 pnpm search:reconcile --retry-failed 才会重试`
           : `第 ${attempts} 次`
-    // eslint-disable-next-line no-console
-    console.error(
-      `[kun-search] 搜索写出箱同步 patch ${row.patch_id} 失败 (${accounting}):`,
-      describeError(error)
+    kunLog(
+      'search.outbox_row_failed',
+      { patchId: row.patch_id, attempts, accounting },
+      error
     )
     return 'failed'
   }
@@ -494,8 +492,7 @@ export const drainSearchOutboxUntilEmpty = async ({
 // 即时消费：入队后立刻尝试 drain 一次，保持近实时同步；抢不到锁则由定时任务兜底。
 const kickDrain = () => {
   void drainSearchOutbox({ budgetMs: KICK_DRAIN_BUDGET_MS }).catch((error) => {
-    // eslint-disable-next-line no-console
-    console.error('搜索写出箱即时消费失败:', error)
+    kunLog('search.drain_failed', {}, error)
   })
 }
 
@@ -519,8 +516,7 @@ const queueSearchOutbox = (patchId: number) => {
   void enqueueSearchOutbox(prisma, patchId)
     .then(kickDrain)
     .catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error(`patch ${patchId} 入搜索写出箱失败:`, error)
+      kunLog('search.enqueue_failed', { patchId }, error)
     })
 }
 

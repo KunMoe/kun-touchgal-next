@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma'
+import { kunLog } from '~/lib/log.server'
 import { getMeiliClient } from '~/lib/meilisearch'
 import { getKvHashAll, setKvHashFields } from '~/lib/redis'
 import {
@@ -105,10 +106,9 @@ export const searchCountsRefreshJob = defineScheduledJob({
     )
     // 关停时不再等锁, 那不是「没等到」
     if (!ran && !signal.aborted) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[kun-search] 搜索计数快照刷新跳过: ${COUNTS_REFRESH_LOCK_WAIT_MS / 1000} 秒内没等到写锁`
-      )
+      kunLog('search.counts_refresh_skipped', {
+        waitSec: COUNTS_REFRESH_LOCK_WAIT_MS / 1000
+      })
     }
   }
 })

@@ -14,7 +14,9 @@ vi.mock('~/lib/redis', () => ({
   getKv: getKvMock,
   setKv: setKvMock
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   queryGalgameIds,
   SEARCH_RANKING_SCORE_THRESHOLD
@@ -30,6 +32,7 @@ describe('queryGalgameIds 分页总数', () => {
     // 默认缓存未命中，现有用例照常发主查询 + 计数查询
     getKvMock.mockReset().mockResolvedValue(null)
     setKvMock.mockReset().mockResolvedValue(undefined)
+    vi.mocked(kunLog).mockClear()
   })
 
   // 索引只是召回层: 卡片与可见性由调用方回 PG 裁决, 这里不取文档的其他字段。
@@ -209,8 +212,6 @@ describe('queryGalgameIds 分页总数', () => {
   it('主查询失败时原样抛出, 计数查询跟着失败也不另记日志', async () => {
     // 两条查询多半是同一个原因失败的: 归类与日志交给 withMeiliEngine, 这里再记一条
     // 只会把故障期的每次搜索变成两条日志 (匿名的非法请求也能刷出一条)
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const mainFailure = Object.assign(new Error('stub malformed_payload'), {
       name: 'MeilisearchApiError',
       response: { status: 400 },
@@ -230,14 +231,11 @@ describe('queryGalgameIds 分页总数', () => {
     ).rejects.toBe(mainFailure)
     // 让计数查询的拒绝也落定
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(warnSpy).not.toHaveBeenCalled()
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
     expect(setKvMock).not.toHaveBeenCalled()
   })
 
   it('主查询成功而计数查询单独失败: 只记一条摘要 (warn)', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     searchMock.mockImplementation(
       (_q: string, options: { hitsPerPage: number }) =>
         options.hitsPerPage === GALGAME_MAX_TOTAL_HITS
@@ -257,13 +255,14 @@ describe('queryGalgameIds 分页总数', () => {
     })
 
     expect(result).toEqual({ ids: [1], total: 148 })
-    expect(warnSpy).toHaveBeenCalledTimes(1)
-    expect(warnSpy).toHaveBeenCalledWith(expect.any(String), {
-      name: 'MeilisearchRequestError',
-      message: 'Request to http://meili has failed',
-      cause: 'TimeoutError'
-    })
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.count_query_failed',
+      {
+        name: 'MeilisearchRequestError',
+        message: 'Request to http://meili has failed',
+        cause: 'TimeoutError'
+      }
+    )
   })
 
   // SDK 对 2xx 但正文不是 JSON 的应答原样抛 SyntaxError, 正文为空或缺字段时照常 resolve
@@ -304,7 +303,6 @@ describe('queryGalgameIds 分页总数', () => {
   })
 
   it('计数查询失败时回退到主查询 totalHits，不拒绝整次搜索、不写缓存', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
     // 主查询成功返回浅页高估 148；计数查询超时/失败（reject）。
     // 期望：不抛错、total 退化为主查询近似值 148，且近似值不入缓存（不污染后续 60s）。
     searchMock.mockImplementation(

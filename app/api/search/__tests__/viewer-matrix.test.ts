@@ -65,6 +65,7 @@ vi.mock('react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react')>()),
   cache: (await import('~/server/viewer/__tests__/viewerMatrix')).memoCache
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 import { POST } from '~/app/api/search/route'
 
@@ -196,7 +197,6 @@ describe('/api/search POST 视角矩阵 (Meilisearch 开启)', () => {
 
   // 索引只给 id: 卡片回 PG 取, 套的是同一个视角的可见性
   it.each(rows)('route, 索引有命中: $viewer.name', async (row) => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
     matrixState.meiliIds = INDEX_HITS
 
     const recording = await viaRoute(row.viewer)

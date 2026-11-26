@@ -7,7 +7,9 @@ const { patchFindManyMock } = vi.hoisted(() => ({
 vi.mock('~/prisma/index', () => ({
   prisma: { patch: { findMany: patchFindManyMock } }
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import { fetchGalgameCardsByIds } from '~/server/galgame/cards'
 import { GalgameCardSelectField } from '~/constants/api/select'
 import { PUBLIC_VISIBILITY } from '~/server/viewer/patchVisibility'
@@ -16,11 +18,8 @@ import { cardRow } from './cardRow'
 const ALL = { contentLimit: null, blockedTagIds: [] } as const
 
 describe('fetchGalgameCardsByIds', () => {
-  let warnSpy: ReturnType<typeof vi.spyOn>
-
   beforeEach(() => {
     vi.resetAllMocks()
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
   it('ids 为空时不查库', async () => {
@@ -34,7 +33,7 @@ describe('fetchGalgameCardsByIds', () => {
     const cards = await fetchGalgameCardsByIds([3, 1, 2], ALL)
 
     expect(cards.map((card) => card.id)).toEqual([3, 1, 2])
-    expect(warnSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   it('经 toGalgameCard 映射, 只选取卡片字段', async () => {
@@ -97,10 +96,10 @@ describe('fetchGalgameCardsByIds', () => {
     const cards = await fetchGalgameCardsByIds([2, 3, 4, 5], PUBLIC_VISIBILITY)
 
     expect(cards.map((card) => card.id)).toEqual([2, 4])
-    expect(warnSpy).toHaveBeenCalledTimes(1)
-    expect(warnSpy).toHaveBeenCalledWith(expect.any(String), {
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('search.hits_dropped', {
       requested: 4,
-      dropped: [3, 5]
+      dropped: 2,
+      ids: '3,5'
     })
   })
 })

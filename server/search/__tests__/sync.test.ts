@@ -58,6 +58,9 @@ vi.mock('~/server/jobs/lease', () => ({
   withJobLease: withJobLeaseMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   SEARCH_OUTBOX_MAX_ATTEMPTS,
   syncPatchToSearch,
@@ -90,7 +93,6 @@ const rejectedTask = {
   error: { code: 'invalid_document_fields', type: 'invalid_request' }
 }
 
-let errorSpy: ReturnType<typeof vi.spyOn>
 let lease: AbortController
 const progressMock = vi.fn()
 
@@ -128,8 +130,7 @@ beforeEach(() => {
         value: await fn({ signal: lease.signal, progress: progressMock })
       })
     )
-  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  vi.mocked(kunLog).mockClear()
 })
 
 afterEach(() => {
@@ -343,9 +344,14 @@ describe('drainSearchOutbox 失败记账', () => {
     const { data } = outboxUpdateManyMock.mock.calls[0][0]
     expect(data.attempts).toBe(SEARCH_OUTBOX_MAX_ATTEMPTS)
     expect(data.next_attempt_at).toEqual(new Date(1_000_000 + 360 * MINUTE))
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('已隔离'),
-      expect.any(String)
+    expect(kunLog).toHaveBeenCalledWith(
+      'search.outbox_row_failed',
+      {
+        patchId: 5,
+        attempts: SEARCH_OUTBOX_MAX_ATTEMPTS,
+        accounting: expect.stringContaining('已隔离')
+      },
+      expect.any(Error)
     )
   })
 
@@ -414,6 +420,11 @@ describe('drainSearchOutbox 失败记账', () => {
       expect(outboxDeleteManyMock).not.toHaveBeenCalled()
       expect(addDocumentsMock).toHaveBeenCalledTimes(1)
       expect(outboxFindManyMock).toHaveBeenCalledTimes(1)
+      expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+        'search.outbox_deferred',
+        { patchId: 5 },
+        expect.anything()
+      )
     }
   )
 
@@ -424,13 +435,14 @@ describe('drainSearchOutbox 失败记账', () => {
 
     await drainSearchOutbox()
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('处理期间又有新的入队, 这次不计'),
-      expect.any(String)
-    )
-    expect(errorSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining('已隔离'),
-      expect.any(String)
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'search.outbox_row_failed',
+      {
+        patchId: 5,
+        attempts: SEARCH_OUTBOX_MAX_ATTEMPTS,
+        accounting: '处理期间又有新的入队, 这次不计'
+      },
+      expect.any(Error)
     )
   })
 
