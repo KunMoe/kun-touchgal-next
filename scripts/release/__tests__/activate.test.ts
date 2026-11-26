@@ -4,6 +4,14 @@ import type { AddressInfo } from 'net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { activateRelease, kunFetchHealth, rollbackTo } from '../activate'
 import {
+  KUN_RELEASE_ACTIVATED,
+  KUN_RELEASE_ROLLED_BACK,
+  isReleaseActivated,
+  isReleaseRolledBack,
+  markReleaseActivated,
+  markReleaseRolledBack
+} from '../history'
+import {
   isReleaseId,
   kunReleaseLayoutFor,
   listReleases,
@@ -32,6 +40,8 @@ const R5 = id('20261105000000-eeeeeee')
 
 const EXPECTED_NODE = '26.12.1'
 const TIMEOUT_MS = 10_000
+const SOAK_MS = 5000
+const EARLIER = new Date('2026-11-01T00:00:00.000Z')
 const APPS: KunAppSpec[] = [
   { name: 'kun-touchgal-next', port: 3000, instances: 3 },
   { name: 'kun-touchgal-next-cron', port: 3001, instances: 1 }
@@ -40,7 +50,8 @@ const APPS: KunAppSpec[] = [
 let root: string
 let layout: ReleaseLayout
 
-const addReleases = (...ids: ReleaseId[]) => {
+// 组装好、还没上线过的发布
+const addBuilt = (...ids: ReleaseId[]) => {
   for (const releaseId of ids) {
     const dir = releaseDirOf(layout, releaseId)
     fs.mkdirSync(dir, { recursive: true })
@@ -55,6 +66,19 @@ const addReleases = (...ids: ReleaseId[]) => {
   }
 }
 
+// 以前上线过 (过了闸门与观察期) 的发布
+const addReleases = (...ids: ReleaseId[]) => {
+  addBuilt(...ids)
+  for (const releaseId of ids) {
+    markReleaseActivated(layout, releaseId, EARLIER)
+  }
+}
+
+const markerText = (releaseId: ReleaseId, name: string) =>
+  fs.readFileSync(`${releaseDirOf(layout, releaseId)}/${name}`, 'utf8')
+
+const listedIds = () => listReleases(layout).map((manifest) => manifest.id)
+
 const currentLabel = () => readCurrentReleaseId(layout) ?? 'legacy'
 
 interface WorldOptions {
@@ -63,15 +87,23 @@ interface WorldOptions {
   daemonNode?: string
   // pm2 update 之后守护进程的 Node; 不给就不变
   nodeAfterUpdate?: string
+  // 启动 / pm2 update 之后的前 n 次 list() 里, 进程还没报上 Node 版本: 启动后是 null, update 后是 dump 里的旧值
+  reportAfterLists?: number
   // 第 n 次 (从 1 数) 调用时抛错
   failStartAt?: number[]
   failStopAt?: number[]
+  // 每次 stopAll 都删掉全部进程, 然后在核对时抛错
+  stopDeletesThenThrows?: boolean
   failSave?: boolean
   status?: (release: ReleaseId | null) => string
-  // 这个发布的 cron 进程启动之后反复退出、又被 PM2 拉起: 状态一直是 online, 每看一次重启次数加一
-  crashLoop?: (release: ReleaseId | null) => boolean
+  // 为 true 时这个发布的 cron 进程退出后又被 PM2 拉起: 状态一直是 online, 每看一次重启次数加一
+  crashLoop?: (release: ReleaseId | null, clock: number) => boolean
   // 默认: 进程在跑时回 200 与它启动时 current 指向的发布
-  health?: (release: ReleaseId | null, port: number) => KunHealth | null
+  health?: (
+    release: ReleaseId | null,
+    port: number,
+    clock: number
+  ) => KunHealth | null
 }
 
 // 假的 PM2: 进程启动时记下 current 当时的指向 (真 PM2 的进程按启动那一刻的软链目标运行), 健康检查回的
@@ -86,7 +118,11 @@ const createWorld = (options: WorldOptions = {}) => {
   const calls: string[] = []
   const violations: string[] = []
   const logs: string[] = []
+  const saves: number[] = []
   const counts = { start: 0, stop: 0 }
+  // 还要几次 list() 进程才报上 Node 版本, 报上之前显示的值
+  let pendingReports = 0
+  let unreported: string | null = null
   // 每次启动都分配新的 pm_id (真 PM2 会复用删掉的编号; 闸门每次都新记基线, 两种都一样)
   let nextPmId = 0
   const spawn = () =>
@@ -119,18 +155,25 @@ const createWorld = (options: WorldOptions = {}) => {
       }
       running = null
       instances = []
+      if (options.stopDeletesThenThrows) {
+        throw new Error('认不出 pm2 jlist 的输出')
+      }
     },
     startAll: () => {
       enter('startAll')
       counts.start += 1
       running = { release: readCurrentReleaseId(layout), node: daemonNode }
       instances = spawn()
+      pendingReports = options.reportAfterLists ?? 0
+      unreported = null
       if (options.failStartAt?.includes(counts.start)) {
         throw new Error('pnpm start 失败')
       }
     },
     update: () => {
       enter('update')
+      pendingReports = options.reportAfterLists ?? 0
+      unreported = daemonNode
       daemonNode = options.nodeAfterUpdate ?? daemonNode
       if (running) {
         running = { release: readCurrentReleaseId(layout), node: daemonNode }
@@ -144,6 +187,7 @@ const createWorld = (options: WorldOptions = {}) => {
     },
     save: () => {
       enter('save')
+      saves.push(clock)
       if (options.failSave) {
         throw new Error('pm2 save 失败')
       }
@@ -155,17 +199,19 @@ const createWorld = (options: WorldOptions = {}) => {
         return []
       }
       const status = options.status?.(live.release) ?? 'online'
-      if (options.crashLoop?.(live.release)) {
+      if (options.crashLoop?.(live.release, clock)) {
         instances = instances.map((instance) =>
           instance.name.endsWith('-cron')
             ? { ...instance, restarts: instance.restarts + 1 }
             : instance
         )
       }
+      const nodeVersion = pendingReports > 0 ? unreported : live.node
+      pendingReports = Math.max(0, pendingReports - 1)
       return instances.map((instance): KunPm2Process => ({
         ...instance,
         status,
-        nodeVersion: live.node
+        nodeVersion
       }))
     }
   }
@@ -180,7 +226,7 @@ const createWorld = (options: WorldOptions = {}) => {
         return null
       }
       return options.health
-        ? options.health(running.release, port)
+        ? options.health(running.release, port, clock)
         : { status: 200, release: running.release }
     },
     sleep: async (ms) => {
@@ -191,7 +237,8 @@ const createWorld = (options: WorldOptions = {}) => {
     },
     now: () => clock,
     gateTimeoutMs: TIMEOUT_MS,
-    pollMs: 1000
+    pollMs: 1000,
+    soakMs: SOAK_MS
   }
 
   return {
@@ -199,6 +246,7 @@ const createWorld = (options: WorldOptions = {}) => {
     calls,
     violations,
     logs,
+    saves,
     running: () => running,
     restarts: () => instances.map((instance) => instance.restarts),
     clock: () => clock
@@ -221,8 +269,9 @@ afterEach(() => {
 })
 
 describe('activateRelease', () => {
-  it('switches current only after every app is deleted, then saves and prunes', async () => {
-    addReleases(R1, R2, R3, R4, R5)
+  it('switches current only after every app is deleted, saves after the soak and prunes', async () => {
+    addReleases(R1, R2, R3, R4)
+    addBuilt(R5)
     switchCurrentRelease(layout, R4)
     const world = createWorld()
 
@@ -239,18 +288,20 @@ describe('activateRelease', () => {
       `startAll@${R5}`,
       `save@${R5}`
     ])
+    expect(world.saves).toEqual([SOAK_MS])
     expect(world.violations).toEqual([])
     expect(world.running()).toEqual({ release: R5, node: EXPECTED_NODE })
     expect(readCurrentReleaseId(layout)).toBe(R5)
-    expect(listReleases(layout).map((manifest) => manifest.id)).toEqual([
-      R5,
-      R4,
-      R3
-    ])
+    expect(listedIds()).toEqual([R5, R4, R3])
+    expect(markerText(R5, KUN_RELEASE_ACTIVATED)).toBe(
+      `${new Date(SOAK_MS).toISOString()}\n`
+    )
+    expect(isReleaseRolledBack(layout, R5)).toBe(false)
   })
 
   it('rolls back to the previous release when the new one never reports its own id', async () => {
-    addReleases(R1, R2)
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     // 200 但 release 不对: 例如发布的 .env 里没写上 KUN_RELEASE_ID
     const world = createWorld({
@@ -275,12 +326,14 @@ describe('activateRelease', () => {
     expect(world.violations).toEqual([])
     expect(world.running()?.release).toBe(R1)
     expect(world.clock()).toBeGreaterThanOrEqual(TIMEOUT_MS)
-    // 没上线的发布留着备查
+    // 没上线的发布留着 (部署链决定删不删), 标成回滚过
     expect(fs.existsSync(releaseDirOf(layout, R2))).toBe(true)
+    expect(isReleaseActivated(layout, R2)).toBe(false)
+    expect(isReleaseRolledBack(layout, R2)).toBe(true)
   })
 
   it('removes current after a failed first cutover so the ecosystem falls back to the legacy build', async () => {
-    addReleases(R1)
+    addBuilt(R1)
     const world = createWorld({ health: silent(R1) })
 
     const result = await activateRelease(world.deps, R1)
@@ -301,7 +354,7 @@ describe('activateRelease', () => {
   })
 
   it('counts a legacy build that predates /api/health (404) as up after falling back', async () => {
-    addReleases(R1)
+    addBuilt(R1)
     const world = createWorld({
       health: (release) =>
         release === null ? { status: 404, release: null } : null
@@ -314,12 +367,27 @@ describe('activateRelease', () => {
     expect(world.running()?.release).toBeNull()
   })
 
-  it('runs pm2 update once when the processes are on another Node and passes once they are not', async () => {
-    addReleases(R1, R2)
+  it('waits for the processes to report their Node before judging it', async () => {
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
+    const world = createWorld({ reportAfterLists: 3 })
+
+    const result = await activateRelease(world.deps, R2)
+
+    expect(result).toMatchObject({ ok: true, id: R2 })
+    expect(world.calls).not.toContain(`update@${R2}`)
+  })
+
+  it('runs pm2 update once and keeps polling until the resurrected processes report the declared Node', async () => {
+    addReleases(R1)
+    addBuilt(R2)
+    switchCurrentRelease(layout, R1)
+    // update 之后前两次看到的还是 dump 里的 26.3.1
     const world = createWorld({
       daemonNode: '26.3.1',
-      nodeAfterUpdate: EXPECTED_NODE
+      nodeAfterUpdate: EXPECTED_NODE,
+      reportAfterLists: 2
     })
 
     const result = await activateRelease(world.deps, R2)
@@ -336,8 +404,9 @@ describe('activateRelease', () => {
     expect(world.restarts().every((count) => count === 1)).toBe(true)
   })
 
-  it('fails and rolls back when pm2 update does not bring the declared Node', async () => {
-    addReleases(R1, R2)
+  it('fails and rolls back when pm2 update does not bring the declared Node by the deadline', async () => {
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     const world = createWorld({ daemonNode: '26.3.1' })
 
@@ -346,6 +415,7 @@ describe('activateRelease', () => {
     expect(result).toMatchObject({ ok: false, id: R2, rolledBackTo: R1 })
     expect(!result.ok && result.reason).toContain('26.3.1')
     expect(!result.ok && result.reason).toContain(EXPECTED_NODE)
+    expect(world.clock()).toBeGreaterThanOrEqual(TIMEOUT_MS)
     expect(world.calls).toEqual([
       `stopAll@${R1}`,
       `startAll@${R2}`,
@@ -358,7 +428,8 @@ describe('activateRelease', () => {
   })
 
   it('fails without waiting for the deadline once PM2 gives up on a process', async () => {
-    addReleases(R1, R2)
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     const world = createWorld({
       status: (release) => (release === R2 ? 'errored' : 'online')
@@ -372,7 +443,8 @@ describe('activateRelease', () => {
   })
 
   it('fails within a few polls when an app keeps restarting but never reaches errored', async () => {
-    addReleases(R1, R2)
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     // cron 在 Next 起来之后才退出 (超过 min_uptime): PM2 一直把它拉起, 它的端口一直不应答
     const world = createWorld({
@@ -386,7 +458,7 @@ describe('activateRelease', () => {
     expect(result).toMatchObject({ ok: false, id: R2, rolledBackTo: R1 })
     expect(result).not.toHaveProperty('rollbackFailed')
     expect(!result.ok && result.reason).toContain(
-      'kun-touchgal-next-cron 在等待期间重启了'
+      'kun-touchgal-next-cron 重启了'
     )
     expect(world.clock()).toBeLessThanOrEqual(3000)
     expect(world.calls).toEqual([
@@ -400,7 +472,8 @@ describe('activateRelease', () => {
   })
 
   it('reports a rollback target that keeps restarting instead of waiting out the deadline', async () => {
-    addReleases(R1, R2)
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     const world = createWorld({ crashLoop: () => true, health: () => null })
 
@@ -412,8 +485,56 @@ describe('activateRelease', () => {
     expect(world.clock()).toBeLessThanOrEqual(6000)
   })
 
-  it('treats a throwing start like a failed gate', async () => {
-    addReleases(R1, R2)
+  it('rolls back when the cron crashes on its first tick during the soak', async () => {
+    addReleases(R1)
+    addBuilt(R2)
+    switchCurrentRelease(layout, R1)
+    // 闸门在 0 秒就过了; 第一次触发 (2 秒) 之后 cron 反复退出
+    const world = createWorld({
+      crashLoop: (release, at) => release === R2 && at >= 2000
+    })
+
+    const result = await activateRelease(world.deps, R2)
+
+    expect(result).toMatchObject({ ok: false, id: R2, rolledBackTo: R1 })
+    expect(result).not.toHaveProperty('rollbackFailed')
+    expect(!result.ok && result.reason).toContain(
+      '观察期内 kun-touchgal-next-cron 重启了'
+    )
+    expect(world.clock()).toBeLessThan(SOAK_MS)
+    // 观察期没过就不 save、不标上线
+    expect(world.calls).toEqual([
+      `stopAll@${R1}`,
+      `startAll@${R2}`,
+      `stopAll@${R2}`,
+      `startAll@${R1}`,
+      `save@${R1}`
+    ])
+    expect(isReleaseActivated(layout, R2)).toBe(false)
+    expect(readCurrentReleaseId(layout)).toBe(R1)
+  })
+
+  it('rolls back when a port stops answering by the end of the soak', async () => {
+    addReleases(R1)
+    addBuilt(R2)
+    switchCurrentRelease(layout, R1)
+    const world = createWorld({
+      health: (release, port, at) =>
+        release === R2 && port === 3001 && at >= 3000
+          ? null
+          : { status: 200, release }
+    })
+
+    const result = await activateRelease(world.deps, R2)
+
+    expect(result).toMatchObject({ ok: false, id: R2, rolledBackTo: R1 })
+    expect(!result.ok && result.reason).toContain('观察期结束时')
+    expect(!result.ok && result.reason).toContain('3001')
+  })
+
+  it('treats a throwing start like a failed gate, and restores without a soak', async () => {
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     // 第一次 pnpm start 起了一部分进程之后失败
     const world = createWorld({ failStartAt: [1] })
@@ -435,10 +556,12 @@ describe('activateRelease', () => {
       `save@${R1}`
     ])
     expect(world.violations).toEqual([])
+    expect(world.clock()).toBe(0)
   })
 
-  it('does not switch when stopping fails and brings the old release back up', async () => {
-    addReleases(R1, R2)
+  it('does not switch when stopping fails and starts the old release again', async () => {
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     const world = createWorld({ failStopAt: [1] })
 
@@ -449,8 +572,9 @@ describe('activateRelease', () => {
       rolledBackTo: R1,
       reason: 'pnpm stop 失败'
     })
+    expect(result).not.toHaveProperty('rollbackFailed')
+    // current 没换过: 不再停一次, pnpm start (startOrRestart) 直接起
     expect(world.calls).toEqual([
-      `stopAll@${R1}`,
       `stopAll@${R1}`,
       `startAll@${R1}`,
       `save@${R1}`
@@ -458,8 +582,28 @@ describe('activateRelease', () => {
     expect(world.violations).toEqual([])
   })
 
+  it('brings the site back up when stopping deleted everything and then failed', async () => {
+    addReleases(R1)
+    addBuilt(R2)
+    switchCurrentRelease(layout, R1)
+    // 每次 stopAll 都删光再抛错: 回滚时再停一次的话什么都起不来
+    const world = createWorld({ stopDeletesThenThrows: true })
+
+    const result = await activateRelease(world.deps, R2)
+
+    expect(result).toMatchObject({ ok: false, rolledBackTo: R1 })
+    expect(result).not.toHaveProperty('rollbackFailed')
+    expect(world.running()?.release).toBe(R1)
+    expect(world.calls).toEqual([
+      `stopAll@${R1}`,
+      `startAll@${R1}`,
+      `save@${R1}`
+    ])
+  })
+
   it('reports a rollback that cannot start instead of throwing', async () => {
-    addReleases(R1, R2)
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     const world = createWorld({ health: silent(R2), failStartAt: [2] })
 
@@ -471,10 +615,13 @@ describe('activateRelease', () => {
       `current 现在是 ${R1}`
     )
     expect(world.violations).toEqual([])
+    // 回滚没做成的发布部署链会留着: 标记让它不成为回滚目标、下次被清理
+    expect(isReleaseRolledBack(layout, R2)).toBe(true)
   })
 
   it('reports a rollback whose health check does not pass, and still saves', async () => {
-    addReleases(R1, R2)
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     const world = createWorld({ health: () => null })
 
@@ -488,7 +635,8 @@ describe('activateRelease', () => {
   })
 
   it('keeps a passed activation when pm2 save fails', async () => {
-    addReleases(R1, R2)
+    addReleases(R1)
+    addBuilt(R2)
     switchCurrentRelease(layout, R1)
     const world = createWorld({ failSave: true })
 
@@ -501,8 +649,7 @@ describe('activateRelease', () => {
 })
 
 describe('rollbackTo', () => {
-  it('defaults to the newest release older than the live one and prunes nothing', async () => {
-    // R3 是比在线发布更新、没通过闸门的那一个
+  it('defaults to the newest known-good release older than the live one and prunes nothing', async () => {
     addReleases(R1, R2, R3, R4)
     switchCurrentRelease(layout, R3)
     const world = createWorld()
@@ -515,19 +662,51 @@ describe('rollbackTo', () => {
       `startAll@${R2}`,
       `save@${R2}`
     ])
+    expect(world.saves).toEqual([SOAK_MS])
     expect(world.violations).toEqual([])
-    expect(listReleases(layout)).toHaveLength(4)
+    expect(listedIds()).toHaveLength(4)
+    expect(isReleaseRolledBack(layout, R3)).toBe(true)
+    expect(markerText(R2, KUN_RELEASE_ACTIVATED)).toBe(
+      `${new Date(SOAK_MS).toISOString()}\n`
+    )
   })
 
-  it('takes an explicit target, also a newer one', async () => {
-    addReleases(R1, R2, R3)
+  it('skips releases that never went live or were rolled back from', async () => {
+    addReleases(R1, R3, R4)
+    // 组装之后部署被打断
+    addBuilt(R2)
+    markReleaseRolledBack(layout, R3, EARLIER)
+    switchCurrentRelease(layout, R4)
+    const world = createWorld()
+
+    const result = await rollbackTo(world.deps)
+
+    expect(result).toMatchObject({ ok: true, id: R1, previous: R4 })
+  })
+
+  it('takes an explicit target, warns when it is not known-good, and clears its rolled-back mark once it passes', async () => {
+    addReleases(R1, R2)
+    addBuilt(R3)
+    markReleaseRolledBack(layout, R2, EARLIER)
     switchCurrentRelease(layout, R1)
     const world = createWorld()
 
-    const result = await rollbackTo(world.deps, R3)
+    // 往前切到一个没上线过的发布
+    const forward = await rollbackTo(world.deps, R3)
 
-    expect(result).toEqual({ ok: true, id: R3, previous: R1, pruned: [] })
+    expect(forward).toEqual({ ok: true, id: R3, previous: R1, pruned: [] })
     expect(readCurrentReleaseId(layout)).toBe(R3)
+    expect(world.logs.some((line) => line.includes('没有上线过'))).toBe(true)
+    expect(isReleaseActivated(layout, R3)).toBe(true)
+    // 往前切不算从 R1 回滚
+    expect(isReleaseRolledBack(layout, R1)).toBe(false)
+
+    const back = await rollbackTo(world.deps, R2)
+
+    expect(back).toMatchObject({ ok: true, id: R2, previous: R3 })
+    expect(world.logs.some((line) => line.includes('被回滚过'))).toBe(true)
+    expect(isReleaseRolledBack(layout, R2)).toBe(false)
+    expect(isReleaseRolledBack(layout, R3)).toBe(true)
   })
 
   it('switches back to the live release when the target fails the gate', async () => {
@@ -543,19 +722,70 @@ describe('rollbackTo', () => {
     expect(world.running()?.release).toBe(R2)
     expect(world.calls.at(-1)).toBe(`save@${R2}`)
     expect(world.violations).toEqual([])
+    expect(isReleaseRolledBack(layout, R2)).toBe(false)
   })
 
   it('refuses before touching PM2 when there is nothing to roll back to', async () => {
-    addReleases(R1, R2)
+    addReleases(R1)
+    addBuilt(R2)
     const world = createWorld()
     // 旧布局在线
     await expect(rollbackTo(world.deps)).rejects.toThrow('旧构建')
 
     switchCurrentRelease(layout, R1)
-    await expect(rollbackTo(world.deps)).rejects.toThrow('更早的发布')
+    await expect(rollbackTo(world.deps)).rejects.toThrow('更早')
     await expect(rollbackTo(world.deps, R1)).rejects.toThrow('就是在线的发布')
     await expect(rollbackTo(world.deps, R3)).rejects.toThrow('不在')
+    // 比在线发布更早的只有没上线过的
+    switchCurrentRelease(layout, null)
+    addReleases(R3)
+    switchCurrentRelease(layout, R3)
+    fs.rmSync(`${releaseDirOf(layout, R1)}/${KUN_RELEASE_ACTIVATED}`)
+    await expect(rollbackTo(world.deps)).rejects.toThrow('上线过')
     expect(world.calls).toEqual([])
+  })
+})
+
+describe('release history', () => {
+  it('does not offer a release that was rolled back from, and the next deploy prunes it', async () => {
+    addReleases(R1, R2, R3)
+    addBuilt(R4)
+    switchCurrentRelease(layout, R3)
+    const world = createWorld()
+
+    // R4 过了闸门, 上线之后发现有问题, 回滚到 R3
+    expect(await activateRelease(world.deps, R4)).toMatchObject({
+      ok: true,
+      pruned: [R1]
+    })
+    expect(await rollbackTo(world.deps)).toMatchObject({ ok: true, id: R3 })
+    expect(isReleaseRolledBack(layout, R4)).toBe(true)
+
+    // 修好之后部署 R5: R4 不占保留名额
+    addBuilt(R5)
+    expect(await activateRelease(world.deps, R5)).toMatchObject({
+      ok: true,
+      pruned: [R4]
+    })
+    expect(listedIds()).toEqual([R5, R3, R2])
+    expect(await rollbackTo(world.deps)).toMatchObject({ ok: true, id: R3 })
+    expect(world.violations).toEqual([])
+  })
+
+  it('prunes a release that never went live even when it is among the newest', async () => {
+    addReleases(R1, R3)
+    // 组装之后部署被打断
+    addBuilt(R2)
+    addBuilt(R4)
+    switchCurrentRelease(layout, R3)
+    const world = createWorld()
+
+    const result = await activateRelease(world.deps, R4)
+
+    expect(result).toMatchObject({ ok: true, pruned: [R2] })
+    expect(listedIds()).toEqual([R4, R3, R1])
+    expect(await rollbackTo(world.deps)).toMatchObject({ ok: true, id: R3 })
+    expect(markerText(R4, KUN_RELEASE_ROLLED_BACK)).toMatch(/^\d{4}-/)
   })
 })
 

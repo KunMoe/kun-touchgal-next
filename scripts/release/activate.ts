@@ -1,13 +1,22 @@
 // 把线上切到一个发布: 停掉全部应用 → 换 current → 启动 → 闸门 (每个 app 的进程都 online 且跑在声明的
-// Node 上, 每个端口的 /api/health 回的是这个发布), 闸门不过就切回原来的发布 (首次切换时删掉 current,
-// ecosystem.config.cjs 回退到检出里的旧构建)。
+// Node 上, 每个端口的 /api/health 回的是这个发布) → 观察期 (见 soak), 不过就切回原来的发布 (首次切换时
+// 删掉 current, ecosystem.config.cjs 回退到检出里的旧构建)。结局写进发布目录的标记 (history.ts)。
 //
 // current 只在全部应用都删掉之后才换 (原因见 layout.ts 文件头)。部署链在切换成功之后才执行 post 迁移
 // (scripts/deployChain.ts), 所以这里的自动回滚不会落到库结构不兼容的旧代码上。闸门与 PM2 的失败一律
 // 作为返回值交出去, 不抛: 部署链要据此决定退出码, 并且照样打印发生了什么
 import {
+  KUN_RELEASE_ACTIVATED,
+  KUN_RELEASE_ROLLED_BACK,
+  isKnownGoodRelease,
+  isReleaseActivated,
+  isReleaseRolledBack,
+  markReleaseActivated,
+  markReleaseRolledBack,
+  planReleasePrune
+} from './history'
+import {
   listReleases,
-  planPrune,
   readCurrentReleaseId,
   removeRelease,
   switchCurrentRelease
@@ -31,9 +40,12 @@ export interface ActivateDeps {
   sleep(ms: number): Promise<void>
   log(message: string): void
   now?: () => number
-  // 一次闸门 (含 pm2 update) 的总时限
+  // 一次闸门 (含 pm2 update) 的总时限, 默认 120 秒
   gateTimeoutMs?: number
+  // 默认 1 秒
   pollMs?: number
+  // 闸门通过之后的观察期 (见 soak), 默认 30 秒; 不计入 gateTimeoutMs
+  soakMs?: number
 }
 
 export type ActivationResult =
@@ -96,8 +108,8 @@ const watchProcesses = () => {
       return null
     }
     return `${[...restarted]
-      .map(([name, count]) => `${name} 在等待期间重启了 ${count} 次`)
-      .join(', ')} (启动即退出?)`
+      .map(([name, count]) => `${name} 重启了 ${count} 次`)
+      .join(', ')} (进程退出后被 PM2 拉起: 启动即退出?)`
   }
 }
 
@@ -189,6 +201,58 @@ const waitHealthy = async (
   return null
 }
 
+// 进程的 Node 版本由子进程起来之后经 IPC 报给 PM2 (pm2 的 lib/God/ClusterMode.js), 刚 online 时可能还没报
+// (null); pm2 update 恢复出来的进程在报上来之前是 dump 里的旧值。untilMatch 为 false 时等到每个进程都报了,
+// 为 true 时等到每个进程都是期望的版本: 看第一眼就下结论, 会把还没报上来的当成不一致
+const waitNodeVersions = async (
+  wait: GateWait,
+  untilMatch: boolean
+): Promise<KunPm2Process[] | string> => {
+  const { expectedNode, sleep } = wait.deps
+  for (;;) {
+    const processes = await waitOnline(wait)
+    if (typeof processes === 'string') {
+      return processes
+    }
+    const unsettled = processes.filter((proc) =>
+      untilMatch ? proc.nodeVersion !== expectedNode : proc.nodeVersion === null
+    )
+    if (unsettled.length === 0) {
+      return processes
+    }
+    if (wait.now() >= wait.deadline) {
+      return untilMatch
+        ? `进程的 Node 仍与 ${expectedNode} 不一致: ${describeNodes(unsettled)}`
+        : `${wait.timeoutSeconds} 秒内进程没有报上 Node 版本: ${describeNodes(unsettled)}`
+    }
+    await sleep(wait.pollMs)
+  }
+}
+
+// 闸门过了之后再看 soakMs 才算上线: 金丝雀不开 cron, cron 的作业要等第一次触发 (审核 15 秒、出箱 1 分钟)
+// 才开始跑, 在第一次触发时崩溃的 cron 过得了闸门。这段时间 web 已经在服务新发布, 不增加停机。期间每一轮
+// 沿用闸门的重启基线看进程列表, 结束时每个端口再查一次健康
+const soak = async (wait: GateWait, id: ReleaseId): Promise<string | null> => {
+  const { apps, fetchHealth, log, pm2, sleep } = wait.deps
+  const soakMs = wait.deps.soakMs ?? 30_000
+  const until = wait.now() + soakMs
+  log(`闸门通过, 再观察 ${Math.round(soakMs / 1000)} 秒`)
+  while (wait.now() < until) {
+    await sleep(Math.min(wait.pollMs, until - wait.now()))
+    const broken = wait.inspect(pm2.list())
+    if (broken !== null) {
+      return `观察期内 ${broken}`
+    }
+  }
+  for (const app of apps) {
+    const health = await fetchHealth(app.port)
+    if (health?.status !== 200 || health.release !== id) {
+      return `观察期结束时 ${app.name} (端口 ${app.port}) 的 /api/health 是 ${describeHealth(health)}, 期望 200 与 release=${id}`
+    }
+  }
+  return null
+}
+
 // 通过时返回 null, 否则返回原因
 const runGate = async (
   deps: ActivateDeps,
@@ -198,11 +262,13 @@ const runGate = async (
   let wait = startWait(deps)
   log(`启动应用 (${id})`)
   pm2.startAll()
-  let processes = await waitOnline(wait)
-  if (typeof processes === 'string') {
-    return processes
+  const reported = await waitNodeVersions(wait, false)
+  if (typeof reported === 'string') {
+    return reported
   }
-  let mismatched = processes.filter((proc) => proc.nodeVersion !== expectedNode)
+  const mismatched = reported.filter(
+    (proc) => proc.nodeVersion !== expectedNode
+  )
   if (mismatched.length > 0) {
     // PM2 守护进程常驻, 拉起的应用跑在它启动时的 node 上; pm2 update 换成当前 shell 的 node
     log(
@@ -211,16 +277,16 @@ const runGate = async (
     pm2.update()
     // 恢复出来的进程不是原来那些, 重启次数的基线重新记; 时限不重新算
     wait = { ...wait, inspect: watchProcesses() }
-    processes = await waitOnline(wait)
-    if (typeof processes === 'string') {
-      return `pm2 update 之后${processes}`
-    }
-    mismatched = processes.filter((proc) => proc.nodeVersion !== expectedNode)
-    if (mismatched.length > 0) {
-      return `pm2 update 之后进程的 Node 仍与 ${expectedNode} 不一致: ${describeNodes(mismatched)}`
+    const updated = await waitNodeVersions(wait, true)
+    if (typeof updated === 'string') {
+      return `pm2 update 之后${updated}`
     }
   }
-  return waitHealthy(wait, id)
+  const unhealthy = await waitHealthy(wait, id)
+  if (unhealthy !== null) {
+    return unhealthy
+  }
+  return soak(wait, id)
 }
 
 const describeCurrent = (layout: ReleaseLayout) => {
@@ -232,7 +298,7 @@ const describeCurrent = (layout: ReleaseLayout) => {
 }
 
 // 回到 target 并启动 (target 为 null 是删掉 current 回到旧布局)。尽力而为: 没做成的写进返回值, 不抛。
-// 健康检查用一份新的时限, 失败只报告: 进程已经起来, 再回滚也没有更早的地方可去
+// 健康检查用一份新的时限, 不过只报告、没有观察期: 进程已经起来, 再回滚也没有更早的地方可去
 const restore = async (
   deps: ActivateDeps,
   target: ReleaseId | null
@@ -240,9 +306,16 @@ const restore = async (
   const { layout, pm2, log } = deps
   let unhealthy: string | null
   try {
-    pm2.stopAll()
-    switchCurrentRelease(layout, target)
-    log(`current → ${labelOf(target)}, 启动应用`)
+    if (readCurrentReleaseId(layout) === target) {
+      // 前进的那一步在切换之前就失败了 (停应用出错): current 没动过, 应用可能已被删掉一部分或全部。
+      // 不再停一次 (同样的错多半再出一次, 结果什么都没起来): pnpm start 是 startOrRestart, 缺的起来、
+      // 在的重启, 跑的都是 current 指向的这一个
+      log(`current 没有换过, 仍是 ${labelOf(target)}, 启动应用`)
+    } else {
+      pm2.stopAll()
+      switchCurrentRelease(layout, target)
+      log(`current → ${labelOf(target)}, 启动应用`)
+    }
     pm2.startAll()
     unhealthy = await waitHealthy(startWait(deps), target)
     // pm2 update 之后 dump 里可能没有我们的应用, 起来之后都要存一次
@@ -285,6 +358,29 @@ const switchWithGate = async (
     : { ok: false, id, rolledBackTo: fallback, reason, rollbackFailed }
 }
 
+const nowOf = (deps: ActivateDeps) => new Date((deps.now ?? Date.now)())
+
+// 标记写不进去不改变结局, 只提醒
+const recordActivated = (deps: ActivateDeps, id: ReleaseId) => {
+  try {
+    markReleaseActivated(deps.layout, id, nowOf(deps))
+  } catch (error) {
+    deps.log(
+      `⚠ 没能写 ${id} 的 ${KUN_RELEASE_ACTIVATED}: ${errorMessage(error)}。它不会成为默认的回滚目标, 下一次部署成功后会被清理`
+    )
+  }
+}
+
+const recordRolledBack = (deps: ActivateDeps, id: ReleaseId) => {
+  try {
+    markReleaseRolledBack(deps.layout, id, nowOf(deps))
+  } catch (error) {
+    deps.log(
+      `⚠ 没能写 ${id} 的 ${KUN_RELEASE_ROLLED_BACK}: ${errorMessage(error)}。它仍可能成为默认的回滚目标`
+    )
+  }
+}
+
 // 闸门已过, 线上已在新发布上: save 失败不改变结局, 只提醒
 const saveAfterSuccess = (deps: ActivateDeps) => {
   try {
@@ -301,7 +397,8 @@ const pruneReleases = (deps: ActivateDeps, id: ReleaseId): ReleaseId[] => {
   const { layout, log } = deps
   let planned: ReleaseId[]
   try {
-    planned = planPrune(
+    planned = planReleasePrune(
+      layout,
       listReleases(layout).map((manifest) => manifest.id),
       id
     )
@@ -330,13 +427,17 @@ export const activateRelease = async (
   const previous = readCurrentReleaseId(deps.layout)
   const failed = await switchWithGate(deps, id, previous)
   if (failed) {
+    // 部署链通常接着把它删掉; 回滚也没做成时它留着备查, 这个标记让它不成为回滚目标、下次被清理
+    recordRolledBack(deps, id)
     return failed
   }
+  recordActivated(deps, id)
   saveAfterSuccess(deps)
   return { ok: true, id, previous, pruned: pruneReleases(deps, id) }
 }
 
-// 切回一个旧发布 (不给 target 时是在线发布之前最新的那一个), 闸门与部署相同, 不过就切回原来的; 不清理。
+// 切回一个旧发布, 闸门与观察期与部署相同, 不过就切回原来的; 不清理。不给 target 时是比在线发布更早、
+// 上线过且没被回滚过的最新一个; 指定的 target 只要在发布列表里就照办, 不是这样的发布只提醒。
 // 前提不满足 (旧布局在线、target 不存在) 时抛错, 这时还什么都没动
 export const rollbackTo = async (
   deps: ActivateDeps,
@@ -350,9 +451,12 @@ export const rollbackTo = async (
     )
   }
   const ids = listReleases(layout).map((manifest) => manifest.id)
-  const to = target ?? ids.find((id) => id < current)
+  const to =
+    target ?? ids.find((id) => id < current && isKnownGoodRelease(layout, id))
   if (to === undefined) {
-    throw new Error(`没有比在线的 ${current} 更早的发布`)
+    throw new Error(
+      `没有比在线的 ${current} 更早、上线过且没被回滚过的发布; 要切到别的发布就指定 id (pnpm deploy:list 列出现有的)`
+    )
   }
   if (!ids.includes(to)) {
     throw new Error(
@@ -362,9 +466,20 @@ export const rollbackTo = async (
   if (to === current) {
     throw new Error(`${to} 就是在线的发布`)
   }
+  if (!isReleaseActivated(layout, to)) {
+    deps.log(`⚠ ${to} 没有上线过 (没有 ${KUN_RELEASE_ACTIVATED}), 按指定切过去`)
+  }
+  if (isReleaseRolledBack(layout, to)) {
+    deps.log(`⚠ ${to} 被回滚过 (有 ${KUN_RELEASE_ROLLED_BACK}), 按指定切过去`)
+  }
   const failed = await switchWithGate(deps, to, current)
   if (failed) {
     return failed
+  }
+  recordActivated(deps, to)
+  // 往回切才算从它回滚: 指定了更新的发布往前切时, 原来在线的那个没有问题
+  if (to < current) {
+    recordRolledBack(deps, current)
   }
   saveAfterSuccess(deps)
   return { ok: true, id: to, previous: current, pruned: [] }

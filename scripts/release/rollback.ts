@@ -1,5 +1,7 @@
-// pnpm deploy:rollback [发布 id]: 把线上切回一个旧发布 (不给 id 时是在线发布之前最新的那一个)。闸门与
-// 部署相同, 不过就切回原来的发布; 不清理旧发布。
+// pnpm deploy:rollback [发布 id]: 把线上切回一个旧发布 (不给 id 时是比在线发布更早、上线过且没被回滚过的
+// 最新一个, 见 history.ts)。闸门与观察期与部署相同, 不过就切回原来的发布; 不清理旧发布。
+// 退出码: 0 已回滚; 1 没有回滚 (前提不满足, 或目标没过闸门、已切回原来的); 3 切回原来的也出了问题,
+// 线上可能没有在服务。
 //
 // 不读 .env、不连库: 回滚只换代码, .env 坏了也要能回滚。注意它不知道库走到了哪一步: 部署的 post 迁移
 // (删列、加约束) 在新发布上线之后才执行, 回滚到那之前构建的发布时, 旧代码可能还在用已经删掉的东西
@@ -37,11 +39,13 @@ const main = async () => {
   )
   if (!result.ok) {
     console.error(`\n✗ ${result.id} 没有通过闸门: ${result.reason}`)
-    console.error(
-      result.rollbackFailed === undefined
-        ? `  已切回原来在线的 ${result.rolledBackTo}`
-        : `  切回原来在线的 ${result.rolledBackTo} 也出了问题: ${result.rollbackFailed}。线上可能没有在服务: 立刻用 pm2 ls 与 pnpm deploy:list 查看`
-    )
+    if (result.rollbackFailed !== undefined) {
+      console.error(
+        `  切回原来在线的 ${result.rolledBackTo} 也出了问题: ${result.rollbackFailed}。线上可能没有在服务: 立刻用 pm2 ls 与 pnpm deploy:list 查看`
+      )
+      return 3
+    }
+    console.error(`  已切回原来在线的 ${result.rolledBackTo}`)
     return 1
   }
   console.log(`\n✓ 已回滚到 ${result.id} (原来在线的是 ${result.previous})`)
