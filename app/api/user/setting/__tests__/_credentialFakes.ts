@@ -677,6 +677,8 @@ export interface FakeMail {
   subject: string
   html: string
   plain: string
+  // 请求带的 AbortSignal: 有没有给发信设上限
+  signal: AbortSignal | null
 }
 
 // 'ok' 正常投递; 'http-error' 非 2xx; 'status-error' 2xx 但 { status: 'error' }; 'throw' 网络异常
@@ -699,7 +701,8 @@ const createFakeMail = () => {
       to: body.to,
       subject: body.subject,
       html: body.html_body,
-      plain: body.plain_body
+      plain: body.plain_body,
+      signal: init?.signal ?? null
     })
     onSend?.()
     switch (mode) {

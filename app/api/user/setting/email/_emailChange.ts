@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { escapeHtml } from '~/utils/escapeHtml'
-import { kunLog } from '~/lib/log.server'
+import { sendKunEmail } from '~/app/api/utils/sendKunEmail'
 
 export type EmailChangeRevertPayload = {
   uid: number
@@ -77,51 +77,26 @@ const createEmailChangeNotificationTemplate = (
   `
 }
 
+// 经 sendKunEmail 发: 与其它发信同一个请求形状, 带 15 秒超时 (中继挂住时改邮箱请求不会一直挂着),
+// 失败记 email.send_failed (只记状态与中继错误码, 不记响应体)
 export const sendEmailChangeNotification = async (
   oldEmail: string,
   newEmail: string,
   token: string
 ) => {
   const revertLink = createEmailChangeRevertLink(token)
-  const res = await fetch(
-    `${process.env.KUN_VISUAL_NOVEL_EMAIL_HOST}/api/v1/send/message`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Server-API-Key': process.env.KUN_VISUAL_NOVEL_EMAIL_PASSWORD || '',
-        Authorization: `Bearer ${process.env.KUN_VISUAL_NOVEL_EMAIL_PASSWORD}`
-      },
-      body: JSON.stringify({
-        to: [oldEmail],
-        from: process.env.KUN_VISUAL_NOVEL_EMAIL_ACCOUNT,
-        sender: `${process.env.KUN_VISUAL_NOVEL_EMAIL_FROM}<${process.env.KUN_VISUAL_NOVEL_EMAIL_ACCOUNT}>`,
-        subject: `${kunMoyuMoe.titleShort} - 邮箱变更提醒`,
-        tag: 'security-notice',
-        html_body: createEmailChangeNotificationTemplate(
-          oldEmail,
-          newEmail,
-          revertLink
-        ),
-        plain_body: `我们收到了将您的账户邮箱从 ${oldEmail} 更改为 ${newEmail} 的请求。如果不是您本人操作, 请在 24 小时内访问此链接撤销: ${revertLink}`
-      })
-    }
-  )
-
-  if (!res.ok) {
-    await res.body?.cancel()
-    kunLog('email.send_failed', { tag: 'security-notice', status: res.status })
-    return '发送旧邮箱安全通知失败, 请稍后重试'
-  }
-
-  const result = await res.json()
-  if (result.status === 'error') {
-    kunLog('email.send_failed', {
-      tag: 'security-notice',
-      relayStatus: 'error',
-      relayCode:
-        typeof result.data?.code === 'string' ? result.data.code : undefined
-    })
+  const error = await sendKunEmail({
+    to: [oldEmail],
+    subject: `${kunMoyuMoe.titleShort} - 邮箱变更提醒`,
+    tag: 'security-notice',
+    html_body: createEmailChangeNotificationTemplate(
+      oldEmail,
+      newEmail,
+      revertLink
+    ),
+    plain_body: `我们收到了将您的账户邮箱从 ${oldEmail} 更改为 ${newEmail} 的请求。如果不是您本人操作, 请在 24 小时内访问此链接撤销: ${revertLink}`
+  })
+  if (error) {
     return '发送旧邮箱安全通知失败, 请稍后重试'
   }
 }

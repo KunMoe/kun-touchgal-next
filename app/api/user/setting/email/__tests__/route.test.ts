@@ -620,6 +620,16 @@ describe('POST /api/user/setting/email: notice and commit', () => {
     expect(session.reissued).toEqual([{ uid: UID, jti: `jti-${UID}`, stamp }])
   })
 
+  it('sends the old-address notice through the bounded mail request', async () => {
+    const response = await post(passwordBody())
+
+    expect(await read(response)).toEqual({})
+    expect(mail.outbox).toHaveLength(1)
+    expect(mail.outbox[0].to).toEqual([OLD_EMAIL])
+    // 中继挂住时由 sendKunEmail 的超时截断, 改邮箱请求不会一直挂着
+    expect(mail.outbox[0].signal).toBeInstanceOf(AbortSignal)
+  })
+
   it.each([
     ['http-error', { tag: 'security-notice', status: 502 }],
     ['status-error', { tag: 'security-notice', relayStatus: 'error' }],
