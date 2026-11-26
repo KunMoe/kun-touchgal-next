@@ -1,5 +1,10 @@
-import { mkdir, readdir, copyFile, stat } from 'fs/promises'
+import { mkdir, readdir, copyFile } from 'fs/promises'
 import path from 'path'
+import {
+  formatVerifyReport,
+  isVerifyClean,
+  verifyRelease
+} from './release/verify'
 
 const distDir = process.env.KUN_NEXT_DIST_DIR ?? '.next'
 const standaloneDir = path.join(distDir, 'standalone')
@@ -35,10 +40,6 @@ const copyRuntimeFile = async (src: string, dest: string): Promise<void> => {
   }
 }
 
-const assertExists = async (targetPath: string) => {
-  await stat(targetPath)
-}
-
 const waitForAllCopies = async (copyTasks: Promise<void>[]) => {
   const results = await Promise.allSettled(copyTasks)
   const rejectedResult = results.find((result) => result.status === 'rejected')
@@ -63,15 +64,17 @@ const copyFiles = async () => {
       )
     ])
 
-    await assertExists(path.join(standaloneDir, 'public/logo.webp'))
-    await assertExists(
-      path.join(standaloneDir, 'public/sooner/こじかひわ.webp')
-    )
-    await assertExists(path.join(standaloneDir, 'public/cap/cap_wasm_bg.wasm'))
-    await assertExists(path.join(standaloneDir, 'posts'))
-    await assertExists(path.join(standaloneDir, 'config/redirect.json'))
-
     console.log('Files copied successfully.')
+
+    // 发布在检出之外运行, standalone 缺的文件与外部包上线后直接崩: 这里就挡下 (见 release/verify.ts)
+    const report = verifyRelease(standaloneDir, { distDir })
+    if (!isVerifyClean(report)) {
+      console.error(formatVerifyReport(report))
+      process.exit(1)
+    }
+    console.log(
+      `standalone 自检通过: 探测了 ${report.externals.length} 个外部包说明符`
+    )
   } catch (error) {
     console.error('Error during postbuild:', error)
     process.exit(1)
