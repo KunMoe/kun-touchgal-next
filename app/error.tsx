@@ -15,5 +15,12 @@ export default function Error({
     toast.error(JSON.stringify(error))
   }, [error])
 
-  return <ErrorComponent showReset={true} error={error.message} reset={reset} />
+  return (
+    <ErrorComponent
+      showReset={true}
+      error={error.message}
+      digest={error.digest}
+      reset={reset}
+    />
+  )
 }

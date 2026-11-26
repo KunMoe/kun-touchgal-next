@@ -6,12 +6,15 @@ import { useRouter } from '@bprogress/next/app'
 
 interface ErrorComponentProps {
   error: string
+  // 服务端渲染错误的编号 (Next 的 error.digest), 与服务端日志 request.unhandled 的 digest 对应
+  digest?: string
   showReset?: boolean
   reset?: () => void
 }
 
 export const ErrorComponent = ({
   error,
+  digest,
   showReset = false,
   reset
 }: ErrorComponentProps) => {
@@ -35,6 +38,11 @@ export const ErrorComponent = ({
           <div className="p-4 mt-4 rounded-lg bg-danger-50">
             <p className="font-mono text-sm text-danger">{error}</p>
           </div>
+          {digest && (
+            <p className="mt-2 font-mono text-xs text-default-500 select-all">
+              错误编号: {digest}
+            </p>
+          )}
         </CardBody>
         <CardFooter className="flex flex-wrap gap-2 px-8 pb-8">
           <Button
