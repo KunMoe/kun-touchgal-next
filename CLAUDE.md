@@ -78,5 +78,6 @@ pnpm start / pnpm stop  # PM2 (ecosystem.config.cjs)
 - 共享读缓存的失效知识只在 `server/cache/plan.ts`：写路径在 `kunTx` 回调里用 `recordKunChanges(ctx, changes)` 报告改了哪一行与前后状态（只取行锁下读值或 `RETURNING`），要失效哪些缓存由规划器推导、提交后逐条执行且不抛错；资源族四个失效 helper 只许 `server/cache/**` 引用（`kun/inv-cache-01`）。被内嵌却刻意不精确失效的字段登记在 `KUN_TTL_TOLERATED`（带陈旧上限，TTL 调长超过它测试变红）。
 - 缓存 TTL 常量在 `config/cache.ts`，Redis key 统一经 `lib/redis.ts` 前缀。
 - 读缓存的命中 / 回源度量在 `server/cache/stats.ts`（`kunRecordCacheOutcome`，每进程每 5 分钟一行 `kun.cache.stats`，`pnpm cache:stats` 汇总）；补丁详情的直读开关 `KUN_PATCH_DETAIL_CACHE=off` 关掉期间失效调用点照常执行，对照结论出来之前不要删失效点或改成空实现（详见 `AGENTS.md`）。
+- 服务端日志只走 `lib/log.server.ts` 的 `kunLog(事件, 字段, err)`：事件先在 `KUN_LOG_EVENTS` 登记（级别、节流、允许写出的字段由登记表定，没登记的字段运行时丢弃），不往字段里写请求头、cookie、整行 user、邮箱、令牌、中继原始响应体；best-effort 写 `.catch((error) => kunLog(...))`。没接住的请求错误由 `instrumentation.ts` 的 `onRequestError` 记 `request.unhandled`（`kunRoute` 对未知异常原样重抛、不自己记）。`no-console` 是 error，只放行 `scripts/**`、`migration/**`、`validations/dotenv-check.ts` 与测试；客户端 4 处与 `kun.cache.stats` 度量行是写明原因的显式 disable。测试 `vi.mock('~/lib/log.server')` 后断言事件（详见 `AGENTS.md`）。
 - 代码风格（Prettier）：单引号、无分号、2 空格缩进、无尾逗号。
 - 启动 / 构建前 `.env` 必须通过 `validations/dotenv-check.ts` 校验，否则会失败（参考 `.env.example`）。
