@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import 'dotenv/config'
 import { writeFileSync } from 'fs'
 import path from 'path'

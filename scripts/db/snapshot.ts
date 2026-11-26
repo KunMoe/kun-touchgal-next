@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import 'dotenv/config'
 import { readFileSync, writeFileSync } from 'fs'
 import { parseArgs } from 'util'

@@ -29,6 +29,7 @@ export const isKunTransportFailure = (res: unknown): boolean =>
     KUN_FETCH_HTTP_MESSAGE.test(res))
 
 const reportKunFetchFailure = (detail: unknown) => {
+  // eslint-disable-next-line no-console -- 客户端没有日志出口 (上报暂缓, T38 S5), 只留在浏览器控制台
   console.error(`Kun Fetch error: ${detail}`)
 }
 

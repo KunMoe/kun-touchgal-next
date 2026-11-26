@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import 'dotenv/config'
 import { createHash } from 'crypto'
 import { existsSync } from 'fs'

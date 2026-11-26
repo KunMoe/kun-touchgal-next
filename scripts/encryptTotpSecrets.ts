@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { prisma } from '~/prisma/index'
 import { sealLegacyTotpSecrets } from '~/server/auth/twoFactorState'
 

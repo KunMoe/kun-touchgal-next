@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { createReadStream } from 'fs'
 import { createInterface } from 'readline'
 import { parseArgs } from 'util'

@@ -42,7 +42,7 @@ const addToBuckets = (buckets: number[], ms: number) => {
 const flushKunCacheStats = () => {
   const now = Date.now()
   for (const [ns, outcomes] of windows) {
-    // eslint-disable-next-line no-console
+    // eslint-disable-next-line no-console -- 度量行是 pnpm cache:stats 解析的另一份契约 (T25), 不是 kunLog 事件
     console.info(
       JSON.stringify({
         ev: 'kun.cache.stats',

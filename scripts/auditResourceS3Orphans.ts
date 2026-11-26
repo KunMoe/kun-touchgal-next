@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 // 只读审计: 列出资源正式前缀 (patch/<数字>/resource/) 下没有任何资源链接引用的对象。
 // 不删对象、不写库。要连生产库与真实的桶, 由站长人工执行:
 //   pnpm exec esno scripts/auditResourceS3Orphans.ts > orphans.csv

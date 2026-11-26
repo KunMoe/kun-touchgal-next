@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import '../validations/dotenv-check'
 import { execSync } from 'child_process'
 import { existsSync, renameSync, rmSync } from 'fs'

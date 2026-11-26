@@ -134,7 +134,7 @@ export const startKunCapSession = ({
       } catch (error) {
         // 模块取到了却建不出实例 (例如厂商升级后导出的形状变了)。这与网络问题不同, 重试没有用,
         // 所以留下线索, 并把建到一半的宿主拿掉
-        // eslint-disable-next-line no-console
+        // eslint-disable-next-line no-console -- 客户端没有日志出口 (上报暂缓, T38 S5), 只留在浏览器控制台
         console.error('[captcha] 无法创建 cap-widget 实例', error)
         cap?.widget.remove()
         cap = null

@@ -110,7 +110,7 @@ export const FileUploadContainer = ({
       if (err instanceof AxiosError) {
         const status = err.response?.status
         const data = err.response?.data
-        // eslint-disable-next-line no-console
+        // eslint-disable-next-line no-console -- 客户端没有日志出口 (上报暂缓, T38 S5), 只留在浏览器控制台
         console.error('[upload] failed', {
           status,
           data,
@@ -127,7 +127,7 @@ export const FileUploadContainer = ({
           rawDetail.length > 200 ? `${rawDetail.slice(0, 200)}…` : rawDetail
         toast.error(`上传失败: ${detail}`)
       } else {
-        // eslint-disable-next-line no-console
+        // eslint-disable-next-line no-console -- 客户端没有日志出口 (上报暂缓, T38 S5), 只留在浏览器控制台
         console.error('[upload] failed', err)
         toast.error('上传失败, 请重试')
       }

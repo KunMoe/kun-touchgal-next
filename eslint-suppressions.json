@@ -29,16 +29,6 @@
       "count": 2
     }
   },
-  "app/api/admin/moderation/batch/route.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
-  "app/api/admin/report/handle/batch/route.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "app/api/admin/report/handle/service.ts": {
     "kun/inv-status-01": {
       "count": 4
@@ -147,16 +137,6 @@
       "count": 1
     }
   },
-  "app/api/user/setting/_upload.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "app/api/user/setting/avatar/route.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "app/api/user/status/service.ts": {
     "kun/inv-status-01": {
       "count": 1
@@ -165,16 +145,6 @@
   "app/api/utils/createMentionMessage.ts": {
     "kun/inv-content-02": {
       "count": 1
-    }
-  },
-  "app/api/utils/purgeCloudflareCache.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "app/api/utils/sendKunEmail.ts": {
-    "no-console": {
-      "count": 3
     }
   },
   "components/admin/appeal/Container.tsx": {
@@ -375,41 +345,6 @@
       "count": 1
     }
   },
-  "scripts/backfillCommentHtml.ts": {
-    "no-console": {
-      "count": 4
-    }
-  },
-  "scripts/generateOidcJwks.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
-  "scripts/migrateReservedUsernames.ts": {
-    "no-console": {
-      "count": 10
-    }
-  },
-  "scripts/oidcE2eFlow.ts": {
-    "no-console": {
-      "count": 10
-    }
-  },
-  "scripts/postbuild.ts": {
-    "no-console": {
-      "count": 4
-    }
-  },
-  "scripts/search/engine.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
-  "scripts/seedOidcTestClient.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "server/account/deleteAccount.ts": {
     "kun/inv-status-01": {
       "count": 1
@@ -418,11 +353,6 @@
   "server/auth/session.ts": {
     "kun/inv-status-01": {
       "count": 4
-    }
-  },
-  "server/moderation/apply.ts": {
-    "no-console": {
-      "count": 3
     }
   },
   "server/report/pending.ts": {
@@ -435,38 +365,13 @@
       "count": 1
     }
   },
-  "server/storage/s3Outbox.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
-  "server/tasks/moderationTask.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
-  "server/tasks/searchReconcileTask.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "utils/cookies.ts": {
     "@typescript-eslint/no-unused-expressions": {
       "count": 1
     }
   },
-  "utils/kunFetch.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "utils/markdownPreview.ts": {
     "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "validations/dotenv-check.ts": {
-    "no-console": {
       "count": 1
     }
   }

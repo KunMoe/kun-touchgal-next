@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { prisma } from '~/prisma/index'
 import {
   MARKDOWN_MAX_LINE_CONTAINER_MARKERS,

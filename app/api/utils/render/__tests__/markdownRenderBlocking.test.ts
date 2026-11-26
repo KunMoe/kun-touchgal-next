@@ -105,7 +105,6 @@ bench('探针法自校验（金标准对照）', () => {
       busyWait(GOLDEN_BLOCK_MS)
     })
 
-    // eslint-disable-next-line no-console
     console.log(
       `[金标准·同步忙等 ${GOLDEN_BLOCK_MS}ms] probeDelay=${probeDelay.toFixed(1)}ms`
     )
@@ -119,7 +118,6 @@ bench('探针法自校验（金标准对照）', () => {
       () => new Promise((resolve) => setTimeout(resolve, GOLDEN_BLOCK_MS))
     )
 
-    // eslint-disable-next-line no-console
     console.log(
       `[金标准·真异步 ${GOLDEN_BLOCK_MS}ms] probeDelay=${probeDelay.toFixed(1)}ms`
     )
@@ -136,7 +134,6 @@ bench('待测：markdown 渲染是否同步阻塞事件循环', () => {
     )
 
     const blockingRatio = probeDelay / elapsed
-    // eslint-disable-next-line no-console
     console.log(
       `[待测·渲染] 文档 ${(markdownBytes / 1024).toFixed(1)}KB | renderMs=${elapsed.toFixed(1)} | probeDelay=${probeDelay.toFixed(1)} | blockingRatio=${blockingRatio.toFixed(2)} → ${blockingRatio > 0.6 ? '同步阻塞' : '未阻塞/让出'}`
     )
@@ -163,7 +160,6 @@ bench('Promise.race 超时对同步 vs 真异步的行为对照', () => {
     }
     const elapsed = performance.now() - start
 
-    // eslint-disable-next-line no-console
     console.log(
       `[实验组·超时空转] timeout=${SHORT_TIMEOUT_MS}ms | elapsed=${elapsed.toFixed(1)}ms | outcome=${outcome}`
     )
@@ -184,7 +180,6 @@ bench('Promise.race 超时对同步 vs 真异步的行为对照', () => {
       outcome = 'timeout'
     }
 
-    // eslint-disable-next-line no-console
     console.log(
       `[对照组·超时有效] timeout=${SHORT_TIMEOUT_MS}ms vs asyncRender=300ms | outcome=${outcome}`
     )

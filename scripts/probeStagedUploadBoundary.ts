@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 // 核查对象存储是否执行资源直传的两道控制 (T19 的 S0 ①), 由站长在生产环境人工执行:
 //   pnpm exec esno scripts/probeStagedUploadBoundary.ts --write
 // 会在 patch/tmp/0/probe-<随机>/ 下写入至多五个 16 字节的对象, 结束时删除; 不读写数据库。

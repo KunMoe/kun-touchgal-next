@@ -43,7 +43,9 @@ const kunConfigs = defineConfig([
       'prettier/prettier': 'error',
       'no-debugger': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
-      'no-console': 'warn',
+      // 服务端日志只经 lib/log.server.ts 的 kunLog (T38): 事件先登记, 级别、节流与允许写出的字段由
+      // 登记表决定。放行的目录见下面的 override; 客户端还没有出口, 个别点写显式 disable 并注明原因
+      'no-console': 'error',
       // 注释里的零宽字符是保留词体系的示例, 模板串里的全角空格是中文报表缩进, 均非笔误
       'no-irregular-whitespace': [
         'error',
@@ -71,6 +73,18 @@ const kunConfigs = defineConfig([
       'react-hooks/refs': 'off',
       'react-hooks/incompatible-library': 'off',
       'react-hooks/immutability': 'off'
+    }
+  },
+  {
+    // 命令行脚本、迁移、.env 预检与测试的输出本来就是给人看的 console, 不走 kunLog
+    files: [
+      'scripts/**',
+      'migration/**',
+      'validations/dotenv-check.ts',
+      '**/__tests__/**'
+    ],
+    rules: {
+      'no-console': 'off'
     }
   },
   {

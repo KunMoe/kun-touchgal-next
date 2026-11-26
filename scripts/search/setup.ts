@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { execSync } from 'child_process'
 
 const runCommand = (command: string) => {

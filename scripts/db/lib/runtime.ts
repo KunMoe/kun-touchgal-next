@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { execFileSync } from 'child_process'
 import { readdirSync, readFileSync } from 'fs'
 import { createRequire } from 'module'

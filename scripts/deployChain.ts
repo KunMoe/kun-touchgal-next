@@ -1,5 +1,3 @@
-/* eslint-disable no-console */
-
 // deploy:build 的步骤编排。真正执行命令、切换构建目录的是 deployBuild.ts, 这里只定顺序和
 // 每一步失败时怎么办, 所以能用假的 run / capture / build / activate 测试。
 //
