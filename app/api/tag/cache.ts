@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto'
 import { TAG_LIST_CACHE_DURATION } from '~/config/cache'
 import { delKv, getKv, setKv } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import type { Tag } from '~/types/api/tag'
 
 const TAG_LIST_CACHE_KEY_PREFIX = 'tag:list'
@@ -17,8 +18,7 @@ export interface TagListResponse {
 }
 
 const logTagListCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'tag:list', op: message }, error)
 }
 
 const deleteTagListCache = async (cacheKey: string) => {

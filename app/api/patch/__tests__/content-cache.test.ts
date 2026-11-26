@@ -79,6 +79,9 @@ vi.mock('~/server/cache/stats', () => ({
   kunRecordCacheOutcome: recordOutcomeMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import { getPatchById } from '~/app/api/patch/get'
 import { getPatchPageData } from '~/app/api/patch/pageData'
 import { getPatchIntroduction } from '~/app/api/patch/introduction/service'
@@ -220,23 +223,21 @@ describe('getPatchById', () => {
     const error = new Error('Redis NX write failed')
     acquireKvLockMock.mockResolvedValueOnce(null)
     setKvIfAbsentMock.mockRejectedValueOnce(error)
-    const consoleError = vi
-      .spyOn(console, 'error')
-      .mockImplementation(() => undefined)
 
-    try {
-      const result = await getPatchById(input, null)
+    const result = await getPatchById(input, null)
 
-      await vi.waitFor(() => {
-        expect(consoleError).toHaveBeenCalledWith(
-          `Failed to write fallback cache for ${getPatchCacheKey(uniqueId)}:`,
-          error
-        )
-      })
-      expect(result).toMatchObject({ id: 7, uniqueId, isFavorite: false })
-    } finally {
-      consoleError.mockRestore()
-    }
+    await vi.waitFor(() => {
+      expect(kunLog).toHaveBeenCalledWith(
+        'cache.degraded',
+        {
+          ns: 'singleflight',
+          op: 'write_fallback',
+          key: getPatchCacheKey(uniqueId)
+        },
+        error
+      )
+    })
+    expect(result).toMatchObject({ id: 7, uniqueId, isFavorite: false })
   })
 })
 
@@ -431,17 +432,9 @@ describe('getPatchIntroduction', () => {
 describe('Redis 故障降级', () => {
   const redisError = new Error('Redis unavailable')
   const viewer = { uid: 42, role: 1 }
-  let consoleError: ReturnType<typeof vi.spyOn>
-
-  beforeEach(() => {
-    consoleError = vi
-      .spyOn(console, 'error')
-      .mockImplementation(() => undefined)
-  })
 
   // mockRejectedValue 覆盖的是 hoisted 里的默认实现, clearAllMocks 不会恢复它
   afterEach(() => {
-    consoleError.mockRestore()
     getKvMock.mockImplementation(
       async (key: string) => kvStore.get(key) ?? null
     )
@@ -499,8 +492,13 @@ describe('Redis 故障降级', () => {
       patch: { id: 7, uniqueId, isFavorite: false },
       intro: { introduction: '<p># intro</p>' }
     })
-    expect(consoleError).toHaveBeenCalledWith(
-      `Failed to write cache for ${getPatchIntroductionCacheKey(uniqueId)}:`,
+    expect(kunLog).toHaveBeenCalledWith(
+      'cache.degraded',
+      {
+        ns: 'singleflight',
+        op: 'write',
+        key: getPatchIntroductionCacheKey(uniqueId)
+      },
       redisError
     )
   })

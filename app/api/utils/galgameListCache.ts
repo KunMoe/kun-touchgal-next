@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
 import { delKv, getKv, setKv, setKvIfAbsent } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { GALGAME_LIST_CACHE_DURATION } from '~/config/cache'
 import { kunCacheSingleflight } from './cacheSingleflight'
 import {
@@ -41,8 +42,7 @@ interface WithGalgameListCacheOptions {
 }
 
 const logGalgameListCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'galgame:list', op: message }, error)
 }
 
 const getGalgameListCacheKey = (

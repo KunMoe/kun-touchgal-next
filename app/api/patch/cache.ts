@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { PATCH_FAVORITE_CACHE_DURATION } from '~/config/cache'
 import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
 import { delKv, delKvs, getKv, getKvs, setKv } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { prisma } from '~/prisma/index'
 
 const PATCH_CACHE_KEY = 'patch'
@@ -68,8 +69,7 @@ type PatchFavoriteCacheResult = {
 }
 
 const logPatchFavoriteCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'patch:favorite', op: message }, error)
 }
 
 export const getCachedPatchFavoriteStatus = async (
@@ -163,8 +163,11 @@ const delPatchContentCacheKeys = async (keys: string[]) => {
   try {
     await delKvs(keys)
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to invalidate patch content cache:', error)
+    kunLog(
+      'cache.invalidate_failed',
+      { ns: 'patch:content', op: 'del', key: keys.join(',') },
+      error
+    )
     throw error
   }
 }

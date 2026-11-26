@@ -70,6 +70,8 @@ vi.mock('~/app/api/tag/get', () => ({
   getTagById: async () => TAG
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { GET } from '~/app/api/tag/galgame/route'
 import { kunGetTagPageDataActions } from '~/app/tag/[id]/actions'
 
@@ -298,7 +300,6 @@ describe.each(backends)(
     // 索引只给 id: 卡片回 PG 取, 套的是同一个视角的可见性
     if (meili) {
       it.each(allRows)('route, 索引有命中: $viewer.name', async (row) => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {})
         matrixState.meiliIds = INDEX_HITS
 
         const recording = await viaRoute(row.viewer)

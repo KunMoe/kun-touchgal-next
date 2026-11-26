@@ -62,6 +62,8 @@ vi.mock('react', async (importOriginal) => ({
   cache: (await import('~/server/viewer/__tests__/viewerMatrix')).memoCache
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { GET } from '~/app/api/galgame/route'
 import { kunGetActions } from '~/app/galgame/actions'
 
@@ -279,7 +281,6 @@ describe('/api/galgame ↔ app/galgame/actions.ts kunGetActions (Meilisearch 开
 
   // 索引只给 id: 卡片回 PG 取, 套的是同一个视角的可见性
   it.each(rows)('route, 索引有命中: $viewer.name', async (row) => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
     matrixState.meiliIds = INDEX_HITS
 
     const recording = await viaRoute(row.viewer)
@@ -290,7 +291,6 @@ describe('/api/galgame ↔ app/galgame/actions.ts kunGetActions (Meilisearch 开
   })
 
   it.each(rows)('loader, 索引有命中: $viewer.name', async (row) => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
     matrixState.meiliIds = INDEX_HITS
 
     const recording = await viaLoader(row.viewer)

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   ImageRejection,
   admitImage,
@@ -120,15 +123,17 @@ describe('encodeVariants', () => {
   })
 
   it('像素数据解不开时拒绝并计费, 不抛错', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const image = await admit(await createTruncatedPng())
     expect(
       await encodeVariants(image, {
         only: { width: 64, height: 64, quality: 50, maxMB: 1 }
       })
     ).toEqual(new ImageRejection('图片已损坏或无法处理', true))
-    expect(warn).toHaveBeenCalledTimes(1)
-    warn.mockRestore()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'image.encode_failed',
+      {},
+      expect.any(Error)
+    )
   })
 
   it('编码排队已满时拒绝, 不计费', async () => {

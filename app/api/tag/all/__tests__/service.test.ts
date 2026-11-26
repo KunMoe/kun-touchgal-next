@@ -25,6 +25,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { invalidateTagListCache } from '~/app/api/tag/cache'
 import { getTag } from '~/app/api/tag/all/service'
 import { PUBLIC_VISIBILITY } from '~/server/viewer/patchVisibility'
@@ -108,7 +110,6 @@ describe('getTag', () => {
   })
 
   it('queries directly and skips cache writes when the version read fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValueOnce(new Error('redis down'))
 
     const response = await getTag({ page: 1, limit: 100 }, PUBLIC_VISIBILITY)
@@ -120,7 +121,6 @@ describe('getTag', () => {
   })
 
   it('queries directly and skips cache writes when the list read fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock
       .mockResolvedValueOnce('version-1')
       .mockRejectedValueOnce(new Error('redis down'))
@@ -133,7 +133,6 @@ describe('getTag', () => {
   })
 
   it('deletes an invalid payload and heals the cache from Prisma', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockResolvedValueOnce('version-1').mockResolvedValueOnce('{')
 
     const response = await getTag({ page: 1, limit: 100 }, PUBLIC_VISIBILITY)
@@ -149,7 +148,6 @@ describe('getTag', () => {
   })
 
   it('returns the database response when the cache write fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     setKvMock.mockRejectedValueOnce(new Error('redis down'))
 
     await expect(
@@ -165,7 +163,6 @@ describe('getTag', () => {
       expect.any(String)
     )
 
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     setKvMock.mockRejectedValueOnce(new Error('redis down'))
     await expect(invalidateTagListCache()).resolves.toBeUndefined()
   })

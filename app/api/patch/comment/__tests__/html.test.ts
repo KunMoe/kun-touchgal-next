@@ -6,6 +6,8 @@ vi.mock('~/prisma/index', () => ({
   prisma: { patch_comment: { updateMany: updateManyMock } }
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { getKunMarkdownProcessor } from '~/app/api/utils/render/processor'
 import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
 import {
@@ -127,7 +129,6 @@ describe('resolveCommentHtml', () => {
 
   // 没预料到的渲染缺陷可能随修复消失, 不能把降级输出固化成当前版本
   it('渲染缺陷的降级结果不写回', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(markdownCommentProcessor, 'parse').mockImplementation(() => {
       throw new Error('boom')
     })
@@ -187,7 +188,6 @@ describe('persistCommentHtml', () => {
   })
 
   it('CAS 未命中与写入失败都计入 skipped, 不影响其余行', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     updateManyMock
       .mockResolvedValueOnce({ count: 0 })
       .mockRejectedValueOnce(new Error('connection lost'))

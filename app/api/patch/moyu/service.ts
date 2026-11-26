@@ -1,5 +1,6 @@
 import { MOYU_PATCH_RESOURCE_CACHE_DURATION } from '~/config/cache'
 import { getKv, setKv } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { prisma } from '~/prisma'
 import { kunAbuseGate } from '~/server/abuse/budget'
 import type {
@@ -11,8 +12,7 @@ const MOYU_PATCH_RESOURCE_CACHE_KEY_PREFIX = 'moyu:patch-resource'
 const NEXTMOE_API_TIMEOUT_MS = 10 * 1000
 
 const logMoyuError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'moyu:patch-resource', op: message }, error)
 }
 
 const fetchMoyuPatchResources = async (
@@ -81,7 +81,7 @@ export const getMoyuPatchResources = async (
   try {
     resources = await fetchMoyuPatchResources(vndbId, apiKey)
   } catch (error) {
-    logMoyuError('Failed to fetch moyu patch resources:', error)
+    kunLog('external.request_failed', { source: 'moyu', id: vndbId }, error)
     return '获取鲲 Galgame 补丁资源失败'
   }
 

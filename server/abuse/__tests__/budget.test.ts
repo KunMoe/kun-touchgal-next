@@ -5,7 +5,9 @@ const { evalKvScriptMock } = vi.hoisted(() => ({
 }))
 
 vi.mock('~/lib/redis', () => ({ evalKvScript: evalKvScriptMock }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   kunAbuseGate,
   kunAbuseMessage,
@@ -126,14 +128,17 @@ describe('reserveAbuseBudget', () => {
   })
 
   it('lets the request through and warns when Redis fails', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    evalKvScriptMock.mockRejectedValue(new Error('redis down'))
+    const failure = new Error('redis down')
+    evalKvScriptMock.mockRejectedValue(failure)
 
     await expect(
       reserveAbuseBudget([{ policy: 'content.comment' }], user)
     ).resolves.toBeNull()
-    expect(warn).toHaveBeenCalledOnce()
-    warn.mockRestore()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'abuse.budget_unavailable',
+      { policies: 'content.comment' },
+      failure
+    )
   })
 })
 

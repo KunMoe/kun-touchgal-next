@@ -10,6 +10,8 @@ vi.mock('~/lib/redis', () => ({
   releaseKvLock: releaseKvLockMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { kunCacheSingleflight } from '~/app/api/utils/cacheSingleflight'
 
 const CACHE_KEY = 'test:key'
@@ -105,7 +107,6 @@ describe('kunCacheSingleflight', () => {
   })
 
   it('falls back to query immediately when lock acquisition throws', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     acquireKvLockMock.mockRejectedValue(new Error('redis down'))
 
     await expect(run()).resolves.toEqual(QUERIED)

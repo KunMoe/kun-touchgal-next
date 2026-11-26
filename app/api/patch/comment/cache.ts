@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { delKv, getKv, setKv, setKvIfAbsent } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { COMMENT_CACHE_DURATION } from '~/config/cache'
 import { kunCacheSingleflight } from '~/app/api/utils/cacheSingleflight'
 import type { PatchComment } from '~/types/api/patch'
@@ -30,8 +31,7 @@ const getCommentCacheKey = (
   `${COMMENT_CACHE_KEY}:${patchId}:r${resourceId ?? 0}:v${version}:p${page}:l${limit}`
 
 const logCommentCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'patch:comment', op: message }, error)
 }
 
 interface CommentPageCacheResult {

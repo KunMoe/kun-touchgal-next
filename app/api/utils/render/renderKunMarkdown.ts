@@ -3,6 +3,7 @@ import {
   MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES,
   MARKDOWN_RENDER_ERROR_CACHE_DURATION
 } from '~/config/cache'
+import { kunLog } from '~/lib/log.server'
 import {
   MARKDOWN_MAX_TREE_DEPTH,
   exceedsCostFuse,
@@ -83,8 +84,7 @@ const failure = (
 })
 
 const logRenderError = (profile: KunMarkdownProfile, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(`[markdown] ${profile} render failed:`, error)
+  kunLog('render.failed', { profile }, error)
 }
 
 // unified 的 parse / run / stringify 全部同步执行 (run 只是签名异步), 这里拆开调用是

@@ -52,6 +52,8 @@ vi.mock('~/server/search/filter-builder', () => ({
   buildGalgameSearchSort: vi.fn().mockReturnValue([])
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { getPatchByCompany } from '~/app/api/company/galgame/service'
 import { toPublicListView } from '~/server/viewer/patchVisibility'
 import { GalgameCardSelectField } from '~/constants/api/select'
@@ -127,7 +129,6 @@ describe('getPatchByCompany', () => {
   })
 
   it('falls back to prisma and still writes cache when meilisearch is unavailable', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue('token-1')
     isMeiliEnabledMock.mockReturnValue(true)

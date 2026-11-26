@@ -1,6 +1,7 @@
 import sharp from 'sharp'
 import type { Metadata } from 'sharp'
 
+import { kunLog } from '~/lib/log.server'
 import { MAX_IMAGE_PIXELS } from '~/validations/file'
 import { EncodeBusyError, withEncodeSlot } from './encodeLimit'
 
@@ -126,8 +127,7 @@ export const encodeVariants = async <K extends string>(
     }
     // 槽里只有 sharp: 文件头通过了准入、像素数据解不开 (截断、损坏), 或编码器拒绝输出 (如只限宽的
     // 原图变体高过 AVIF 的尺寸上限)。成本已经花了, 计费; 分不清输入问题与服务端故障, 留日志
-    // eslint-disable-next-line no-console
-    console.warn('图片解码或编码失败, 按无法处理的图片拒绝:', error)
+    kunLog('image.encode_failed', {}, error)
     return new ImageRejection('图片已损坏或无法处理', true)
   }
 }

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { prisma } from '~/prisma/index'
 import { delKv, getKv, setKv, setKvIfAbsent } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { HOME_CACHE_DURATION } from '~/config/cache'
 import { GalgameCardSelectField, toGalgameCard } from '~/constants/api/select'
 import { kunCacheSingleflight } from '~/app/api/utils/cacheSingleflight'
@@ -35,8 +36,7 @@ interface HomeCacheResult {
 }
 
 const logHomeCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'home', op: message }, error)
 }
 
 const deleteHomeCache = async (cacheKey: string) => {

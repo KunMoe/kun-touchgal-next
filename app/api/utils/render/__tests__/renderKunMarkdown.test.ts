@@ -20,6 +20,9 @@ vi.mock('~/lib/redis', () => ({
   delKv: delKvMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   MARKDOWN_HTML_CACHE_DURATION,
   MARKDOWN_HTML_CACHE_MAX_MARKDOWN_BYTES,
@@ -156,7 +159,6 @@ describe.each(PROFILES)(
     // 渲染缺陷不是预算的结论: 结果不可落库, 只做短 TTL 负缓存
     it('渲染中途抛错时不 reject, 给出不可落库的降级结果', async () => {
       enableCache()
-      const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
       vi.spyOn(processor, 'run').mockRejectedValue(
         new RangeError('Maximum call stack size exceeded')
       )
@@ -170,7 +172,11 @@ describe.each(PROFILES)(
         persistable: false
       })
       expect(result.html).toContain('&lt;b&gt;hello&lt;/b&gt;')
-      expect(logged).toHaveBeenCalledOnce()
+      expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+        'render.failed',
+        { profile },
+        expect.any(RangeError)
+      )
       expect(setKvMock).toHaveBeenCalledWith(
         expect.any(String),
         JSON.stringify({ html: result.html, reason: 'render-error' }),
@@ -196,7 +202,6 @@ describe('renderKunMarkdown 残余成本', () => {
   })
 
   it('入口自身出现意外异常时同样不 reject', async () => {
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(Buffer, 'byteLength').mockImplementationOnce(() => {
       throw new Error('unexpected')
     })
@@ -206,7 +211,11 @@ describe('renderKunMarkdown 残余成本', () => {
       reason: 'render-error',
       persistable: false
     })
-    expect(logged).toHaveBeenCalledOnce()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'render.failed',
+      { profile: 'comment' },
+      expect.any(Error)
+    )
   })
 })
 
@@ -390,7 +399,6 @@ describe('renderKunMarkdownForWrite', () => {
   )
 
   it('渲染缺陷同样拒绝写入', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(markdownCommentProcessor, 'parse').mockImplementation(() => {
       throw new Error('boom')
     })

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'crypto'
 import * as z from 'zod'
 import { RESOURCE_LIST_CACHE_DURATION } from '~/config/cache'
 import { delKv, getKv, getKvs, setKv, setKvIfAbsent } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { resourceSchema } from '~/validations/resource'
 import type { ResourceListResponse } from '~/types/api/resource'
 
@@ -11,8 +12,7 @@ const RESOURCE_LIST_CACHE_CONTENT_VERSION_KEY = 'resource:list:version:content'
 const RESOURCE_LIST_CACHE_STATS_VERSION_KEY = 'resource:list:version:stats'
 
 const logResourceListCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'resource:list', op: message }, error)
 }
 
 const deleteResourceListCache = async (cacheKey: string) => {

@@ -52,6 +52,8 @@ vi.mock('~/server/search/filter-builder', () => ({
   buildGalgameSearchSort: vi.fn().mockReturnValue([])
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { getGalgame } from '~/app/api/galgame/service'
 import { toPublicListView } from '~/server/viewer/patchVisibility'
 import { GalgameCardSelectField } from '~/constants/api/select'
@@ -158,7 +160,6 @@ describe('getGalgame', () => {
   })
 
   it('falls back to prisma and still writes cache when meilisearch is unavailable', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockResolvedValue('token-1')
     isMeiliEnabledMock.mockReturnValue(true)
@@ -211,7 +212,6 @@ describe('getGalgame', () => {
   })
 
   it('queries directly without locking when the cache read fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValue(new Error('redis down'))
 
     const response = await getGalgame(INPUT, VIEW)

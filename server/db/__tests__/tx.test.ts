@@ -7,7 +7,9 @@ const rec = await vi.hoisted(async () =>
 )
 
 vi.mock('~/prisma/index', () => rec.module)
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import { Prisma } from '~/prisma/generated/prisma/client'
 import { kunTx } from '~/server/db/tx'
 import { isPrismaTransactionConflict } from '~/server/db/txErrors'
@@ -28,6 +30,8 @@ const violation = (code: string) =>
 beforeEach(() => {
   rec.reset()
   vi.restoreAllMocks()
+  // restoreAllMocks 只还原 spyOn, 不清 mock 工厂里 vi.fn 的调用记录
+  vi.mocked(kunLog).mockClear()
 })
 
 describe('kunTx 提交与回滚', () => {
@@ -345,7 +349,6 @@ describe('kunTx 没有提交时的清理', () => {
   })
 
   it('某一项清理失败只记日志, 其余照常执行, 不遮住原来的结果', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const boom = new Error('boom')
     const s3Down = new Error('s3 down')
     const redisDown = new Error('redis down')
@@ -370,9 +373,17 @@ describe('kunTx 没有提交时的清理', () => {
     ).rejects.toBe(boom)
 
     expect(calls).toEqual(['token'])
-    expect(errorSpy.mock.calls).toEqual([
-      ['[kunTx:edit.create] onRollback', redisDown],
-      ['[kunTx:edit.create] onRollback:banner', s3Down]
+    expect(vi.mocked(kunLog).mock.calls).toEqual([
+      [
+        'tx.settle_failed',
+        { tx: 'edit.create', stage: 'onRollback' },
+        redisDown
+      ],
+      [
+        'tx.settle_failed',
+        { tx: 'edit.create', stage: 'onRollback:banner' },
+        s3Down
+      ]
     ])
   })
 })
@@ -483,7 +494,6 @@ describe('kunTx 提交后副作用', () => {
   })
 
   it('某一项失败只记日志, 其余照常执行, 结果不变', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const calls: string[] = []
     const failure = new Error('redis down')
 
@@ -497,8 +507,9 @@ describe('kunTx 提交后副作用', () => {
 
     expect(result).toEqual({ ok: true })
     expect(calls).toEqual(['second'])
-    expect(errorSpy).toHaveBeenCalledWith(
-      '[kunTx:comment.remove] first',
+    expect(kunLog).toHaveBeenCalledWith(
+      'tx.settle_failed',
+      { tx: 'comment.remove', stage: 'first' },
       failure
     )
   })

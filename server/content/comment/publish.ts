@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { buildCommentLink } from '~/utils/patch/buildCommentLink'
 import {
   buildMentionContent,
@@ -173,8 +174,7 @@ export const onCommentPublished = async (commentId: number) => {
         { uid: comment.user_id, role: comment.user.role }
       )
       if (denial) {
-        // eslint-disable-next-line no-console
-        console.warn('[abuse] mention notifications dropped', {
+        kunLog('abuse.mention_dropped', {
           commentId,
           senderUid: comment.user_id,
           recipients: mentionCount,
@@ -195,7 +195,6 @@ export const onCommentPublished = async (commentId: number) => {
       )
     )
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(`评论 ${commentId} 的通知发送失败:`, error)
+    kunLog('comment.notify_failed', { commentId }, error)
   }
 }

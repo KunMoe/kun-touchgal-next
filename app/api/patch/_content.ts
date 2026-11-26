@@ -4,6 +4,7 @@ import {
 } from '~/config/cache'
 import { toGalgameCardCount } from '~/constants/api/select'
 import { getKv, setKv, setKvIfAbsent } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { prisma } from '~/prisma/index'
 import { roundOneDecimal } from '~/utils/rating/average'
 import { renderKunMarkdown } from '~/app/api/utils/render/renderKunMarkdown'
@@ -153,8 +154,7 @@ export interface PatchContentCacheResult<T> {
 }
 
 const logPatchContentCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'patch:content', op: message }, error)
 }
 
 export const getCachedPatchContent = async (

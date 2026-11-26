@@ -47,6 +47,8 @@ vi.mock('~/server/cache/stats', () => ({
   kunRecordCacheOutcome: recordOutcomeMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { getPatchResource } from '~/app/api/resource/service'
 import { toPublicListView } from '~/server/viewer/patchVisibility'
 
@@ -261,7 +263,6 @@ describe('getPatchResource', () => {
   })
 
   it('skips singleflight when the cache version read fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvsMock.mockRejectedValue(new Error('redis down'))
 
     const response = await getPatchResource(INPUT, ALL_VIEW)
@@ -275,7 +276,6 @@ describe('getPatchResource', () => {
   })
 
   it('queries directly without locking when the cache read fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValue(new Error('redis down'))
 
     const response = await getPatchResource(INPUT, ALL_VIEW)

@@ -1,9 +1,9 @@
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { incrementPatchViewBuffer } from './buffer'
 
 const logPatchViewError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('patch.views_failed', { op: message }, error)
 }
 
 export const updatePatchViews = async (uniqueId: string) => {

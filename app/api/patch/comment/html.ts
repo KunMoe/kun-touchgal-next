@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
 import {
   renderKunMarkdown,
@@ -104,8 +105,7 @@ export const persistCommentHtml = async (
       })
       written += count
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to persist backfilled comment html:', error)
+      kunLog('comment.html_persist_failed', {}, error)
     }
   }
   return { written, skipped: rows.length - written }

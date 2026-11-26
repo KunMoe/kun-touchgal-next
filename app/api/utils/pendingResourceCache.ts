@@ -1,5 +1,6 @@
 import { prisma } from '~/prisma/index'
 import { delKv, getKv, setKv } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { USER_PENDING_RESOURCE_CACHE_DURATION } from '~/config/cache'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
@@ -10,8 +11,7 @@ const getPendingResourceCacheKey = (uid: number) =>
   `user:has-pending-resource:${uid}`
 
 const logPendingResourceCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'user:pending-resource', op: message }, error)
 }
 
 // 作者是否有待审核 (status 2/3) 资源: 读穿 Redis, 未命中回落 DB count 并回填

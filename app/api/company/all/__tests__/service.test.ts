@@ -25,6 +25,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
 import { getCompany } from '~/app/api/company/all/service'
 
@@ -89,7 +91,6 @@ describe('getCompany', () => {
   })
 
   it('queries directly and skips cache writes when the version read fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValueOnce(new Error('redis down'))
 
     const response = await getCompany({ page: 1, limit: 100 })
@@ -101,7 +102,6 @@ describe('getCompany', () => {
   })
 
   it('queries directly and skips cache writes when the list read fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock
       .mockResolvedValueOnce('version-1')
       .mockRejectedValueOnce(new Error('redis down'))
@@ -114,7 +114,6 @@ describe('getCompany', () => {
   })
 
   it('deletes an invalid payload and heals the cache from Prisma', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockResolvedValueOnce('version-1').mockResolvedValueOnce('{')
 
     const response = await getCompany({ page: 1, limit: 100 })
@@ -130,7 +129,6 @@ describe('getCompany', () => {
   })
 
   it('returns the database response when the cache write fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     setKvMock.mockRejectedValueOnce(new Error('redis down'))
 
     await expect(getCompany({ page: 1, limit: 100 })).resolves.toEqual(RESPONSE)
@@ -144,7 +142,6 @@ describe('getCompany', () => {
       expect.any(String)
     )
 
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     setKvMock.mockRejectedValueOnce(new Error('redis down'))
     await expect(invalidateCompanyListCache()).resolves.toBeUndefined()
   })

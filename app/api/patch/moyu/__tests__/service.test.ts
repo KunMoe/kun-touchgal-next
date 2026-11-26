@@ -22,6 +22,9 @@ vi.mock('~/prisma', () => ({
   }
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import { getMoyuPatchResources } from '../service'
 
 const CACHE_KEY = 'moyu:patch-resource:v4145'
@@ -142,7 +145,6 @@ describe('getMoyuPatchResources', () => {
   })
 
   it('上游报错时返回错误消息且不写缓存', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     fetchMock.mockResolvedValue(
       jsonResponse({ status: 429, code: 'RATE_LIMITED' }, 429)
     )
@@ -151,6 +153,11 @@ describe('getMoyuPatchResources', () => {
       '获取鲲 Galgame 补丁资源失败'
     )
     expect(setKvMock).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledWith(
+      'external.request_failed',
+      { source: 'moyu', id: 'v4145' },
+      expect.any(Error)
+    )
   })
 
   // 整站共用一把每分钟 60 次的密钥 (X05-04): 只在真要打上游时扣, 游客按全站计
@@ -190,7 +197,6 @@ describe('getMoyuPatchResources', () => {
   })
 
   it('读缓存失败时降级为直接请求上游', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValue(new Error('redis down'))
     fetchMock.mockResolvedValue(
       jsonResponse({

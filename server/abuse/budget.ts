@@ -1,4 +1,5 @@
 import { can } from '~/constants/permission'
+import { kunLog } from '~/lib/log.server'
 import { reserveWindows } from './windowCounter'
 import { KUN_ABUSE_POLICIES } from './policies'
 import type { KunSubject } from '~/constants/role'
@@ -91,11 +92,11 @@ export const reserveAbuseBudget = async (
   try {
     reservation = await reserveWindows(groups)
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.warn('[abuse] budget unavailable, letting the request through', {
-      policies: counted.map((charge) => charge.policy),
+    kunLog(
+      'abuse.budget_unavailable',
+      { policies: counted.map((charge) => charge.policy).join(',') },
       error
-    })
+    )
     return null
   }
 

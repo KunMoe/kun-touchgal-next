@@ -1,4 +1,5 @@
 import { acquireKvLock, releaseKvLock } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 
 const CACHE_SINGLEFLIGHT_LOCK_TTL_SECONDS = 10
 // 递进退避: 首次延迟刻意非零 (调用方刚读到 miss, 立即重读几乎必再 miss),
@@ -42,8 +43,11 @@ export const kunCacheSingleflight = async <T>({
     )
   } catch (error) {
     // Redis 异常不同于锁竞争, 直接回源, 不进入等待循环
-    // eslint-disable-next-line no-console
-    console.error(`Failed to acquire cache lock for ${cacheKey}:`, error)
+    kunLog(
+      'cache.degraded',
+      { ns: 'singleflight', op: 'lock', key: cacheKey },
+      error
+    )
     return query()
   }
 
@@ -64,8 +68,11 @@ export const kunCacheSingleflight = async <T>({
     // 并以 NX 回写补位缺席的持锁者, 避免锁 TTL 内缓存持续为空
     const response = await query()
     void writeCacheIfAbsent(response).catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error(`Failed to write fallback cache for ${cacheKey}:`, error)
+      kunLog(
+        'cache.degraded',
+        { ns: 'singleflight', op: 'write_fallback', key: cacheKey },
+        error
+      )
     })
     return response
   }
@@ -80,8 +87,11 @@ export const kunCacheSingleflight = async <T>({
     const response = await query()
     // 写缓存失败 (Redis 故障) 不应使请求失败, 与上方 writeCacheIfAbsent 分支对齐
     await writeCache(response).catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error(`Failed to write cache for ${cacheKey}:`, error)
+      kunLog(
+        'cache.degraded',
+        { ns: 'singleflight', op: 'write', key: cacheKey },
+        error
+      )
     })
     return response
   } finally {

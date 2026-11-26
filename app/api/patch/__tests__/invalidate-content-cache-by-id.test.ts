@@ -19,6 +19,9 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   getPatchCacheKey,
   getPatchIntroductionCacheKey,
@@ -44,17 +47,22 @@ describe('invalidatePatchContentCache', () => {
   it('删除失败时记录日志并向上抛出, 由调用方 best-effort 吞掉', async () => {
     const error = new Error('redis down')
     delKvsMock.mockRejectedValueOnce(error)
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     await expect(invalidatePatchContentCache('aaaaaaaa')).rejects.toThrow(
       'redis down'
     )
-    expect(consoleSpy).toHaveBeenCalledWith(
-      'Failed to invalidate patch content cache:',
+    expect(kunLog).toHaveBeenCalledWith(
+      'cache.invalidate_failed',
+      {
+        ns: 'patch:content',
+        op: 'del',
+        key: [
+          getPatchCacheKey('aaaaaaaa'),
+          getPatchIntroductionCacheKey('aaaaaaaa')
+        ].join(',')
+      },
       error
     )
-
-    consoleSpy.mockRestore()
   })
 })
 

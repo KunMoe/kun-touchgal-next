@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto'
 import { COMPANY_LIST_CACHE_DURATION } from '~/config/cache'
 import { delKv, getKv, setKv } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import type { Company } from '~/types/api/company'
 
 const COMPANY_LIST_CACHE_KEY_PREFIX = 'company:list'
@@ -17,8 +18,7 @@ export interface CompanyListResponse {
 }
 
 const logCompanyListCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'company:list', op: message }, error)
 }
 
 const deleteCompanyListCache = async (cacheKey: string) => {

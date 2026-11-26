@@ -36,6 +36,8 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { getHomeData } from '~/app/api/home/service'
 import { toPublicListView } from '~/server/viewer/patchVisibility'
 
@@ -149,7 +151,6 @@ describe('getHomeData', () => {
   })
 
   it('falls back to the database immediately when lock acquisition fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockResolvedValue(null)
     acquireKvLockMock.mockRejectedValue(new Error('redis down'))
 
@@ -234,7 +235,6 @@ describe('getHomeData', () => {
   )
 
   it('queries directly without locking when the cache read fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     getKvMock.mockRejectedValue(new Error('redis down'))
 
     const response = await getHomeData(ALL_VIEW)

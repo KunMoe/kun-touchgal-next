@@ -17,7 +17,9 @@ vi.mock('~/app/api/message/unread/cache', () => ({
 vi.mock('~/server/abuse/budget', () => ({
   reserveAbuseBudget: reserveAbuseBudgetMock
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   onCommentPublished,
   planCommentNotifications
@@ -336,7 +338,6 @@ describe('onCommentPublished', () => {
   })
 
   it('提及超出预算时这一轮的提及整批不发、记 warn, 回复通知照发', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     reserveAbuseBudgetMock.mockResolvedValue({
       policy: 'notify.mention',
       per: 'uid',
@@ -356,12 +357,15 @@ describe('onCommentPublished', () => {
       [expect.objectContaining({ type: 'comment', recipient_id: 9 })]
     ])
     expect(invalidateUnreadMock.mock.calls).toEqual([[9]])
-    expect(warnSpy).toHaveBeenCalledOnce()
-    warnSpy.mockRestore()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('abuse.mention_dropped', {
+      commentId: 11,
+      senderUid: 7,
+      recipients: 2,
+      retryAfterSec: 3600
+    })
   })
 
   it('提及超出预算且没有别的通知时什么都不写', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     reserveAbuseBudgetMock.mockResolvedValue({
       policy: 'notify.mention',
       per: 'uid',
@@ -376,11 +380,9 @@ describe('onCommentPublished', () => {
 
     expect(created()).toEqual([])
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
-    warnSpy.mockRestore()
   })
 
   it('写入失败只记日志, 不向调用方抛错', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const failure = new Error('fk violation')
     rec.on(
       'patch_comment.findUnique',
@@ -392,8 +394,11 @@ describe('onCommentPublished', () => {
 
     await expect(onCommentPublished(11)).resolves.toBeUndefined()
 
-    expect(errorSpy).toHaveBeenCalledWith('评论 11 的通知发送失败:', failure)
+    expect(kunLog).toHaveBeenCalledWith(
+      'comment.notify_failed',
+      { commentId: 11 },
+      failure
+    )
     expect(invalidateUnreadMock).not.toHaveBeenCalled()
-    errorSpy.mockRestore()
   })
 })

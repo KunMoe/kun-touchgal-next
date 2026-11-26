@@ -88,6 +88,9 @@ vi.mock('~/server/search/sync', () => ({
   enqueueSearchOutbox: vi.fn()
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import { deletePatchById } from '~/app/api/patch/delete'
 
 const BED = 'https://img.example.test'
@@ -198,7 +201,6 @@ describe('deletePatchById', () => {
   })
 
   it('does not enqueue anything for a pointer outside the configured image bed', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     patchDeleteMock.mockResolvedValue({
       id: 7,
       banner: 'https://elsewhere.example.test/patch/7/banner/banner.avif'
@@ -207,7 +209,20 @@ describe('deletePatchById', () => {
     await expect(deletePatchById({ patchId: 7 })).resolves.toEqual({})
 
     expect(enqueueS3DeletionMock).not.toHaveBeenCalled()
-    expect(warn).toHaveBeenCalledTimes(1)
+    // 没 mock 的标签 / 会社列表缓存失效连不上 Redis 也会记日志, 只数这一个事件
+    expect(
+      vi
+        .mocked(kunLog)
+        .mock.calls.filter(([event]) => event === 'banner.pointer_unrecognized')
+    ).toEqual([
+      [
+        'banner.pointer_unrecognized',
+        {
+          patchId: 7,
+          pointer: 'https://elsewhere.example.test/patch/7/banner/banner.avif'
+        }
+      ]
+    ])
   })
 
   it('still resolves when patch content cache invalidation fails', async () => {

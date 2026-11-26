@@ -22,6 +22,8 @@ vi.mock('~/lib/redis', () => ({
   delKv: vi.fn()
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { getKunMarkdownProcessor } from '~/app/api/utils/render/processor'
 import { KUN_MARKDOWN_PROFILES } from '~/app/api/utils/render/profiles'
 

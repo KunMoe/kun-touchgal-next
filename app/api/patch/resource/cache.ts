@@ -4,6 +4,7 @@ import {
   PATCH_RESOURCE_DETAIL_VERSION_DURATION
 } from '~/config/cache'
 import { delKv, getKv, setKv, setKvIfAbsent } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import type { PatchResource } from '~/types/api/patch'
 
 const PATCH_RESOURCE_DETAIL_CACHE_KEY_PREFIX = 'patch:resource:detail'
@@ -15,8 +16,7 @@ const patchResourceDetailVersionKey = (patchId: number) =>
   `patch:resource:detail:version:${patchId}`
 
 const logPatchResourceDetailCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.degraded', { ns: 'patch:resource:detail', op: message }, error)
 }
 
 const deletePatchResourceDetailCache = async (cacheKey: string) => {

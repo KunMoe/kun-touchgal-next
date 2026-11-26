@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { isPrismaTransactionConflict } from './txErrors'
 import { translateDbViolation } from './violations'
 import type { Prisma } from '~/prisma/generated/prisma/client'
@@ -81,8 +82,7 @@ export const kunTx = async <T extends TxValue>(
     try {
       await effect()
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error(`[kunTx:${name}] ${label}`, error)
+      kunLog('tx.settle_failed', { tx: name, stage: label }, error)
     }
   }
 
