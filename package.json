@@ -33,7 +33,9 @@
     "start": "pm2 startOrRestart ecosystem.config.cjs",
     "stop": "pm2 delete ecosystem.config.cjs",
     "deploy:install": "esno scripts/deployInstall.ts",
-    "deploy:build": "esno scripts/deployBuild.ts"
+    "deploy:build": "esno scripts/deployBuild.ts",
+    "deploy:rollback": "esno scripts/release/rollback.ts",
+    "deploy:list": "esno scripts/release/list.ts"
   },
   "author": {
     "name": "KUN1007",

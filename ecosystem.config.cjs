@@ -1,7 +1,24 @@
-const path = require('path')
+const fs = require('fs')
+const { kunReleaseLayout } = require('./scripts/release/layout.cjs')
 
-const cwd = path.join(__dirname)
-const standaloneServer = './.next/standalone/server.js'
+// 在线发布在检出之外 (scripts/release/layout.cjs): current 指向 <检出>-releases/releases/<id>,
+// 由 deploy:build / deploy:rollback 在两个 app 都删掉之后才切换。PM2 记下的是软链路径, 单个 worker
+// 重启 (max_memory_restart) 会按 current 当时的指向起来, 不要在进程运行时手工改 current。
+// 没有 current 时是旧布局: 跑检出里的 .next/standalone。切到发布布局之前的那次部署 (旧的 deployBuild
+// 仍按旧布局切换) 与首次切换失败后的回退都靠这一条
+const { currentLink } = kunReleaseLayout(__dirname)
+const hasCurrentRelease = (() => {
+  try {
+    fs.lstatSync(currentLink)
+    return true
+  } catch {
+    return false
+  }
+})()
+const cwd = hasCurrentRelease ? currentLink : __dirname
+const standaloneServer = hasCurrentRelease
+  ? './server.js'
+  : './.next/standalone/server.js'
 const commonEnv = {
   NODE_ENV: 'production',
   HOSTNAME: '127.0.0.1',
