@@ -44,7 +44,9 @@ vi.mock('~/server/cache/publish', () => ({
 vi.mock('~/app/api/utils/purgeCloudflareCache', () => ({
   purgeCloudflareCache: mocks.purgeCloudflareCache
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   putPatchBannerSet,
   replacePatchBanner
@@ -279,7 +281,6 @@ describe('replacePatchBanner', () => {
   })
 
   it('discardOld: 仍被引用的不删; 删失败的留给出箱, CDN 照样清', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
     mocks.isS3ObjectReferenced.mockImplementation(
       async (_db: unknown, key: string) => key === OLD_KEYS[0]
     )
@@ -294,6 +295,11 @@ describe('replacePatchBanner', () => {
 
     expect(mocks.deleteFileFromS3.mock.calls.map(([key]) => key)).toEqual(
       OLD_KEYS.slice(1)
+    )
+    expect(kunLog).toHaveBeenCalledWith(
+      's3.delete_failed',
+      { via: 'banner.withdraw', key: OLD_KEYS[1] },
+      expect.objectContaining({ message: 'S3 flaky' })
     )
     expect(events.slice(-2)).toEqual([`delete:${OLD_KEYS[2]}`, 'purge'])
   })

@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   KUN_SECURITY_STAMP_MODE,
   rejectOnStampMismatch,
@@ -28,12 +32,11 @@ describe('安全戳的读法', () => {
 describe('rejectOnStampMismatch', () => {
   // 上线先跑影子模式; 切强制是单独的一次发布, 那次提交连这条一起改
   it('当前以影子模式发布: 记一行可 grep 的日志, 不拒绝', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
     expect(KUN_SECURITY_STAMP_MODE).toBe('shadow')
     expect(rejectOnStampMismatch('site', { uid: 7, tokenStamp: 1 })).toBe(false)
-    expect(warn).toHaveBeenCalledWith(
-      '[kun-security-stamp] {"mode":"shadow","source":"site","uid":7,"tokenStamp":1}'
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'auth.security_stamp_mismatch',
+      { mode: 'shadow', source: 'site', uid: 7, tokenStamp: 1 }
     )
   })
 })

@@ -1,3 +1,6 @@
+import { kunLog } from '~/lib/log.server'
+import type { KunLogFields } from '~/lib/log.server'
+
 // 安全戳 (user.security_stamp) 的读法与比较。戳由 securityEvents.ts 与凭据写在同一条语句里;
 // 站点令牌带签发时读到的戳 (cs, 毫秒), 解析时必须与库里的值相等; OIDC 令牌没法带自定义版本,
 // 签发得比戳早 (秒) 就失效。库里的 null 与不带 cs 的存量令牌都按 0 处理, 上线不会把人踢下线
@@ -14,18 +17,19 @@ export const tokenStampOf = (payload: { cs?: unknown }) =>
 
 export type KunStampMismatchSource = 'site' | 'two-factor' | 'oidc'
 
-// 记一行可 grep 的日志 (pm2 logs | grep kun-security-stamp), 返回是否应当拒绝。
+// 记一行可 grep 的日志 (pm2 logs | grep auth.security_stamp_mismatch), 返回是否应当拒绝。
 // quiet: 已知的良性竞态 (重签与同一会话的并发请求), 不记日志, 只按模式给结论
 export const rejectOnStampMismatch = (
   source: KunStampMismatchSource,
-  detail: Record<string, string | number | undefined>,
+  detail: Omit<KunLogFields<'auth.security_stamp_mismatch'>, 'mode' | 'source'>,
   { quiet = false }: { quiet?: boolean } = {}
 ) => {
   if (!quiet) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[kun-security-stamp] ${JSON.stringify({ mode: KUN_SECURITY_STAMP_MODE, source, ...detail })}`
-    )
+    kunLog('auth.security_stamp_mismatch', {
+      mode: KUN_SECURITY_STAMP_MODE,
+      source,
+      ...detail
+    })
   }
   return KUN_SECURITY_STAMP_MODE === 'enforce'
 }

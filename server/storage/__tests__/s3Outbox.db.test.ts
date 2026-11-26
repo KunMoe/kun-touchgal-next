@@ -20,6 +20,7 @@ const { deleteFileFromS3Mock } = vi.hoisted(() => ({
 }))
 
 vi.mock('~/lib/s3', () => ({ deleteFileFromS3: deleteFileFromS3Mock }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 // 单消费者锁在 Redis 上, 与这里测的库语义无关: 直接执行任务体
 vi.mock('~/server/jobs/lease', () => ({
@@ -72,7 +73,6 @@ describe.skipIf(!dbContractUrl)('S3 deletion outbox on real PostgreSQL', () => {
 
   beforeEach(() => {
     deleteFileFromS3Mock.mockReset().mockResolvedValue(undefined)
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
   })
 
   afterEach(async () => {

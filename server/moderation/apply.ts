@@ -6,6 +6,7 @@ import { invalidateUserSession } from '~/app/api/user/session/cache'
 import { invalidateUnread } from '~/app/api/message/unread/cache'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
 import { copyObject, deleteFileFromS3 } from '~/lib/s3'
+import { kunLog } from '~/lib/log.server'
 import { toDependencyFailure } from '~/lib/resilience/failure'
 import { kunTx } from '~/server/db/tx'
 import { transitionComments } from '~/server/content/comment/transition'
@@ -318,15 +319,23 @@ export const applyModerationVerdict = async (
         `${imageBedUrl}/${avatar.avatarKey}`,
         `${imageBedUrl}/${avatar.avatarMiniKey}`
       ]).catch((error) =>
-        console.error('Failed to purge avatar CDN cache:', error)
+        kunLog('cdn.purge_failed', { via: 'moderation.avatar' }, error)
       )
     }
     // pending 暂存对象无论通过与否都清理; 拒绝时用户原头像与正式 key 保持不动
     await deleteFileFromS3(avatar.pendingKey).catch((error) =>
-      console.error('Failed to delete pending avatar:', error)
+      kunLog(
+        's3.delete_failed',
+        { via: 'moderation.pending_avatar', key: avatar.pendingKey },
+        error
+      )
     )
     await deleteFileFromS3(avatar.pendingMiniKey).catch((error) =>
-      console.error('Failed to delete pending mini avatar:', error)
+      kunLog(
+        's3.delete_failed',
+        { via: 'moderation.pending_avatar_mini', key: avatar.pendingMiniKey },
+        error
+      )
     )
   }
   if (task.content_type === 'bio') {

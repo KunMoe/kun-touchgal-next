@@ -55,7 +55,9 @@ vi.mock(import('~/server/moderation/ai'), async (importOriginal) => ({
   moderateText: moderateTextMock,
   moderateImage: moderateImageMock
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import { ModerationConfigError } from '~/server/moderation/ai'
 import {
   createModerationWorker,
@@ -287,11 +289,6 @@ const healthReports = () =>
     .filter(([key]) => key === KUN_MODERATION_HEALTH_KEY)
     .map(([, value, ttl]) => ({ ...JSON.parse(value as string), ttl }))
 
-let consoleErrorSpy: ReturnType<typeof vi.spyOn>
-let consoleWarnSpy: ReturnType<typeof vi.spyOn>
-
-const BREAKER_LOG_PREFIX = '[kun-moderation-breaker] '
-
 interface BreakerLog {
   lane: string
   type: string
@@ -301,10 +298,10 @@ interface BreakerLog {
 }
 
 const breakerLogs = (): BreakerLog[] =>
-  consoleWarnSpy.mock.calls
-    .map((call: unknown[]) => String(call[0]))
-    .filter((line: string) => line.startsWith(BREAKER_LOG_PREFIX))
-    .map((line: string) => JSON.parse(line.slice(BREAKER_LOG_PREFIX.length)))
+  vi
+    .mocked(kunLog)
+    .mock.calls.filter(([event]) => event === 'moderation.breaker')
+    .map(([, fields]) => fields as unknown as BreakerLog)
 
 // 默认是上线的配置: 系统性故障检测只记日志
 const newWorker = (systematic: 'log' | 'enforce' = 'log') =>
@@ -341,8 +338,6 @@ beforeEach(() => {
   vi.stubEnv('MODERATION_AI_API_KEY', 'test-key')
   vi.stubEnv('MODERATION_AI_TEXT_MODEL', 'text-model')
   vi.stubEnv('MODERATION_AI_VISION_MODEL', 'vision-model')
-  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-  consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   rows = []
   nextTaskId = 1
   recover()
@@ -763,8 +758,9 @@ describe('并发与分组', () => {
     await expect(runPool(newWorker())).resolves.toBeUndefined()
 
     expect(rowOf(healthy).status).toBe('approved')
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'Moderation worker crashed:',
+    expect(kunLog).toHaveBeenCalledWith(
+      'moderation.pool_failed',
+      { stage: 'worker' },
       expect.objectContaining({ message: 'db down' })
     )
   })
@@ -818,7 +814,7 @@ describe('供应商整体不可用', () => {
         }
       }
     ])
-    // 车道的开合各留一行日志, 排障时按前缀 grep
+    // 车道的开合各留一行日志, 排障时按事件名 grep
     expect(breakerLogs()).toEqual([
       {
         lane: 'text',
@@ -1627,8 +1623,9 @@ describe('连续工作池', () => {
     }
     await pool
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'Moderation worker crashed:',
+    expect(kunLog).toHaveBeenCalledWith(
+      'moderation.pool_failed',
+      { stage: 'worker' },
       expect.objectContaining({ message: 'db down' })
     )
     expect(claimsOf(tasks[MODERATION_CONCURRENCY])).toEqual([])

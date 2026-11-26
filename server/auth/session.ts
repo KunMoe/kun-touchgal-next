@@ -15,6 +15,7 @@ import {
   setKvIfAbsent,
   setKvsAndAddKvSetMembers
 } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { prisma } from '~/prisma/index'
 import { toKunRole } from '~/constants/role'
 import { kunCookieOptions } from './cookieOptions'
@@ -498,11 +499,6 @@ const loadAuthUser = async (uid: number) => {
   return user
 }
 
-const logSessionError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
-}
-
 // 站点会话的唯一解析器。三态按位置判定, 不按错误类型 (ioredis 与 Prisma adapter 的错误类
 // 没有稳定的公共基类): 令牌本身不成立、Redis 已答复但对不上、库里查无此人或已封禁 → 匿名;
 // 验签之后任何没被降级吸收的异常 (Redis / 库不可用) → 不可用。不可用永远不会被当成已认证
@@ -545,7 +541,11 @@ export const resolveKunSiteSession = async (
     if (!user || user.status === 2) {
       // 库给出的是正面证据, 删不掉会话也不改变结论: 这个分支不写鉴权缓存, 下次照样查库拒绝
       await deleteKunToken(payload.uid).catch((error) =>
-        logSessionError('Failed to revoke sessions of a banned user:', error)
+        kunLog(
+          'auth.session_revoke_failed',
+          { reason: 'user_banned', uid: payload.uid },
+          error
+        )
       )
       return ANONYMOUS_SITE_SESSION
     }

@@ -73,6 +73,9 @@ vi.mock('~/lib/s3', () => ({
   deleteFileFromS3: vi.fn()
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   applyModerationVerdict,
   markTaskManual,
@@ -263,9 +266,6 @@ describe('applyModerationVerdict', () => {
   })
 
   it('still deletes pending avatar objects when the CDN purge rejects', async () => {
-    const consoleErrorSpy = vi
-      .spyOn(console, 'error')
-      .mockImplementation(() => {})
     vi.mocked(purgeCloudflareCache).mockRejectedValueOnce(
       new Error('cf unreachable')
     )
@@ -292,8 +292,9 @@ describe('applyModerationVerdict', () => {
     ).resolves.toBe(true)
 
     expect(purgeCloudflareCache).toHaveBeenCalledTimes(1)
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'Failed to purge avatar CDN cache:',
+    expect(kunLog).toHaveBeenCalledWith(
+      'cdn.purge_failed',
+      { via: 'moderation.avatar' },
       expect.any(Error)
     )
     expect(deleteFileFromS3).toHaveBeenCalledTimes(2)
@@ -303,7 +304,6 @@ describe('applyModerationVerdict', () => {
     expect(deleteFileFromS3).toHaveBeenCalledWith(
       'avatar/user_100/pending-abc-mini.avif'
     )
-    consoleErrorSpy.mockRestore()
   })
 
   it('hides the rejected comment and notifies the author with an appeal link', async () => {

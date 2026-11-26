@@ -43,6 +43,9 @@ vi.mock('~/server/auth/secondFactor', () => ({
   }
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   consumeStepUpBackupCode,
   requireStepUp,
@@ -54,7 +57,6 @@ const user = (enable_2fa: boolean) => ({ password: 'stored-hash', enable_2fa })
 
 beforeEach(() => {
   vi.resetAllMocks()
-  vi.spyOn(console, 'error').mockImplementation(() => {})
   reserveAttemptMock.mockResolvedValue({ allowed: true, remaining: [9, 4] })
   settleSuccessMock.mockResolvedValue(true)
   findUniqueMock.mockResolvedValue(user(false))
@@ -147,7 +149,8 @@ describe('requireStepUp: password', () => {
   })
 
   it('fails closed when the budget cannot be reserved', async () => {
-    reserveAttemptMock.mockRejectedValue(new Error('redis unavailable'))
+    const error = new Error('redis unavailable')
+    reserveAttemptMock.mockRejectedValue(error)
 
     await expect(
       requireStepUp(7, 'password.change', { currentPassword: 'x' }, ctx)
@@ -157,6 +160,11 @@ describe('requireStepUp: password', () => {
       message: '验证服务暂不可用, 请稍后重试'
     })
     expect(verifyPasswordMock).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'auth.dependency_failed',
+      { stage: 'step_up_reserve' },
+      error
+    )
   })
 
   it('keeps the reservation charged for a wrong password', async () => {
@@ -173,11 +181,17 @@ describe('requireStepUp: password', () => {
   })
 
   it('still passes when the counters cannot be cleared afterwards', async () => {
-    settleSuccessMock.mockRejectedValue(new Error('redis unavailable'))
+    const error = new Error('redis unavailable')
+    settleSuccessMock.mockRejectedValue(error)
 
     await expect(
       requireStepUp(7, 'password.change', { currentPassword: 'x' }, ctx)
     ).resolves.toMatchObject({ ok: true })
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'auth.dependency_failed',
+      { stage: 'step_up_settle' },
+      error
+    )
   })
 
   it('rejects a session whose user row is gone', async () => {

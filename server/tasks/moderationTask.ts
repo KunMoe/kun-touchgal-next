@@ -2,6 +2,7 @@ import { prisma } from '~/prisma'
 import type { moderation_taskModel } from '~/prisma/generated/prisma/models'
 import type { Prisma } from '~/prisma/generated/prisma/client'
 import { getKv, setKv } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { getFileFromS3 } from '~/lib/s3'
 import {
   DependencyFailure,
@@ -82,8 +83,7 @@ const getCachedVerdict = async (
   try {
     cached = await getKv(verdictCacheKey(policy, contentType, hash))
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to read moderation verdict cache:', error)
+    kunLog('cache.degraded', { ns: 'moderation:verdict', op: 'read' }, error)
     return null
   }
   if (!cached) {
@@ -108,7 +108,7 @@ const cacheVerdict = async (
     JSON.stringify(verdict),
     MODERATION_VERDICT_CACHE_DURATION
   ).catch((error) =>
-    console.error('Failed to cache moderation verdict:', error)
+    kunLog('cache.degraded', { ns: 'moderation:verdict', op: 'write' }, error)
   )
 }
 
@@ -275,12 +275,9 @@ export const createModerationWorker = (options: {
       probeLeaseMs: MODERATION_LEASE_SECONDS * 1000,
       onEvent: (event: BreakerEvent) => {
         // 车道每次开合 (以及疑似系统性故障) 留一行可 grep 的日志
-        // (pm2 logs | grep kun-moderation-breaker): 阈值在正常流量下有没有误开、
+        // (pm2 logs | grep moderation.breaker): 阈值在正常流量下有没有误开、
         // 每一轮故障持续了多久, 靠它回看
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[kun-moderation-breaker] ${JSON.stringify({ lane, ...event })}`
-        )
+        kunLog('moderation.breaker', { lane, ...event })
       }
     })
   return {
@@ -470,7 +467,11 @@ const processTask = async (
         task.id,
         decideFailureAccounting({ task, ...failure, record, now: Date.now() })
       )
-      console.error(`Moderation task ${task.id} attempt failed:`, error)
+      kunLog(
+        'moderation.attempt_failed',
+        { taskId: task.id, scope: failure.scope },
+        error
+      )
     }
     return true
   } finally {
@@ -801,7 +802,7 @@ export const runModerationPool = async (
       })
         .catch((error) => {
           pausedUntil = Date.now() + POOL_POLL_MS
-          console.error('Moderation worker crashed:', error)
+          kunLog('moderation.pool_failed', { stage: 'worker' }, error)
           return false
         })
         .then((claimed) => {
@@ -867,8 +868,7 @@ export const runModerationPool = async (
             throw error
           }
           pausedUntil = Date.now() + POOL_POLL_MS
-          // eslint-disable-next-line no-console
-          console.error('Moderation pool round failed:', error)
+          kunLog('moderation.pool_failed', { stage: 'round' }, error)
         }
         if (round.started === 0 && inFlight.size === 0) {
           return

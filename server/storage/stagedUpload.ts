@@ -7,6 +7,7 @@ import {
   presignPutObject,
   promoteObject
 } from '~/lib/s3'
+import { kunLog } from '~/lib/log.server'
 import {
   OBJECT_STORAGE_MAX_FILE_SIZE_BYTES,
   OBJECT_STORAGE_MAX_FILE_SIZE_ERROR,
@@ -168,9 +169,8 @@ export const promoteStagedObject = async (
       info.ContentDisposition?.startsWith('attachment') &&
       info.ContentLength === meta.declared
     if (!declared) {
-      // eslint-disable-next-line no-console
-      console.error('转正后的对象与服务端声明的元数据不符 (只记录, 未拒绝):', {
-        finalKey,
+      kunLog('upload.promoted_meta_mismatch', {
+        key: finalKey,
         contentType: info.ContentType,
         contentDisposition: info.ContentDisposition,
         contentLength: info.ContentLength,
@@ -178,12 +178,7 @@ export const promoteStagedObject = async (
       })
     }
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(
-      '转正后的对象未能核对元数据 (只记录, 未拒绝):',
-      finalKey,
-      error
-    )
+    kunLog('upload.promoted_meta_check_failed', { key: finalKey }, error)
   }
 }
 

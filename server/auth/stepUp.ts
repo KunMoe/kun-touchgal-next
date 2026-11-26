@@ -1,5 +1,6 @@
 import { prisma } from '~/prisma/index'
 import type { KunTx } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { verifyPassword } from './algorithm'
 import { reserveAttempt, settleSuccess } from './attemptBudget'
 import { stepUpPasswordDims } from './budgets'
@@ -102,8 +103,7 @@ export const requireStepUp = async <A extends SensitiveAction>(
     try {
       reservation = await reserveAttempt(passwordDims)
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('[stepUp] reserve', error)
+      kunLog('auth.dependency_failed', { stage: 'step_up_reserve' }, error)
       return UNAVAILABLE
     }
     if (!reservation.allowed) {
@@ -125,8 +125,7 @@ export const requireStepUp = async <A extends SensitiveAction>(
     }
     // 清不掉计数只是此前的失败没被勾销, 不能因此判失败
     await settleSuccess(passwordDims).catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error('[stepUp] settle', error)
+      kunLog('auth.dependency_failed', { stage: 'step_up_settle' }, error)
     })
   }
 

@@ -44,6 +44,9 @@ vi.mock('~/server/jobs/lease', () => ({
   withJobLease: withJobLeaseMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   enqueueS3Deletion,
   drainS3DeletionOutbox,
@@ -57,6 +60,7 @@ let lease: AbortController
 const progressMock = vi.fn()
 
 beforeEach(() => {
+  vi.mocked(kunLog).mockReset()
   outboxFindManyMock.mockReset().mockResolvedValue([])
   outboxDeleteManyMock.mockReset().mockResolvedValue({ count: 1 })
   outboxUpdateManyMock.mockReset().mockResolvedValue({ count: 1 })
@@ -158,7 +162,6 @@ describe('drainS3DeletionOutbox 单消费者 + 引用判定 + CAS 删行', () =>
   })
 
   it('仍被引用：不删对象，只按 (s3_key, seq) 移除出箱行并告警', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     outboxFindManyMock.mockResolvedValue([{ s3_key: 'shared', seq: 0 }])
     isS3ObjectReferencedMock.mockResolvedValue(true)
 
@@ -168,13 +171,13 @@ describe('drainS3DeletionOutbox 单消费者 + 引用判定 + CAS 删行', () =>
     expect(outboxDeleteManyMock).toHaveBeenCalledWith({
       where: { s3_key: 'shared', seq: 0 }
     })
-    expect(warn).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('s3.outbox_row_skipped', {
+      key: 'shared'
+    })
     expect(result).toEqual({ deleted: 0, skippedReferenced: 1 })
-    warn.mockRestore()
   })
 
   it('引用判定在删除之前：判定失败时既不删对象也不删行', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     outboxFindManyMock.mockResolvedValue([{ s3_key: 'k1', seq: 0 }])
     isS3ObjectReferencedMock.mockRejectedValue(new Error('db down'))
 
@@ -186,13 +189,12 @@ describe('drainS3DeletionOutbox 单消费者 + 引用判定 + CAS 删行', () =>
       where: { s3_key: 'k1' },
       data: { attempts: { increment: 1 } }
     })
-    error.mockRestore()
   })
 
   it('删除失败的行不移除、累加 attempts 滞留待下一轮', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const error = new Error('S3 down')
     outboxFindManyMock.mockResolvedValue([{ s3_key: 'k1', seq: 0 }])
-    deleteFileFromS3Mock.mockRejectedValue(new Error('S3 down'))
+    deleteFileFromS3Mock.mockRejectedValue(error)
 
     await drainS3DeletionOutbox()
 
@@ -201,12 +203,15 @@ describe('drainS3DeletionOutbox 单消费者 + 引用判定 + CAS 删行', () =>
       where: { s3_key: 'k1' },
       data: { attempts: { increment: 1 } }
     })
-    error.mockRestore()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      's3.outbox_row_failed',
+      { key: 'k1' },
+      error
+    )
   })
 
   it('每处理完一行报一次进度 (租约的停滞看门狗), 失败的行也算', async () => {
     progressMock.mockClear()
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
     outboxFindManyMock.mockResolvedValue([
       { s3_key: 'k1', seq: 0 },
       { s3_key: 'k2', seq: 1 }
@@ -219,7 +224,6 @@ describe('drainS3DeletionOutbox 单消费者 + 引用判定 + CAS 删行', () =>
   })
 
   it('一行失败不阻断其余行处理', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     outboxFindManyMock.mockResolvedValue([
       { s3_key: 'k1', seq: 0 },
       { s3_key: 'k2', seq: 1 }
@@ -234,7 +238,6 @@ describe('drainS3DeletionOutbox 单消费者 + 引用判定 + CAS 删行', () =>
     expect(outboxDeleteManyMock).toHaveBeenCalledWith({
       where: { s3_key: 'k2', seq: 1 }
     })
-    error.mockRestore()
   })
 
   it('租约丢失或关停 (lease.signal 中止) 时在下一行之前停下, 剩下的行留在出箱', async () => {

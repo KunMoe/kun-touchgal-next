@@ -73,6 +73,9 @@ vi.mock('~/app/api/user/session/cache', () => ({
   invalidateUserSession: invalidateUserSessionMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import { bindUploadedResource } from '~/app/api/patch/resource/_helper'
 import {
   RESOURCE_S3_COPY_TIMEOUT_MS,
@@ -119,7 +122,6 @@ const PROMOTED = {
 let calls: string[]
 // 转正后那次 HEAD 的应答; 暂存对象的 HEAD 由各用例直接改 headObjectMock
 let promotedHead: () => unknown
-let consoleErrorSpy: ReturnType<typeof vi.spyOn>
 
 const site = (key: unknown) => (key === STAGING_KEY ? 'staging' : 'final')
 
@@ -137,7 +139,6 @@ const promotedKey = () => promoteObjectMock.mock.calls[0][1] as string
 beforeEach(() => {
   vi.resetAllMocks()
   vi.stubEnv('NEXT_PUBLIC_KUN_VISUAL_NOVEL_S3_STORAGE_URL', STORAGE_URL)
-  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   calls = []
   promotedHead = () => PROMOTED
 
@@ -404,7 +405,7 @@ describe('bindUploadedResource 转正', () => {
       size: SIZE
     })
     expect(invalidateUserSessionMock).toHaveBeenCalledWith(UID)
-    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   it('转正不走继承源对象元数据的 copyObject', async () => {
@@ -543,10 +544,16 @@ describe('bindUploadedResource 转正后核对正式对象的元数据', () => {
     promotedHead = () => info
 
     await expect(bind()).resolves.toMatchObject({ size: SIZE })
-    expect(consoleErrorSpy).toHaveBeenCalledTimes(1)
-    expect(consoleErrorSpy.mock.calls[0][1]).toMatchObject({
-      finalKey: promotedKey()
-    })
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'upload.promoted_meta_mismatch',
+      {
+        key: promotedKey(),
+        contentType: info.ContentType,
+        contentDisposition: info.ContentDisposition,
+        contentLength: info.ContentLength,
+        declared: SIZE
+      }
+    )
     expect(takeKvMock).toHaveBeenCalledWith(`upload:${TOKEN}`)
   })
 
@@ -558,7 +565,7 @@ describe('bindUploadedResource 转正后核对正式对象的元数据', () => {
 
     await bind()
 
-    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   it('HEAD 失败: 记一条日志, 绑定照常成功', async () => {
@@ -567,6 +574,10 @@ describe('bindUploadedResource 转正后核对正式对象的元数据', () => {
     }
 
     await expect(bind()).resolves.toMatchObject({ size: SIZE })
-    expect(consoleErrorSpy).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'upload.promoted_meta_check_failed',
+      { key: promotedKey() },
+      expect.objectContaining({ message: 's3 down' })
+    )
   })
 })

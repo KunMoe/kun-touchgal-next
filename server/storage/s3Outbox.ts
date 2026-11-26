@@ -1,6 +1,7 @@
 import { prisma } from '~/prisma/index'
 import type { KunTx } from '~/prisma/index'
 import { deleteFileFromS3 } from '~/lib/s3'
+import { kunLog } from '~/lib/log.server'
 import { withJobLease } from '~/server/jobs/lease'
 import { isS3ObjectReferenced } from './references'
 
@@ -80,10 +81,7 @@ export const drainS3DeletionOutbox = async ({
           if (await isS3ObjectReferenced(prisma, row.s3_key)) {
             // 历史共享对象 (重复提交留下的同 key 资源)、重复提交的同一 link id、提交响应
             // 丢失后的 abandon、commit 结果不确定时回收的封面新版本都会走到这里
-            // eslint-disable-next-line no-console
-            console.warn(
-              `S3 删除写出箱跳过 ${row.s3_key}：仍被资源链接或封面指针引用，只移除出箱行`
-            )
+            kunLog('s3.outbox_row_skipped', { key: row.s3_key })
             skippedReferenced++
           } else {
             await deleteFileFromS3(row.s3_key)
@@ -103,10 +101,7 @@ export const drainS3DeletionOutbox = async ({
               data: { attempts: { increment: 1 } }
             })
             .catch(() => undefined)
-          console.error(
-            `S3 删除写出箱处理 ${row.s3_key} 失败，保留待下轮重试:`,
-            error
-          )
+          kunLog('s3.outbox_row_failed', { key: row.s3_key }, error)
         }
         lease.progress()
       }
@@ -119,6 +114,6 @@ export const drainS3DeletionOutbox = async ({
 // 即时消费：入队后立刻尝试 drain 一次，保持近实时删除；抢不到锁则由定时任务兜底。
 export const kickS3DeletionDrain = () => {
   void drainS3DeletionOutbox().catch((error) => {
-    console.error('S3 删除写出箱即时消费失败:', error)
+    kunLog('s3.drain_failed', {}, error)
   })
 }

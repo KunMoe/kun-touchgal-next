@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { KUN_MODERATION_HEALTH_KEY } from '~/config/redis'
 import { getKv, setKv } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 
 // 审核 worker 的车道状态: cron 进程每批上报一次 (批次进行中另有心跳), web 进程只读。
 // 键的形状只在这里定。键带 TTL: 读不到说明 cron 进程超过两分钟没有上报
@@ -35,8 +36,7 @@ export const publishModerationHealth = async (health: ModerationHealth) => {
       HEALTH_TTL_SECONDS
     )
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to publish moderation health:', error)
+    kunLog('moderation.health_publish_failed', {}, error)
   }
 }
 

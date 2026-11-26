@@ -28,7 +28,9 @@ vi.mock('~/server/auth/securityStamp', async (importOriginal) => ({
   ...(await importOriginal<typeof import('~/server/auth/securityStamp')>()),
   rejectOnStampMismatch: vi.fn(() => stampMode.enforce)
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   establishKunSession,
   KUN_BANNED_LOGIN_MESSAGE,
@@ -295,11 +297,13 @@ describe('resolveKunSiteSession', () => {
     const { token } = await establish()
     findUniqueMock.mockResolvedValue(row({ status: 2 }))
     redis.failNext('getKvSetMembers')
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     expect(await resolveKunSiteSession(token)).toEqual({ kind: 'anonymous' })
-    expect(consoleError).toHaveBeenCalled()
-    consoleError.mockRestore()
+    expect(kunLog).toHaveBeenCalledWith(
+      'auth.session_revoke_failed',
+      { reason: 'user_banned', uid: UID },
+      expect.objectContaining({ message: 'redis unavailable' })
+    )
   })
 
   it('已认证: 名字与角色取自库, 不采信令牌里的 claim; 域外角色回落为普通用户', async () => {

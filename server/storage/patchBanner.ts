@@ -1,6 +1,7 @@
 import { prisma } from '~/prisma/index'
 import type { KunTx } from '~/prisma/index'
 import { deleteFileFromS3, uploadImageToS3 } from '~/lib/s3'
+import { kunLog } from '~/lib/log.server'
 import { kunTx } from '~/server/db/tx'
 import { recordKunChanges } from '~/server/cache/publish'
 import {
@@ -61,10 +62,7 @@ export const enqueuePatchBannerDeletion = async (
   const keys = patchBannerKeysFromPointer(patchId, pointer)
   if (!keys.length) {
     if (pointer) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `封面指针不在配置的图床下或形态不符, 不回收: patch ${patchId} ${pointer}`
-      )
+      kunLog('banner.pointer_unrecognized', { patchId, pointer })
     }
     return
   }
@@ -94,8 +92,7 @@ const discardNow = async (keys: string[]) => {
         await deleteFileFromS3(key)
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error(`撤图时删除 ${key} 失败, 留给删除写出箱重试:`, error)
+      kunLog('s3.delete_failed', { via: 'banner.withdraw', key }, error)
     }
   }
   await purgeCloudflareCache(keys.map(imageUrlOfKey))
@@ -115,8 +112,7 @@ export const replacePatchBanner = async (
     await putPatchBannerSet(encoded, set)
   } catch (error) {
     await recycleSet(set).catch((cleanupError) =>
-      // eslint-disable-next-line no-console
-      console.error('封面新版本写入失败后的回收入队失败:', cleanupError)
+      kunLog('banner.recycle_enqueue_failed', {}, cleanupError)
     )
     throw error
   }

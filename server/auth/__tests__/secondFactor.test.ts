@@ -24,6 +24,9 @@ vi.mock('~/server/auth/attemptBudget', () => ({
   settleSuccess: settleSuccessMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   checkTotp,
   createTotpKey,
@@ -81,7 +84,6 @@ beforeEach(() => {
     'KUN_TWO_FACTOR_SECRET_ENC_KEY',
     'test-only-two-factor-secret-kek-1234567890'
   )
-  vi.spyOn(console, 'error').mockImplementation(() => {})
   reserveAttemptMock.mockResolvedValue({ allowed: true, remaining: [9, 4] })
   settleSuccessMock.mockResolvedValue(true)
   setKvIfAbsentMock.mockResolvedValue(true)
@@ -250,13 +252,19 @@ describe('verifySecondFactor', () => {
   })
 
   it('fails closed when the budget cannot be reserved', async () => {
-    reserveAttemptMock.mockRejectedValue(new Error('redis unavailable'))
+    const error = new Error('redis unavailable')
+    reserveAttemptMock.mockRejectedValue(error)
 
     await expect(verifySecondFactor(7, totp(), ctx)).resolves.toEqual({
       ok: false,
       reason: 'unavailable'
     })
     expect(findUniqueMock).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'auth.dependency_failed',
+      { stage: 'second_factor_reserve' },
+      error
+    )
   })
 
   it('keeps the reservation charged for a wrong or replayed code', async () => {

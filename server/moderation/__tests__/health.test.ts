@@ -7,7 +7,9 @@ const { getKvMock, setKvMock } = vi.hoisted(() => ({
 }))
 
 vi.mock('~/lib/redis', () => ({ getKv: getKvMock, setKv: setKvMock }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import {
   publishModerationHealth,
   readModerationHealth
@@ -61,13 +63,17 @@ describe('审核车道状态的上报与读取', () => {
   })
 
   it('上报失败只记日志, 不往外抛', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    setKvMock.mockRejectedValue(new Error('redis down'))
+    const error = new Error('redis down')
+    setKvMock.mockRejectedValue(error)
 
     await expect(publishModerationHealth(health)).resolves.toBeUndefined()
 
-    expect(consoleError).toHaveBeenCalledTimes(1)
-    consoleError.mockRestore()
+    expect(kunLog).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledWith(
+      'moderation.health_publish_failed',
+      {},
+      error
+    )
   })
 
   it.each([

@@ -42,7 +42,9 @@ vi.mock(import('~/server/moderation/ai'), async (importOriginal) => ({
   moderateText: moderateTextMock,
   moderateImage: moderateImageMock
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import { ModerationConfigError } from '~/server/moderation/ai'
 import {
   processAvatarTask,
@@ -304,14 +306,18 @@ describe('processTextTask: 裁决缓存', () => {
   })
 
   it('缓存读不到 (Redis 抖动) 按未命中处理, 照常调模型', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-    getKvMock.mockRejectedValue(new Error('redis timeout'))
+    const error = new Error('redis timeout')
+    getKvMock.mockRejectedValue(error)
 
     await runTextTask(makeTask('comment', comment('hello')), [])
 
     expect(moderateTextMock).toHaveBeenCalledTimes(1)
     expect(applyModerationVerdictMock).toHaveBeenCalledTimes(1)
-    vi.restoreAllMocks()
+    expect(kunLog).toHaveBeenCalledWith(
+      'cache.degraded',
+      { ns: 'moderation:verdict', op: 'read' },
+      error
+    )
   })
 
   it('缓存内容不是合法裁决时回落到模型', async () => {

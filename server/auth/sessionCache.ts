@@ -1,12 +1,12 @@
 import { randomUUID } from 'crypto'
 import { getKv, setKv } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import type { UserState } from '~/types/api/session'
 
 const USER_SESSION_CACHE_TTL_SECONDS = 10 * 60
 const USER_SESSION_GENERATION_KEY = 'session:user:generation'
 const logSessionCacheError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
+  kunLog('cache.invalidate_failed', { ns: 'session:user', op: message }, error)
 }
 
 interface UserSessionCacheScope {

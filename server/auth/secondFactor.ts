@@ -1,6 +1,7 @@
 import { generateBackupCodes, generateConfig, Hotp, Totp } from 'time2fa'
 import { prisma } from '~/prisma/index'
 import { setKvIfAbsent } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { createSecretBox } from '~/lib/crypto/secretBox'
 import { reserveAttempt, settleSuccess } from './attemptBudget'
 import { stepUpSecondFactorDims } from './budgets'
@@ -95,8 +96,7 @@ export const checkTotp = async (
 }
 
 const unavailable = (stage: string, error: unknown): SecondFactorResult => {
-  // eslint-disable-next-line no-console
-  console.error(`[secondFactor] ${stage}`, error)
+  kunLog('auth.dependency_failed', { stage: `second_factor_${stage}` }, error)
   return { ok: false, reason: 'unavailable' }
 }
 
