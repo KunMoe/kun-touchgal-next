@@ -102,7 +102,7 @@ const kunConfigs = defineConfig([
       '@typescript-eslint/no-require-imports': 'off'
     }
   },
-  // 要类型信息的那两条规则 (漏写 await 的 Promise 等) 与它们的代价、摘除办法见 lint/kunTypeAware.mjs
+  // 要类型信息的那几条规则 (漏写 await 的 Promise 等) 与它们的代价、摘除办法见 lint/kunTypeAware.mjs
   ...kunTypeAwareConfigs(import.meta.dirname),
   // 跨文件承重不变量 (C9 zod 命名空间导入、C19 bprogress 子路径等) 在 lint/kunInvariants.mjs
   // 逐条登记为 kun/inv-*。不要在本文件新增核心 no-restricted-imports / no-restricted-syntax

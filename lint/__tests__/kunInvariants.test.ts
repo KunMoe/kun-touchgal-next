@@ -17,7 +17,7 @@ const SELF = 'lint/__tests__/kunInvariants.test.ts'
 // ESLint 首次加载整套配置与插件要数秒
 const TIMEOUT = 60_000
 
-// 样例路径都是虚构的 (磁盘上没有这些文件), 类型服务找不到它们, 开着类型块连解析都过不了。
+// 样例路径多数是虚构的 (磁盘上没有这些文件), 类型服务找不到它们, 开着类型块连解析都过不了。
 // 不变量规则只看语法, 所以本文件的每个 ESLint 实例都把类型块关掉 (见 lint/kunTypeAware.mjs)
 const eslint = new ESLint({
   cwd: repoRoot,
