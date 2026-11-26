@@ -37,9 +37,10 @@ vi.mock('~/middleware/_verifyHeaderCookie', () => ({
 }))
 
 // 两份缓存都在 Redis 里, 与这里要看的事无关
+// 与真实现一样是 async: 路由对每个失效各自 .catch
 vi.mock('~/app/api/patch/cache', () => ({
-  invalidatePatchFavoriteCache: vi.fn(),
-  invalidatePatchContentCache: vi.fn()
+  invalidatePatchFavoriteCache: vi.fn(async () => undefined),
+  invalidatePatchContentCache: vi.fn(async () => undefined)
 }))
 
 vi.mock('~/app/api/message/unread/cache', () => ({
