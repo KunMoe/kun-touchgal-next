@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { encodePatchBanner } from '../_upload'
 import {
   createSvg,
@@ -47,11 +49,9 @@ describe('encodePatchBanner', () => {
   })
 
   it('像素数据损坏时返回文案, 不抛错', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(await encodePatchBanner(await createTruncatedPng())).toBe(
       '图片已损坏或无法处理'
     )
-    vi.restoreAllMocks()
   })
 
   it('编码排队已满时返回限流提示', async () => {

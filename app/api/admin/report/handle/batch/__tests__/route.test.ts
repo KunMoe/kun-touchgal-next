@@ -28,7 +28,10 @@ vi.mock('~/app/api/admin/report/handle/service', () => ({
   handleReport: handleReportMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { POST } from '~/app/api/admin/report/handle/batch/route'
+import { kunLog } from '~/lib/log.server'
 
 const request = new Request('http://localhost/api/admin/report/handle/batch', {
   method: 'POST'
@@ -93,9 +96,6 @@ describe('POST /api/admin/report/handle/batch', () => {
       }
       return {}
     })
-    const consoleErrorSpy = vi
-      .spyOn(console, 'error')
-      .mockImplementation(() => {})
 
     const response = await POST(request)
 
@@ -105,6 +105,11 @@ describe('POST /api/admin/report/handle/batch', () => {
       failedIds: [3]
     })
     expect(handleReportMock).toHaveBeenCalledTimes(4)
-    consoleErrorSpy.mockRestore()
+    expect(kunLog).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledWith(
+      'admin.batch_item_failed',
+      { kind: 'report', action: 'delete', id: 3 },
+      expect.objectContaining({ message: 'boom' })
+    )
   })
 })

@@ -98,7 +98,10 @@ vi.mock('~/server/auth/twoFactorBackupCode', () => ({
   consumeTwoFactorBackupCode: consumeBackupCodeMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { POST } from '~/app/api/auth/verify-2fa/route'
+import { kunLog } from '~/lib/log.server'
 
 const user = {
   id: 7,
@@ -282,7 +285,8 @@ describe('POST /api/auth/verify-2fa', () => {
   })
 
   it('fails closed when the used time step cannot be recorded', async () => {
-    checkTotpMock.mockRejectedValue(new Error('redis unavailable'))
+    const error = new Error('redis unavailable')
+    checkTotpMock.mockRejectedValue(error)
 
     const response = await POST(createRequest())
 
@@ -291,6 +295,11 @@ describe('POST /api/auth/verify-2fa', () => {
     )
     expect(consumeChallengeMock).not.toHaveBeenCalled()
     expect(establishSessionMock).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledWith(
+      'auth.dependency_failed',
+      { stage: '2fa_verify' },
+      error
+    )
   })
 
   it('takes a backup code through the atomic consume, not the TOTP check', async () => {
@@ -310,7 +319,8 @@ describe('POST /api/auth/verify-2fa', () => {
   })
 
   it('fails closed when Redis cannot reserve an attempt', async () => {
-    reserveAttemptMock.mockRejectedValue(new Error('redis unavailable'))
+    const error = new Error('redis unavailable')
+    reserveAttemptMock.mockRejectedValue(error)
 
     const response = await POST(createRequest())
 
@@ -319,6 +329,11 @@ describe('POST /api/auth/verify-2fa', () => {
     )
     expect(findUniqueMock).not.toHaveBeenCalled()
     expect(establishSessionMock).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledWith(
+      'auth.dependency_failed',
+      { stage: '2fa_attempt_reserve' },
+      error
+    )
   })
 
   it('第一步之后被封禁: 第二步通过也不建立会话, 回封禁消息', async () => {

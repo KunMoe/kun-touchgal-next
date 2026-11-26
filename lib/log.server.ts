@@ -78,7 +78,7 @@ export const KUN_LOG_EVENTS = {
   // 失效没做成: 旧条目要等 TTL 才会消失
   'cache.invalidate_failed': {
     level: 'warn',
-    fields: ['ns', 'key'],
+    fields: ['ns', 'op', 'key'],
     throttleMs: MINUTE,
     throttleBy: 'ns'
   },
@@ -197,6 +197,8 @@ export const KUN_LOG_EVENTS = {
   's3.outbox_row_skipped': { level: 'warn', fields: ['key'] },
   's3.outbox_row_failed': { level: 'error', fields: ['key'] },
   's3.drain_failed': { level: 'error', fields: [] },
+  // 即时删除与入删除写出箱都失败: 对象没有任何引用, 也没人会再删它
+  's3.orphan_left': { level: 'error', fields: ['via', 'key'] },
   'banner.pointer_unrecognized': {
     level: 'warn',
     fields: ['patchId', 'pointer']
@@ -213,6 +215,8 @@ export const KUN_LOG_EVENTS = {
     ]
   },
   'upload.promoted_meta_check_failed': { level: 'error', fields: ['key'] },
+  // 转正失败后没退回已扣的当日上传额度
+  'upload.quota_refund_failed': { level: 'error', fields: ['uid', 'mb'] },
 
   // —— 搜索 (Meilisearch 的错误只记摘要: name / status / code / message / cause) ——
   'search.request_rejected': {

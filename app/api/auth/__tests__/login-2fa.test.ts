@@ -87,7 +87,10 @@ vi.mock('~/app/api/auth/_twoFactorChallenge', () => ({
   TWO_FACTOR_CHALLENGE_TTL_SECONDS: 600
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { POST } from '~/app/api/auth/login/route'
+import { kunLog } from '~/lib/log.server'
 
 const createRequest = () =>
   new Request('http://localhost/api/auth/login', {
@@ -144,7 +147,8 @@ describe('POST /api/auth/login with 2FA', () => {
   })
 
   it('does not issue a stateless fallback when Redis is unavailable', async () => {
-    createChallengeMock.mockRejectedValue(new Error('redis unavailable'))
+    const error = new Error('redis unavailable')
+    createChallengeMock.mockRejectedValue(error)
 
     const response = await POST(createRequest())
 
@@ -153,6 +157,11 @@ describe('POST /api/auth/login with 2FA', () => {
     )
     expect(generateStatelessTokenMock).not.toHaveBeenCalled()
     expect(cookieSetMock).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledWith(
+      'auth.dependency_failed',
+      { stage: '2fa_challenge_create' },
+      error
+    )
   })
 })
 

@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { IncomingMessage } from 'node:http'
 import { Socket } from 'node:net'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Provider from 'oidc-provider'
 import type { JWK } from 'oidc-provider'
 
@@ -29,6 +29,8 @@ vi.mock('next/headers', () => ({
   headers: headersMock,
   cookies: cookiesMock
 }))
+
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 import {
   buildHeadersBridge,
@@ -221,14 +223,6 @@ describe('请求体预算 (/oidc 不经 proxy, 桥自己限)', () => {
       headers: { 'content-type': FORM },
       duplex: 'half'
     } as RequestInit)
-
-  let warnSpy: ReturnType<typeof vi.spyOn>
-  beforeEach(() => {
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-  })
-  afterEach(() => {
-    warnSpy.mockRestore()
-  })
 
   it('预算之内的请求体原样交给 provider', async () => {
     const res = await handleOidcCallback(tokenRequest(tokenBody()))

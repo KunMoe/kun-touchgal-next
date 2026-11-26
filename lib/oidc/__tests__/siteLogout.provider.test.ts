@@ -36,6 +36,9 @@ vi.mock('~/app/api/utils/pendingResourceCache', () => ({
   hasPendingResource: hasPendingResourceMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import { buildKunInteractionPolicy } from '~/lib/oidc/policy'
 import { registerKunSiteLogout } from '~/lib/oidc/siteLogout'
 import {
@@ -113,14 +116,18 @@ describe('依赖方登出 × 站点会话', () => {
   it('吊销失败时照样清 cookie, 登出不报错', async () => {
     const b = browser()
     await loginOnce(b, provider, 7)
-    deleteKunTokenSessionMock.mockRejectedValue(new Error('redis down'))
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const error = new Error('redis down')
+    deleteKunTokenSessionMock.mockRejectedValue(error)
 
     const res = await rpLogout(b, 7, 'yes')
 
     expect(res.status).toBe(303)
     expect(clearsSiteCookie(res)).toBe(true)
-    consoleError.mockRestore()
+    expect(kunLog).toHaveBeenCalledWith(
+      'auth.session_revoke_failed',
+      { reason: 'oidc_logout', uid: 7 },
+      error
+    )
   })
 
   it('确认失败 (xsrf 不对) 时 provider 会话还在, 站点也不退', async () => {
@@ -145,13 +152,11 @@ describe('依赖方登出 × 站点会话', () => {
     await loginOnce(b, provider, 7)
     verifyKunTokenWithUserMock.mockRejectedValue(new Error('redis down'))
     deleteKunTokenSessionMock.mockRejectedValue(new Error('redis down'))
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const res = await rpLogout(b, 7, 'yes')
 
     expect(res.status).toBe(303)
     expect(clearsSiteCookie(res)).toBe(true)
-    consoleError.mockRestore()
   })
 
   it('点「否」(只撤这个依赖方的授权) 时站点会话不动', async () => {

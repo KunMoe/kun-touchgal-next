@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { kunTx } from '~/server/db/tx'
 import { avatarSchema } from '~/validations/user'
 import { purgeCloudflareCache } from '~/app/api/utils/purgeCloudflareCache'
@@ -157,7 +158,7 @@ const updateUserAvatar = async (actor: KunActor, avatar: ArrayBuffer) => {
   await invalidateUserSession(uid)
   // best-effort: 头像已更新成功, purge 失败不应使请求整体报错
   await purgeCache(uid).catch((error) =>
-    console.error('Failed to purge avatar CDN cache:', error)
+    kunLog('cdn.purge_failed', { via: 'avatar' }, error)
   )
 
   return { avatar: imageLink }

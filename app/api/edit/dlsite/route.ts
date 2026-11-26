@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { fetchDlsiteData } from '~/lib/arnebiae/dlsite'
 
 const dlsiteSchema = z.object({
@@ -16,8 +17,11 @@ export const POST = kunRoute.post({
       const data = await fetchDlsiteData(input.code)
       return NextResponse.json(data)
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('DLSite fetch failed', { code: input.code, error })
+      kunLog(
+        'external.request_failed',
+        { source: 'dlsite', id: input.code },
+        error
+      )
       return NextResponse.json('DLSite API 请求失败, 请稍后重试')
     }
   }

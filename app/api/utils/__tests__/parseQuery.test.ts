@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import * as z from 'zod'
 
 vi.mock('next/server', () => ({
   NextRequest: class {}
 }))
+
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 import {
   kunParseFormData,
@@ -128,14 +130,6 @@ const truncatedRequest = (bytes: Uint8Array<ArrayBuffer>, declared: number) =>
   }) as unknown as BodyRequest
 
 describe('请求体的字节预算', () => {
-  let warnSpy: ReturnType<typeof vi.spyOn>
-  beforeEach(() => {
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-  })
-  afterEach(() => {
-    warnSpy.mockRestore()
-  })
-
   it.each([
     ['POST', kunParsePostBody],
     ['PUT', kunParsePutBody]
@@ -207,14 +201,6 @@ describe('kunParseFormData', () => {
       contentType: response.headers.get('content-type') as string
     }
   }
-
-  let warnSpy: ReturnType<typeof vi.spyOn>
-  beforeEach(() => {
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-  })
-  afterEach(() => {
-    warnSpy.mockRestore()
-  })
 
   it('预算之内解析出字段与文件', async () => {
     const { bytes, contentType } = await multipart(1000)

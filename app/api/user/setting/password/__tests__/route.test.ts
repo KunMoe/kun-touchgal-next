@@ -22,6 +22,7 @@ vi.mock('~/server/auth/attemptBudget', () => fakes.modules.budget)
 vi.mock('~/middleware/_verifyHeaderCookie', () => fakes.modules.session)
 vi.mock('~/server/auth/session', () => fakes.modules.sessionStore)
 vi.mock('next/headers', () => fakes.modules.headers)
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 import { hashPassword, verifyPassword } from '~/server/auth/algorithm'
 import {
@@ -249,7 +250,6 @@ describe('POST /api/user/setting/password', () => {
 
   it('fails closed, before reading the credential, when attempts cannot be counted', async () => {
     budget.failNext()
-    vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const response = await post({
       oldPassword: OLD_PASSWORD,

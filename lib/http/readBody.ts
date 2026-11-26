@@ -1,4 +1,5 @@
 import { KUN_PROXY_BODY_CLONE_LIMIT } from '~/constants/bodyBudget'
+import { kunLog } from '~/lib/log.server'
 
 // 读请求体的唯一出口 (T32): 边读边计数, 超过入口声明的预算就停, 不先把整段收进内存再判断。
 // 预算取值在 constants/bodyBudget.ts。别处不直接调 req.json() / formData() / arrayBuffer() /
@@ -43,8 +44,7 @@ export const kunReadBody = async (
     received: number
   ): KunBodyFailure => {
     // 每次拒绝记一行, 上线后据此发现误拒的入口、调大它的预算
-    // eslint-disable-next-line no-console
-    console.warn('[kunReadBody] rejected', {
+    kunLog('body.rejected', {
       path: pathOf(req),
       reason,
       maxBytes,

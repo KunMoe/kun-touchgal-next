@@ -1,5 +1,6 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { adminModerationBatchSchema } from '~/validations/admin'
 import {
   applyModerationVerdict,
@@ -74,10 +75,9 @@ export const PUT = kunRoute.put({
           failedIds.push(taskId)
         }
       } catch (error) {
-        console.error(
-          'Batch moderation action failed:',
-          input.action,
-          taskId,
+        kunLog(
+          'admin.batch_item_failed',
+          { kind: 'moderation', action: input.action, id: taskId },
           error
         )
         failedIds.push(taskId)
@@ -96,7 +96,7 @@ export const PUT = kunRoute.put({
           }
         })
         .catch((error) =>
-          console.error('Failed to write batch moderation admin log:', error)
+          kunLog('admin.log_write_failed', { action: input.action }, error)
         )
     }
 

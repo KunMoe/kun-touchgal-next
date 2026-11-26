@@ -2,6 +2,7 @@ import * as z from 'zod'
 import { randomUUID } from 'crypto'
 import { cookies } from 'next/headers'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import {
   DUMMY_PASSWORD_HASH,
   hashPassword,
@@ -83,8 +84,7 @@ const login = async (
     try {
       await createTwoFactorChallenge(jti, user.id)
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to create 2FA challenge', error)
+      kunLog('auth.dependency_failed', { stage: '2fa_challenge_create' }, error)
       return '2FA 验证服务暂不可用, 请稍后重试'
     }
 

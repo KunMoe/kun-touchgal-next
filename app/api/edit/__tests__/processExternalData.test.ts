@@ -46,6 +46,8 @@ vi.mock('~/server/search/sync', () => ({
   enqueueSearchOutbox: enqueueSearchOutboxMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 vi.mock('~/prisma/index', () => ({
   prisma: {
     patch_tag: {
@@ -71,6 +73,7 @@ vi.mock('~/prisma/index', () => ({
 }))
 
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { processSubmittedExternalData } from '~/app/api/edit/processExternalData'
 
 const NO_TAG_CHANGE = { removeTagIds: [], addTagNames: [] }
@@ -87,12 +90,8 @@ const EMPTY_DATA = {
   dlsiteCircleLink: ''
 }
 
-let errorSpy: ReturnType<typeof vi.spyOn>
-
 beforeEach(() => {
   vi.clearAllMocks()
-  // rejected 任务会真打日志, 静音以免注入失败的用例刷屏, 断言对 errorSpy 做 (expect(console.x) 会触 no-console)
-  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   saveManualTagChangeMock.mockResolvedValue({ changed: false })
   tagFindManyMock.mockResolvedValue([])
   tagCreateManyMock.mockResolvedValue({ count: 1 })
@@ -130,13 +129,15 @@ describe('processSubmittedExternalData cache invalidation', () => {
     expect(companyCreateManyMock).not.toHaveBeenCalled()
     expect(invalidateTagCacheMock).not.toHaveBeenCalled()
     expect(invalidateCompanyCacheMock).not.toHaveBeenCalled()
-    expect(errorSpy).toHaveBeenCalledTimes(2)
-    expect(errorSpy).toHaveBeenCalledWith(
-      'Failed to process external tag data for patch 1:',
+    expect(kunLog).toHaveBeenCalledTimes(2)
+    expect(kunLog).toHaveBeenCalledWith(
+      'edit.external_data_failed',
+      { source: 'tag', patchId: 1 },
       tagError
     )
-    expect(errorSpy).toHaveBeenCalledWith(
-      'Failed to process external company data for patch 1:',
+    expect(kunLog).toHaveBeenCalledWith(
+      'edit.external_data_failed',
+      { source: 'company', patchId: 1 },
       companyError
     )
   })
@@ -480,9 +481,10 @@ describe('processSubmittedExternalData rejected task logging', () => {
       7
     )
 
-    expect(errorSpy).toHaveBeenCalledTimes(1)
-    expect(errorSpy).toHaveBeenCalledWith(
-      'Failed to process external company data for patch 1:',
+    expect(kunLog).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledWith(
+      'edit.external_data_failed',
+      { source: 'company', patchId: 1 },
       error
     )
     expect(tagCreateManyMock).toHaveBeenCalledTimes(1)
@@ -497,7 +499,7 @@ describe('processSubmittedExternalData rejected task logging', () => {
       7
     )
 
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 })
 
@@ -514,7 +516,7 @@ describe('processSubmittedExternalData aliases', () => {
 
     expect(aliasFindManyMock).not.toHaveBeenCalled()
     expect(aliasCreateManyMock).not.toHaveBeenCalled()
-    expect(errorSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 })
 
@@ -591,9 +593,10 @@ describe('processSubmittedExternalData search outbox', () => {
       )
     ).resolves.toBeUndefined()
 
-    expect(errorSpy).toHaveBeenCalledTimes(1)
-    expect(errorSpy).toHaveBeenCalledWith(
-      'Failed to enqueue search sync for patch 1:',
+    expect(kunLog).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledWith(
+      'search.enqueue_failed',
+      { patchId: 1 },
       error
     )
     expect(invalidateTagCacheMock).toHaveBeenCalledTimes(1)

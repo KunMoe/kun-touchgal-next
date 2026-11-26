@@ -1,4 +1,5 @@
 import { copyObject, uploadImageToS3 } from '~/lib/s3'
+import { kunLog } from '~/lib/log.server'
 import { ImageRejection, encodeVariants } from '~/server/image/pipeline'
 import type { AdmittedImage, VariantPlan } from '~/server/image/pipeline'
 import { MODERATION_S3_TIMEOUT_MS } from '~/constants/moderation'
@@ -30,7 +31,7 @@ export const archiveAvatarForModeration = async (
     )
     return `${process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL}/${archiveKey}`
   } catch (error) {
-    console.error('Failed to archive moderation avatar:', error)
+    kunLog('moderation.avatar_archive_failed', {}, error)
     return undefined
   }
 }

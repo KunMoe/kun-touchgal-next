@@ -11,6 +11,9 @@ vi.mock('~/lib/s3', () => ({
   uploadImageToS3: uploadImageToS3Mock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   archiveAvatarForModeration,
   uploadUserAvatar
@@ -40,6 +43,7 @@ const createPng = async (
 describe('archiveAvatarForModeration', () => {
   beforeEach(() => {
     copyObjectMock.mockReset()
+    vi.mocked(kunLog).mockClear()
     process.env.KUN_VISUAL_NOVEL_IMAGE_BED_URL = 'https://img.example.com'
   })
 
@@ -57,12 +61,16 @@ describe('archiveAvatarForModeration', () => {
   })
 
   it('复制失败返回 undefined 而不抛出 —— 留档降级不阻断头像上传主流程', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    copyObjectMock.mockRejectedValue(new Error('s3 down'))
+    const error = new Error('s3 down')
+    copyObjectMock.mockRejectedValue(error)
     await expect(
       archiveAvatarForModeration('src-key', 42, 'nonce-abc')
     ).resolves.toBeUndefined()
-    errorSpy.mockRestore()
+    expect(kunLog).toHaveBeenCalledWith(
+      'moderation.avatar_archive_failed',
+      {},
+      error
+    )
   })
 })
 

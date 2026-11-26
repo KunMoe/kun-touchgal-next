@@ -13,7 +13,9 @@ vi.mock('~/middleware/_verifyHeaderCookie', () => ({
 
 // 不 mock 的话会去连真实 Redis (连上就写计数, 连不上就放行)
 vi.mock('~/server/abuse/budget', () => ({ kunAbuseGate: abuseGateMock }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
+import { kunLog } from '~/lib/log.server'
 import { POST as steamPost } from '../steam/route'
 import { POST as dlsitePost } from '../dlsite/route'
 import { POST as vndbRelationPost } from '../vndb/relation/route'
@@ -31,36 +33,42 @@ const routes: Array<{
   post: (req: NextRequest) => Promise<Response>
   body: Record<string, string>
   upstream: string
+  source: string
 }> = [
   {
     path: 'steam',
     post: steamPost,
     body: { steamId: '123' },
-    upstream: 'upstream.steam'
+    upstream: 'upstream.steam',
+    source: 'steam'
   },
   {
     path: 'dlsite',
     post: dlsitePost,
     body: { code: 'RJ123456' },
-    upstream: 'upstream.dlsite'
+    upstream: 'upstream.dlsite',
+    source: 'dlsite'
   },
   {
     path: 'vndb/relation',
     post: vndbRelationPost,
     body: { relationId: 'r123' },
-    upstream: 'upstream.vndb'
+    upstream: 'upstream.vndb',
+    source: 'vndb_release'
   },
   {
     path: 'vndb/details',
     post: vndbDetailsPost,
     body: { vndbId: 'v123' },
-    upstream: 'upstream.vndb'
+    upstream: 'upstream.vndb',
+    source: 'vndb'
   },
   {
     path: 'bangumi',
     post: bangumiPost,
     body: { bangumiId: '123' },
-    upstream: 'upstream.bangumi'
+    upstream: 'upstream.bangumi',
+    source: 'bangumi'
   }
 ]
 
@@ -96,6 +104,12 @@ describe('外部元数据抓取路由鉴权', () => {
       expect(await res.json()).not.toBe('用户未登录')
       expect(fetchMock).toHaveBeenCalledTimes(1)
       expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal)
+      // 抓取失败记一行, id 是请求里的条目号
+      expect(kunLog).toHaveBeenCalledWith(
+        'external.request_failed',
+        { source: route.source, id: Object.values(route.body)[0] },
+        expect.objectContaining({ message: 'network down' })
+      )
     })
 
     // 只限频, 不加角色门槛 (external-fetch-routes-auth-timeout 的裁定)

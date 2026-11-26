@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { resolveUserSessionByToken } from '~/app/api/user/session/service'
 import type { NextRequest } from 'next/server'
 
@@ -13,8 +14,7 @@ const getUserSession = async (req: NextRequest) => {
     return NextResponse.json(resolution.session)
   }
   if (resolution.kind === 'unavailable') {
-    // eslint-disable-next-line no-console
-    console.error('User session service unavailable:', resolution.cause)
+    kunLog('auth.session_unavailable', { source: 'api' }, resolution.cause)
     return NextResponse.json('会话服务暂时不可用', { status: 503 })
   }
   return NextResponse.json('用户登录失效', { status: 401 })

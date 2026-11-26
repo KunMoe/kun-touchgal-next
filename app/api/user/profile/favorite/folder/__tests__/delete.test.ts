@@ -25,6 +25,8 @@ vi.mock('~/app/api/patch/cache', () => ({
   invalidatePatchContentCacheByPatchId: mocks.invalidateContent
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { deleteFolder } from '~/app/api/user/profile/favorite/folder/delete'
 
 // 事务外读的收藏关系 (带 unique_id, 用于本人的收藏状态缓存, 最多 501 条)
@@ -96,14 +98,10 @@ describe('deleteFolder', () => {
 
   it('详情失效失败不影响删除结果', async () => {
     mocks.invalidateContent.mockRejectedValue(new Error('redis down'))
-    const errorSpy = vi
-      .spyOn(console, 'error')
-      .mockImplementation(() => undefined)
 
     await expect(deleteFolder({ folderId: 1 }, 7)).resolves.toEqual({})
 
     expect(mocks.invalidateStatus).toHaveBeenCalledTimes(1)
-    errorSpy.mockRestore()
   })
 
   it('不是自己的收藏夹时不删除、不失效', async () => {

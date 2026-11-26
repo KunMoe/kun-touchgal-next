@@ -44,6 +44,8 @@ vi.mock('~/lib/s3', () => ({
   uploadImageToS3: uploadImageToS3Mock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { POST } from '~/app/api/user/image/route'
 
 const IMAGE_BED_URL = 'https://img.example.test'
@@ -143,7 +145,6 @@ describe('POST /api/user/image', () => {
   })
 
   it('文件头完整、像素数据损坏: 已经花了解码成本, 返回文案且不退额度', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(await (await postImage(await createTruncatedPng())).json()).toBe(
       '图片已损坏或无法处理'
     )

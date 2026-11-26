@@ -24,6 +24,7 @@ vi.mock('~/lib/redis', () => fakes.modules.redis)
 vi.mock('~/server/auth/attemptBudget', () => fakes.modules.budget)
 vi.mock('~/middleware/_verifyHeaderCookie', () => fakes.modules.session)
 vi.mock('~/server/auth/session', () => fakes.modules.sessionStore)
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 import { hashPassword } from '~/server/auth/algorithm'
 import {
@@ -33,6 +34,7 @@ import {
 } from '~/app/api/user/setting/__tests__/_credentialFakes'
 import { POST as changeEmail } from '~/app/api/user/setting/email/route'
 import { GET, POST } from '~/app/api/user/setting/email/revert/route'
+import { kunLog } from '~/lib/log.server'
 
 const { db, kv, mail, session } = fakes
 const UID = 7
@@ -104,6 +106,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(FIXED_NOW)
   fakes.reset()
+  vi.mocked(kunLog).mockClear()
   db.insertUser(makeUser({ id: UID, email: NEW_EMAIL }))
 })
 
@@ -276,10 +279,10 @@ describe('POST /api/user/setting/email/revert', () => {
 
   it('still reports the restored address when signing the sessions out fails', async () => {
     recordChange(TOKEN)
+    const error = new Error('redis unavailable')
     session.onRevoke(() => {
-      throw new Error('redis unavailable')
+      throw error
     })
-    vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const response = await postForm({ token: TOKEN })
     const html = await response.text()
@@ -289,6 +292,11 @@ describe('POST /api/user/setting/email/revert', () => {
     expect(html).toContain('请立即修改密码')
     expect(html).not.toContain('全部登录会话已被登出')
     expect(db.user(UID)?.email).toBe(OLD_EMAIL)
+    expect(kunLog).toHaveBeenCalledWith(
+      'auth.session_revoke_failed',
+      { reason: 'email_reverted', uid: UID },
+      error
+    )
   })
 
   it.each([
@@ -305,7 +313,6 @@ describe('POST /api/user/setting/email/revert', () => {
   })
 
   it('treats a body over the 16 KiB budget as carrying no token, and keeps the token', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     recordChange(TOKEN)
 
     const response = await postForm({
@@ -317,8 +324,8 @@ describe('POST /api/user/setting/email/revert', () => {
     expect(await titleOf(response)).toBe('撤销链接无效')
     expect(db.queries).toEqual([])
     expect(db.user(UID)?.email).toBe(NEW_EMAIL)
-    expect(warn).toHaveBeenCalledWith(
-      '[kunReadBody] rejected',
+    expect(kunLog).toHaveBeenCalledWith(
+      'body.rejected',
       expect.objectContaining({ path: revertPath, reason: 'too-large' })
     )
   })

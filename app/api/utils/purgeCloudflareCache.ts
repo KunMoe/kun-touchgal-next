@@ -1,3 +1,5 @@
+import { kunLog } from '~/lib/log.server'
+
 const CF_PURGE_TIMEOUT_MS = 5000
 
 export const purgeCloudflareCache = async (files: string[]) => {
@@ -15,10 +17,7 @@ export const purgeCloudflareCache = async (files: string[]) => {
   )
 
   if (!res.ok) {
-    console.error('Cloudflare cache purge failed:', {
-      status: res.status,
-      files
-    })
+    kunLog('cdn.purge_failed', { status: res.status, files: files.length })
   }
 
   return { status: res.status }

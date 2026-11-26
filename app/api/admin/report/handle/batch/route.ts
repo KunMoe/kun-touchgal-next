@@ -1,4 +1,5 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { adminBatchHandleReportSchema } from '~/validations/admin'
 import { handleReport } from '~/app/api/admin/report/handle/service'
 
@@ -27,10 +28,9 @@ export const POST = kunRoute.post({
           success += 1
         }
       } catch (error) {
-        console.error(
-          'Batch report handle failed:',
-          input.action,
-          reportId,
+        kunLog(
+          'admin.batch_item_failed',
+          { kind: 'report', action: input.action, id: reportId },
           error
         )
         failedIds.push(reportId)

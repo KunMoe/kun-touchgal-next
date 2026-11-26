@@ -48,7 +48,10 @@ vi.mock('~/server/moderation/apply', () => ({
   requeueModerationTask: requeueMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { PUT } from '~/app/api/admin/moderation/batch/route'
+import { kunLog } from '~/lib/log.server'
 
 const request = new Request('http://localhost/api/admin/moderation/batch', {
   method: 'PUT'
@@ -123,15 +126,19 @@ describe('PUT /admin/moderation/batch', () => {
       action: 'approve'
     })
     findTasksMock.mockResolvedValue([task(1), task(2)])
-    applyVerdictMock
-      .mockRejectedValueOnce(new Error('S3 timeout'))
-      .mockResolvedValueOnce(true)
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const error = new Error('S3 timeout')
+    applyVerdictMock.mockRejectedValueOnce(error).mockResolvedValueOnce(true)
 
     const res = await PUT(request)
 
     expect(await res.json()).toEqual({ success: 1, failedIds: [1] })
     expect(applyVerdictMock).toHaveBeenCalledTimes(2)
+    expect(kunLog).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledWith(
+      'admin.batch_item_failed',
+      { kind: 'moderation', action: 'approve', id: 1 },
+      error
+    )
   })
 
   it('skips tasks that already left pending / manual', async () => {

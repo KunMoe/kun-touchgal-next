@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { cookies } from 'next/headers'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { establishKunSession } from '~/server/auth/session'
 import { prisma } from '~/prisma/index'
 import { getUserStatus } from '~/app/api/user/status/service'
@@ -111,8 +112,7 @@ export const POST = kunRoute.post({
     try {
       reservation = await reserveTwoFactorAttempt(payload.jti, payload.id, ip)
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to reserve 2FA attempt', error)
+      kunLog('auth.dependency_failed', { stage: '2fa_attempt_reserve' }, error)
       return '2FA 验证服务暂不可用, 请稍后重试'
     }
 
@@ -135,8 +135,7 @@ export const POST = kunRoute.post({
         userAgent: req.headers.get('user-agent') ?? ''
       })
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to verify 2FA', error)
+      kunLog('auth.dependency_failed', { stage: '2fa_verify' }, error)
       return '2FA 验证服务暂不可用, 请稍后重试'
     }
 

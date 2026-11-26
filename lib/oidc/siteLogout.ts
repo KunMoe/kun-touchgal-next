@@ -5,6 +5,7 @@ import {
   deleteKunTokenSession
 } from '~/server/auth/session'
 import { kunCookieOptions } from '~/server/auth/cookieOptions'
+import { kunLog } from '~/lib/log.server'
 import type Provider from 'oidc-provider'
 import type { KoaContextWithOIDC } from 'oidc-provider'
 
@@ -50,8 +51,11 @@ export const registerKunSiteLogout = (provider: Provider) => {
 
     // provider 会话已经销毁, 这里失败也照样清 cookie: 浏览器这一侧总能退出
     await deleteKunTokenSession(site.uid, site.jti).catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error('Failed to revoke the site session on OIDC logout', error)
+      kunLog(
+        'auth.session_revoke_failed',
+        { reason: 'oidc_logout', uid: site.uid },
+        error
+      )
     })
     clearSiteCookie(ctx as KoaContextWithOIDC)
   })

@@ -1,6 +1,7 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
 import { KUN_BODY_BUDGET } from '~/constants/bodyBudget'
 import { kunBodyFormData, kunBodyJson, kunReadBody } from '~/lib/http/readBody'
+import { kunLog } from '~/lib/log.server'
 import { delKv, getKv } from '~/lib/redis'
 import { finishKunSecurityEvent } from '~/server/auth/securityEvents'
 import {
@@ -146,8 +147,11 @@ const revert = async (req: NextRequest) => {
   try {
     await finishKunSecurityEvent(result.uid, 'email-reverted')
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to revoke sessions after email revert', error)
+    kunLog(
+      'auth.session_revoke_failed',
+      { reason: 'email_reverted', uid: result.uid },
+      error
+    )
     return createEmailChangeRevertResponse(
       '邮箱已恢复',
       `账户邮箱已恢复为 ${result.oldEmail}, 但登出该账户的现有登录会话时出错。请立即修改密码 (修改密码会登出全部会话) 并检查 2FA 设置。`

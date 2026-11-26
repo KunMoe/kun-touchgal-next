@@ -76,6 +76,8 @@ vi.mock('~/server/moderation/submit', () => ({
   createModerationTask: createModerationTaskMock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { POST } from '~/app/api/user/setting/avatar/route'
 
 const UID = 7
@@ -242,7 +244,6 @@ describe('POST /api/user/setting/avatar', () => {
   })
 
   it('文件头完整、像素数据损坏: 已经花了解码成本, 返回文案且不退额度', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(await (await postAvatar(await createTruncatedPng())).json()).toBe(
       '图片已损坏或无法处理'
     )

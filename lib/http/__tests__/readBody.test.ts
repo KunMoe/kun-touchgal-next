@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
+import { kunLog } from '~/lib/log.server'
 import {
   KunBodyLimitError,
   kunBodyFailureMessage,
@@ -37,12 +41,8 @@ const streamOf = (chunks: Uint8Array[], onCancel?: () => void) =>
     }
   })
 
-let warnSpy: ReturnType<typeof vi.spyOn>
 beforeEach(() => {
-  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-})
-afterEach(() => {
-  warnSpy.mockRestore()
+  vi.mocked(kunLog).mockClear()
 })
 
 describe('parseContentLength', () => {
@@ -163,13 +163,14 @@ describe('kunReadBody', () => {
     const result = await kunReadBody(new Request(URL_), 100)
 
     expect(result).toEqual({ ok: true, bytes: new Uint8Array(0) })
-    expect(warnSpy).not.toHaveBeenCalled()
+    expect(kunLog).not.toHaveBeenCalled()
   })
 
   it('每次拒绝记一行 warn, 带路径与计数', async () => {
     await kunReadBody(fakeRequest(null, { 'content-length': '500' }), 100)
 
-    expect(warnSpy).toHaveBeenCalledWith('[kunReadBody] rejected', {
+    expect(kunLog).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledWith('body.rejected', {
       path: '/api/test',
       reason: 'too-large',
       maxBytes: 100,

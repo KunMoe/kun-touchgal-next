@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { fetchVndbVn } from '~/lib/arnebiae/vndb'
 import { TAG_MAP } from '~/lib/tagMap'
 import type {
@@ -77,8 +78,7 @@ export const POST = kunRoute.post({
 
       return NextResponse.json({ titles, released, tags, developers })
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('VNDB vn fetch failed', { vndbId, error })
+      kunLog('external.request_failed', { source: 'vndb', id: vndbId }, error)
       return NextResponse.json('VNDB API 请求失败')
     }
   }

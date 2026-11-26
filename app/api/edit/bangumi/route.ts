@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { BANGUMI_API_BASE, BANGUMI_HEADERS } from '~/constants/bangumi'
 import { lowQualityTags } from '~/lib/bgmDirtyTag'
 import { extractDevelopers, type BangumiInfoboxItem } from './_developers'
@@ -59,11 +60,11 @@ export const POST = kunRoute.post({
         developers
       })
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Bangumi fetch failed', {
-        bangumiId: input.bangumiId,
+      kunLog(
+        'external.request_failed',
+        { source: 'bangumi', id: input.bangumiId },
         error
-      })
+      )
       return NextResponse.json('Bangumi API 请求失败')
     }
   }

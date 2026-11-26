@@ -1,4 +1,5 @@
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { parseCookies } from '~/utils/cookies'
 import { verify2FA } from '~/app/api/utils/verify2FA'
 import { isTwoFactorChallengeActive } from '~/app/api/auth/_twoFactorChallenge'
@@ -25,8 +26,7 @@ export const GET = kunRoute.get({
         return '2FA 临时令牌已失效, 请重新登录'
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to check 2FA challenge', error)
+      kunLog('auth.dependency_failed', { stage: '2fa_challenge_check' }, error)
       return '2FA 验证服务暂不可用, 请稍后重试'
     }
 

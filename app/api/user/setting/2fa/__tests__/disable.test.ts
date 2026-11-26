@@ -14,6 +14,7 @@ vi.mock('~/lib/redis', () => fakes.modules.redis)
 vi.mock('~/server/auth/attemptBudget', () => fakes.modules.budget)
 vi.mock('~/middleware/_verifyHeaderCookie', () => fakes.modules.session)
 vi.mock('~/server/auth/session', () => fakes.modules.sessionStore)
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 
 import { hashTwoFactorBackupCode } from '~/server/auth/twoFactorBackupCode'
 import {
@@ -373,7 +374,6 @@ describe('POST /api/user/setting/2fa/disable', () => {
 
     it('fails closed when attempts cannot be counted', async () => {
       budget.failNext()
-      vi.spyOn(console, 'error').mockImplementation(() => {})
 
       const response = await post({ token: totpAt(TOTP_SECRET) })
 

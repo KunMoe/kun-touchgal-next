@@ -13,12 +13,8 @@ import {
   getUserSessionCacheScope,
   setCachedUserSession
 } from '~/server/auth/sessionCache'
+import { kunLog } from '~/lib/log.server'
 import type { UserSession, UserState } from '~/types/api/session'
-
-const logSessionError = (message: string, error: unknown) => {
-  // eslint-disable-next-line no-console
-  console.error(message, error)
-}
 
 // 模块内部的约定: 基础设施失败用异常表达, 正面否定 (用户不存在 / 已封禁) 用 null 表达,
 // 到模块边界 (resolveUserSessionByToken) 一次性转成三态
@@ -35,7 +31,11 @@ const getUserState = async (uid: number): Promise<UserState | null> => {
   if (typeof user === 'string') {
     // 库给出的正面证据: 删不掉会话也不改变结论 (这个分支不写缓存, 下次照样查库拒绝)
     await finishKunSecurityEvent(uid, 'ban-detected').catch((error) =>
-      logSessionError('Failed to revoke sessions of a missing user:', error)
+      kunLog(
+        'auth.session_revoke_failed',
+        { reason: 'user_missing', uid },
+        error
+      )
     )
     return null
   }
@@ -86,7 +86,7 @@ export const getServerUserSession = async (): Promise<UserSession | null> => {
 
   const resolution = await resolveCachedUserSessionByToken(token)
   if (resolution.kind === 'unavailable') {
-    logSessionError('User session service unavailable:', resolution.cause)
+    kunLog('auth.session_unavailable', { source: 'page' }, resolution.cause)
     return null
   }
   return resolution.kind === 'authenticated' ? resolution.session : null

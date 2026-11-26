@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { fetchSteamAppData } from '~/lib/arnebiae/steam'
 
 const steamSchema = z.object({
@@ -22,8 +23,11 @@ export const POST = kunRoute.post({
         developers: data.developers
       })
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Steam fetch failed', { steamId: input.steamId, error })
+      kunLog(
+        'external.request_failed',
+        { source: 'steam', id: input.steamId },
+        error
+      )
       return NextResponse.json('Steam API 请求失败')
     }
   }

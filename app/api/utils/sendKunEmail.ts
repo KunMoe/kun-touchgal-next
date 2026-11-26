@@ -1,3 +1,5 @@
+import { kunLog } from '~/lib/log.server'
+
 export const SEND_EMAIL_TIMEOUT_MS = 15 * 1000
 const SEND_EMAIL_ERROR = '邮件发送失败, 请稍后重试'
 
@@ -30,22 +32,24 @@ export const sendKunEmail = async (payload: KunEmailPayload) => {
     )
 
     if (!res.ok) {
-      const text = await res.text()
-      console.error('Failed to send email:', {
-        tag: payload.tag,
-        status: res.status,
-        body: text
-      })
+      // 中继的原始响应体不写进日志 (可能带收件地址), 只释放掉
+      await res.body?.cancel()
+      kunLog('email.send_failed', { tag: payload.tag, status: res.status })
       return SEND_EMAIL_ERROR
     }
 
     const r = await res.json()
     if (r.status === 'error') {
-      console.error('Failed to send email:', { tag: payload.tag, body: r })
+      // 只记中继的错误码 (如 Postal 的 NoRecipients), 不记 message
+      kunLog('email.send_failed', {
+        tag: payload.tag,
+        relayStatus: 'error',
+        relayCode: typeof r.data?.code === 'string' ? r.data.code : undefined
+      })
       return SEND_EMAIL_ERROR
     }
   } catch (error) {
-    console.error('Failed to send email:', { tag: payload.tag, error })
+    kunLog('email.send_failed', { tag: payload.tag }, error)
     return SEND_EMAIL_ERROR
   }
 }

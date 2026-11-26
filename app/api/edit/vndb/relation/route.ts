@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { fetchVndbRelease } from '~/lib/arnebiae/vndb'
 
 const relationSchema = z.object({
@@ -46,8 +47,11 @@ export const POST = kunRoute.post({
         released: release.released ?? ''
       })
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('VNDB release fetch failed', { relationId, error })
+      kunLog(
+        'external.request_failed',
+        { source: 'vndb_release', id: relationId },
+        error
+      )
       return NextResponse.json('VNDB Release API 请求失败')
     }
   }

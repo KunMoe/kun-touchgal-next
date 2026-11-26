@@ -31,6 +31,7 @@ vi.mock('~/server/auth/sessionActivity', () => ({
   touchUserLastActiveTime: touchUserLastActiveTimeMock,
   updateUserLastLoginTime: vi.fn()
 }))
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 vi.mock('~/app/api/message/unread/service', () => ({
   getUnreadMessageStatus: getUnreadMock,
   KUN_UNREAD_UNAVAILABLE: {
@@ -45,6 +46,7 @@ import {
   resolveKunSiteSession
 } from '~/server/auth/session'
 import { GET } from '~/app/api/user/session/route'
+import { kunLog } from '~/lib/log.server'
 
 const UID = 7
 const OTHER_UID = 8
@@ -114,7 +116,6 @@ beforeEach(() => {
       blocked_tag_ids: []
     })
   )
-  vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
 afterEach(() => {
@@ -184,7 +185,8 @@ describe('GET /api/user/session', () => {
 
   it('returns 503 when getUserStatus rejects, without deleting any session (T60: was 401)', async () => {
     const token = await login()
-    getUserStatusMock.mockRejectedValue(new Error('db down'))
+    const error = new Error('db down')
+    getUserStatusMock.mockRejectedValue(error)
 
     const response = await GET(request(token))
 
@@ -193,6 +195,11 @@ describe('GET /api/user/session', () => {
     expect(redis.callNames()).not.toContain('delKvsAndRemoveKvSetMembers')
     expect(await alive(token)).toBe(true)
     expect(touchUserLastActiveTimeMock).not.toHaveBeenCalled()
+    expect(kunLog).toHaveBeenCalledWith(
+      'auth.session_unavailable',
+      { source: 'api' },
+      error
+    )
   })
 
   it.each(['用户未找到', '用户登录失效'])(
@@ -220,12 +227,18 @@ describe('GET /api/user/session', () => {
   it('still returns 401 when deleting the sessions fails in that branch (T60: the route used to throw)', async () => {
     const token = await login()
     getUserStatusMock.mockResolvedValue('用户登录失效')
-    redis.failNext('delKvsAndRemoveKvSetMembers', new Error('redis del failed'))
+    const error = new Error('redis del failed')
+    redis.failNext('delKvsAndRemoveKvSetMembers', error)
 
     const response = await GET(request(token))
 
     expect(response.status).toBe(401)
     expect(await response.json()).toBe('用户登录失效')
+    expect(kunLog).toHaveBeenCalledWith(
+      'auth.session_revoke_failed',
+      { reason: 'user_missing', uid: UID },
+      error
+    )
   })
 
   it('serves a session-cache hit without calling getUserStatus or touchUserLastActiveTime', async () => {

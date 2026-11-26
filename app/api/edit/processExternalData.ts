@@ -1,4 +1,5 @@
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { saveManualTagChange } from './batchTag'
 import { invalidateCompanyListCache } from '~/app/api/company/cache'
 import { invalidateTagListCache } from '~/app/api/tag/cache'
@@ -206,9 +207,9 @@ export const processSubmittedExternalData = async (
   const results = await Promise.allSettled(tasks.map(([, task]) => task))
   results.forEach((result, index) => {
     if (result.status === 'rejected') {
-      // eslint-disable-next-line no-console
-      console.error(
-        `Failed to process external ${tasks[index][0]} data for patch ${patchId}:`,
+      kunLog(
+        'edit.external_data_failed',
+        { source: tasks[index][0], patchId },
         result.reason
       )
     }
@@ -219,8 +220,7 @@ export const processSubmittedExternalData = async (
   // 无条件入队, 顺带收尾调用方在此之前写的别名与字段; 调用方返回之后只需 kick 一次消费。
   // 与上面同理不上抛, 失败留痕
   await enqueueSearchOutbox(prisma, patchId).catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error(`Failed to enqueue search sync for patch ${patchId}:`, error)
+    kunLog('search.enqueue_failed', { patchId }, error)
   })
 
   await Promise.all([

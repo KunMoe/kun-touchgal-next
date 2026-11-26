@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { kunTx } from '~/server/db/tx'
 import { creditGalgamePublish } from '~/server/points/account'
 import { encodePatchBanner } from './_upload'
@@ -262,8 +263,7 @@ export const createGalgame = async (input: CreateGalgameInput, uid: number) => {
   if (contentLimit === 'sfw') {
     const newPatchUrl = `${kunMoyuMoe.domain.main}/${galgameUniqueId}`
     void postToIndexNow(newPatchUrl).catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error('Failed to post new patch to IndexNow', error)
+      kunLog('external.request_failed', { source: 'indexnow' }, error)
     })
   }
 
