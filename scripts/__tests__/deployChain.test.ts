@@ -52,13 +52,15 @@ const createChain = ({
   pendingPost = 0,
   probeOutput = `共 ${pendingPost} 个 (--phase post)\n`,
   dirty = '',
-  ref
+  ref,
+  remoteBranches = []
 }: {
   failing?: string[]
   pendingPost?: number
   probeOutput?: string
   dirty?: string
   ref?: string
+  remoteBranches?: string[]
 } = {}) => {
   const steps: string[] = []
   const step = (name: string) => {
@@ -75,6 +77,16 @@ const createChain = ({
       run: step,
       capture: (command: string) => {
         step(command)
+        const remote =
+          /^git rev-parse --verify --quiet refs\/remotes\/origin\/(.+)$/.exec(
+            command
+          )
+        if (remote) {
+          if (!remoteBranches.includes(remote[1])) {
+            throw new Error(`Command failed: ${command}`)
+          }
+          return 'f'.repeat(40)
+        }
         return command === STATUS ? dirty : probeOutput
       },
       preflight: () => step('preflight'),
@@ -137,14 +149,32 @@ describe('kunRunDeployChain', () => {
     expect(steps.indexOf(INSTALL)).toBeLessThan(steps.indexOf(PRE_MIGRATE))
   })
 
-  it('给了版本时切到它的分离 HEAD, 不在当前分支上 pull', async () => {
+  it('给了标签或提交号时切到它的分离 HEAD, 不在当前分支上 pull', async () => {
     const { steps, deps } = createChain({ ref: 'v1.2.3' })
 
     await expect(kunRunDeployChain(deps)).resolves.toBe('ok')
     expect(steps).toEqual(
       chainWith(FULL_VERIFY, [
-        'git fetch origin',
+        'git fetch origin --tags',
+        'git rev-parse --verify --quiet refs/remotes/origin/v1.2.3',
         'git checkout --detach v1.2.3'
+      ])
+    )
+  })
+
+  // 本地的同名分支可能停在上一次 pull 的地方: 按它部署会悄悄发出旧代码
+  it('给了分支名时按 fetch 下来的远端分支部署, 不按本地的同名分支', async () => {
+    const { steps, deps } = createChain({
+      ref: 'main',
+      remoteBranches: ['main']
+    })
+
+    await expect(kunRunDeployChain(deps)).resolves.toBe('ok')
+    expect(steps).toEqual(
+      chainWith(FULL_VERIFY, [
+        'git fetch origin --tags',
+        'git rev-parse --verify --quiet refs/remotes/origin/main',
+        'git checkout --detach refs/remotes/origin/main'
       ])
     )
   })

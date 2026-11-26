@@ -85,6 +85,20 @@ const runSearchSteps = (
 // ref 进的是 shell 命令: 只收分支、标签、提交号会用到的字符, 也不许以 - 开头被当成选项
 const DEPLOY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/
 
+const remoteBranchOrRef = (
+  capture: (command: string) => string,
+  ref: string
+) => {
+  const remote = `refs/remotes/origin/${ref}`
+  try {
+    capture(`git rev-parse --verify --quiet ${remote}`)
+    return remote
+  } catch {
+    // 不是远端分支: 标签或提交号, 原样交给 git
+    return ref
+  }
+}
+
 const checkoutTarget = (
   run: (command: string) => void,
   capture: (command: string) => string,
@@ -105,8 +119,9 @@ const checkoutTarget = (
     if (ref === undefined) {
       run('git pull --ff-only')
     } else {
-      run('git fetch origin')
-      run(`git checkout --detach ${ref}`)
+      run('git fetch origin --tags')
+      // 分支名取远端的: 检出里的同名本地分支可能停在上一次 pull 的地方, 按它部署就是悄悄发了旧代码
+      run(`git checkout --detach ${remoteBranchOrRef(capture, ref)}`)
     }
   } catch (error) {
     console.error(
