@@ -22,7 +22,7 @@ const main = async () => {
   }
   const repoDir = process.cwd()
   const expectedNode = kunDeclaredNodeVersion(repoDir)
-  // 闸门发现进程的 Node 不对时会 pm2 update, 它换成的是当前 shell 的 node
+  // 闸门发现进程的 Node 不对时会重启 PM2 守护进程, 新的守护进程用的是当前 shell 的 node
   assertShellNodeVersion(expectedNode)
   const apps = kunEcosystemApps(repoDir)
   const result = await rollbackTo(

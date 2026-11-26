@@ -85,9 +85,11 @@ interface WorldOptions {
   // 测试开始时 PM2 上是否已有在跑的应用 (跑的是那时 current 指向的发布)
   running?: boolean
   daemonNode?: string
-  // pm2 update 之后守护进程的 Node; 不给就不变
-  nodeAfterUpdate?: string
-  // 启动 / pm2 update 之后的前 n 次 list() 里, 进程还没报上 Node 版本: 启动后是 null, update 后是 dump 里的旧值
+  // 重启守护进程之后它的 Node; 不给就不变
+  nodeAfterRestart?: string
+  // 重启守护进程时抛错 (真实现在 PM2 还管着别的应用时拒绝)
+  failRestartDaemon?: boolean
+  // 每次启动之后的前 n 次 list() 里, 进程还没报上 Node 版本 (null)
   reportAfterLists?: number
   // 第 n 次 (从 1 数) 调用时抛错
   failStartAt?: number[]
@@ -120,9 +122,8 @@ const createWorld = (options: WorldOptions = {}) => {
   const logs: string[] = []
   const saves: number[] = []
   const counts = { start: 0, stop: 0 }
-  // 还要几次 list() 进程才报上 Node 版本, 报上之前显示的值
+  // 还要几次 list() 进程才报上 Node 版本
   let pendingReports = 0
-  let unreported: string | null = null
   // 每次启动都分配新的 pm_id (真 PM2 会复用删掉的编号; 闸门每次都新记基线, 两种都一样)
   let nextPmId = 0
   const spawn = () =>
@@ -165,25 +166,20 @@ const createWorld = (options: WorldOptions = {}) => {
       running = { release: readCurrentReleaseId(layout), node: daemonNode }
       instances = spawn()
       pendingReports = options.reportAfterLists ?? 0
-      unreported = null
       if (options.failStartAt?.includes(counts.start)) {
         throw new Error('pnpm start 失败')
       }
     },
-    update: () => {
-      enter('update')
-      pendingReports = options.reportAfterLists ?? 0
-      unreported = daemonNode
-      daemonNode = options.nodeAfterUpdate ?? daemonNode
+    restartDaemon: async () => {
+      enter('restartDaemon')
+      // 真实现见到我们的应用还在就抛错; 这里记成违例, 让每个用例都核对得到
       if (running) {
-        running = { release: readCurrentReleaseId(layout), node: daemonNode }
-        // 恢复出来的进程沿用原来的 pm_id、重启次数还多了一次: 比真 PM2 (重新编号、从 0 数起) 苛刻,
-        // 闸门不在 update 之后重新记基线就会误判
-        instances = instances.map((instance) => ({
-          ...instance,
-          restarts: instance.restarts + 1
-        }))
+        violations.push('restartDaemon: 应用还在跑')
       }
+      if (options.failRestartDaemon) {
+        throw new Error('PM2 还管着别的应用 (other-app), 不自动重启守护进程')
+      }
+      daemonNode = options.nodeAfterRestart ?? daemonNode
     },
     save: () => {
       enter('save')
@@ -206,7 +202,7 @@ const createWorld = (options: WorldOptions = {}) => {
             : instance
         )
       }
-      const nodeVersion = pendingReports > 0 ? unreported : live.node
+      const nodeVersion = pendingReports > 0 ? null : live.node
       pendingReports = Math.max(0, pendingReports - 1)
       return instances.map((instance): KunPm2Process => ({
         ...instance,
@@ -376,17 +372,16 @@ describe('activateRelease', () => {
     const result = await activateRelease(world.deps, R2)
 
     expect(result).toMatchObject({ ok: true, id: R2 })
-    expect(world.calls).not.toContain(`update@${R2}`)
+    expect(world.calls).not.toContain(`restartDaemon@${R2}`)
   })
 
-  it('runs pm2 update once and keeps polling until the resurrected processes report the declared Node', async () => {
+  it('deletes the apps before restarting the PM2 daemon when the processes run another Node, then starts again', async () => {
     addReleases(R1)
     addBuilt(R2)
     switchCurrentRelease(layout, R1)
-    // update 之后前两次看到的还是 dump 里的 26.3.1
     const world = createWorld({
       daemonNode: '26.3.1',
-      nodeAfterUpdate: EXPECTED_NODE,
+      nodeAfterRestart: EXPECTED_NODE,
       reportAfterLists: 2
     })
 
@@ -396,15 +391,33 @@ describe('activateRelease', () => {
     expect(world.calls).toEqual([
       `stopAll@${R1}`,
       `startAll@${R2}`,
-      `update@${R2}`,
+      `stopAll@${R2}`,
+      `restartDaemon@${R2}`,
+      `startAll@${R2}`,
       `save@${R2}`
     ])
+    expect(world.violations).toEqual([])
     expect(world.running()).toEqual({ release: R2, node: EXPECTED_NODE })
-    // 恢复出来的进程带着更多的重启次数, 不算等待期间的重启
-    expect(world.restarts().every((count) => count === 1)).toBe(true)
   })
 
-  it('fails and rolls back when pm2 update does not bring the declared Node by the deadline', async () => {
+  it('gives the restart after the daemon swap a fresh deadline', async () => {
+    addReleases(R1)
+    addBuilt(R2)
+    switchCurrentRelease(layout, R1)
+    // 每次启动都要 8 轮 (8 秒) 才报上 Node: 两次启动合起来超过 10 秒的时限, 各自都不超过
+    const world = createWorld({
+      daemonNode: '26.3.1',
+      nodeAfterRestart: EXPECTED_NODE,
+      reportAfterLists: 8
+    })
+
+    const result = await activateRelease(world.deps, R2)
+
+    expect(result).toMatchObject({ ok: true, id: R2 })
+    expect(world.clock()).toBeGreaterThan(TIMEOUT_MS)
+  })
+
+  it('fails at once and rolls back when the restarted daemon still runs another Node', async () => {
     addReleases(R1)
     addBuilt(R2)
     switchCurrentRelease(layout, R1)
@@ -415,16 +428,42 @@ describe('activateRelease', () => {
     expect(result).toMatchObject({ ok: false, id: R2, rolledBackTo: R1 })
     expect(!result.ok && result.reason).toContain('26.3.1')
     expect(!result.ok && result.reason).toContain(EXPECTED_NODE)
-    expect(world.clock()).toBeGreaterThanOrEqual(TIMEOUT_MS)
+    expect(world.clock()).toBeLessThan(TIMEOUT_MS)
     expect(world.calls).toEqual([
       `stopAll@${R1}`,
       `startAll@${R2}`,
-      `update@${R2}`,
+      `stopAll@${R2}`,
+      `restartDaemon@${R2}`,
+      `startAll@${R2}`,
       `stopAll@${R2}`,
       `startAll@${R1}`,
       `save@${R1}`
     ])
+    expect(world.violations).toEqual([])
     expect(readCurrentReleaseId(layout)).toBe(R1)
+  })
+
+  it('rolls back without killing the daemon when it refuses to restart', async () => {
+    addReleases(R1)
+    addBuilt(R2)
+    switchCurrentRelease(layout, R1)
+    const world = createWorld({ daemonNode: '26.3.1', failRestartDaemon: true })
+
+    const result = await activateRelease(world.deps, R2)
+
+    expect(result).toMatchObject({ ok: false, id: R2, rolledBackTo: R1 })
+    expect(result).not.toHaveProperty('rollbackFailed')
+    expect(!result.ok && result.reason).toContain('别的应用')
+    expect(world.calls).toEqual([
+      `stopAll@${R1}`,
+      `startAll@${R2}`,
+      `stopAll@${R2}`,
+      `restartDaemon@${R2}`,
+      `stopAll@${R2}`,
+      `startAll@${R1}`,
+      `save@${R1}`
+    ])
+    expect(world.running()).toEqual({ release: R1, node: '26.3.1' })
   })
 
   it('fails without waiting for the deadline once PM2 gives up on a process', async () => {

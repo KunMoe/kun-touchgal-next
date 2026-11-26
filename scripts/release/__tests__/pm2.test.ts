@@ -175,12 +175,110 @@ describe('createKunPm2', () => {
     ).toThrow('pm2 jlist')
   })
 
-  it('maps start, update and save to the commands', () => {
+  it('maps start and save to the commands', () => {
     const shell = createShell({})
     const pm2 = createKunPm2({ repoDir, apps: APPS, ...shell })
     pm2.startAll()
-    pm2.update()
     pm2.save()
-    expect(shell.commands).toEqual(['pnpm start', 'pm2 update', 'pm2 save'])
+    expect(shell.commands).toEqual(['pnpm start', 'pm2 save'])
+  })
+})
+
+describe('restartDaemon', () => {
+  const moduleEntry = {
+    name: 'pm2-logrotate',
+    pm_id: 0,
+    pm2_env: { status: 'online', pmx_module: true }
+  }
+  // 守护进程 4242 在 pm2 kill 之后第 aliveChecks 次检查时才退出
+  const daemon = (aliveChecks: number) => {
+    let checks = 0
+    return {
+      daemonPid: () => 4242,
+      isAlive: (pid: number) => {
+        expect(pid).toBe(4242)
+        checks += 1
+        return checks < aliveChecks
+      },
+      sleeps: [] as number[],
+      checks: () => checks
+    }
+  }
+
+  it('kills the daemon and waits until its pid is gone, keeping modules out of the way', async () => {
+    const shell = createShell({ 'pm2 jlist': JSON.stringify([moduleEntry]) })
+    const d = daemon(4)
+    const pm2 = createKunPm2({
+      repoDir,
+      apps: APPS,
+      ...shell,
+      ...d,
+      sleep: async (ms) => {
+        d.sleeps.push(ms)
+      }
+    })
+
+    await pm2.restartDaemon()
+
+    expect(shell.commands).toEqual(['pm2 jlist', 'pm2 jlist', 'pm2 kill'])
+    expect(d.checks()).toBe(4)
+    expect(d.sleeps).toEqual([200, 200, 200])
+  })
+
+  it('refuses while our apps are still in PM2', async () => {
+    const shell = createShell({
+      'pm2 jlist': JSON.stringify([
+        jlistEntry(1, 'kun-touchgal-next-cron', 'stopping')
+      ])
+    })
+    const pm2 = createKunPm2({ repoDir, apps: APPS, ...shell, ...daemon(1) })
+
+    await expect(pm2.restartDaemon()).rejects.toThrow('kun-touchgal-next-cron')
+    expect(shell.commands).not.toContain('pm2 kill')
+  })
+
+  it("refuses when the daemon also manages someone else's app", async () => {
+    const shell = createShell({
+      'pm2 jlist': JSON.stringify([
+        moduleEntry,
+        jlistEntry(1, 'other-app', 'online')
+      ])
+    })
+    const pm2 = createKunPm2({ repoDir, apps: APPS, ...shell, ...daemon(1) })
+
+    await expect(pm2.restartDaemon()).rejects.toThrow('other-app')
+    expect(shell.commands).not.toContain('pm2 kill')
+  })
+
+  it('throws when the old daemon outlives the timeout', async () => {
+    const shell = createShell({ 'pm2 jlist': '[]' })
+    const pm2 = createKunPm2({
+      repoDir,
+      apps: APPS,
+      ...shell,
+      daemonPid: () => 4242,
+      isAlive: () => true,
+      sleep: async () => {},
+      daemonExitTimeoutMs: 1000
+    })
+
+    await expect(pm2.restartDaemon()).rejects.toThrow('4242')
+    expect(shell.commands).toContain('pm2 kill')
+  })
+
+  it('only kills when no daemon pid is on record', async () => {
+    const shell = createShell({ 'pm2 jlist': '[]' })
+    const pm2 = createKunPm2({
+      repoDir,
+      apps: APPS,
+      ...shell,
+      daemonPid: () => null,
+      isAlive: () => {
+        throw new Error('should not check')
+      }
+    })
+
+    await pm2.restartDaemon()
+    expect(shell.commands).toEqual(['pm2 jlist', 'pm2 jlist', 'pm2 kill'])
   })
 })

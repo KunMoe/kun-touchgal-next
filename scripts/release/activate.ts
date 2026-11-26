@@ -40,7 +40,7 @@ export interface ActivateDeps {
   sleep(ms: number): Promise<void>
   log(message: string): void
   now?: () => number
-  // 一次闸门 (含 pm2 update) 的总时限, 默认 120 秒
+  // 闸门每次启动应用之后的时限 (重启守护进程之后重新计), 默认 120 秒
   gateTimeoutMs?: number
   // 默认 1 秒
   pollMs?: number
@@ -202,28 +202,22 @@ const waitHealthy = async (
 }
 
 // 进程的 Node 版本由子进程起来之后经 IPC 报给 PM2 (pm2 的 lib/God/ClusterMode.js), 刚 online 时可能还没报
-// (null); pm2 update 恢复出来的进程在报上来之前是 dump 里的旧值。untilMatch 为 false 时等到每个进程都报了,
-// 为 true 时等到每个进程都是期望的版本: 看第一眼就下结论, 会把还没报上来的当成不一致
+// (null): 等到每个进程都报了再比, 看第一眼就下结论会把还没报上来的当成不一致
 const waitNodeVersions = async (
-  wait: GateWait,
-  untilMatch: boolean
+  wait: GateWait
 ): Promise<KunPm2Process[] | string> => {
-  const { expectedNode, sleep } = wait.deps
+  const { sleep } = wait.deps
   for (;;) {
     const processes = await waitOnline(wait)
     if (typeof processes === 'string') {
       return processes
     }
-    const unsettled = processes.filter((proc) =>
-      untilMatch ? proc.nodeVersion !== expectedNode : proc.nodeVersion === null
-    )
+    const unsettled = processes.filter((proc) => proc.nodeVersion === null)
     if (unsettled.length === 0) {
       return processes
     }
     if (wait.now() >= wait.deadline) {
-      return untilMatch
-        ? `进程的 Node 仍与 ${expectedNode} 不一致: ${describeNodes(unsettled)}`
-        : `${wait.timeoutSeconds} 秒内进程没有报上 Node 版本: ${describeNodes(unsettled)}`
+      return `${wait.timeoutSeconds} 秒内进程没有报上 Node 版本: ${describeNodes(unsettled)}`
     }
     await sleep(wait.pollMs)
   }
@@ -262,7 +256,7 @@ const runGate = async (
   let wait = startWait(deps)
   log(`启动应用 (${id})`)
   pm2.startAll()
-  const reported = await waitNodeVersions(wait, false)
+  const reported = await waitNodeVersions(wait)
   if (typeof reported === 'string') {
     return reported
   }
@@ -270,16 +264,23 @@ const runGate = async (
     (proc) => proc.nodeVersion !== expectedNode
   )
   if (mismatched.length > 0) {
-    // PM2 守护进程常驻, 拉起的应用跑在它启动时的 node 上; pm2 update 换成当前 shell 的 node
+    // PM2 守护进程常驻, 拉起的应用跑在它启动时的 node 上。应用删掉之后再杀守护进程 (见 pm2.ts 的
+    // restartDaemon), pnpm start 用当前 shell 的 node 拉起新的; 时限与重启基线都重新计
     log(
-      `进程的 Node 与 .node-version 的 ${expectedNode} 不一致 (${describeNodes(mismatched)}), 执行 pm2 update`
+      `进程的 Node 与 .node-version 的 ${expectedNode} 不一致 (${describeNodes(mismatched)}), 停掉应用、重启 PM2 守护进程后再启动`
     )
-    pm2.update()
-    // 恢复出来的进程不是原来那些, 重启次数的基线重新记; 时限不重新算
-    wait = { ...wait, inspect: watchProcesses() }
-    const updated = await waitNodeVersions(wait, true)
-    if (typeof updated === 'string') {
-      return `pm2 update 之后${updated}`
+    pm2.stopAll()
+    await pm2.restartDaemon()
+    wait = startWait(deps)
+    log(`启动应用 (${id})`)
+    pm2.startAll()
+    const restarted = await waitNodeVersions(wait)
+    if (typeof restarted === 'string') {
+      return `重启守护进程之后${restarted}`
+    }
+    const still = restarted.filter((proc) => proc.nodeVersion !== expectedNode)
+    if (still.length > 0) {
+      return `重启守护进程之后进程的 Node 仍与 ${expectedNode} 不一致: ${describeNodes(still)}`
     }
   }
   const unhealthy = await waitHealthy(wait, id)
@@ -318,7 +319,7 @@ const restore = async (
     }
     pm2.startAll()
     unhealthy = await waitHealthy(startWait(deps), target)
-    // pm2 update 之后 dump 里可能没有我们的应用, 起来之后都要存一次
+    // 闸门重启过守护进程的话 dump 里是旧的列表, 起来之后都要存一次
     pm2.save()
   } catch (error) {
     return `回滚到 ${labelOf(target)} 没有做完: ${errorMessage(error)}。current 现在是 ${describeCurrent(layout)}, 用 pm2 ls 确认进程`
