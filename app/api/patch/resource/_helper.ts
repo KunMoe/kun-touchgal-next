@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto'
 import { deleteFileFromS3 } from '~/lib/s3'
+import { kunLog } from '~/lib/log.server'
 import { acquireKvLock, releaseKvLock } from '~/lib/redis'
 import { prisma } from '~/prisma/index'
 import type { KunTx } from '~/prisma/index'
@@ -82,7 +83,13 @@ export const bindUploadedResource = async (
       // finalKey 孤儿 (随机段, 重试会生成新 key 使其永久泄漏)。DeleteObject 幂等
       // (未创建则 no-op)：即时清理；即时删除亦失败时入删除写出箱由 worker 兜底重试
       await deleteFileFromS3(finalKey).catch(() =>
-        enqueueS3Deletion(prisma, [finalKey]).catch(() => undefined)
+        enqueueS3Deletion(prisma, [finalKey]).catch((cleanupError) =>
+          kunLog(
+            's3.orphan_left',
+            { via: 'resource.bind_rollback', key: finalKey },
+            cleanupError
+          )
+        )
       )
       await prisma.user
         .updateMany({
@@ -92,7 +99,13 @@ export const bindUploadedResource = async (
           },
           data: { daily_upload_size: { decrement: fileSizeMB } }
         })
-        .catch(() => undefined)
+        .catch((refundError) =>
+          kunLog(
+            'upload.quota_refund_failed',
+            { uid, mb: fileSizeMB },
+            refundError
+          )
+        )
       throw error
     }
     await invalidateUserSession(uid)

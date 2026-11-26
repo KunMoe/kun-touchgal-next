@@ -5,6 +5,7 @@ import {
   statementNameGenerator
 } from '~/prisma/createClient'
 import { isPrismaTransactionConflict } from '~/server/db/txErrors'
+import { kunLog } from '~/lib/log.server'
 
 const connectionString = `${process.env.KUN_DATABASE_URL}`
 
@@ -24,6 +25,10 @@ const pool = new pg.Pool({
   // 只增不减的 prepared statement (实测 24~63 KB/条) 一个时间上界。
   maxLifetimeSeconds: 1800
 })
+
+// 空闲连接上的错误 (库重启、连接被对端掐断): adapter 自己的监听只进 debug, 这里记一条节流后的
+// error。adapter 在 dispose 时只摘掉它自己的那个监听
+pool.on('error', (error) => kunLog('dep.pg_pool_error', {}, error))
 
 const prisma = createKunPrismaClient(pool)
 

@@ -7,6 +7,7 @@ import { verifyVerificationCode } from '~/app/api/utils/verifyVerificationCode'
 import { resetEmailSchema } from '~/validations/user'
 import { getRemoteIp } from '~/app/api/utils/getRemoteIp'
 import { delKv } from '~/lib/redis'
+import { kunLog } from '~/lib/log.server'
 import { requireStepUp } from '~/server/auth/stepUp'
 import {
   commitEmailChange,
@@ -73,7 +74,10 @@ const updateEmail = async (
     user.email,
     input.email,
     revert.token
-  ).catch(() => NOTICE_FAILED)
+  ).catch((error) => {
+    kunLog('email.send_failed', { tag: 'security-notice' }, error)
+    return NOTICE_FAILED
+  })
   if (noticeError) {
     return noticeError
   }

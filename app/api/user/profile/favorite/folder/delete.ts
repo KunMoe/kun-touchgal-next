@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { prisma } from '~/prisma/index'
+import { kunLog } from '~/lib/log.server'
 import { kunTx } from '~/server/db/tx'
 import { recordKunChanges } from '~/server/cache/publish'
 import {
@@ -63,8 +64,13 @@ export const deleteFolder = async (
         uid
       )
     }
-  } catch {
+  } catch (error) {
     // 缓存失效失败不影响删除结果
+    kunLog(
+      'cache.invalidate_failed',
+      { ns: 'patch:favorite', op: truncated ? 'bump_version' : 'del' },
+      error
+    )
   }
 
   return {}

@@ -1,6 +1,7 @@
 import Redis from 'ioredis'
 import type { RedisOptions } from 'ioredis'
 import { randomUUID } from 'crypto'
+import { kunLog } from '~/lib/log.server'
 
 const KUN_PATCH_REDIS_PREFIX = 'kun:touchgal'
 const REDIS_MULTI_KEY_BATCH_SIZE = 500
@@ -65,6 +66,12 @@ const redisOptions: RedisOptions = {
 }
 
 export const redis = new Redis(redisOptions)
+
+// 连接状态只产出事件, 节流在登记表里 (每种状态每分钟一条); 状态机与「只在状态迁移时记一条」
+// 留给 T41。挂了 error 监听之后, ioredis 也不再在每次连不上时自己打印一段没有时间的裸堆栈
+redis.on('error', (error) => kunLog('dep.redis', { state: 'error' }, error))
+redis.on('reconnecting', () => kunLog('dep.redis', { state: 'reconnecting' }))
+redis.on('ready', () => kunLog('dep.redis_ready'))
 
 let redisConnectPromise: Promise<void> | null = null
 

@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import { prisma } from '~/prisma/index'
 import { kunTx } from '~/server/db/tx'
 import { togglePatchFavoriteSchema } from '~/validations/patch'
@@ -107,14 +108,17 @@ const togglePatchFavorite = async (
     return response
   }
 
-  try {
-    await Promise.all([
-      invalidatePatchFavoriteCache(patch.unique_id, uid),
-      invalidatePatchContentCache(patch.unique_id)
-    ])
-  } catch {
-    // 缓存失效失败不影响收藏结果
-  }
+  // 缓存失效失败不影响收藏结果。补丁内容缓存的失效失败已在 delPatchContentCacheKeys 里记过
+  await Promise.all([
+    invalidatePatchFavoriteCache(patch.unique_id, uid).catch((error) =>
+      kunLog(
+        'cache.invalidate_failed',
+        { ns: 'patch:favorite', op: 'toggle' },
+        error
+      )
+    ),
+    invalidatePatchContentCache(patch.unique_id).catch(() => undefined)
+  ])
 
   // 提交后失效补丁作者未读缓存 (L-01): 收藏发通知 / 取消收藏删通知都改变其未读态,
   // 事务内失效会被并发读回填旧值; 自收藏不产生通知
