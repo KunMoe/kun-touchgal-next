@@ -10,13 +10,19 @@ import {
   KUN_INVARIANTS,
   createKunInvariantRule
 } from '../kunInvariants.mjs'
+import { kunWithoutTypeInfo } from '../kunTypeAware.mjs'
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
 const SELF = 'lint/__tests__/kunInvariants.test.ts'
 // ESLint 首次加载整套配置与插件要数秒
 const TIMEOUT = 60_000
 
-const eslint = new ESLint({ cwd: repoRoot })
+// 样例路径都是虚构的 (磁盘上没有这些文件), 类型服务找不到它们, 开着类型块连解析都过不了。
+// 不变量规则只看语法, 所以本文件的每个 ESLint 实例都把类型块关掉 (见 lint/kunTypeAware.mjs)
+const eslint = new ESLint({
+  cwd: repoRoot,
+  overrideConfig: [kunWithoutTypeInfo]
+})
 
 const reportsOf = async (
   linter: ESLint,
@@ -302,6 +308,7 @@ describe('kun 不变量注册表', { timeout: TIMEOUT }, () => {
     const withLaterBlocks = new ESLint({
       cwd: repoRoot,
       overrideConfig: [
+        kunWithoutTypeInfo,
         {
           files: ['components/**'],
           rules: {
@@ -401,6 +408,7 @@ describe('kun 不变量规则工厂', { timeout: TIMEOUT }, () => {
     new ESLint({
       cwd: repoRoot,
       overrideConfig: [
+        kunWithoutTypeInfo,
         {
           plugins: {
             kunProbe: {

@@ -148,11 +148,17 @@
     }
   },
   "components/admin/appeal/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
     "kun/inv-list-01": {
       "count": 1
     }
   },
   "components/admin/creator/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     }
@@ -163,6 +169,9 @@
     }
   },
   "components/admin/feedback/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     },
@@ -171,13 +180,24 @@
     }
   },
   "components/admin/galgame/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     }
   },
   "components/admin/log/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
+    }
+  },
+  "components/admin/moderation/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
     }
   },
   "components/admin/report/Container.tsx": {
@@ -186,11 +206,17 @@
     }
   },
   "components/admin/resource-apply/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
     "kun/inv-list-01": {
       "count": 1
     }
   },
   "components/admin/user/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
     "kun/inv-list-01": {
       "count": 1
     }
@@ -200,7 +226,15 @@
       "count": 1
     }
   },
+  "components/company/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
   "components/company/detail/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     }
@@ -210,13 +244,31 @@
       "count": 1
     }
   },
+  "components/edit/create/BannerImage.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "components/edit/create/PublishButton.tsx": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
   "components/galgame/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     }
   },
   "components/kun/editor/MarkdownEditor.tsx": {
     "kun/inv-content-04": {
+      "count": 1
+    }
+  },
+  "components/kun/floating-card/KunUserCard.tsx": {
+    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },
@@ -230,13 +282,36 @@
       "count": 1
     }
   },
+  "components/kun/top-bar/UserDropdown.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "components/login/2FA.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
   "components/message/MessageCard.tsx": {
     "kun/inv-status-01": {
       "count": 1
     }
   },
+  "components/message/MessageNav.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
   "components/message/chat/ChatContainer.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-status-01": {
+      "count": 1
+    }
+  },
+  "components/message/chat/ChatInput.tsx": {
+    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },
@@ -246,8 +321,16 @@
     }
   },
   "components/patch/comment/Comments.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    },
     "kun/inv-list-01": {
       "count": 1
+    }
+  },
+  "components/patch/header/button/favorite/FavoriteModal.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
     }
   },
   "components/patch/introduction/IntroductionTab.tsx": {
@@ -271,31 +354,84 @@
     }
   },
   "components/patch/resource/Resource.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
   },
+  "components/patch/resource/Tabs.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
   "components/patch/resource/kun/KunResourceDownload.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-content-04": {
       "count": 1
     }
   },
+  "components/patch/resource/publish/ResourceLinksInput.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
   "components/resource/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     }
   },
   "components/search/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "components/settings/user/BlockedTags.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "components/settings/user/LoginSessions.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    }
+  },
+  "components/settings/user/TwoFactorAuth.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 4
+    }
+  },
+  "components/settings/user/Username.tsx": {
+    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },
   "components/settings/user/appeal/AppealSettings.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     }
   },
+  "components/tag/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    }
+  },
   "components/tag/detail/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     }
@@ -306,6 +442,9 @@
     }
   },
   "components/user/comment/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     }
@@ -316,12 +455,28 @@
     }
   },
   "components/user/rating/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
       "count": 1
     }
   },
   "components/user/resource/Container.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
     "kun/inv-list-01": {
+      "count": 1
+    }
+  },
+  "hooks/useConfetti.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "hooks/useModerationPending.ts": {
+    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },
@@ -335,13 +490,38 @@
       "count": 1
     }
   },
+  "lib/oidc/__tests__/_providerHarness.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
   "lib/oidc/account.ts": {
     "kun/inv-status-01": {
       "count": 1
     }
   },
+  "lib/oidc/webToNode.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
   "postcss.config.js": {
     "import/no-anonymous-default-export": {
+      "count": 1
+    }
+  },
+  "scripts/generateOidcJwks.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "scripts/postbuild.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "scripts/seedOidcTestClient.ts": {
+    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },
@@ -362,6 +542,11 @@
   },
   "server/search/document.ts": {
     "kun/inv-content-01": {
+      "count": 1
+    }
+  },
+  "store/_cookie.ts": {
+    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },
