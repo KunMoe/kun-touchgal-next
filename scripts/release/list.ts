@@ -6,11 +6,20 @@ import {
 } from './layout'
 
 const layout = kunRepoReleaseLayout(process.cwd())
-const current = readCurrentReleaseId(layout)
 const releases = listReleases(layout)
 
 console.log(`发布根: ${layout.root}`)
-if (current === null) {
+let current: string | null = null
+let currentError: string | null = null
+try {
+  current = readCurrentReleaseId(layout)
+} catch (error) {
+  currentError = error instanceof Error ? error.message : String(error)
+}
+if (currentError !== null) {
+  console.log(`current: 认不出 (${currentError})`)
+  process.exitCode = 1
+} else if (current === null) {
   console.log('current: (还没有切到发布布局, 在线的是检出里的旧构建)')
 } else if (!releases.some((manifest) => manifest.id === current)) {
   console.log(`current: ${current} (清单缺失或损坏)`)
