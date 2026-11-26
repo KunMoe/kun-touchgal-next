@@ -2,6 +2,7 @@ import * as z from 'zod'
 import { kunId } from '~/validations/primitives'
 import { NextResponse } from 'next/server'
 import { kunRoute } from '~/app/api/utils/kunRoute'
+import { kunLog } from '~/lib/log.server'
 import {
   patchResourceCreateSchema,
   patchResourceUpdateSchema
@@ -67,8 +68,10 @@ export const POST = kunRoute.post({
     try {
       lockToken = await acquireKvLock(lockKey, 300)
     } catch (error) {
-      process.stderr.write(
-        `Failed to acquire patch resource lock: ${String(error)}\n`
+      kunLog(
+        'lock.failed',
+        { lock: 'patch.resource.create', op: 'acquire' },
+        error
       )
       return NextResponse.json('资源提交服务暂时不可用, 请稍后重试')
     }
@@ -84,8 +87,10 @@ export const POST = kunRoute.post({
       try {
         await releaseKvLock(lockKey, lockToken)
       } catch (error) {
-        process.stderr.write(
-          `Failed to release patch resource lock: ${String(error)}\n`
+        kunLog(
+          'lock.failed',
+          { lock: 'patch.resource.create', op: 'release' },
+          error
         )
       }
     }

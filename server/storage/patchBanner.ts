@@ -112,7 +112,11 @@ export const replacePatchBanner = async (
     await putPatchBannerSet(encoded, set)
   } catch (error) {
     await recycleSet(set).catch((cleanupError) =>
-      kunLog('banner.recycle_enqueue_failed', {}, cleanupError)
+      kunLog(
+        'banner.recycle_enqueue_failed',
+        { patchId, keys: Object.values(set.keys).join(',') },
+        cleanupError
+      )
     )
     throw error
   }

@@ -37,6 +37,7 @@ import {
   wrongTotp
 } from '~/app/api/user/setting/__tests__/_credentialFakes'
 import { POST } from '~/app/api/user/setting/email/route'
+import { kunLog } from '~/lib/log.server'
 
 const { budget, db, kv, mail, session } = fakes
 const UID = 7
@@ -120,6 +121,8 @@ afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  // 工厂里的 vi.fn 不随 restoreAllMocks 清空
+  vi.mocked(kunLog).mockClear()
 })
 
 describe('POST /api/user/setting/email: request gates', () => {
@@ -617,14 +620,24 @@ describe('POST /api/user/setting/email: notice and commit', () => {
     expect(session.reissued).toEqual([{ uid: UID, jti: `jti-${UID}`, stamp }])
   })
 
-  it.each(['http-error', 'status-error', 'throw'] as const)(
+  it.each([
+    ['http-error', { tag: 'security-notice', status: 502 }],
+    ['status-error', { tag: 'security-notice', relayStatus: 'error' }],
+    ['throw', { tag: 'security-notice' }]
+  ] as const)(
     'fails closed when the old-address notice fails (%s)',
-    async (mode) => {
+    async (mode, fields) => {
       mail.setMode(mode)
 
       const response = await post(passwordBody())
 
       expect(await read(response)).toBe(NOTICE_FAILED)
+      // 三条失败路径都留一条 email.send_failed, 中继的响应体不进日志
+      const sendFailed = vi
+        .mocked(kunLog)
+        .mock.calls.filter(([event]) => event === 'email.send_failed')
+      expect(sendFailed).toHaveLength(1)
+      expect(sendFailed[0][1]).toEqual(fields)
       expect(mail.outbox).toHaveLength(1)
       expect(db.user(UID)?.email).toBe(OLD_EMAIL)
       expect(db.emailChanges()).toEqual([])

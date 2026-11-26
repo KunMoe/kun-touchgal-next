@@ -200,6 +200,41 @@ describe('kunLog', () => {
     })
   })
 
+  it('永不抛出: 绕过类型传进没登记的事件名, 按 error 记一行降级', () => {
+    expect(() => kunLog('no.such_event' as never, {})).not.toThrow()
+    expect(written[0]).toMatchObject({
+      stream: 'stderr',
+      record: { level: 'error', event: 'no.such_event', serializeFailed: true }
+    })
+  })
+
+  it('err 的 name / code / digest 截到 256, 每帧截到 512', () => {
+    const error = Object.assign(new Error('x'), {
+      name: 'N'.repeat(5000),
+      code: 'C'.repeat(5000),
+      digest: 'D'.repeat(5000)
+    })
+    error.stack = `Error: x\n    at ${'f'.repeat(5000)} (file.ts:1)`
+    kunLog('search.drain_failed', {}, error)
+    const err = written[0].record.err as Record<string, unknown>
+    expect((err.name as string).length).toBe(257)
+    expect((err.code as string).length).toBe(257)
+    expect((err.digest as string).length).toBe(257)
+    expect((err.stack as string[])[0].length).toBe(513)
+  })
+
+  it('dep.redis_ready 不节流: 连上就记, 不会被上一条压下', () => {
+    kunLog('dep.redis_ready')
+    kunLog('dep.redis_ready')
+    expect(written).toHaveLength(2)
+  })
+
+  it('没有字段的事件只收空对象 (类型层面)', () => {
+    // @ts-expect-error 没登记字段的事件不收任何键
+    kunLog('s3.drain_failed', { key: 'patch/1' })
+    expect(written[0].record.fields).toEqual({})
+  })
+
   it('永不抛出: 写入本身抛错也吞掉', () => {
     vi.mocked(process.stderr.write).mockImplementation(() => {
       throw new Error('EPIPE')

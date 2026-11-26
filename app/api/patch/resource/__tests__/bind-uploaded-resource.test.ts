@@ -480,12 +480,25 @@ describe('bindUploadedResource 转正', () => {
     const failure = new Error('copy timeout')
     promoteObjectMock.mockRejectedValue(failure)
     deleteFileFromS3Mock.mockRejectedValue(new Error('s3 down'))
-    enqueueS3DeletionMock.mockRejectedValue(new Error('db down'))
+    const enqueueError = new Error('db down')
+    const refundError = new Error('db down again')
+    enqueueS3DeletionMock.mockRejectedValue(enqueueError)
     userUpdateManyMock
       .mockResolvedValueOnce({ count: 1 })
-      .mockRejectedValueOnce(new Error('db down'))
+      .mockRejectedValueOnce(refundError)
 
     await expect(bind()).rejects.toBe(failure)
+    // 两步兜底都失败时各留一条: 没人引用也没人会再删的对象、没退回的额度
+    expect(kunLog).toHaveBeenCalledWith(
+      's3.orphan_left',
+      { via: 'resource.bind_rollback', key: promotedKey() },
+      enqueueError
+    )
+    expect(kunLog).toHaveBeenCalledWith(
+      'upload.quota_refund_failed',
+      { uid: UID, mb: 2 },
+      refundError
+    )
   })
 
   it('认领令牌时 Redis 不可用: 删掉正式对象并退回额度后抛出; 暂存对象还在, 同一枚令牌可以重试', async () => {

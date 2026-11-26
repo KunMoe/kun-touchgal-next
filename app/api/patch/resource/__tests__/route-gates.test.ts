@@ -34,6 +34,7 @@ vi.mock('~/prisma/index', () => ({
   }
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
 vi.mock('~/lib/redis', () => ({
   acquireKvLock: acquireKvLockMock,
   releaseKvLock: releaseKvLockMock
@@ -57,6 +58,7 @@ vi.mock('~/app/api/patch/resource/get', () => ({
   getPatchResource: getPatchResourceMock
 }))
 
+import { kunLog } from '~/lib/log.server'
 import { DELETE, POST, PUT } from '~/app/api/patch/resource/route'
 
 const UID = 7
@@ -279,11 +281,16 @@ describe('POST /api/patch/resource 用户行、萌萌点与待审资源', () => 
 
 describe('POST /api/patch/resource 提交锁', () => {
   it('取锁抛错返回服务暂不可用, 不创建也不释放', async () => {
-    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-    acquireKvLockMock.mockRejectedValue(new Error('redis down'))
+    const error = new Error('redis down')
+    acquireKvLockMock.mockRejectedValue(error)
     const res = await POST(jsonRequest('POST', createBody()))
 
     expect(await res.json()).toBe('资源提交服务暂时不可用, 请稍后重试')
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'lock.failed',
+      { lock: 'patch.resource.create', op: 'acquire' },
+      error
+    )
     expect(createPatchResourceMock).not.toHaveBeenCalled()
     expect(releaseKvLockMock).not.toHaveBeenCalled()
   })
@@ -325,14 +332,16 @@ describe('POST /api/patch/resource 提交锁', () => {
   })
 
   it('释放锁失败只记日志, 不影响已有响应', async () => {
-    const stderrSpy = vi
-      .spyOn(process.stderr, 'write')
-      .mockImplementation(() => true)
-    releaseKvLockMock.mockRejectedValue(new Error('redis down'))
+    const error = new Error('redis down')
+    releaseKvLockMock.mockRejectedValue(error)
     const res = await POST(jsonRequest('POST', createBody()))
 
     expect(await res.json()).toEqual({ id: 1, name: 'created' })
-    expect(stderrSpy).toHaveBeenCalledTimes(1)
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith(
+      'lock.failed',
+      { lock: 'patch.resource.create', op: 'release' },
+      error
+    )
   })
 })
 

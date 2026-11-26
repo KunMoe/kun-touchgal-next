@@ -345,6 +345,22 @@ describe('replacePatchBanner', () => {
     expect(mocks.kickS3DeletionDrain).toHaveBeenCalledTimes(1)
   })
 
+  it('新版本写入失败且回收入队也失败: 仍抛最初的错误, 记下这组 key', async () => {
+    const enqueueError = new Error('db down')
+    mocks.uploadImageToS3.mockRejectedValue(new Error('S3 down'))
+    mocks.enqueueS3Deletion.mockRejectedValue(enqueueError)
+
+    await expect(replacePatchBanner(PATCH_ID, encoded)).rejects.toThrow(
+      'S3 down'
+    )
+
+    expect(kunLog).toHaveBeenCalledWith(
+      'banner.recycle_enqueue_failed',
+      { patchId: PATCH_ID, keys: newKeys().join(',') },
+      enqueueError
+    )
+  })
+
   it('commit 抛错而指针已经是新版本 (其实提交了): 不回收新版本', async () => {
     rec.failNextCommit(new Error('connection reset'))
     rec.on('patch.findUnique', () => ({

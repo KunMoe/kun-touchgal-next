@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { kunMoyuMoe } from '~/config/moyu-moe'
 import { escapeHtml } from '~/utils/escapeHtml'
+import { kunLog } from '~/lib/log.server'
 
 export type EmailChangeRevertPayload = {
   uid: number
@@ -108,11 +109,19 @@ export const sendEmailChangeNotification = async (
   )
 
   if (!res.ok) {
+    await res.body?.cancel()
+    kunLog('email.send_failed', { tag: 'security-notice', status: res.status })
     return '发送旧邮箱安全通知失败, 请稍后重试'
   }
 
   const result = await res.json()
   if (result.status === 'error') {
+    kunLog('email.send_failed', {
+      tag: 'security-notice',
+      relayStatus: 'error',
+      relayCode:
+        typeof result.data?.code === 'string' ? result.data.code : undefined
+    })
     return '发送旧邮箱安全通知失败, 请稍后重试'
   }
 }

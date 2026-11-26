@@ -40,8 +40,11 @@ export const onRequestError: Instrumentation.onRequestError = async (
   const { kunLog } = await import('./lib/log.server')
   const requestId = request.headers['x-request-id']
   const digest =
-    typeof error === 'object' && error !== null && 'digest' in error
-      ? String(error.digest)
+    typeof error === 'object' &&
+    error !== null &&
+    'digest' in error &&
+    typeof error.digest === 'string'
+      ? error.digest
       : undefined
   kunLog(
     'request.unhandled',

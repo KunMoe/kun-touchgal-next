@@ -12,8 +12,11 @@ export default function GlobalError({
   retry: () => void
 }) {
   const digest =
-    typeof error === 'object' && error !== null && 'digest' in error
-      ? String(error.digest)
+    typeof error === 'object' &&
+    error !== null &&
+    'digest' in error &&
+    typeof error.digest === 'string'
+      ? error.digest
       : null
 
   return (

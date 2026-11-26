@@ -2,11 +2,13 @@
 // 新事件先在 KUN_LOG_EVENTS 登记。每条一行 JSON:
 //   {ts, level, event, app, pid, instance, release, fields, suppressed?, err?}
 // warn / error 写 stderr, info 写 stdout (PM2 分别落到 error / out 日志)。
-// - 只写登记过的字段, 其余键在运行时丢弃 (类型上的多余属性检查只对对象字面量生效, 拦不住变量),
-//   字符串截到 256 字符: 请求头、cookie、整行 user、Prisma 的 meta、中继的原始响应体都进不来;
+// - fields 只写登记过的字段, 其余键在运行时丢弃 (类型上的多余属性检查只对对象字面量生效, 拦不住
+//   变量), 字符串截到 256 字符: 请求头、cookie、整行 user、中继的原始响应体进不了 fields;
 //   以字符串形式写进字段的邮箱、令牌只能靠评审字段表把关
 // - err 只留 name、message (截到 2000)、code、digest、前 15 帧调用栈与一层 cause (name、
-//   message、code)。调用栈只取 `at` 帧: 栈的首行就是 message 本身, 整段留下等于绕过截断
+//   message、code), 不留 Prisma 的 meta。调用栈只取 `at` 帧: 栈的首行就是 message 本身, 整段
+//   留下等于绕过截断。message 本身不过滤: Prisma 的参数校验错误会把调用参数 (含 where 里的邮箱)
+//   写进 message, 截断只降低、不消除这类泄漏
 // - 节流在进程内: 键为「事件 × throttleBy 字段的值」, 一个窗口只放行第一条, 下一条放行时带上
 //   这期间压下的条数 (suppressed)。throttleBy 只能指向低基数字段 (命名空间、状态), 不能是 id
 // - kunLog 永不抛出: 写不出去、序列化失败都只影响这一行, 不影响调用方
@@ -64,7 +66,8 @@ export const KUN_LOG_EVENTS = {
     throttleMs: MINUTE,
     throttleBy: 'state'
   },
-  'dep.redis_ready': { level: 'info', fields: [], throttleMs: MINUTE },
+  // 不节流: 只在连上时出现, 压下的话最后一条可见的就是断线, 看上去像一直没恢复
+  'dep.redis_ready': { level: 'info', fields: [] },
   'dep.pg_pool_error': { level: 'error', fields: [], throttleMs: MINUTE },
 
   // —— 读缓存 ——
@@ -203,7 +206,10 @@ export const KUN_LOG_EVENTS = {
     level: 'warn',
     fields: ['patchId', 'pointer']
   },
-  'banner.recycle_enqueue_failed': { level: 'error', fields: [] },
+  'banner.recycle_enqueue_failed': {
+    level: 'error',
+    fields: ['patchId', 'keys']
+  },
   'upload.promoted_meta_mismatch': {
     level: 'error',
     fields: [
@@ -217,6 +223,8 @@ export const KUN_LOG_EVENTS = {
   'upload.promoted_meta_check_failed': { level: 'error', fields: ['key'] },
   // 转正失败后没退回已扣的当日上传额度
   'upload.quota_refund_failed': { level: 'error', fields: ['uid', 'mb'] },
+  // 资源发布的每用户提交锁取不到 / 放不掉 (放不掉时这个用户 300 秒内提交不了)
+  'lock.failed': { level: 'error', fields: ['lock', 'op'] },
 
   // —— 搜索 (Meilisearch 的错误只记摘要: name / status / code / message / cause) ——
   'search.request_rejected': {
@@ -299,14 +307,17 @@ export type KunLogEvent = keyof typeof KUN_LOG_EVENTS
 type KunLogFieldName<E extends KunLogEvent> =
   (typeof KUN_LOG_EVENTS)[E]['fields'][number]
 
-// undefined 的值不写出, 调用点可以直接传可选值
-export type KunLogFields<E extends KunLogEvent> = Partial<
-  Record<KunLogFieldName<E>, KunLogValue | undefined>
->
+// undefined 的值不写出, 调用点可以直接传可选值。没有字段的事件只收空对象
+export type KunLogFields<E extends KunLogEvent> = [KunLogFieldName<E>] extends [
+  never
+]
+  ? Record<string, never>
+  : Partial<Record<KunLogFieldName<E>, KunLogValue | undefined>>
 
 const FIELD_MAX_LENGTH = 256
 const ERROR_MESSAGE_MAX_LENGTH = 2000
 const STACK_MAX_FRAMES = 15
+const STACK_FRAME_MAX_LENGTH = 512
 
 const truncate = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}…` : text
@@ -346,23 +357,25 @@ const serializeError = (value: unknown, nested: boolean): KunLogErrorRecord => {
         : truncate(String(value), ERROR_MESSAGE_MAX_LENGTH)
   }
   if (typeof source.name === 'string') {
-    record.name = source.name
+    record.name = truncate(source.name, FIELD_MAX_LENGTH)
   }
-  if (typeof source.code === 'string' || typeof source.code === 'number') {
+  if (typeof source.code === 'string') {
+    record.code = truncate(source.code, FIELD_MAX_LENGTH)
+  } else if (typeof source.code === 'number') {
     record.code = source.code
   }
   if (nested) {
     return record
   }
   if (typeof source.digest === 'string') {
-    record.digest = source.digest
+    record.digest = truncate(source.digest, FIELD_MAX_LENGTH)
   }
   if (typeof source.stack === 'string') {
     const frames = source.stack
       .split('\n')
       .filter((line) => /^\s+at /.test(line))
       .slice(0, STACK_MAX_FRAMES)
-      .map((line) => line.trim())
+      .map((line) => truncate(line.trim(), STACK_FRAME_MAX_LENGTH))
     if (frames.length) {
       record.stack = frames
     }
@@ -418,9 +431,11 @@ export const kunLog = <E extends KunLogEvent>(
   fields?: KunLogFields<E>,
   err?: unknown
 ): void => {
-  const spec: KunLogSpec = KUN_LOG_EVENTS[event]
   const ts = new Date().toISOString()
+  let level: KunLogLevel = 'error'
   try {
+    const spec: KunLogSpec = KUN_LOG_EVENTS[event]
+    level = spec.level
     const raw = fields as Record<string, unknown> | undefined
     const suppressed = passThrottle(event, spec, raw)
     if (suppressed === null) {
@@ -434,10 +449,10 @@ export const kunLog = <E extends KunLogEvent>(
       }
     }
     writeLine(
-      spec.level,
+      level,
       JSON.stringify({
         ts,
-        level: spec.level,
+        level,
         event,
         app: appName(),
         pid: process.pid,
@@ -451,8 +466,8 @@ export const kunLog = <E extends KunLogEvent>(
   } catch {
     // 读字段或错误对象时抛错 (getter、Proxy): 退化为只有事件与级别的一行
     writeLine(
-      spec.level,
-      JSON.stringify({ ts, level: spec.level, event, serializeFailed: true })
+      level,
+      JSON.stringify({ ts, level, event, serializeFailed: true })
     )
   }
 }
