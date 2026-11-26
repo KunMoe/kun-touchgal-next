@@ -82,6 +82,7 @@ POST /api/edit/vndb/relation                             user abuse=external.fet
 POST /api/forgot/request                                 public
 POST /api/forgot/reset                                   public
 GET /api/galgame                                         optional
+GET /api/health                                          public
 GET /api/home/random                                     optional
 GET /api/home                                            optional
 GET /api/message/all                                     user

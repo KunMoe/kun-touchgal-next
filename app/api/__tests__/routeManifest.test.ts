@@ -186,6 +186,7 @@ const GUEST_ACCESS: Record<string, string> = {
   'GET /api/galgame': '作品列表, 按请求视角过滤',
   'GET /api/home': '首页, 按请求视角过滤',
   'GET /api/home/random': '首页随机作品, 按请求视角过滤',
+  'GET /api/health': '部署闸门与金丝雀确认进程跑的是哪个发布, 只回发布 id',
   'GET /api/patch': '作品详情, 按请求视角过滤; 登录者另带收藏等个人字段',
   'GET /api/patch/resource': '作品页的资源列表; 登录者看得到自己待审核的资源',
   'PUT /api/patch/resource/download': '下载计数, 游客按 IP 去重',
