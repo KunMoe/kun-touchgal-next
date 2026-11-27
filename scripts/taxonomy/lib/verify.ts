@@ -17,7 +17,6 @@ import {
 import type { TaxonomyViolation } from '~/validations/resourceTaxonomy'
 
 const BATCH_SIZE = 2000
-const SAMPLE_LIMIT = 5
 
 // patch.type 里的 'patch' 不豁免。它有两个来源: 已删除的姊妹站同步任务 (bbe203e8) 打的标记,
 // 和 patch_resource.type 的旧值 'patch' 经 recalcPatchType 聚合上来的。资源改掉而作品还没
@@ -58,40 +57,35 @@ const describeViolation = (violation: TaxonomyViolation): string => {
   }
 }
 
-interface Sample {
+interface RowRef {
   id: number
   // 站内路径, 前面接站点地址就是深链
   path: string
 }
 
-interface Tally {
-  rows: number
-  // 值 → 带着它的行数
-  values: Map<string, number>
-  // 扫描按 id 升序, 留下的是 id 最小的几行
-  samples: Sample[]
+interface TallyRow extends RowRef {
+  // 这一行在这一类里带着的值 (没有取值的类别是空数组)
+  values: readonly string[]
 }
 
-const newTally = (): Tally => ({ rows: 0, values: new Map(), samples: [] })
+interface Tally {
+  // 值 → 带着它的行数
+  values: Map<string, number>
+  // 这一类的全部行, 不截断; 扫描按 id 升序, 这里也是
+  rows: TallyRow[]
+}
 
-const record = (
-  tally: Tally,
-  sample: Sample,
-  values: readonly string[] = []
-) => {
-  tally.rows++
+const record = (tally: Tally, ref: RowRef, values: readonly string[] = []) => {
   for (const value of values) {
     tally.values.set(value, (tally.values.get(value) ?? 0) + 1)
   }
-  if (tally.samples.length < SAMPLE_LIMIT) {
-    tally.samples.push(sample)
-  }
+  tally.rows.push({ ...ref, values })
 }
 
 const tallyOf = (tallies: Map<string, Tally>, label: string) => {
   let tally = tallies.get(label)
   if (!tally) {
-    tally = newTally()
+    tally = { values: new Map(), rows: [] }
     tallies.set(label, tally)
   }
   return tally
@@ -201,7 +195,7 @@ export const verifyResourceTaxonomy = async (
         resources.clean++
         return
       }
-      const sample = {
+      const ref = {
         id: row.id,
         path: `/${row.unique_id}/resource/${row.id}`
       }
@@ -229,7 +223,7 @@ export const verifyResourceTaxonomy = async (
               : resources.other,
             describeViolation(violation)
           ),
-          sample,
+          ref,
           values
         )
       }
@@ -267,7 +261,7 @@ export const verifyResourceTaxonomy = async (
        FROM patch WHERE id > $1 ORDER BY id LIMIT $2`,
     (row) => {
       patches.scanned++
-      const sample = { id: row.id, path: `/${row.unique_id}` }
+      const ref = { id: row.id, path: `/${row.unique_id}` }
       let blocking = false
       for (const [column, vocabulary] of PATCH_COLUMNS) {
         const outside = [
@@ -279,7 +273,7 @@ export const verifyResourceTaxonomy = async (
           blocking = true
           record(
             tallyOf(patches.blocking, `patch.${column} 含词表外的值`),
-            sample,
+            ref,
             outside
           )
         }
@@ -300,14 +294,26 @@ export const isTaxonomyVerified = (report: TaxonomyReport) =>
 const byCountDesc = (counts: Iterable<[string, number]>) =>
   [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
 
-const formatSamples = (tally: Tally, siteUrl: string) =>
-  tally.samples.map(({ id, path }) => `      样例 ${id}  ${siteUrl}${path}`)
+const quoted = (values: readonly string[]) =>
+  values.map((value) => JSON.stringify(value)).join(', ')
+
+// 每一行: id、深链、这一行带着的值
+const formatRows = (tally: Tally, siteUrl: string) =>
+  tally.rows.map(({ id, path, values }) =>
+    [
+      `      ${id}`,
+      `${siteUrl}${path}`,
+      ...(values.length > 0 ? [quoted(values)] : [])
+    ].join('  ')
+  )
 
 const formatTallies = (tallies: Map<string, Tally>, siteUrl: string) =>
   [...tallies]
-    .sort((a, b) => b[1].rows - a[1].rows || (a[0] < b[0] ? -1 : 1))
+    .sort(
+      (a, b) => b[1].rows.length - a[1].rows.length || (a[0] < b[0] ? -1 : 1)
+    )
     .flatMap(([label, tally]) => [
-      `    ${label}: ${tally.rows} 行`,
+      `    ${label}: ${tally.rows.length} 行`,
       ...(tally.values.size > 0
         ? [
             `      取值: ${byCountDesc(tally.values)
@@ -315,7 +321,7 @@ const formatTallies = (tallies: Map<string, Tally>, siteUrl: string) =>
               .join(', ')}`
           ]
         : []),
-      ...formatSamples(tally, siteUrl)
+      ...formatRows(tally, siteUrl)
     ])
 
 export const formatTaxonomyReport = (
@@ -341,7 +347,7 @@ export const formatTaxonomyReport = (
   ...formatTallies(patches.blocking, siteUrl)
 ]
 
-// 完整清单: 迁移与重算要处理的就是这些 id
+// 去重后的 id 清单 (一行在上面可能出现在几个类别里): 迁移与重算要处理的就是这些 id
 export const formatBlockingIds = ({ resources, patches }: TaxonomyReport) => [
   `拦收尾的资源 id (${resources.blockingIds.length}):`,
   resources.blockingIds.join(','),

@@ -52,12 +52,12 @@ const verify = (
 ) => verifyResourceTaxonomy(clientOf(resources, patches))
 
 const tallies = (
-  map: Map<string, { rows: number; values: Map<string, number> }>
+  map: Map<string, { rows: unknown[]; values: Map<string, number> }>
 ) =>
   Object.fromEntries(
     [...map].map(([label, tally]) => [
       label,
-      { rows: tally.rows, values: Object.fromEntries(tally.values) }
+      { rows: tally.rows.length, values: Object.fromEntries(tally.values) }
     ])
   )
 
@@ -172,19 +172,38 @@ describe('verifyResourceTaxonomy: patch_resource', () => {
     })
   })
 
-  it('每一类只留 id 最小的 5 个样例, 带站内路径', async () => {
+  // 行数超过一批: 既不按条数截断, 也不只留某一批的
+  it('每一类留下全部的行, 按 id 升序, 带站内路径与这一行的值', async () => {
+    const ids = Array.from({ length: 2001 }, (_, index) => index * 3 + 1)
     const { resources } = await verify(
-      Array.from({ length: 8 }, (_, index) =>
-        resource(index + 1, { platform: ['android'] })
+      ids.map((id) =>
+        resource(id, { platform: id === 4 ? ['ios', 'android'] : ['android'] })
       )
     )
 
-    expect(resources.blocking.get('平台含词表外的值')).toMatchObject({
-      rows: 8,
-      samples: [1, 2, 3, 4, 5].map((id) => ({
+    expect(resources.blocking.get('平台含词表外的值')?.rows).toEqual(
+      ids.map((id) => ({
         id,
-        path: `/u${id}/resource/${id}`
+        path: `/u${id}/resource/${id}`,
+        values: id === 4 ? ['ios', 'android'] : ['android']
       }))
+    )
+  })
+
+  it('一行在几个类别里各记一次, 各带各的值; 没有取值的类别带空数组', async () => {
+    const { resources } = await verify([
+      resource(7, { type: ['manual', 'pc', 'game'], platform: [] })
+    ])
+    const rowsOf = (map: typeof resources.blocking) =>
+      Object.fromEntries([...map].map(([label, tally]) => [label, tally.rows]))
+    const path = '/u7/resource/7'
+
+    expect(rowsOf(resources.blocking)).toEqual({
+      类型含词表外的值: [{ id: 7, path, values: ['pc'] }],
+      '类型在词表里, 却不属于所在类别': [{ id: 7, path, values: ['manual'] }]
+    })
+    expect(rowsOf(resources.other)).toEqual({
+      平台为空: [{ id: 7, path, values: [] }]
     })
   })
 })
@@ -211,9 +230,9 @@ describe('verifyResourceTaxonomy: patch 的派生列', () => {
       'patch.platform 含词表外的值': { rows: 1, values: { android: 1 } },
       'patch.language 含词表外的值': { rows: 1, values: { chinese: 1 } }
     })
-    expect(
-      patches.blocking.get('patch.language 含词表外的值')?.samples
-    ).toEqual([{ id: 4, path: '/p4' }])
+    expect(patches.blocking.get('patch.language 含词表外的值')?.rows).toEqual([
+      { id: 4, path: '/p4', values: ['chinese'] }
+    ])
   })
 
   // 'patch' 可能是已删除的同步任务打的标记, 也可能是旧资源类型聚合上来的: 资源改掉而作品
@@ -254,7 +273,7 @@ describe('isTaxonomyVerified', () => {
 })
 
 describe('formatTaxonomyReport', () => {
-  it('行数多的类别在前, 取值按行数降序, 样例拼成深链', async () => {
+  it('行数多的类别在前, 取值按行数降序, 每一行给 id、深链与它带着的值', async () => {
     const report = await verify(
       [
         resource(1),
@@ -270,25 +289,25 @@ describe('formatTaxonomyReport', () => {
       '  拦收尾 (值不在词表里, 或类型不属于所在类别): 2 行',
       '    平台含词表外的值: 2 行',
       '      取值: "android" ×2, "ios" ×1',
-      '      样例 2  https://example.com/u2/resource/2',
-      '      样例 3  https://example.com/u3/resource/3',
+      '      2  https://example.com/u2/resource/2  "ios", "android"',
+      '      3  https://example.com/u3/resource/3  "android"',
       '    类型含词表外的值: 1 行',
       '      取值: "pc" ×1',
-      '      样例 3  https://example.com/u3/resource/3',
+      '      3  https://example.com/u3/resource/3  "pc"',
       '    这些行的来源 (类别 / 发布者 / status):',
       '      galgame / 其他用户 / status 0 正常: 2 行',
       '  不拦收尾 (行自身不完整, 怎么补逐条裁定): 1 行, 其中 1 行没有上面的问题',
       '    平台为空: 1 行',
-      '      样例 4  https://example.com/u4/resource/4',
+      '      4  https://example.com/u4/resource/4',
       '',
       '二、patch 的派生列 type / language / platform: 扫描 1 行',
       '  拦收尾 (含词表外的值; 资源行改干净后对这些作品重跑 recalcPatchType): 1 行',
       '    patch.platform 含词表外的值: 1 行',
       '      取值: "android" ×1',
-      '      样例 9  https://example.com/p9',
+      '      9  https://example.com/p9  "android"',
       '    patch.type 含词表外的值: 1 行',
       '      取值: "patch" ×1',
-      '      样例 9  https://example.com/p9'
+      '      9  https://example.com/p9  "patch"'
     ])
     expect(formatBlockingIds(report)).toEqual([
       '拦收尾的资源 id (2):',
@@ -296,5 +315,32 @@ describe('formatTaxonomyReport', () => {
       '拦收尾的作品 id (1):',
       '9'
     ])
+  })
+
+  it('一类有多少行就列多少行, 不截断', async () => {
+    const report = await verify(
+      Array.from({ length: 12 }, (_, index) =>
+        resource(index + 1, { platform: ['android'] })
+      ),
+      Array.from({ length: 7 }, (_, index) =>
+        patch(index + 1, { language: ['chinese'] })
+      )
+    )
+    const lines = formatTaxonomyReport(report, '')
+
+    expect(
+      lines.filter((line) => /^ {6}\d+ {2}\/u\d+\/resource\//.test(line))
+    ).toEqual(
+      Array.from({ length: 12 }, (_, index) => {
+        const id = index + 1
+        return `      ${id}  /u${id}/resource/${id}  "android"`
+      })
+    )
+    expect(lines.filter((line) => /^ {6}\d+ {2}\/p\d+ /.test(line))).toEqual(
+      Array.from(
+        { length: 7 },
+        (_, index) => `      ${index + 1}  /p${index + 1}  "chinese"`
+      )
+    )
   })
 })

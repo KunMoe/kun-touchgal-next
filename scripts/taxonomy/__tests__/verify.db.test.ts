@@ -116,13 +116,25 @@ describe.skipIf(!dbContractUrl)(
       ])
     })
 
-    it('样例带上所属作品的 unique_id', () => {
-      expect(
-        report.resources.blocking.get('平台含词表外的值')?.samples
-      ).toEqual([
+    it('每一行带上所属作品的 unique_id 与它带着的值', () => {
+      expect(report.resources.blocking.get('平台含词表外的值')?.rows).toEqual([
         {
           id: resourceIds[1999],
-          path: `/v0000001/resource/${resourceIds[1999]}`
+          path: `/v0000001/resource/${resourceIds[1999]}`,
+          values: ['android']
+        }
+      ])
+      // 两批各一行: 列出来的行不止第一批的
+      expect(report.resources.blocking.get('类型含词表外的值')?.rows).toEqual([
+        {
+          id: resourceIds[10],
+          path: `/v0000001/resource/${resourceIds[10]}`,
+          values: ['chinese', 'pc']
+        },
+        {
+          id: resourceIds[2000],
+          path: `/v0000001/resource/${resourceIds[2000]}`,
+          values: ['pc']
         }
       ])
     })
