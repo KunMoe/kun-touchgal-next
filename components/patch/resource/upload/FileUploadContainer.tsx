@@ -1,8 +1,7 @@
 'use client'
 
-import axios, { AxiosError } from 'axios'
 import toast from 'react-hot-toast'
-import { Dispatch, SetStateAction, useState } from 'react'
+import { useState } from 'react'
 import { FileDropZone } from './FileDropZone'
 import { FileUploadCard } from './FileUploadCard'
 import { KunCaptchaModal } from '~/components/kun/auth/CaptchaModal'
@@ -14,128 +13,46 @@ import {
   OBJECT_STORAGE_MAX_FILE_SIZE_BYTES,
   OBJECT_STORAGE_MAX_FILE_SIZE_LABEL
 } from '~/constants/resource'
-import type {
-  KunUploadCompleteResponse,
-  KunUploadInitResponse
-} from '~/types/api/upload'
+import { formatResourceSize } from '~/utils/resourceSize'
+import type { UploadedFile } from '../form/linkDraft'
+import type { ResourceUploadProgress } from '../form/useResourceUploads'
 import type { FileStatus } from '../share'
 
 interface Props {
-  onSuccess: (
-    storage: string,
-    hash: string,
-    content: string,
-    size: string
-  ) => void
-  handleRemoveFile: () => void
-  setUploadingResource: Dispatch<SetStateAction<boolean>>
+  // 这条链接上进行中的上传 (useResourceUploads); 没有在传就是 undefined
+  progress: ResourceUploadProgress | undefined
+  // 已经传完、挂在这条链接上的文件 (链接草稿里的 upload)
+  uploaded: UploadedFile | null
+  onUpload: (file: File, captcha: string) => void
+  onRemove: () => void
+  errorMessage?: string
 }
 
-const KUN_FETCH_HEADERS = { 'X-Requested-With': 'kun-fetch' }
-
 export const FileUploadContainer = ({
-  onSuccess,
-  handleRemoveFile,
-  setUploadingResource
+  progress,
+  uploaded,
+  onUpload,
+  onRemove,
+  errorMessage
 }: Props) => {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const canPublish = useUserStore((state) => canPublishResource(state.user))
   const skipCaptcha = useUserStore((state) =>
     can(state.user, 'upload.skipCaptcha')
   )
-  const [fileData, setFileData] = useState<FileStatus | null>(null)
+  // 选好了、还在等人机验证的文件
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
 
-  const handleCaptchaSuccess = async (
-    code: string,
-    fileToUpload?: File | null
-  ) => {
+  const handleCaptchaSuccess = (code: string) => {
     onClose()
 
-    const file = fileToUpload || fileData?.file
+    const file = pendingFile
+    setPendingFile(null)
     if (!file) {
       toast.error('未找到资源文件, 请重试')
       return
     }
-
-    setUploadingResource(true)
-    setFileData({ file, progress: 0 })
-
-    try {
-      const initRes = await axios.post<KunUploadInitResponse | string>(
-        '/api/upload/init',
-        {
-          fileName: file.name,
-          fileSize: file.size,
-          captcha: code
-        },
-        { headers: KUN_FETCH_HEADERS }
-      )
-      if (typeof initRes.data === 'string') {
-        toast.error(initRes.data)
-        setFileData(null)
-        handleRemoveFile()
-        return
-      }
-
-      const { uploadUrl, token } = initRes.data
-
-      await axios.put(uploadUrl, file, {
-        headers: { 'Content-Type': 'application/octet-stream' },
-        onUploadProgress: (progressEvent) => {
-          const progress = Math.round(
-            (progressEvent.loaded * 100) / (progressEvent.total || file.size)
-          )
-          setFileData((prev) => (prev ? { ...prev, progress } : null))
-        }
-      })
-
-      const completeRes = await axios.post<KunUploadCompleteResponse | string>(
-        '/api/upload/complete',
-        { token },
-        { headers: KUN_FETCH_HEADERS }
-      )
-      if (typeof completeRes.data === 'string') {
-        toast.error(completeRes.data)
-        setFileData(null)
-        handleRemoveFile()
-        return
-      }
-
-      const { fileToken, fileSize, filetype } = completeRes.data
-      setFileData((prev) =>
-        prev ? { ...prev, hash: fileToken, filetype } : null
-      )
-      onSuccess(filetype, fileToken, '', fileSize)
-    } catch (err) {
-      if (err instanceof AxiosError) {
-        const status = err.response?.status
-        const data = err.response?.data
-        // eslint-disable-next-line no-console -- 客户端没有日志出口 (上报暂缓, T38 S5), 只留在浏览器控制台
-        console.error('[upload] failed', {
-          status,
-          data,
-          message: err.message,
-          code: err.code
-        })
-        const rawDetail =
-          typeof data === 'string' && data
-            ? data
-            : status
-              ? `HTTP ${status}`
-              : err.message
-        const detail =
-          rawDetail.length > 200 ? `${rawDetail.slice(0, 200)}…` : rawDetail
-        toast.error(`上传失败: ${detail}`)
-      } else {
-        // eslint-disable-next-line no-console -- 客户端没有日志出口 (上报暂缓, T38 S5), 只留在浏览器控制台
-        console.error('[upload] failed', err)
-        toast.error('上传失败, 请重试')
-      }
-      setFileData(null)
-      handleRemoveFile()
-    } finally {
-      setUploadingResource(false)
-    }
+    onUpload(file, code)
   }
 
   const handleFileUpload = async (file: File) => {
@@ -143,10 +60,9 @@ export const FileUploadContainer = ({
       return
     }
 
-    const fileSizeMB = file.size / (1024 * 1024)
     if (file.size >= OBJECT_STORAGE_MAX_FILE_SIZE_BYTES) {
       toast.error(
-        `文件大小超出限制: ${fileSizeMB.toFixed(3)} MB, 必须小于 ${OBJECT_STORAGE_MAX_FILE_SIZE_LABEL}`
+        `文件大小超出限制: ${formatResourceSize(file.size)}, 必须小于 ${OBJECT_STORAGE_MAX_FILE_SIZE_LABEL}`
       )
       return
     }
@@ -156,24 +72,41 @@ export const FileUploadContainer = ({
       return
     }
 
-    setFileData({ file, progress: 0 })
-
     if (!skipCaptcha) {
+      setPendingFile(file)
       onOpen()
     } else {
-      await handleCaptchaSuccess('', file)
+      onUpload(file, '')
     }
-  }
-
-  const removeFile = () => {
-    setFileData(null)
-    handleRemoveFile()
   }
 
   const handleCaptureClose = () => {
     onClose()
-    removeFile()
+    setPendingFile(null)
   }
+
+  const fileData: FileStatus | null = progress
+    ? {
+        fileName: progress.fileName,
+        size: formatResourceSize(progress.bytes),
+        progress: progress.progress,
+        done: false
+      }
+    : pendingFile
+      ? {
+          fileName: pendingFile.name,
+          size: formatResourceSize(pendingFile.size),
+          progress: 0,
+          done: false
+        }
+      : uploaded
+        ? {
+            fileName: uploaded.fileName,
+            size: uploaded.size,
+            progress: 100,
+            done: true
+          }
+        : null
 
   return (
     <div className="space-y-2">
@@ -192,7 +125,11 @@ export const FileUploadContainer = ({
       {!fileData ? (
         <FileDropZone onFileUpload={handleFileUpload} />
       ) : (
-        <FileUploadCard fileData={fileData} onRemove={removeFile} />
+        <FileUploadCard fileData={fileData} onRemove={onRemove} />
+      )}
+
+      {errorMessage && !fileData && (
+        <p className="text-tiny text-danger">{errorMessage}</p>
       )}
     </div>
   )

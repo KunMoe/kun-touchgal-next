@@ -374,11 +374,6 @@
       "count": 1
     }
   },
-  "components/patch/resource/publish/ResourceLinksInput.tsx": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "components/resource/Container.tsx": {
     "@typescript-eslint/no-floating-promises": {
       "count": 1

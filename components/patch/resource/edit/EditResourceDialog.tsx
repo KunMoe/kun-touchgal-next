@@ -1,6 +1,5 @@
 'use client'
 
-import * as z from 'zod'
 import { Button } from '@heroui/button'
 import {
   ModalBody,
@@ -10,19 +9,19 @@ import {
 } from '@heroui/react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
 import toast from 'react-hot-toast'
 import { kunFetchPut } from '~/utils/kunFetch'
-import { patchResourceCreateSchema } from '~/validations/patch'
 import { ResourceLinksInput } from '../publish/ResourceLinksInput'
 import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { ResourceDetailsForm } from '../publish/ResourceDetailsForm'
 import { ResourceSectionSelect } from '../publish/ResourceSectionSelect'
+import { fromResource, toRequest } from '../form/linkDraft'
+import { resourceFormResolver } from '../form/resolver'
+import { useResourceUploads } from '../form/useResourceUploads'
 import { RESOURCE_SECTION_TYPE_MAP } from '~/constants/resource'
 import type { PatchResource } from '~/types/api/patch'
+import type { ResourceFormValues } from '../form/linkDraft'
 import { contentPhase } from '~/constants/contentStatus'
-
-type EditResourceFormData = z.infer<typeof patchResourceCreateSchema>
 
 // 按阶段穷举: 编辑被预审拦下时资源转为待审核、别人暂时看不到, 不能只说更新成功 (P26-04)
 const editSuccessMessage = (status: number) => {
@@ -53,29 +52,27 @@ export const EditResourceDialog = ({
   type = 'patch'
 }: EditResourceDialogProps) => {
   const [editing, setEditing] = useState(false)
-  const [uploadingResource, setUploadingResource] = useState(false)
 
   const {
     control,
     reset,
+    getValues,
     setValue,
+    trigger,
     watch,
     formState: { errors }
-  } = useForm<EditResourceFormData>({
-    resolver: zodResolver(patchResourceCreateSchema),
-    defaultValues: {
-      ...resource,
-      // 兼容旧缓存数据缺字段: 保持受控输入
-      emulatorType: resource.emulatorType ?? [],
-      modelName: resource.modelName ?? ''
-    }
+  } = useForm<ResourceFormValues>({
+    resolver: resourceFormResolver,
+    defaultValues: fromResource(resource)
   })
+  const uploads = useResourceUploads({ getValues, setValue, trigger })
+  const uploadingResource = uploads.uploading
 
   const handleUpdateResource = async () => {
     setEditing(true)
     const res = await kunFetchPut<KunResponse<PatchResource>>(
       `/${type}/resource`,
-      { resourceId: resource.id, ...watch() }
+      { resourceId: resource.id, ...toRequest(getValues()) }
     )
     kunErrorHandler(res, (value) => {
       reset()
@@ -114,10 +111,12 @@ export const EditResourceDialog = ({
           <ResourceLinksInput
             control={control}
             errors={errors}
+            getValues={getValues}
             setValue={setValue}
+            trigger={trigger}
             watch={watch}
             section={watch().section}
-            setUploadingResource={setUploadingResource}
+            uploads={uploads}
           />
           <ResourceDetailsForm
             control={control}

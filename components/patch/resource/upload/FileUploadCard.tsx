@@ -8,14 +8,9 @@ interface Props {
   onRemove: () => void
 }
 
-const calcFileSizeMB = (byteNumber: number) => {
-  const fileSizeInMB = byteNumber / (1024 * 1024)
-  return `${fileSizeInMB.toFixed(3)} MB`
-}
-
 export const FileUploadCard = ({ fileData, onRemove }: Props) => {
   const fileName = (
-    toSafeObjectName(fileData.file.name) ?? fileData.file.name
+    toSafeObjectName(fileData.fileName) ?? fileData.fileName
   ).slice(0, 20)
 
   return (
@@ -25,12 +20,10 @@ export const FileUploadCard = ({ fileData, onRemove }: Props) => {
           <FileIcon className="size-6 text-primary/60" />
           <div className="flex-1">
             <p className="font-medium truncate">{fileName}</p>
-            <p className="text-sm text-default-500">
-              {calcFileSizeMB(fileData.file.size)}
-            </p>
+            <p className="text-sm text-default-500">{fileData.size}</p>
           </div>
         </div>
-        {fileData.hash ? (
+        {fileData.done ? (
           <div className="flex items-center gap-2 ml-auto">
             <span className="text-sm text-default-500">文件上传成功</span>
             <Button color="danger" variant="flat" onPress={onRemove}>

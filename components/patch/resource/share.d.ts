@@ -1,41 +1,25 @@
 import type {
   Control,
   FieldErrors,
+  UseFormGetValues,
   UseFormSetValue,
+  UseFormTrigger,
   UseFormWatch
 } from 'react-hook-form'
-import type { PatchResourceLink } from '~/types/api/patch'
+import type { ResourceFormValues } from './form/linkDraft'
 
-interface Fields {
-  type: string[]
-  name: string
-  section: string
-  patchId: number
-  note: string
-  language: string[]
-  platform: string[]
-  emulatorType: string[]
-  modelName: string
-  links: Array<{
-    id?: number
-    storage: PatchResourceLink['storage']
-    hash: PatchResourceLink['hash']
-    content: PatchResourceLink['content']
-    size: PatchResourceLink['size']
-    code: PatchResourceLink['code']
-    password: PatchResourceLink['password']
-  }>
-}
-
+// 上传卡片展示的一个文件: 在等人机验证、正在传, 或者已经传完
 export interface FileStatus {
-  file: File
+  fileName: string
+  size: string
   progress: number
   error?: string
-  hash?: string
-  filetype?: string
+  done: boolean
 }
 
-export type ErrorType = FieldErrors<Fields>
-export type ControlType = Control<Fields, any>
-export type SetValueType = UseFormSetValue<Fields>
-export type WatchType = UseFormWatch<Fields>
+export type ErrorType = FieldErrors<ResourceFormValues>
+export type ControlType = Control<ResourceFormValues, any>
+export type GetValuesType = UseFormGetValues<ResourceFormValues>
+export type SetValueType = UseFormSetValue<ResourceFormValues>
+export type TriggerType = UseFormTrigger<ResourceFormValues>
+export type WatchType = UseFormWatch<ResourceFormValues>

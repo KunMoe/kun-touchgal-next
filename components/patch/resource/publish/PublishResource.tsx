@@ -1,9 +1,7 @@
 'use client'
 
-import * as z from 'zod'
 import { useRef, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
 import { Button } from '@heroui/button'
 import { Link } from '@heroui/link'
 import {
@@ -15,10 +13,12 @@ import {
 } from '@heroui/react'
 import toast from 'react-hot-toast'
 import { kunFetchPost } from '~/utils/kunFetch'
-import { patchResourceCreateSchema } from '~/validations/patch'
 import { ResourceLinksInput } from './ResourceLinksInput'
 import { ResourceDetailsForm } from './ResourceDetailsForm'
 import { ResourceSectionSelect } from './ResourceSectionSelect'
+import { emptyLink, toRequest } from '../form/linkDraft'
+import { resourceFormResolver } from '../form/resolver'
+import { useResourceUploads } from '../form/useResourceUploads'
 import { Upload, Gamepad2, Puzzle } from 'lucide-react'
 import {
   RESOURCE_SECTION_MAP,
@@ -29,9 +29,8 @@ import { kunErrorHandler } from '~/utils/kunErrorHandler'
 import { useUserStore } from '~/store/userStore'
 import { can, defaultLinkStorage } from '~/constants/permission'
 import type { PatchResource } from '~/types/api/patch'
+import type { ResourceFormValues } from '../form/linkDraft'
 import { contentPhase } from '~/constants/contentStatus'
-
-export type ResourceFormData = z.infer<typeof patchResourceCreateSchema>
 
 interface CreateResourceProps {
   patchId: number
@@ -44,18 +43,11 @@ export const PublishResource = ({
   onClose,
   onSuccess
 }: CreateResourceProps) => {
-  const createDefaultLink = (section: string) => ({
-    storage: defaultLinkStorage(user, section),
-    hash: '',
-    content: '',
-    size: '',
-    code: '',
-    password: ''
-  })
+  const createDefaultLink = (section: string) =>
+    emptyLink(defaultLinkStorage(user, section))
 
   const [creating, setCreating] = useState(false)
   const creatingRef = useRef(false)
-  const [uploadingResource, setUploadingResource] = useState(false)
   const user = useUserStore((state) => state.user)
   // 发布官方资源的角色默认进 Galgame 分区, 其余角色先选分区
   const isOfficialPublisher = can(user, 'resource.officialBadge')
@@ -68,11 +60,13 @@ export const PublishResource = ({
   const {
     control,
     reset,
+    getValues,
     setValue,
+    trigger,
     formState: { errors },
     watch
-  } = useForm<ResourceFormData>({
-    resolver: zodResolver(patchResourceCreateSchema),
+  } = useForm<ResourceFormValues>({
+    resolver: resourceFormResolver,
     defaultValues: {
       patchId,
       name: '',
@@ -87,8 +81,10 @@ export const PublishResource = ({
     }
   })
 
+  const uploads = useResourceUploads({ getValues, setValue, trigger })
+
   const handleRewriteResource = async () => {
-    if (creatingRef.current || uploadingResource) {
+    if (creatingRef.current || uploads.uploading) {
       return
     }
 
@@ -97,7 +93,7 @@ export const PublishResource = ({
     try {
       const res = await kunFetchPost<KunResponse<PatchResource>>(
         '/patch/resource',
-        watch()
+        toRequest(getValues())
       )
       kunErrorHandler(res, (value) => {
         reset()
@@ -214,10 +210,12 @@ export const PublishResource = ({
             <ResourceLinksInput
               control={control}
               errors={errors}
+              getValues={getValues}
               setValue={setValue}
+              trigger={trigger}
               watch={watch}
               section={watch().section}
-              setUploadingResource={setUploadingResource}
+              uploads={uploads}
             />
 
             <ResourceDetailsForm
@@ -237,7 +235,7 @@ export const PublishResource = ({
           {(sectionConfirmed || !needsSectionPreselection) && (
             <Button
               color="primary"
-              disabled={creating || uploadingResource}
+              disabled={creating || uploads.uploading}
               isLoading={creating}
               endContent={<Upload className="size-4" />}
               onPress={handleRewriteResource}
