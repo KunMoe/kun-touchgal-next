@@ -61,7 +61,8 @@ export const EditResourceDialog = ({
 
   // 未迁移的历史资源可能残留旧词表值 (type 的 pc/chinese, platform 的 android 等),
   // 这些值不在 Select 选项内, 用户无法在 UI 里取消, 却会随提交触发校验失败.
-  // 分类迁移全部落库后, 下方 type/platform 两处 filter 即恒等, 可一并删除
+  // 删除判据: 生产上 pnpm taxonomy:verify 以 0 退出. 那之后下方 type/platform 两处
+  // filter 即恒等, 可一并删除
   const allowedTypes =
     RESOURCE_SECTION_TYPE_MAP[resource.section] ?? SUPPORTED_TYPE
 

@@ -51,6 +51,7 @@ pnpm db:new <slug>           # 改了 prisma/schema 之后生成迁移草稿（�
 pnpm db:snapshot             # 新增或修改迁移后重新生成 db/objects.snapshot.sql
 pnpm db:verify --prisma      # 只读校验：台账、INVALID 索引、库级对象、表结构
 pnpm db:inspect              # 只读盘点一个库的实际状态
+pnpm taxonomy:verify         # 只读核查：库里有没有带着词表外的值的资源分类（见「资源词表变更」）
 pnpm prisma:push             # db push 后重新生成 client；只用于本地原型
 pnpm dev                     # Turbopack，127.0.0.1:3000
 pnpm dev:webpack             # Webpack 开发服务器
@@ -192,6 +193,19 @@ pnpm prisma:generate
 - `pnpm build` 输出 Next standalone；postbuild 复制 `public/`、`.next/static/`、`posts/`、`config/redirect.json`，然后自检产物（见上文部署链的构建一条）。不要绕过该生命周期部署裸 `.next/standalone`。prebuild 在 `public/` 下留有 `robots.txt` 或 `sitemap.xml` 时拒绝构建：回退到站点地图还由构建生成的版本再升回来时，旧版本的构建会重新写出不受 git 跟踪的 `public/sitemap.xml`，要手动删掉。
 - Meilisearch 由 `compose.yaml` 可选启动；运行时必须保留 basic 引擎（Prisma 实现），它也是未启用 Meilisearch 时的唯一实现。S3、邮件、Cloudflare 等外部服务由环境变量配置，验证时避免真实生产资源。
 - 对象存储的桶与边缘配置是资源直传边界的一部分，由站长维护，换存储或换域名时要重做：存储公开域名对全部路径加响应头 `Content-Disposition: attachment` 与 `X-Content-Type-Options: nosniff`（存量对象的元数据代码改不动，靠它兜底）；对 `GET` / `HEAD /patch/tmp/*` 返回 403（暂存对象只经带凭据的 S3 API 访问；规则加在公开域名上，不是预签名 PUT 所在的 S3 端点）；给 `patch/tmp/` 前缀配过期规则，不少于 48 小时（上传令牌 24 小时内都可以绑定），前缀不得匹配 `patch/<id>/resource/` 与 `user/avatar/*/moderation/`。存储是否核验签名里的 Content-Type、是否遵从 `MetadataDirective: REPLACE`，用 `pnpm exec esno scripts/probeStagedUploadBoundary.ts --write` 核查（写入并删除至多五个探针对象，不碰数据库；第 5 项顺带报告 key 末段的字节上限）；转正后对正式对象的元数据核对目前只记日志（`转正后的对象…` 开头的两条），确认生产上没有这两条之后再改成拒绝。
+
+## 资源词表变更
+
+- 资源分类（类别 / 类型 / 语言 / 平台 / 模拟器类型 / 模型型号）的取值在 `constants/resource.ts`，规则只在 `validations/resourceTaxonomy.ts` 的 `findTaxonomyViolations`：`validations/patch.ts` 的联动校验与全表核查 `pnpm taxonomy:verify`（`scripts/verifyResourceTaxonomy.ts`）都读它，改联动或条件必填只改这一处。各字段自己的 `refine(includes)` 与文案留在 schema 里，不换成 `z.enum`：报错路径会从 `type` 变成 `type.0`，对象级的 `superRefine` 也不再执行（zod 4.6.7 实测）。同一份词表的几张平行表（取值列表、文案表、下拉选项、按类别的分组）由 `constants/__tests__/resource.test.ts` 核对键集。
+- 库对这些列不设约束，词表的权威只在代码里：代码里删掉一个值，库里带着它的行不会跟着变。一次变更做完没有，只看 `pnpm taxonomy:verify` 的退出码：0 是没有任何一行带着词表外的值（`patch_resource` 全表，不分 status、发布者与类别；外加 `patch` 上由 `recalcPatchType` 聚合出来的 `type` / `language` / `platform`）。它开只读会话、按 id 分批读，可以直接对生产库跑。迁移脚本自己的「已完成」判断不算数：那只代表这份脚本看的那几列。
+- 只加值：改 `constants/resource.ts` 里这份词表的每张平行表即可。
+- 删值或换值分三步，不要在一次部署里直接删（07-28 与 09-18 两次都是代码先删、数据迁移留到之后，期间带旧值的资源一编辑就被校验拦下，哪些表单要补过滤每次都得重新决定）：
+  1. expand 部署：新值进词表；被删的值挪进 `constants/resource.ts` 里新建的 `LEGACY_*` 列表，校验在过渡期继续放行它（字段的 `refine` 与类别联动都要认），判据照旧把它报为词表外的值。界面不提供这个选项，也不给它加回 `*_MAP` 文案（旧值在迁移前显示成空白是既有裁定）。新旧词表里同名的值（如 `other`）从值上分不出新旧，要在这一步记下来源边界（上线时刻或目标 id 集），迁移只动边界以内的行。
+  2. 迁移数据，直到 `pnpm taxonomy:verify` 以 0 退出。资源行改干净之后派生列还有残留的，对那些作品重跑 `recalcPatchType`，再 `pnpm search:reconcile --enqueue-only` 让搜索索引跟上。
+  3. contract 部署：删掉 `LEGACY_*` 与过渡代码。过渡代码的注释里写明删除判据就是这条命令以 0 退出（现有的一处是 `EditResourceDialog.tsx` 的 type / platform 过滤）。
+- 只是删值、且旧值到新值的映射确定时，可以先迁移、再部署删除、再跑一遍补漏，同样以核查为 0 收尾。
+- 核查里「不拦收尾」的两类不影响退出码：行自身不完整（平台为空、选了模拟器平台却没有模拟器类型等，怎么补由站长逐条裁定），以及 `patch.type` 里的 `'patch'`（姊妹站同步任务打的标记，任务已在 `bbe203e8` 删除、没有写入方了；`patch_resource.type` 里的 `'patch'` 才是旧值）。数组列在库里可空，核查与 Prisma 一样把 `NULL` 读成空数组。
+- 不给这些列加数据库 CHECK：`NOT VALID` 的约束照样校验之后的 UPDATE，残留行上的下载计数、隐藏与审核写入都会失败，每次加值也要先执行 DDL；等核查在生产上为 0 再评估。`recalcPatchType` 不按词表过滤：那会把残留藏起来，核查就看不见了。
 
 ## Testing & QA
 
