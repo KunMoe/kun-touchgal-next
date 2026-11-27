@@ -69,5 +69,34 @@ describe('getPatchResource 搜索过滤', () => {
     const { where } = findManyMock.mock.calls[0][0]
     expect(where.OR).toBeUndefined()
     expect(where.links).toBeUndefined()
+    expect(where.id).toBeUndefined()
   })
+
+  it('带 resourceId 时按资源 ID 精确匹配', async () => {
+    const input = adminResourcePaginationSchema.parse({
+      page: 1,
+      limit: 30,
+      resourceId: '233'
+    })
+    await getPatchResource(input, null)
+
+    const { where } = findManyMock.mock.calls[0][0]
+    expect(where.id).toBe(233)
+    expect(where.OR).toBeUndefined()
+    expect(where.links).toBeUndefined()
+    expect(countMock.mock.calls[0][0].where).toEqual(where)
+  })
+
+  it.each(['abc', '1.5', '0', '2147483648'])(
+    'resourceId 为 %s 时在校验阶段被拒',
+    (resourceId) => {
+      const result = adminResourcePaginationSchema.safeParse({
+        page: 1,
+        limit: 30,
+        resourceId
+      })
+      expect(result.success).toBe(false)
+      expect(result.error?.issues[0]?.message).toBe('资源 ID 无效')
+    }
+  )
 })

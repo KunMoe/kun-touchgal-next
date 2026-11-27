@@ -11,7 +11,7 @@ export const getPatchResource = async (
   input: z.infer<typeof adminResourcePaginationSchema>,
   contentLimit: ContentLimit | null
 ) => {
-  const { page, limit, search, searchType, userId } = input
+  const { page, limit, search, searchType, userId, resourceId } = input
   const offset = (page - 1) * limit
 
   const searchFilter = search
@@ -56,6 +56,7 @@ export const getPatchResource = async (
 
   const where = {
     ...searchFilter,
+    ...(resourceId ? { id: resourceId } : {}),
     ...(userId ? { user_id: userId } : {}),
     // 后台列表只按分级过滤, 不套用屏蔽标签
     patch: toPatchWhere({ contentLimit, blockedTagIds: [] })

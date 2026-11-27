@@ -40,7 +40,7 @@ import { KunPagination } from '~/components/kun/Pagination'
 import type { AdminResource } from '~/types/api/admin'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 
-type ResourceSearchType = 'content' | 'info' | 'user'
+type ResourceSearchType = 'content' | 'info' | 'id' | 'user'
 // 批量修改只在公开与隐藏之间切换, 待初审 / 待审是系统态
 type ResourceHiddenStatus =
   typeof RESOURCE_STATUS.public | typeof RESOURCE_STATUS.hidden
@@ -70,6 +70,7 @@ const searchTypeOptions: Array<{
     label: '名称备注',
     placeholder: '输入资源名称或备注搜索...'
   },
+  { key: 'id', label: '资源 ID', placeholder: '输入资源 ID 搜索...' },
   { key: 'user', label: '用户名', placeholder: '输入用户名搜索...' }
 ]
 
@@ -86,7 +87,10 @@ const fetchResourcePage = async (query: ResourceQuery) => {
     page: query.page,
     limit: query.limit
   }
-  if (query.searchType !== 'user' && query.search) {
+  if (query.searchType === 'id' && query.search) {
+    // 资源 ID 是数值入参, 值域由服务端的 kunId 校验, 不当作文本搜索词
+    params.resourceId = query.search
+  } else if (query.searchType !== 'user' && query.search) {
     params.search = query.search
     params.searchType = query.searchType
   }

@@ -111,7 +111,8 @@ export const adminResourceSearchTypeSchema = z.enum(['content', 'info'])
 export const adminResourcePaginationSchema = adminPaginationSchema.extend({
   limit: kunLimit(500),
   searchType: adminResourceSearchTypeSchema.default('content'),
-  userId: kunId('用户 ID').optional()
+  userId: kunId('用户 ID').optional(),
+  resourceId: kunId('资源 ID').optional()
 })
 
 const adminResourceHiddenLimit = 500
