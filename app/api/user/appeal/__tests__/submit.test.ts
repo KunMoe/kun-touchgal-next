@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   findTaskMock,
@@ -310,6 +310,53 @@ describe('submitAppeal 资源链接', () => {
 
     expect(result).toBe('请输入资源链接')
     expect(createAppealMock).not.toHaveBeenCalled()
+  })
+
+  // 与发布 / 编辑同一条规则 (storageGate.ts): 外链不许指向本站桶里的对象
+  describe('自定义链接的地址指向本站桶里的对象', () => {
+    const BUCKET = 'https://bucket.example'
+    const OBJECT_URL = `${BUCKET}/patch/1/resource/abc/file.zip`
+    const MANAGED_ERROR =
+      '本站对象存储里的文件不能填成外部链接, 请选择「对象存储」并上传文件'
+
+    beforeEach(() => {
+      vi.stubEnv('NEXT_PUBLIC_KUN_VISUAL_NOVEL_S3_STORAGE_URL', BUCKET)
+    })
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('申诉里把地址改成桶里的对象: 拒绝, 不建申诉', async () => {
+      const result = await submitAppeal(
+        resourceInput([
+          submittedLink(21),
+          submittedLink(22, { content: OBJECT_URL })
+        ]),
+        UID
+      )
+
+      expect(result).toBe(MANAGED_ERROR)
+      expect(createAppealMock).not.toHaveBeenCalled()
+    })
+
+    it('库里本来就是这样的地址、申诉没有改它: 不判', async () => {
+      txLinkFindManyMock.mockResolvedValue([
+        storedLinks[0],
+        { ...storedLinks[1], content: OBJECT_URL }
+      ])
+
+      const result = await submitAppeal(
+        resourceInput([
+          submittedLink(21),
+          submittedLink(22, { content: OBJECT_URL })
+        ]),
+        UID
+      )
+
+      expect(result).not.toBe(MANAGED_ERROR)
+      expect(createAppealMock).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('站内存储的链接提交空地址不算错', async () => {

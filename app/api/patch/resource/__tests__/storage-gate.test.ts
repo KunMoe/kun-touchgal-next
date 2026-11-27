@@ -352,6 +352,23 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
     expectNoSideEffects()
   })
 
+  it('只换存储类型、其余字段原样: 仍按新链接判', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('galgame', [storedLink(5, 'user')])
+    )
+
+    const result = await frontUpdate(
+      buildInput('galgame', [
+        { ...kept(5, 'user'), storage: 'touchgal' } as LinkInput
+      ]),
+      99,
+      3
+    )
+
+    expect(result).toBe(TOUCHGAL_ERROR)
+    expectNoSideEffects()
+  })
+
   it('带着库里没有的链接 id 提交按新增判 (不能靠编造 id 冒充存量)', async () => {
     resourceFindUniqueMock.mockResolvedValue(
       storedResource('galgame', [storedLink(5, 'user')])
@@ -671,6 +688,55 @@ describe('外链不许指向本站桶里的对象', () => {
     )
 
     expect(result).toBe(PASSED_GATE)
+  })
+
+  it('存量行的豁免认的是那一行: 另加一条同地址的新链接照拒', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('patch', [
+        { ...storedLink(5, 'user'), content: OBJECT_URL }
+      ])
+    )
+
+    const result = await frontUpdate(
+      buildInput('patch', [external(OBJECT_URL, 5), external(OBJECT_URL)]),
+      AUTHOR_UID,
+      2
+    )
+
+    expect(result).toBe(MANAGED_ERROR)
+    expectNoSideEffects()
+  })
+
+  // 桶的公开地址换过, 或环境变量与库里的行对不上时, 按前缀认不出旧地址: 「对象存储的行
+  // 改成外链却留着地址」不看域名
+  it.each([
+    ['环境变量是另一个域名', 'https://another-bucket.example'],
+    ['没有配环境变量', undefined]
+  ])('P26-01 的原样形态在%s时也拒绝', async (_label, env) => {
+    vi.stubEnv('NEXT_PUBLIC_KUN_VISUAL_NOVEL_S3_STORAGE_URL', env)
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('patch', [{ ...storedLink(5, 's3'), content: OBJECT_URL }])
+    )
+
+    const result = await frontUpdate(
+      buildInput('patch', [external(`${OBJECT_URL}  `, 5)]),
+      AUTHOR_UID,
+      2
+    )
+
+    expect(result).toBe(MANAGED_ERROR)
+    expectNoSideEffects()
+  })
+
+  it('环境变量结尾带斜杠时前缀照样认得出', async () => {
+    vi.stubEnv('NEXT_PUBLIC_KUN_VISUAL_NOVEL_S3_STORAGE_URL', `${BUCKET}/`)
+
+    const result = await createPatchResource(
+      buildInput('patch', [external(OBJECT_URL)]),
+      kunTestActor({ uid: AUTHOR_UID, role: 4 })
+    )
+
+    expect(result).toBe(MANAGED_ERROR)
   })
 
   it('存量外链连同存储类型一起换: 按新链接判', async () => {

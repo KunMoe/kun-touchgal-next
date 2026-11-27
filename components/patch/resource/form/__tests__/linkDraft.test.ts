@@ -380,6 +380,17 @@ describe('resourceFormResolver: 表单按请求体校验', () => {
     })
   })
 
+  // 校验的是请求体: 草稿里的上传在 upload 里, 请求体里才是 uploadToken
+  it('新加的对象存储链接传完文件之后通过校验', async () => {
+    const values = fromResource(resource)
+    const fresh = emptyLink('s3')
+    const result = await resolve({
+      ...values,
+      links: [...attachUpload([fresh], fresh.key, UPLOAD)]
+    })
+    expect(result.errors).toEqual({})
+  })
+
   it('外链没填地址: 错误落在它的 content 上', async () => {
     const values = fromResource(resource)
     const result = await resolve({ ...values, links: [emptyLink('user')] })

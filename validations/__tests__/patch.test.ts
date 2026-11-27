@@ -322,6 +322,30 @@ describe('资源链接按存储类型判别', () => {
     })
   })
 
+  // 上传 token 是 24 字节的 base64url (server/storage/stagedUpload.ts), 32 个字符
+  it('真实长度的上传 token 过得了长度上限', () => {
+    const token = 'q83vEjRWeJBqrCfx9Mz0tQ8k2LmN4pYa'
+    expect(token).toHaveLength(32)
+    expect(parsedLink({ ...s3, uploadToken: token })).toMatchObject({
+      uploadToken: token
+    })
+    expect(issuesOf([{ ...s3, uploadToken: 'x'.repeat(108) }])).toEqual([
+      ['links.0.uploadToken', '上传凭证不正确, 请重新上传文件']
+    ])
+  })
+
+  it('对象存储链接的提取码与解压码沿用同一份约束', () => {
+    expect(parsedLink({ ...s3, id: 5, code: ' c0de ' })).toMatchObject({
+      code: 'c0de'
+    })
+    expect(issuesOf([{ ...s3, id: 5, code: 'x'.repeat(1008) }])).toEqual([
+      ['links.0.code', '资源提取码长度最多 1007 位']
+    ])
+    expect(issuesOf([{ ...s3, id: 5, password: 'x'.repeat(1008) }])).toEqual([
+      ['links.0.password', '资源解压码长度最多 1007 位']
+    ])
+  })
+
   it.each([
     ['既没有 id 也没有 uploadToken', {}],
     ['uploadToken 是空串', { uploadToken: '' }],
@@ -351,6 +375,12 @@ describe('资源链接按存储类型判别', () => {
   ])('旧页面在对象存储链接的 hash 里回传%s: 提示刷新', (_label, hash) => {
     expect(
       issuesOf([{ ...s3, id: 5, hash, content: '', size: '1 MB' }])
+    ).toEqual([['links.0.hash', '页面版本已更新, 请刷新后重试']])
+  })
+
+  it('旧页面新上传 (token 在 hash 里、没有 id): 只提示刷新, 不再多报一条「请先上传」', () => {
+    expect(
+      issuesOf([{ ...s3, hash: 'q83vEjRWeJBqrCfx9Mz0tQ8k2LmN4pYa' }])
     ).toEqual([['links.0.hash', '页面版本已更新, 请刷新后重试']])
   })
 

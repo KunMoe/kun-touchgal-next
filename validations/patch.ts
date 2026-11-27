@@ -144,10 +144,14 @@ const s3LinkSchema = z
     code: resourceLinkFields.code,
     password: resourceLinkFields.password
   })
-  .refine((link) => link.id !== undefined || !!link.uploadToken, {
-    message: '请先上传资源文件',
-    path: ['uploadToken']
-  })
+  // 旧页面把 token 放在 hash 里: 上面的守卫已经让它刷新, 这里不再多报一条「请先上传」
+  .refine(
+    (link) => link.id !== undefined || !!link.uploadToken || !!link.hash,
+    {
+      message: '请先上传资源文件',
+      path: ['uploadToken']
+    }
+  )
 
 const EXTERNAL_LINK_STORAGES = KUN_LINK_STORAGES.filter(
   (storage) => storage !== 's3'

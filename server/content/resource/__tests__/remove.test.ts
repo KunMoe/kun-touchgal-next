@@ -63,7 +63,10 @@ vi.mock('~/server/storage/s3Outbox', async (importOriginal) => ({
   kickS3DeletionDrain: kickS3Mock
 }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 import { kunTx } from '~/server/db/tx'
+import { kunLog } from '~/lib/log.server'
 import {
   executeResourceRemoval,
   planResourceRemoval
@@ -186,6 +189,11 @@ describe('资源删除的语句顺序', () => {
     await remove([1, 2])
 
     expect(s3EnqueuedKeys(rec)).toEqual([['k-10', 'k-20']])
+    // 外链行没有对象 key: 不把它们交给入队, 否则每次删除都记一条「链接没有 key」的假告警
+    expect(kunLog).not.toHaveBeenCalledWith(
+      's3.link_without_key',
+      expect.anything()
+    )
   })
 
   it('批量删除按 id 升序锁资源行, 补丁按 id 升序重算', async () => {

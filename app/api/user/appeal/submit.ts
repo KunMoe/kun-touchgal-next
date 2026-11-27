@@ -11,6 +11,10 @@ import {
   getAppealModelName
 } from '~/server/moderation/appeal'
 import { getAppealEditableLinkFields } from '~/utils/appealPayload'
+import {
+  MANAGED_OBJECT_LINK_ERROR,
+  pointsAtManagedObject
+} from '~/app/api/patch/resource/storageGate'
 import { toWellFormedDeep } from '~/utils/text/unicode'
 import type {
   AppealLink,
@@ -141,6 +145,10 @@ const buildResourceAppealLinks = async (
     }
     if (editable.includes('content') && !link.content.trim()) {
       ctx.fail('请输入资源链接')
+    }
+    // 与发布 / 编辑同一条规则: 申诉里把外链的地址改成本站桶里的对象同样不收 (没改的不判)
+    if (editable.includes('content') && pointsAtManagedObject(link, current)) {
+      ctx.fail(MANAGED_OBJECT_LINK_ERROR)
     }
     links.push(link)
   }

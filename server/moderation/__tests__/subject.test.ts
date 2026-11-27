@@ -129,14 +129,20 @@ describe('submittedLinkSubject: 提交的链接 → 送审字段', () => {
   it('新上传的对象存储链接没有可审的地址与大小, 即使给了库里的旧大小', () => {
     expect(
       submittedLinkSubject(
-        { id: 3, storage: 's3', uploadToken: 'tok', code: '', password: 'pw' },
+        {
+          id: 3,
+          storage: 's3',
+          uploadToken: 'tok',
+          code: 'c0de',
+          password: 'pw'
+        },
         '100 MB'
       )
     ).toEqual({
       storage: 's3',
       content: '',
       size: '',
-      code: '',
+      code: 'c0de',
       password: 'pw'
     })
   })

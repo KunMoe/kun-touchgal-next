@@ -57,22 +57,31 @@ const changedLinks = (
   })
 }
 
+export const MANAGED_OBJECT_LINK_ERROR =
+  '本站对象存储里的文件不能填成外部链接, 请选择「对象存储」并上传文件'
+
 // 外链的地址不许指向本站桶里的对象: 那个对象归某条对象存储链接所有, 只有 storage 为 s3
 // 的行才算它的引用 (server/storage 的引用裁决同此), 那一行被删掉或换了文件, 对象随之删除,
-// 指着它的外链就成了死链。把对象存储链接改成外链却留着对象地址 (P26-01) 是其中最常见的
-// 一种。规则之前留下的行不妨碍持有者改别的字段: 存储类型与地址都原样带回的不判
-const pointsAtManagedObject = (
-  link: SubmittedLink,
-  stored: ReadonlyMap<number, StoredLink>
+// 指着它的外链就成了死链。发布 / 编辑经 linkStorageGateError 判, 申诉改链接地址时直接调。
+// link 是提交上来的外链, before 是库里同 id 的那一行 (新链接没有)。两条判据:
+// - 对象存储的行改成外链却留着对象的地址 (P26-01 的原样形态)。不看域名: 桶的公开地址换过、
+//   或环境变量与库里的行对不上时, 按前缀认不出它
+// - 地址以桶的公开地址开头。规则之前留下的行不妨碍持有者改别的字段: 存储类型与地址都
+//   原样带回的不判
+export const pointsAtManagedObject = (
+  link: { storage: string; content: string },
+  before?: { storage: string; content: string }
 ) => {
-  const prefix = `${process.env.NEXT_PUBLIC_KUN_VISUAL_NOVEL_S3_STORAGE_URL!}/`
-  if (
-    link.storage === 's3' ||
-    !link.content.trim().toLowerCase().startsWith(prefix.toLowerCase())
-  ) {
+  const content = link.content.trim()
+  if (before?.storage === 's3' && before.content.trim() === content) {
+    return true
+  }
+  const base = (
+    process.env.NEXT_PUBLIC_KUN_VISUAL_NOVEL_S3_STORAGE_URL ?? ''
+  ).replace(/\/+$/, '')
+  if (!base || !content.toLowerCase().startsWith(`${base}/`.toLowerCase())) {
     return false
   }
-  const before = link.id === undefined ? undefined : stored.get(link.id)
   return !(
     before &&
     before.storage === link.storage &&
@@ -100,8 +109,15 @@ export const linkStorageGateError = (
     const stored = new Map(
       (previous?.links ?? []).map((link) => [link.id, link])
     )
-    return next.links.some((link) => pointsAtManagedObject(link, stored))
-      ? '本站对象存储里的文件不能填成外部链接, 请选择「对象存储」并上传文件'
+    return next.links.some(
+      (link) =>
+        link.storage !== 's3' &&
+        pointsAtManagedObject(
+          link,
+          link.id === undefined ? undefined : stored.get(link.id)
+        )
+    )
+      ? MANAGED_OBJECT_LINK_ERROR
       : null
   }
   if (storage === 'touchgal') {

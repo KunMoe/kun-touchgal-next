@@ -790,3 +790,116 @@ describe('更新资源不把 hash 写到外链行上', () => {
     ])
   })
 })
+
+// 链接行按请求里的形态落库: 外链取用户填的, 被换掉的对象存储行连同它的对象一起走
+describe('更新资源按链接形态落库', () => {
+  const storedExternal = {
+    id: 5,
+    storage: 'user',
+    content: 'https://example.com/old',
+    hash: '',
+    s3_key: '',
+    size: '100MB',
+    code: '',
+    password: '',
+    download: 9
+  }
+  const storedS3 = {
+    ...storedExternal,
+    storage: 's3',
+    content: 'old-c',
+    s3_key: 'old-k'
+  }
+
+  beforeEach(() => {
+    transactionQueryRawMock.mockResolvedValue([
+      { status: 0, section: 'galgame' }
+    ])
+    transactionResourceUpdateMock.mockResolvedValue(buildUpdated())
+  })
+
+  it('改已有外链的地址与大小: 落库的是提交的新值, 下载数带过去', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      buildSnapshot({ links: [storedExternal] })
+    )
+    transactionLinkFindManyMock.mockResolvedValue([storedExternal])
+
+    await updateResource(
+      buildInput({
+        links: [
+          {
+            id: 5,
+            storage: 'user',
+            content: 'https://example.com/new',
+            size: '2 GB',
+            code: 'c0de',
+            password: 'pw'
+          }
+        ]
+      }),
+      7,
+      1
+    )
+
+    expect(
+      transactionResourceUpdateMock.mock.calls[0][0].data.links.create
+    ).toEqual([
+      {
+        storage: 'user',
+        content: 'https://example.com/new',
+        size: '2 GB',
+        code: 'c0de',
+        password: 'pw',
+        hash: '',
+        s3_key: '',
+        sort_order: 0,
+        download: 9
+      }
+    ])
+    expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
+      transactionClient,
+      []
+    )
+  })
+
+  it('对象存储链接改成外链: 原对象入队删除, 新行不带对象 key', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      buildSnapshot({ links: [storedS3] })
+    )
+    transactionLinkFindManyMock.mockResolvedValue([storedS3])
+
+    const result = await updateResource(
+      buildInput({
+        links: [
+          {
+            id: 5,
+            storage: 'user',
+            content: 'https://example.com/new',
+            size: '2 GB',
+            code: '',
+            password: ''
+          }
+        ]
+      }),
+      7,
+      1
+    )
+
+    expect(typeof result).not.toBe('string')
+    expect(bindUploadedResourceMock).not.toHaveBeenCalled()
+    expect(
+      transactionResourceUpdateMock.mock.calls[0][0].data.links.create
+    ).toEqual([
+      expect.objectContaining({
+        storage: 'user',
+        content: 'https://example.com/new',
+        s3_key: '',
+        hash: ''
+      })
+    ])
+    expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
+      transactionClient,
+      [{ s3Key: 'old-k' }]
+    )
+  })
+})
