@@ -7,9 +7,12 @@ import {
   SUPPORTED_TYPE
 } from '~/constants/resource'
 
-// 资源分类 (类别 / 类型 / 语言 / 平台 / 模拟器类型 / 模型型号) 的唯一违规判据。
-// 接口与表单的校验 (validations/patch.ts) 和全表核查 (scripts/verifyResourceTaxonomy.ts)
-// 都从这里读, 「接口收下的」与「核查认为干净的」因此是同一套规则。
+// 资源分类 (类别 / 类型 / 语言 / 平台 / 模拟器类型 / 模型型号) 的违规判据: 一行数据
+// 哪里不合词表与联动规则。全表核查 (scripts/verifyResourceTaxonomy.ts) 拿它判库里的行;
+// 接口与表单的校验 (validations/patch.ts) 的类别联动与两条条件必填也从这里读, 这三条规则
+// 只写在这里。词表成员与非空在 schema 里另有各字段自己的校验 (文案不同), 两边由
+// __tests__/resourceTaxonomy.test.ts 的对照用例保持一致。
+// 不管条数上限 (每个字段最多 10 项是表单的限制, 不是词表规则)。
 // 纯函数, 只依赖 constants/resource, 客户端也能用
 
 export interface ResourceTaxonomyRow {
@@ -104,8 +107,8 @@ export const findTaxonomyViolations = (
   return violations
 }
 
-// 词表变更是否收尾只看这两类: 它们只能来自还没迁移的旧值 (或绕过校验的写入)。
-// 其余几类是行自身不完整 (空数组、缺联动字段、留着孤儿值), 怎么补要逐条裁定,
+// 词表变更是否收尾只看这两类: 校验不放行它们, 库里出现就是还没迁移的旧值 (或绕过校验
+// 的写入)。其余几类是行自身不完整 (空数组、缺联动字段、留着孤儿值), 怎么补要逐条裁定,
 // 核查里单列、不拦收尾
 export const isMembershipViolation = (violation: TaxonomyViolation) =>
   violation.kind === 'unknown-value' || violation.kind === 'section-type'

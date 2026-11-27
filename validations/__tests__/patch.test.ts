@@ -161,6 +161,65 @@ describe('patchResourceCreateSchema 资源类别 / 类型联动', () => {
     ])
   })
 
+  // 联动改由判据给出之后, 这几类输入的报错要与此前一条不多、一条不少: 判据另外报的
+  // 词表外的值、空数组与孤儿值, 校验不重复报
+  it.each<[string, Record<string, unknown>, string[][]]>([
+    [
+      '旧类型值',
+      { section: 'galgame', type: ['pc', 'chinese', 'game'] },
+      [
+        ['custom', 'type', '非法的类型'],
+        ['custom', 'type', '所选资源类型不属于当前资源类别']
+      ]
+    ],
+    [
+      '类型为空',
+      { type: [] },
+      [['too_small', 'type', '请选择至少一个资源类型']]
+    ],
+    [
+      '语言与平台为空',
+      { language: [], platform: [] },
+      [
+        ['too_small', 'language', '请选择至少一个资源语言'],
+        ['too_small', 'platform', '请选择至少一个资源平台']
+      ]
+    ],
+    [
+      '模拟器平台配已删除的模拟器类型',
+      { platform: ['emulator'], emulatorType: ['winlator'] },
+      [['custom', 'emulatorType', '非法的模拟器类型']]
+    ],
+    [
+      '不该有的模拟器类型与模型型号 (落库前清掉)',
+      { emulatorType: ['joiplay'], modelName: 'GPT-4o' },
+      []
+    ],
+    [
+      '词表外的类别同时触发两条条件必填',
+      { section: 'constructor', type: ['ai'], platform: ['emulator'] },
+      [
+        ['custom', 'section', '资源链接类型仅能为 Galgame 或补丁'],
+        ['custom', 'emulatorType', '选择模拟器平台时请选择模拟器类型'],
+        ['custom', 'modelName', '发布 AI 翻译补丁时请填写模型型号']
+      ]
+    ]
+  ])('完整的报错列表: %s', (_, fields, expected) => {
+    const result = patchResourceCreateSchema.safeParse({
+      ...baseInput,
+      ...fields
+    })
+    expect(
+      result.success
+        ? []
+        : result.error.issues.map((issue) => [
+            issue.code,
+            issue.path.join('.'),
+            issue.message
+          ])
+    ).toEqual(expected)
+  })
+
   // 拿 section 直接查对象字面量会命中原型链上的成员, 此前校验在这里抛 TypeError (接口回 500)
   it.each(['constructor', '__proto__', 'toString'])(
     '资源类别取对象原型上的成员名 %s 时回业务错误',
