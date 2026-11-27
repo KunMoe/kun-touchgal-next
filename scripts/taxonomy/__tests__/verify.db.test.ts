@@ -37,9 +37,10 @@ describe.skipIf(!dbContractUrl)(
       patchIds = patches.map((patch) => patch.id).sort((a, b) => a - b)
       await prisma.$executeRaw`
         UPDATE patch SET name = name WHERE id <= ${patchIds[999]}`
-      // 第一批的最后一行带旧值, 第二批的第一行三列都是 NULL
+      // 第一批的最后一行带旧值 (status 不是 0 的作品照样核查), 第二批的第一行三列都是 NULL
       await prisma.$executeRaw`
-        UPDATE patch SET type = '{chinese,patch}', platform = '{android}'
+        UPDATE patch
+           SET type = '{chinese,patch}', platform = '{android}', status = 1
          WHERE id = ${patchIds[1999]}`
       await prisma.$executeRaw`
         UPDATE patch SET type = NULL, language = NULL, platform = NULL
