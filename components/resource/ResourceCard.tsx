@@ -59,7 +59,6 @@ export const ResourceCard = ({ resource }: Props) => {
           emulatorType={resource.emulatorType}
           modelName={resource.modelName}
           size="sm"
-          hidePatchType
         />
 
         <div className="mt-auto flex items-end justify-between gap-3 pt-1">
