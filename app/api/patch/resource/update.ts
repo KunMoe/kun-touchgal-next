@@ -15,13 +15,17 @@ import {
   hasPendingModeration,
   planTextModeration
 } from '~/server/moderation/submit'
-import { resourceSubject } from '~/server/moderation/subject'
+import {
+  resourceSubject,
+  submittedLinkSubject
+} from '~/server/moderation/subject'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import { RESOURCE_STATUS } from '~/constants/contentStatus'
 import { markResourcePendingReview } from '~/server/content/resource/edit'
 import { linkStorageGateError } from './storageGate'
 import { kunTx } from '~/server/db/tx'
 import { recordKunChanges } from '~/server/cache/publish'
+import { formatResourceSize } from '~/utils/resourceSize'
 import type { ResourceStatus } from '~/constants/contentStatus'
 import type { PatchResource } from '~/types/api/patch'
 import type { KunActor } from '~/constants/role'
@@ -112,6 +116,16 @@ export const updatePatchResource = async (
     return renderable
   }
 
+  const snapshotLinksById = new Map(
+    resource.links.map((link) => [link.id, link])
+  )
+  // 沿用原文件的对象存储链接, 库里那一行的大小 (见 submittedLinkSubject)
+  const keptSize = (id: number | undefined) => {
+    const snapshotLink =
+      id === undefined ? undefined : snapshotLinksById.get(id)
+    return snapshotLink?.storage === 's3' ? snapshotLink.size : ''
+  }
+
   // 送审字段 (见 resourceSubject 的策略表) 有变化就必须重新送审; 待人工审批
   // (status=2) 的资源不送 AI; 全空的资源无文本可审, 直接放行. 预筛必须先于 S3 重绑:
   // 预筛 (读审核配置) 可能因 Redis 故障抛错, 在绑定之后抛会泄漏已复制的对象
@@ -123,7 +137,9 @@ export const updatePatchResource = async (
             name: input.name,
             note: input.note,
             modelName: model_name,
-            links
+            links: links.map((link) =>
+              submittedLinkSubject(link, keptSize(link.id))
+            )
           }),
           {
             actor,
@@ -143,15 +159,18 @@ export const updatePatchResource = async (
   // 行锁之下, 以锁下集合为事实源. 事务外快照与行锁之间的并发编辑是 deleteMany +
   // create 整体换行: 基于快照的 diff 会漏删并发重绑的新 s3 对象 (孤儿且公开可达),
   // 并把已入队删除的旧 key 复制回新行成悬空链接
-  const snapshotLinksById = new Map(
-    resource.links.map((link) => [link.id, link])
-  )
   const nextLinkIds = new Set(
     links
       .map((link) => link.id)
       .filter((id): id is number => typeof id === 'number')
   )
-  const boundLinks = new Map<number, { content: string; s3Key: string }>()
+  const boundLinks = new Map<
+    number,
+    { content: string; s3Key: string; size: string }
+  >()
+  // 清理已重绑的对象只需要它们的地址与 key
+  const boundObjects = () =>
+    [...boundLinks.values()].map(({ content, s3Key }) => ({ content, s3Key }))
 
   // bind 抛错 (Redis/配额 DB 故障、copy 超时 rethrow) 同样泄漏历史条目: 抛错的
   // 迭代要么未创建 finalKey 要么已在 _helper 内自清, 循环级 catch 只清历史无双删
@@ -160,30 +179,35 @@ export const updatePatchResource = async (
       if (link.storage !== 's3') {
         continue
       }
-      const snapshotLink =
-        typeof link.id === 'number' ? snapshotLinksById.get(link.id) : null
-      // 直传迁移前的历史 s3 链接 hash 列存 BLAKE3 校验码, 编辑表单会原样回传:
-      // 与库中值相同即保留, 只有不同的非空值才是新上传的 token
-      if (link.hash && link.hash !== snapshotLink?.hash) {
-        const result = await bindUploadedResource(patchId, link.hash, actor.uid)
+      // 带着 uploadToken 才绑定 (新加的链接, 或给已有的链接换文件); 不带就是沿用原文件
+      if (link.uploadToken) {
+        const result = await bindUploadedResource(
+          patchId,
+          link.uploadToken,
+          actor.uid
+        )
         if (typeof result === 'string') {
-          await abandonBoundResourceObjects([...boundLinks.values()], patchId)
+          await abandonBoundResourceObjects(boundObjects(), patchId)
           return result
         }
         boundLinks.set(index, {
           content: result.downloadLink,
-          s3Key: result.s3Key
+          s3Key: result.s3Key,
+          size: formatResourceSize(result.size)
         })
         continue
       }
-      // 保留型 s3 链接仅做资格预检, content/s3_key/hash 在锁下解析
+      // 沿用原文件的链接只做资格预检 (必须是库里已有的对象存储行),
+      // content / s3_key / size / hash 在锁下解析
+      const snapshotLink =
+        link.id === undefined ? undefined : snapshotLinksById.get(link.id)
       if (!snapshotLink || snapshotLink.storage !== 's3') {
-        await abandonBoundResourceObjects([...boundLinks.values()], patchId)
+        await abandonBoundResourceObjects(boundObjects(), patchId)
         return '请先上传资源文件'
       }
     }
   } catch (error) {
-    await abandonBoundResourceObjects([...boundLinks.values()], patchId)
+    await abandonBoundResourceObjects(boundObjects(), patchId)
     throw error
   }
 
@@ -287,34 +311,39 @@ export const updatePatchResource = async (
         typeof link.id === 'number' ? currentLinksById.get(link.id) : null
       const bound = boundLinks.get(index)
 
-      let content = link.content
+      // 请求里能落到链接行上的只有外链的地址与大小, 以及两种形态都有的提取码与解压码。
+      // hash 列从不取自请求: 新行与外链为空, 沿用原文件的行照锁下的值原样带过去
+      let content: string
+      let size: string
       let s3Key = ''
-      let hash = link.hash
-      if (link.storage === 's3') {
-        if (bound) {
-          content = bound.content
-          s3Key = bound.s3Key
-          hash = ''
-        } else if (existingLink && existingLink.storage === 's3') {
-          content = existingLink.content
-          s3Key = existingLink.s3_key
-          // 历史链接 s3_key 为空, 删除时靠 hash 还原对象 key (resolveS3Key), 须原样保留
-          hash = existingLink.hash
-        } else {
-          // 资格预检通过但锁下行已被并发编辑重建: 本次编辑的语义基础已失效.
-          // 已重绑的新对象随本事务入队清理 —— 以 commitWith 提交, 此前
-          // 无任何行变更, 提交的只有这份清理入队; 上传暂存仍在, 重试可再次绑定
-          await enqueueResourceLinkDeletions(
-            prisma,
-            [...boundLinks.values()].map((item) => ({
-              content: item.content,
-              patchId: resource.patch_id,
-              hash: '',
-              s3Key: item.s3Key
-            }))
-          )
-          return ctx.commitWith('该资源的链接已被修改, 请刷新后重试')
-        }
+      let hash = ''
+      if (link.storage !== 's3') {
+        content = link.content
+        size = link.size
+      } else if (bound) {
+        content = bound.content
+        size = bound.size
+        s3Key = bound.s3Key
+      } else if (existingLink && existingLink.storage === 's3') {
+        content = existingLink.content
+        size = existingLink.size
+        s3Key = existingLink.s3_key
+        // 历史链接 s3_key 为空, 删除时靠 hash 还原对象 key (resolveS3Key), 须原样保留
+        hash = existingLink.hash
+      } else {
+        // 资格预检通过但锁下行已被并发编辑重建: 本次编辑的语义基础已失效.
+        // 已重绑的新对象随本事务入队清理 —— 以 commitWith 提交, 此前
+        // 无任何行变更, 提交的只有这份清理入队; 上传暂存仍在, 重试可再次绑定
+        await enqueueResourceLinkDeletions(
+          prisma,
+          [...boundLinks.values()].map((item) => ({
+            content: item.content,
+            patchId: resource.patch_id,
+            hash: '',
+            s3Key: item.s3Key
+          }))
+        )
+        return ctx.commitWith('该资源的链接已被修改, 请刷新后重试')
       }
 
       if (
@@ -332,7 +361,7 @@ export const updatePatchResource = async (
 
       preparedLinks.push({
         storage: link.storage,
-        size: link.size,
+        size,
         code: link.code,
         password: link.password,
         hash,
@@ -466,8 +495,7 @@ export const updatePatchResource = async (
   }
   const updatedResource = await kunTx('resource.update', updateInTx, {
     // 没有提交时冲突分支的事务内清理入队也随之撤销: 已重绑对象在此兜底清理
-    onRollback: () =>
-      abandonBoundResourceObjects([...boundLinks.values()], patchId)
+    onRollback: () => abandonBoundResourceObjects(boundObjects(), patchId)
   })
   if (typeof updatedResource === 'string') {
     return updatedResource

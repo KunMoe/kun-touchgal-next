@@ -5,6 +5,7 @@ import {
   readUploadToken,
   verifyStagedObject
 } from '~/server/storage/stagedUpload'
+import { formatResourceSize } from '~/utils/resourceSize'
 
 const completeSchema = z.object({
   token: z.string().min(8).max(128)
@@ -26,12 +27,10 @@ export const POST = kunRoute.post({
       return verified
     }
 
-    const fileSizeMB = verified.size / (1024 * 1024)
-
     return {
       filetype: 's3',
       fileToken: input.token,
-      fileSize: `${fileSizeMB.toFixed(3)} MB`
+      fileSize: formatResourceSize(verified.size)
     }
   }
 })

@@ -53,7 +53,7 @@ interface ResourceLinksInputProps {
 // 一条链接上可能出现的校验错误, 按请求体的字段名 (见 form/resolver.ts)
 type LinkErrors = Partial<
   Record<
-    'storage' | 'content' | 'size' | 'code' | 'password' | 'hash',
+    'storage' | 'content' | 'size' | 'code' | 'password' | 'uploadToken',
     { message?: string }
   >
 >
@@ -225,7 +225,7 @@ export const ResourceLinksInput = ({
                     setValue(`links.${index}`, discardUpload(link))
                     void trigger(`links.${index}`)
                   }}
-                  errorMessage={linkErrors?.hash?.message}
+                  errorMessage={linkErrors?.uploadToken?.message}
                 />
               )}
 

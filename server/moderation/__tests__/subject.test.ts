@@ -8,7 +8,8 @@ import {
   ratingSubject,
   resourceSubject,
   segmentMaxLength,
-  subjectChanged
+  subjectChanged,
+  submittedLinkSubject
 } from '../subject'
 import type { ModerationSubject, SubjectSegment } from '../subject'
 import { patchResourceCreateSchema } from '~/validations/patch'
@@ -90,7 +91,6 @@ describe('资源字段策略表', () => {
     const linkSchema = patchResourceCreateSchema.shape.links.element
     const link = {
       storage: 'user',
-      hash: '',
       content: 'https://pan.example/s/abc',
       code: '',
       password: ''
@@ -102,6 +102,66 @@ describe('资源字段策略表', () => {
       linkSchema.safeParse({ ...link, size: `加${longest}` }).success
     ).toBe(false)
     expect(segmentMaxLength('resource', '大小')).toBe(longest.length)
+  })
+})
+
+// 提交的链接里哪些是用户填的: 对象存储的地址与新上传文件的大小由服务端写下, 不送审
+describe('submittedLinkSubject: 提交的链接 → 送审字段', () => {
+  it('外链的四个字段都是用户填的', () => {
+    expect(
+      submittedLinkSubject({
+        id: 3,
+        storage: 'user',
+        content: 'https://pan.example/s/abc',
+        size: '1 GB',
+        code: 'c0de',
+        password: 'pw'
+      })
+    ).toEqual({
+      storage: 'user',
+      content: 'https://pan.example/s/abc',
+      size: '1 GB',
+      code: 'c0de',
+      password: 'pw'
+    })
+  })
+
+  it('新上传的对象存储链接没有可审的地址与大小, 即使给了库里的旧大小', () => {
+    expect(
+      submittedLinkSubject(
+        { id: 3, storage: 's3', uploadToken: 'tok', code: '', password: 'pw' },
+        '100 MB'
+      )
+    ).toEqual({
+      storage: 's3',
+      content: '',
+      size: '',
+      code: '',
+      password: 'pw'
+    })
+  })
+
+  it('沿用原文件的对象存储链接带上库里的大小: 与编辑前的主体对得上', () => {
+    const stored = {
+      storage: 's3',
+      content: 'https://cdn.example/patch/1/resource/seg/a.zip',
+      size: '100 MB',
+      code: '',
+      password: 'pw'
+    }
+    const kept = submittedLinkSubject(
+      { id: 3, storage: 's3', code: '', password: 'pw' },
+      stored.size
+    )
+    const fields = { name: '标题', note: '', modelName: '' }
+
+    expect(kept.size).toBe('100 MB')
+    expect(
+      subjectChanged(
+        resourceSubject({ ...fields, links: [stored] }),
+        resourceSubject({ ...fields, links: [kept] })
+      )
+    ).toBe(false)
   })
 })
 

@@ -116,7 +116,10 @@ const updateResource = (
   return updatePatchResource(input, actor, 'front')
 }
 
-const buildInput = (overrides: Record<string, unknown> = {}) => ({
+type UpdateInput = Parameters<typeof updatePatchResource>[0]
+type LinkInput = UpdateInput['links'][number]
+
+const buildInput = (overrides: Partial<UpdateInput> = {}): UpdateInput => ({
   resourceId: 1,
   patchId: 10,
   section: 'galgame',
@@ -125,7 +128,6 @@ const buildInput = (overrides: Record<string, unknown> = {}) => ({
   links: [
     {
       storage: 'user',
-      hash: '',
       content: 'https://example.com',
       size: '100MB',
       code: '',
@@ -388,9 +390,7 @@ describe('更新资源在行锁下复检守卫', () => {
       links: [
         {
           storage: 's3',
-          hash: 'upload-token',
-          content: '',
-          size: '100MB',
+          uploadToken: 'upload-token',
           code: '',
           password: ''
         }
@@ -423,9 +423,7 @@ describe('更新资源在行锁下复检守卫', () => {
       links: [
         {
           storage: 's3',
-          hash: 'upload-token',
-          content: '',
-          size: '100MB',
+          uploadToken: 'upload-token',
           code: '',
           password: ''
         }
@@ -499,18 +497,13 @@ describe('更新资源在行锁下重算 links diff', () => {
       links: [
         {
           storage: 's3',
-          hash: 'upload-token',
-          content: '',
-          size: '100MB',
+          uploadToken: 'upload-token',
           code: '',
           password: ''
         },
         {
           id: 5,
           storage: 's3',
-          hash: '',
-          content: 'old-c',
-          size: '100MB',
           code: '',
           password: ''
         }
@@ -541,20 +534,17 @@ describe('更新资源在行锁下复判存储闸门', () => {
     code: '',
     password: ''
   }
-  const keptTouchgalLink = {
+  const keptTouchgalLink: LinkInput = {
     id: 5,
     storage: 'touchgal',
-    hash: '',
     content: 'https://pan.example.com/official',
     size: '100MB',
     code: '',
     password: ''
   }
-  const newS3Link = {
+  const newS3Link: LinkInput = {
     storage: 's3',
-    hash: 'upload-token',
-    content: '',
-    size: '100MB',
+    uploadToken: 'upload-token',
     code: '',
     password: ''
   }
@@ -620,8 +610,8 @@ describe('更新资源在行锁下复判存储闸门', () => {
   })
 })
 
-// 预签名直传迁移前的历史 s3 链接: hash 列存 BLAKE3 校验码、s3_key 为空,
-// 对象 key 靠 hash 还原. 编辑表单原样回传该 hash, 不能被当成上传 token
+// 预签名直传迁移前的历史 s3 链接: hash 列存 BLAKE3 校验码。请求里没有 hash 这个字段,
+// 沿用原文件只凭 id 表态, 库里的校验码、地址、对象 key 与大小都照锁下的行原样带过去
 describe('更新资源保留历史 s3 链接', () => {
   const legacyLink = {
     id: 5,
@@ -633,13 +623,10 @@ describe('更新资源保留历史 s3 链接', () => {
     code: '',
     password: ''
   }
-  const legacyInputLink = {
+  const legacyInputLink: LinkInput = {
     id: 5,
     storage: 's3',
-    hash: 'blake3-hash',
-    content: 'legacy-c',
-    size: '100MB',
-    code: '',
+    code: 'new-code',
     password: ''
   }
 
@@ -654,7 +641,7 @@ describe('更新资源保留历史 s3 链接', () => {
     transactionResourceUpdateMock.mockResolvedValue(buildUpdated())
   })
 
-  it('回传库中原 hash 视为保留, 不走上传绑定且原样保留 hash', async () => {
+  it('只带 id 的对象存储链接是沿用原文件: 不走上传绑定, 校验码、地址、大小原样保留', async () => {
     const result = await updateResource(
       buildInput({ links: [legacyInputLink] }),
       7,
@@ -666,12 +653,17 @@ describe('更新资源保留历史 s3 链接', () => {
     const created =
       transactionResourceUpdateMock.mock.calls[0][0].data.links.create
     expect(created).toEqual([
-      expect.objectContaining({
+      {
         storage: 's3',
         content: 'legacy-c',
         hash: 'blake3-hash',
-        s3_key: ''
-      })
+        s3_key: '',
+        size: '100MB',
+        code: 'new-code',
+        password: '',
+        sort_order: 0,
+        download: 0
+      }
     ])
     expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
       transactionClient,
@@ -679,9 +671,36 @@ describe('更新资源保留历史 s3 链接', () => {
     )
   })
 
+  it('沿用原文件的行取锁下的值, 不取事务外快照的', async () => {
+    transactionLinkFindManyMock.mockResolvedValue([
+      {
+        ...legacyLink,
+        content: 'locked-c',
+        s3_key: 'locked-k',
+        hash: '',
+        size: '7.000 MB',
+        download: 4
+      }
+    ])
+
+    await updateResource(buildInput({ links: [legacyInputLink] }), 7, 1)
+
+    const created =
+      transactionResourceUpdateMock.mock.calls[0][0].data.links.create
+    expect(created).toEqual([
+      expect.objectContaining({
+        content: 'locked-c',
+        s3_key: 'locked-k',
+        hash: '',
+        size: '7.000 MB',
+        download: 4
+      })
+    ])
+  })
+
   // 换文件是一次新的上传: 以创作者 (role 2) 在补丁分区提交, 这是允许新用对象存储的最低
   // 角色与分区
-  it('历史链接换新文件时按 token 绑定, 旧对象按原 hash 入队删除', async () => {
+  it('历史链接换新文件时按 uploadToken 绑定, 地址与大小取绑定的结果, 旧对象按原 hash 入队删除', async () => {
     resourceFindUniqueMock.mockResolvedValue(
       buildSnapshot({ section: 'patch', links: [legacyLink] })
     )
@@ -689,13 +708,13 @@ describe('更新资源保留历史 s3 链接', () => {
     bindUploadedResourceMock.mockResolvedValue({
       downloadLink: 'new-c',
       s3Key: 'new-k',
-      size: 1
+      size: 5 * 1024 * 1024
     })
 
     const result = await updateResource(
       buildInput({
         section: 'patch',
-        links: [{ ...legacyInputLink, hash: 'upload-token' }]
+        links: [{ ...legacyInputLink, uploadToken: 'upload-token' }]
       }),
       7,
       2
@@ -706,11 +725,68 @@ describe('更新资源保留历史 s3 链接', () => {
     const created =
       transactionResourceUpdateMock.mock.calls[0][0].data.links.create
     expect(created).toEqual([
-      expect.objectContaining({ content: 'new-c', hash: '', s3_key: 'new-k' })
+      expect.objectContaining({
+        content: 'new-c',
+        hash: '',
+        s3_key: 'new-k',
+        size: '5.000 MB'
+      })
     ])
     expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
       transactionClient,
       [{ content: 'legacy-c', patchId: 10, hash: 'blake3-hash', s3Key: '' }]
     )
+  })
+
+  it('只带 id 却对不上库里对象存储行的链接不算沿用: 提示先上传', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      buildSnapshot({ links: [{ ...legacyLink, storage: 'user' }] })
+    )
+
+    const result = await updateResource(
+      buildInput({ links: [legacyInputLink] }),
+      7,
+      4
+    )
+
+    expect(result).toBe('请先上传资源文件')
+    expect(bindUploadedResourceMock).not.toHaveBeenCalled()
+    expect(transactionMock).not.toHaveBeenCalled()
+  })
+})
+
+// 库里的 hash 列只存历史对象的校验码: 外链行上规则之前留下的值, 保存一次就清掉
+describe('更新资源不把 hash 写到外链行上', () => {
+  it('原样带回的外链, 落库的 hash 为空', async () => {
+    const stored = {
+      id: 5,
+      storage: 'user',
+      content: 'https://example.com',
+      hash: 'left-over',
+      s3_key: '',
+      size: '100MB',
+      code: '',
+      password: ''
+    }
+    resourceFindUniqueMock.mockResolvedValue(buildSnapshot({ links: [stored] }))
+    transactionQueryRawMock.mockResolvedValue([
+      { status: 0, section: 'galgame' }
+    ])
+    transactionLinkFindManyMock.mockResolvedValue([stored])
+    transactionResourceUpdateMock.mockResolvedValue(buildUpdated())
+
+    const [link] = buildInput().links
+    await updateResource(buildInput({ links: [{ ...link, id: 5 }] }), 7, 1)
+
+    const created =
+      transactionResourceUpdateMock.mock.calls[0][0].data.links.create
+    expect(created).toEqual([
+      expect.objectContaining({
+        storage: 'user',
+        content: 'https://example.com',
+        hash: '',
+        s3_key: ''
+      })
+    ])
   })
 })

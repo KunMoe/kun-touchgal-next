@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   resourceFindUniqueMock,
@@ -100,19 +100,24 @@ const PASSED_GATE = '未找到该资源对应的 Galgame 信息, 请确认 Galga
 
 const AUTHOR_UID = 7
 
-const link = (storage: string, id?: number) => ({
-  ...(id === undefined ? {} : { id }),
-  storage,
-  hash: storage === 's3' ? 'upload-token' : '',
-  content: storage === 's3' ? '' : 'https://example.com/file',
-  size: '100MB',
-  code: '',
-  password: ''
-})
+type LinkInput = Parameters<typeof createPatchResource>[0]['links'][number]
+
+// 新提交的链接: 对象存储带着一次上传, 外链带着地址与大小。storage 收字符串是为了能传
+// 不认识的存储类型 (校验层会拦下, 这里测的是服务自己的闸门)
+const link = (storage: string, id?: number) =>
+  ({
+    ...(id === undefined ? {} : { id }),
+    storage,
+    ...(storage === 's3'
+      ? { uploadToken: 'upload-token' }
+      : { content: 'https://example.com/file', size: '100MB' }),
+    code: '',
+    password: ''
+  }) as LinkInput
 
 const buildInput = (
   section: string,
-  links: ReturnType<typeof link>[],
+  links: LinkInput[],
   overrides: Record<string, unknown> = {}
 ) => ({
   patchId: 10,
@@ -141,18 +146,16 @@ const storedLink = (id: number, storage: string) => ({
   download: 0
 })
 
-// 编辑表单原样带回的链接: 与库里那一行逐字段相同
+// 编辑表单原样带回的链接: 对象存储只凭 id (不带上传), 外链与库里那一行逐字段相同
 const kept = (id: number, storage: string) => {
   const stored = storedLink(id, storage)
   return {
     id,
     storage,
-    hash: stored.hash,
-    content: stored.content,
-    size: stored.size,
+    ...(storage === 's3' ? {} : { content: stored.content, size: stored.size }),
     code: stored.code,
     password: stored.password
-  }
+  } as LinkInput
 }
 
 const storedResource = (
@@ -424,8 +427,7 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
     ['解压码 (只多了一个空格)', { password: ' ' }],
     ['大小', { size: '999GB' }],
     ['提取码', { code: 'evil' }],
-    ['解压码', { password: 'evil' }],
-    ['hash', { hash: 'evil' }]
+    ['解压码', { password: 'evil' }]
   ])('role 3 不能改既有 TouchGal 链接的%s', async (_label, change) => {
     resourceFindUniqueMock.mockResolvedValue(
       storedResource('galgame', [storedLink(5, 'touchgal')])
@@ -483,7 +485,9 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
       )
 
       const result = await frontUpdate(
-        buildInput('galgame', [{ ...kept(5, 's3'), hash: 'new-upload-token' }]),
+        buildInput('galgame', [
+          { ...kept(5, 's3'), uploadToken: 'new-upload-token' } as LinkInput
+        ]),
         AUTHOR_UID,
         role
       )
@@ -509,7 +513,7 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
     expectNoSideEffects()
   })
 
-  it('存量对象存储链接的大小、提取码、解压码作者仍可改 (与申诉的可改字段一致), 不带 token 也算原对象', async () => {
+  it('存量对象存储链接的提取码、解压码作者仍可改, 不带 uploadToken 就是原对象', async () => {
     resourceFindUniqueMock.mockResolvedValue(
       storedResource('galgame', [storedLink(5, 's3')])
     )
@@ -518,8 +522,6 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
       buildInput('galgame', [
         {
           ...kept(5, 's3'),
-          hash: '',
-          size: '200MB',
           code: 'abcd',
           password: 'kun'
         }
@@ -557,5 +559,142 @@ describe('更新资源: 只判新增的链接与存储或分区有变化的链�
     )
 
     expect(result).toBe('您没有权限更改该资源')
+  })
+})
+
+// 只有 storage 为 s3 的行才算对象的引用: 外链指着桶里的对象, 那一行被删或换了文件之后
+// 它就是死链 (P26-01)。规则之前留下的行原样带回不判
+describe('外链不许指向本站桶里的对象', () => {
+  const BUCKET = 'https://bucket.example'
+  const OBJECT_URL = `${BUCKET}/patch/10/resource/abc/game.zip`
+  const MANAGED_ERROR =
+    '本站对象存储里的文件不能填成外部链接, 请选择「对象存储」并上传文件'
+
+  const external = (
+    content: string,
+    id?: number,
+    storage: 'user' | 'touchgal' = 'user'
+  ): LinkInput => ({
+    ...(id === undefined ? {} : { id }),
+    storage,
+    content,
+    size: '100MB',
+    code: '',
+    password: ''
+  })
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_KUN_VISUAL_NOVEL_S3_STORAGE_URL', BUCKET)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('发布时外链填了桶里对象的地址: 拒绝, 什么都还没做', async () => {
+    const result = await createPatchResource(
+      buildInput('patch', [external(OBJECT_URL)]),
+      kunTestActor({ uid: AUTHOR_UID, role: 4 })
+    )
+
+    expect(result).toBe(MANAGED_ERROR)
+    expect(patchFindUniqueMock).not.toHaveBeenCalled()
+    expectNoSideEffects()
+  })
+
+  it.each([
+    ['大小写不同', 'HTTPS://Bucket.Example/patch/10/resource/abc/game.zip'],
+    ['前面带空白', `  ${OBJECT_URL}`]
+  ])('地址%s也认得出', async (_label, content) => {
+    const result = await createPatchResource(
+      buildInput('patch', [external(content)]),
+      kunTestActor({ uid: AUTHOR_UID, role: 4 })
+    )
+
+    expect(result).toBe(MANAGED_ERROR)
+  })
+
+  it('别处的地址、只是提到桶域名的地址不拦', async () => {
+    const result = await createPatchResource(
+      buildInput('patch', [
+        external('https://pan.example/s/1'),
+        external(`https://redirect.example/?url=${OBJECT_URL}`),
+        external('https://bucket.example.evil/patch/1')
+      ]),
+      kunTestActor({ uid: AUTHOR_UID, role: 4 })
+    )
+
+    expect(result).toBe(PASSED_GATE)
+  })
+
+  it('P26-01: 把对象存储链接改成外链却留着对象地址, 拒绝且不重绑、不开事务', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('patch', [{ ...storedLink(5, 's3'), content: OBJECT_URL }])
+    )
+
+    const result = await frontUpdate(
+      buildInput('patch', [external(OBJECT_URL, 5)]),
+      AUTHOR_UID,
+      2
+    )
+
+    expect(result).toBe(MANAGED_ERROR)
+    expectNoSideEffects()
+  })
+
+  it('把已有外链的地址改成桶里的对象: 拒绝', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('patch', [storedLink(5, 'user')])
+    )
+
+    const result = await frontUpdate(
+      buildInput('patch', [external(OBJECT_URL, 5)]),
+      AUTHOR_UID,
+      2
+    )
+
+    expect(result).toBe(MANAGED_ERROR)
+    expectNoSideEffects()
+  })
+
+  it('规则之前留下的这种外链原样带回不判: 不妨碍改别的字段', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('patch', [
+        { ...storedLink(5, 'user'), content: OBJECT_URL }
+      ])
+    )
+
+    const result = await frontUpdate(
+      buildInput('patch', [external(OBJECT_URL, 5)], { name: '改了名字' }),
+      AUTHOR_UID,
+      2
+    )
+
+    expect(result).toBe(PASSED_GATE)
+  })
+
+  it('存量外链连同存储类型一起换: 按新链接判', async () => {
+    resourceFindUniqueMock.mockResolvedValue(
+      storedResource('patch', [
+        { ...storedLink(5, 'user'), content: OBJECT_URL }
+      ])
+    )
+
+    const result = await frontUpdate(
+      buildInput('patch', [external(OBJECT_URL, 5, 'touchgal')]),
+      99,
+      4
+    )
+
+    expect(result).toBe(MANAGED_ERROR)
+  })
+
+  it('对象存储链接自己不在此列', () => {
+    expect(
+      linkStorageGateError(kunTestActor({ uid: AUTHOR_UID, role: 4 }), {
+        section: 'patch',
+        links: [link('s3')]
+      })
+    ).toBeNull()
   })
 })

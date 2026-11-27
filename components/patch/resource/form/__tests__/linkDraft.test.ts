@@ -318,26 +318,25 @@ describe('toRequest: 请求体的唯一出口', () => {
     }
   })
 
-  it('沿用原文件的对象存储链接只凭 id 表明身份, 不回传库里的校验码', () => {
+  it('沿用原文件的对象存储链接只凭 id 表明身份: 不带地址、大小与库里的校验码', () => {
     expect(toRequest(values).links[0]).toEqual({
       id: 5,
       storage: 's3',
-      hash: '',
-      content: '',
-      size: '100.000 MB',
+      uploadToken: undefined,
       code: '',
       password: 'pw'
     })
+    expect(JSON.stringify(toRequest(values).links[0])).toBe(
+      '{"id":5,"storage":"s3","code":"","password":"pw"}'
+    )
   })
 
-  it('挂着上传的对象存储链接带上传 token 与上传得到的大小', () => {
+  it('挂着上传的对象存储链接带上传 token, 大小由服务端按文件写', () => {
     const links = attachUpload(values.links, values.links[0].key, UPLOAD)
     expect(toRequest({ ...values, links: [...links] }).links[0]).toEqual({
       id: 5,
       storage: 's3',
-      hash: 'tok-1',
-      content: '',
-      size: '5.000 MB',
+      uploadToken: 'tok-1',
       code: '',
       password: 'pw'
     })
@@ -347,7 +346,6 @@ describe('toRequest: 请求体的唯一出口', () => {
     expect(toRequest(values).links[1]).toEqual({
       id: 6,
       storage: 'user',
-      hash: '',
       content: 'https://pan.example/s/1',
       size: '2 GB',
       code: 'c0de',
@@ -378,7 +376,7 @@ describe('resourceFormResolver: 表单按请求体校验', () => {
     })
     expect(result.errors.links?.[0]).toBeUndefined()
     expect(result.errors.links?.[2]).toMatchObject({
-      hash: { message: '请先上传资源文件' }
+      uploadToken: { message: '请先上传资源文件' }
     })
   })
 

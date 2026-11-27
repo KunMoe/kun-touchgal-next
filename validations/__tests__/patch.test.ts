@@ -13,7 +13,6 @@ const baseInput = {
   links: [
     {
       storage: 'user',
-      hash: '',
       content: 'https://example.com/file.zip',
       size: '100MB',
       code: '',
@@ -283,6 +282,138 @@ describe('资源链接的 id 不可重复', () => {
       ]
     })
     expect(result.success).toBe(false)
+  })
+})
+
+// 链接按存储类型分成两种形态, 各自只收属于自己的字段 (T45)。此前是一个扁平对象, hash 在请求里
+// 装上传 token、在库里是历史对象的校验码, 服务端只能靠「与库里的值是否相同」猜它是哪一种
+describe('资源链接按存储类型判别', () => {
+  const parseLinks = (links: Array<Record<string, unknown>>) =>
+    patchResourceUpdateSchema.safeParse({ ...baseInput, resourceId: 9, links })
+  const issuesOf = (links: Array<Record<string, unknown>>) => {
+    const result = parseLinks(links)
+    return result.success
+      ? []
+      : result.error.issues.map((issue) => [
+          issue.path.join('.'),
+          issue.message
+        ])
+  }
+  const parsedLink = (link: Record<string, unknown>) => {
+    const result = parseLinks([link])
+    if (!result.success) {
+      throw new Error(JSON.stringify(result.error.issues))
+    }
+    return result.data.links[0]
+  }
+  const s3 = { storage: 's3', code: '', password: '' }
+  const [external] = baseInput.links
+
+  it('对象存储: 新上传带 uploadToken, 沿用原文件只带 id', () => {
+    expect(parsedLink({ ...s3, uploadToken: 'tok' })).toEqual({
+      ...s3,
+      uploadToken: 'tok'
+    })
+    expect(parsedLink({ ...s3, id: 5 })).toEqual({ ...s3, id: 5 })
+    expect(parsedLink({ ...s3, id: 5, uploadToken: 'tok' })).toEqual({
+      ...s3,
+      id: 5,
+      uploadToken: 'tok'
+    })
+  })
+
+  it.each([
+    ['既没有 id 也没有 uploadToken', {}],
+    ['uploadToken 是空串', { uploadToken: '' }],
+    ['uploadToken 只有空白', { uploadToken: '   ' }]
+  ])('对象存储%s: 请先上传', (_label, fields) => {
+    expect(issuesOf([{ ...s3, ...fields }])).toEqual([
+      ['links.0.uploadToken', '请先上传资源文件']
+    ])
+  })
+
+  it('对象存储的地址与大小归服务端: 请求里带了也不取', () => {
+    expect(
+      parsedLink({
+        ...s3,
+        id: 5,
+        content: 'https://evil.example/file.zip',
+        size: '999 GB',
+        s3_key: 'patch/1/resource/x/y.zip'
+      })
+    ).toEqual({ ...s3, id: 5 })
+  })
+
+  // 过渡守卫: 发布前打开的旧页面把上传 token 或库里的校验码放在 hash 里
+  it.each([
+    ['上传 token', 'q83vEjRWeJBqrCfx9Mz0tQ8k2LmN4pYa'],
+    ['库里的 BLAKE3 校验码', 'b3'.repeat(32)]
+  ])('旧页面在对象存储链接的 hash 里回传%s: 提示刷新', (_label, hash) => {
+    expect(
+      issuesOf([{ ...s3, id: 5, hash, content: '', size: '1 MB' }])
+    ).toEqual([['links.0.hash', '页面版本已更新, 请刷新后重试']])
+  })
+
+  it('旧页面沿用新式对象存储链接 (hash 为空) 照常通过', () => {
+    expect(
+      issuesOf([{ ...s3, id: 5, hash: '', content: 'x', size: '1 MB' }])
+    ).toEqual([])
+  })
+
+  it('外链: 地址与大小由用户填, 不属于它的 hash / uploadToken 不取', () => {
+    expect(
+      parsedLink({
+        ...external,
+        id: 5,
+        hash: 'x'.repeat(107),
+        uploadToken: 'tok'
+      })
+    ).toEqual({ ...external, id: 5 })
+    expect(parsedLink({ ...external, storage: 'touchgal' })).toEqual({
+      ...external,
+      storage: 'touchgal'
+    })
+  })
+
+  it.each([
+    ['空串', ''],
+    ['只有空白', '   ']
+  ])('外链的地址是%s: 请输入资源链接', (_label, content) => {
+    expect(issuesOf([{ ...external, content }])).toEqual([
+      ['links.0.content', '请输入资源链接']
+    ])
+  })
+
+  it('外链的地址原样落库, 不 trim (与库里的行逐字比较靠它)', () => {
+    expect(
+      parsedLink({ ...external, content: ' https://example.com/a ' })
+    ).toMatchObject({ content: ' https://example.com/a ' })
+  })
+
+  it('外链的大小、提取码沿用各字段原来的约束', () => {
+    expect(issuesOf([{ ...external, size: '很大' }])).toEqual([
+      ['links.0.size', '请选择资源的大小, MB 或 GB']
+    ])
+    expect(parsedLink({ ...external, code: ' c0de ' })).toMatchObject({
+      code: 'c0de'
+    })
+  })
+
+  it.each([
+    ['不认识的存储类型', { ...external, storage: 'ftp' }],
+    ['没有存储类型', { content: 'x', size: '1 MB', code: '', password: '' }],
+    ['原型上的成员名', { ...external, storage: 'constructor' }]
+  ])('%s: 只报这一条', (_label, link) => {
+    expect(issuesOf([link])).toEqual([
+      ['links.0.storage', '非法的资源链接类型']
+    ])
+  })
+
+  it('各条链接各自判别, 错误落在各自的下标上', () => {
+    expect(issuesOf([external, s3, { ...external, content: '' }])).toEqual([
+      ['links.1.uploadToken', '请先上传资源文件'],
+      ['links.2.content', '请输入资源链接']
+    ])
   })
 })
 

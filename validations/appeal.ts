@@ -1,6 +1,6 @@
 import * as z from 'zod'
 import { kunId, kunLimit, kunPage } from './primitives'
-import { patchResourceCreateSchema } from './patch'
+import { patchResourceCreateSchema, resourceLinkFields } from './patch'
 
 export const getUserAppealSchema = z.object({
   page: kunPage(),
@@ -21,7 +21,6 @@ export const getUserAppealSchema = z.object({
 const appealTaskIdSchema = kunId('审核任务 ID')
 
 const resourceShape = patchResourceCreateSchema.shape
-const resourceLinkShape = resourceShape.links.element.shape
 
 // 资源申诉可改的链接字段就是送审的那几个, 各字段的约束直接取发布 / 编辑资源用的同一份
 // schema。链接按 id 对应资源已有的链接行: 申诉不增删链接, 不换存储类型, 也不重新上传文件。
@@ -30,10 +29,10 @@ const resourceLinkShape = resourceShape.links.element.shape
 // 不可改的字段不提交也就不校验 —— 库里不合现行格式的旧值不会卡住申诉
 const appealResourceLinkSchema = z.object({
   id: kunId('链接 ID'),
-  content: resourceLinkShape.content.optional(),
-  size: resourceLinkShape.size.optional(),
-  code: resourceLinkShape.code.optional(),
-  password: resourceLinkShape.password.optional()
+  content: resourceLinkFields.content.optional(),
+  size: resourceLinkFields.size.optional(),
+  code: resourceLinkFields.code.optional(),
+  password: resourceLinkFields.password.optional()
 })
 
 export const submitAppealSchema = z.discriminatedUnion('contentType', [

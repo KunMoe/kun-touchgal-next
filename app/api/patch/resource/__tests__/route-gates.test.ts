@@ -72,7 +72,6 @@ const PENDING_ERROR =
 
 const userLink = (overrides: Record<string, unknown> = {}) => ({
   storage: 'user',
-  hash: '',
   content: 'https://pan.example.com/s/abc',
   size: '1.5 GB',
   code: '',
@@ -380,6 +379,68 @@ describe('PUT /api/patch/resource 闸门', () => {
       expect(updatePatchResourceMock.mock.calls[0][0]).toEqual(body)
     }
   )
+
+  // 发布前打开的旧页面把上传 token 或库里的校验码放在 hash 里回传: 不拦的话 hash 被当作
+  // 多余的键丢掉, 换文件的请求会被当成沿用原文件
+  it('旧页面在对象存储链接上回传非空 hash: 提示刷新, 不调 service', async () => {
+    verifyHeaderCookieMock.mockResolvedValue(asPayload(2))
+    const res = await PUT(
+      jsonRequest(
+        'PUT',
+        updateBody({
+          links: [
+            {
+              id: 4,
+              storage: 's3',
+              hash: 'upload-token',
+              content: '',
+              size: '1 MB',
+              code: '',
+              password: ''
+            }
+          ]
+        })
+      )
+    )
+
+    expect(await res.json()).toBe('页面版本已更新, 请刷新后重试')
+    expect(updatePatchResourceMock).not.toHaveBeenCalled()
+  })
+
+  it('对象存储链接只把 id、uploadToken、提取码、解压码交给 service', async () => {
+    verifyHeaderCookieMock.mockResolvedValue(asPayload(2))
+    const res = await PUT(
+      jsonRequest(
+        'PUT',
+        updateBody({
+          links: [
+            {
+              id: 4,
+              storage: 's3',
+              uploadToken: 'upload-token',
+              hash: '',
+              content: 'https://evil.example/file',
+              size: '999 GB',
+              code: 'c',
+              password: 'p'
+            }
+          ]
+        })
+      )
+    )
+
+    expect(await res.json()).toEqual({ id: RESOURCE_ID, name: 'updated' })
+    expect(updatePatchResourceMock.mock.calls[0][0].links).toEqual([
+      {
+        id: 4,
+        storage: 's3',
+        uploadToken: 'upload-token',
+        hash: '',
+        code: 'c',
+        password: 'p'
+      }
+    ])
+  })
 
   it.each([1, 2, 3, 4])(
     'role %i 不含 touchgal 链接时直接交给 service (路由没有角色闸门)',

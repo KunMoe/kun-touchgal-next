@@ -4,8 +4,10 @@ import { stripInvisible } from '~/utils/text/unicode'
 import {
   patchCommentCreateSchema,
   patchRatingCreateSchema,
-  patchResourceCreateSchema
+  patchResourceCreateSchema,
+  resourceLinkFields
 } from '~/validations/patch'
+import type { ResourceLinkInput } from '~/validations/patch'
 import { bioSchema } from '~/validations/user'
 
 // 送审主体: 「哪些对外字段送审、字段怎样变化才重审、以什么形态交给黑名单与模型」
@@ -48,7 +50,6 @@ const maxLengthOf = (schema: { maxLength: number | null }) => {
 }
 
 const resourceShape = patchResourceCreateSchema.shape
-const linkShape = resourceShape.links.element.shape
 
 // audit    对外展示的自由文本, 送审
 // enum     取值受枚举或固定格式约束, 不是自由文本
@@ -104,7 +105,7 @@ export const RESOURCE_LINK_FIELD_POLICY = {
   content: {
     audit: 'plain',
     label: '链接',
-    maxLength: maxLengthOf(linkShape.content),
+    maxLength: maxLengthOf(resourceLinkFields.content),
     // 站内存储 (s3) 的链接地址由服务端在绑定上传对象时生成, 不是用户输入
     when: (link) => link.storage !== 's3'
   },
@@ -117,12 +118,12 @@ export const RESOURCE_LINK_FIELD_POLICY = {
   code: {
     audit: 'plain',
     label: '提取码',
-    maxLength: maxLengthOf(linkShape.code)
+    maxLength: maxLengthOf(resourceLinkFields.code)
   },
   password: {
     audit: 'plain',
     label: '解压码',
-    maxLength: maxLengthOf(linkShape.password)
+    maxLength: maxLengthOf(resourceLinkFields.password)
   },
   sortOrder: 'internal',
   download: 'internal'
@@ -139,6 +140,29 @@ export type ResourceLinkSubjectFields = Record<
   AuditedKeys<typeof RESOURCE_LINK_FIELD_POLICY>,
   string
 > & { storage: string }
+
+// 提交的一条链接 → 它的送审字段。对象存储的地址与新上传文件的大小由服务端在绑定时写下,
+// 不是用户输入, 不送审; 沿用原文件的那一行把库里的大小 (keptSize) 带上: 它可能是规则之前
+// 由用户填的, 而且主体里有它, 编辑前后的两份主体才对得上 (否则每次保存都算作改了送审字段)
+export const submittedLinkSubject = (
+  link: ResourceLinkInput,
+  keptSize = ''
+): ResourceLinkSubjectFields =>
+  link.storage === 's3'
+    ? {
+        storage: link.storage,
+        content: '',
+        size: link.uploadToken ? '' : keptSize,
+        code: link.code,
+        password: link.password
+      }
+    : {
+        storage: link.storage,
+        content: link.content,
+        size: link.size,
+        code: link.code,
+        password: link.password
+      }
 
 export type ResourceSubjectFields = Record<
   AuditedKeys<typeof RESOURCE_FIELD_POLICY>,

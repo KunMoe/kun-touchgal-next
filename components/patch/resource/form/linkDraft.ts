@@ -189,17 +189,14 @@ export const toRequest = (values: ResourceFormValues): ResourceRequest => ({
       ? {
           id: link.id,
           storage: link.storage,
-          // 线上契约里上传 token 仍借 hash 字段传 (下一片改成独立的 uploadToken)
-          hash: link.upload?.token ?? '',
-          content: '',
-          size: link.upload?.size ?? link.origin?.size ?? '',
+          // 换文件或新加的链接带上传 token; 沿用原文件的只凭 id。地址与大小由服务端写
+          uploadToken: link.upload?.token,
           code: link.code,
           password: link.password
         }
       : {
           id: link.id,
           storage: link.storage,
-          hash: '',
           content: link.content,
           size: link.size,
           code: link.code,

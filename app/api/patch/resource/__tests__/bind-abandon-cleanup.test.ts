@@ -145,11 +145,13 @@ const updateResource = (
   return updatePatchResource(input, actor, 'front')
 }
 
-const s3Link = (hash: string, overrides: Record<string, unknown> = {}) => ({
+// 带 uploadToken 的是一次新上传; 不带的只凭 id 沿用库里的原文件
+const s3Link = (
+  uploadToken: string | undefined,
+  overrides: Record<string, unknown> = {}
+) => ({
   storage: 's3',
-  hash,
-  content: '',
-  size: '100MB',
+  uploadToken,
   code: '',
   password: '',
   ...overrides
@@ -293,7 +295,7 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     bindUploadedResourceMock.mockResolvedValueOnce(BOUND_A)
 
     const input = buildUpdateInput({
-      links: [s3Link('token-a'), s3Link('', { id: 5, content: 'old-c' })]
+      links: [s3Link('token-a'), s3Link(undefined, { id: 5 })]
     })
     const result = await updateResource(input, 7, 2)
 
@@ -389,11 +391,11 @@ describe('创建资源循环早退时清理已绑定对象', () => {
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
-  it('后续链接 hash 为空时, 同样清理已绑定对象', async () => {
+  it('后续链接没带上传时, 同样清理已绑定对象', async () => {
     bindUploadedResourceMock.mockResolvedValueOnce(BOUND_A)
 
     const input = buildCreateInput({
-      links: [s3Link('token-a'), s3Link('')]
+      links: [s3Link('token-a'), s3Link(undefined)]
     })
     const result = await createPatchResource(
       input,

@@ -143,7 +143,7 @@ const updateResource = (
   return updatePatchResource(input, actor, 'front')
 }
 
-const resourceInput = {
+const resourceInput: Parameters<typeof createPatchResource>[0] = {
   patchId: 10,
   section: 'galgame',
   name: 'Resource',
@@ -156,7 +156,6 @@ const resourceInput = {
   links: [
     {
       storage: 'user',
-      hash: '',
       content: 'https://example.com/file',
       size: '1 MB',
       code: '',

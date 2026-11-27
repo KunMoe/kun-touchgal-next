@@ -30,7 +30,6 @@ const acceptedRest = {
   links: [
     {
       storage: 'user',
-      hash: '',
       content: 'https://example.com/file.zip',
       size: '100MB',
       code: '',

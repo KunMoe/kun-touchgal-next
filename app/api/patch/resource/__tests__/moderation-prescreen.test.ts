@@ -122,7 +122,17 @@ const updateResource = (
   return updatePatchResource(input, actor, 'front')
 }
 
-const resourceInput = {
+type CreateInput = Parameters<typeof createPatchResource>[0]
+
+const externalLink = {
+  storage: 'user',
+  content: 'https://example.com/file',
+  size: '1 MB',
+  code: '',
+  password: ''
+} as const
+
+const resourceInput: CreateInput = {
   patchId: 10,
   section: 'patch',
   name: '',
@@ -132,16 +142,7 @@ const resourceInput = {
   platform: ['windows'],
   emulatorType: [],
   modelName: '',
-  links: [
-    {
-      storage: 'user',
-      hash: '',
-      content: 'https://example.com/file',
-      size: '1 MB',
-      code: '',
-      password: ''
-    }
-  ]
+  links: [externalLink]
 }
 
 const storedResource = {
@@ -198,7 +199,6 @@ beforeEach(() => {
 
 const createdTaskData = () => taskCreateMock.mock.calls[0][0].data
 
-const externalLink = resourceInput.links[0]
 const LINK_SEGMENT = {
   label: '链接',
   kind: 'plain',
@@ -235,36 +235,42 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
     )
   })
 
-  // 「大小」只要求以 MB / GB 结尾, 前面写什么都行; 每条链接都有它, 所以带链接的资源
-  // 不存在「没有可审文本」的情况, 站内存储的也一样
-  it('只有站内存储链接、其余全空的资源仍要送审它的大小字段', async () => {
+  // 外链的「大小」只要求以 MB / GB 结尾, 前面写什么都行, 所以要送审。新上传的对象存储链接
+  // 没有这个口子: 地址与大小都由服务端按文件写, 请求里没有这两个字段
+  it('只有新上传的对象存储链接、其余全空的资源没有用户填的文本: 不送审, 直接公开', async () => {
     bindUploadedResourceMock.mockResolvedValue({
       downloadLink: 'https://cdn.example/file',
-      s3Key: 'patch/10/file'
+      s3Key: 'patch/10/file',
+      size: 3 * 1024 * 1024
     })
 
     await createPatchResource(
       {
         ...resourceInput,
         links: [
-          {
-            ...externalLink,
-            storage: 's3',
-            hash: 'upload-token',
-            content: '',
-            size: '加微信 vx123456789 代充 GB'
-          }
+          { storage: 's3', uploadToken: 'upload-token', code: '', password: '' }
         ]
       },
       kunTestActor({ uid: 7, role: 2 })
     )
 
-    expect(createdTaskData().payload.segments).toEqual([
-      { label: '大小', kind: 'plain', value: '加微信 vx123456789 代充 GB' }
-    ])
+    expect(taskCreateMock).not.toHaveBeenCalled()
     expect(transactionResourceCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: 3 })
+        data: expect.objectContaining({
+          status: 0,
+          links: {
+            create: [
+              expect.objectContaining({
+                storage: 's3',
+                content: 'https://cdn.example/file',
+                s3_key: 'patch/10/file',
+                size: '3.000 MB',
+                hash: ''
+              })
+            ]
+          }
+        })
       })
     )
   })
@@ -328,10 +334,11 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
     ])
   })
 
-  it('多条链接的字段带序号; 站内存储的链接地址不是用户输入, 不送审', async () => {
+  it('多条链接的字段带序号; 站内存储的链接地址与大小不是用户输入, 不送审', async () => {
     bindUploadedResourceMock.mockResolvedValue({
       downloadLink: 'https://cdn.example/file',
-      s3Key: 'patch/10/file'
+      s3Key: 'patch/10/file',
+      size: 1
     })
 
     await createPatchResource(
@@ -340,10 +347,9 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
         links: [
           { ...externalLink, code: 'abcd', password: '解压码 touchgal' },
           {
-            ...externalLink,
             storage: 's3',
-            hash: 'upload-token',
-            content: '',
+            uploadToken: 'upload-token',
+            code: '',
             password: '加群 987654321 获取'
           }
         ]
@@ -356,7 +362,6 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
       { ...SIZE_SEGMENT, label: '大小 1' },
       { label: '提取码 1', kind: 'plain', value: 'abcd' },
       { label: '解压码 1', kind: 'plain', value: '解压码 touchgal' },
-      { ...SIZE_SEGMENT, label: '大小 2' },
       { label: '解压码 2', kind: 'plain', value: '加群 987654321 获取' }
     ])
   })
@@ -439,6 +444,39 @@ describe('资源审核预筛选: 送审标题、介绍、模型型号与各条�
       data: { status: 3 },
       select: { status: true }
     })
+  })
+
+  // 沿用原文件的对象存储链接, 请求里没有地址与大小: 送审主体里的大小取库里那一行的,
+  // 与编辑前的主体对得上, 所以原样保存不算改了送审字段
+  it('对象存储链接沿用原文件、其余不变: 不重新送审', async () => {
+    const storedS3Link = {
+      ...storedExternalLink,
+      storage: 's3',
+      content: 'https://cdn.example/patch/10/resource/seg/file.zip',
+      s3_key: 'patch/10/resource/seg/file.zip',
+      size: '12.345 MB'
+    }
+    resourceFindUniqueMock.mockResolvedValue({
+      ...storedResource,
+      links: [storedS3Link]
+    })
+    transactionLinkFindManyMock.mockResolvedValue([storedS3Link])
+
+    const result = await updateResource(
+      {
+        ...resourceInput,
+        resourceId: 1,
+        name: storedResource.name,
+        note: storedResource.note,
+        links: [{ id: 3, storage: 's3', code: '', password: '' }]
+      },
+      7,
+      2
+    )
+
+    expect(typeof result).not.toBe('string')
+    expect(taskCreateMock).not.toHaveBeenCalled()
+    expect(transactionResourceUpdateMock).toHaveBeenCalledTimes(1)
   })
 
   it('更新为非空标题时仍正常送审', async () => {

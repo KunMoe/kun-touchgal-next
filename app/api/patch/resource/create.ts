@@ -15,12 +15,16 @@ import {
   enqueueTextModeration,
   planTextModeration
 } from '~/server/moderation/submit'
-import { resourceSubject } from '~/server/moderation/subject'
+import {
+  resourceSubject,
+  submittedLinkSubject
+} from '~/server/moderation/subject'
 import { renderKunMarkdownForWrite } from '~/app/api/utils/render/renderKunMarkdown'
 import { can } from '~/constants/permission'
 import { linkStorageGateError } from './storageGate'
 import { kunTx } from '~/server/db/tx'
 import { creditPoints } from '~/server/points/account'
+import { formatResourceSize } from '~/utils/resourceSize'
 import { recordKunChanges } from '~/server/cache/publish'
 import type { PatchResource } from '~/types/api/patch'
 import type { ResourceStatus } from '~/constants/contentStatus'
@@ -90,7 +94,7 @@ export const createPatchResource = async (
           name: input.name,
           note: input.note,
           modelName: model_name,
-          links
+          links: links.map((link) => submittedLinkSubject(link))
         }),
         { actor }
       )
@@ -115,29 +119,41 @@ export const createPatchResource = async (
   // 迭代要么未创建 finalKey 要么已在 _helper 内自清, 循环级 catch 只清历史无双删
   try {
     for (const [index, link] of links.entries()) {
-      let content = link.content
+      let content: string
+      let size: string
       let s3Key = ''
       if (link.storage === 's3') {
-        if (!link.hash.trim()) {
+        // 新建的资源没有可沿用的行: 对象存储链接必须带着一次上传 (只带 id 的过得了校验)
+        if (!link.uploadToken) {
           await abandonBoundResourceObjects(boundObjects, patchId)
           return '请先上传资源文件'
         }
-        const result = await bindUploadedResource(patchId, link.hash, uid)
+        const result = await bindUploadedResource(
+          patchId,
+          link.uploadToken,
+          uid
+        )
         if (typeof result === 'string') {
           await abandonBoundResourceObjects(boundObjects, patchId)
           return result
         }
+        // 地址、对象 key 与大小都取绑定的结果, 不取请求里的值
         content = result.downloadLink
+        size = formatResourceSize(result.size)
         s3Key = result.s3Key
         boundObjects.push({ content, s3Key })
+      } else {
+        content = link.content
+        size = link.size
       }
 
       preparedLinks.push({
         storage: link.storage,
-        size: link.size,
+        size,
         code: link.code,
         password: link.password,
-        hash: link.storage === 's3' ? '' : link.hash,
+        // hash 列只存历史对象的校验码, 新行一律为空
+        hash: '',
         s3_key: s3Key,
         content,
         sort_order: index,

@@ -137,7 +137,7 @@ const updateResource = (
   return updatePatchResource(input, actor, 'front')
 }
 
-const resourceInput = {
+const resourceInput: Parameters<typeof createPatchResource>[0] = {
   patchId: 10,
   section: 'patch',
   name: 'Resource',
@@ -150,7 +150,6 @@ const resourceInput = {
   links: [
     {
       storage: 'user',
-      hash: '',
       content: 'https://example.com/file',
       size: '1 MB',
       code: '',
@@ -243,12 +242,7 @@ describe('资源写入 patch 绑定', () => {
         ...resourceInput,
         resourceId: 1,
         links: [
-          {
-            ...resourceInput.links[0],
-            storage: 's3',
-            hash: 'upload-token',
-            content: ''
-          }
+          { storage: 's3', uploadToken: 'upload-token', code: '', password: '' }
         ]
       },
       7,
@@ -291,12 +285,7 @@ describe('资源写入 patch 绑定', () => {
         ...resourceInput,
         patchId: 20,
         links: [
-          {
-            ...resourceInput.links[0],
-            storage: 's3',
-            hash: 'upload-token',
-            content: ''
-          }
+          { storage: 's3', uploadToken: 'upload-token', code: '', password: '' }
         ]
       },
       kunTestActor({ uid: 7, role: 2 })
@@ -318,13 +307,8 @@ describe('资源写入 patch 绑定', () => {
     })
     resourceCountMock.mockResolvedValue(1)
     resourceFindUniqueMock.mockResolvedValue({ ...storedResource, links: [] })
-    const s3Links = [
-      {
-        ...resourceInput.links[0],
-        storage: 's3',
-        hash: 'upload-token',
-        content: ''
-      }
+    const s3Links: (typeof resourceInput)['links'] = [
+      { storage: 's3', uploadToken: 'upload-token', code: '', password: '' }
     ]
 
     await expect(

@@ -1,18 +1,18 @@
 import { can, findDisallowedLinkStorage } from '~/constants/permission'
 import { getAppealEditableLinkFields } from '~/utils/appealPayload'
 import type { KunActor } from '~/constants/role'
+import type { ResourceLinkInput } from '~/validations/patch'
 
-interface SubmittedLink {
-  id?: number
+type SubmittedLink = ResourceLinkInput
+
+interface StoredLink {
+  id: number
   storage: string
-  hash: string
   content: string
   size: string
   code: string
   password: string
 }
-
-type StoredLink = Required<SubmittedLink>
 
 const LINK_FIELDS = ['content', 'size', 'code', 'password'] as const
 
@@ -24,7 +24,7 @@ const asValidated = (
   stored: StoredLink
 ) => (field === 'code' ? stored.code.trim() : stored[field])
 
-// 链接是不是原样带回的。归存储所有的字段不许动: 对象存储是对象本身 (带了新的上传 token
+// 链接是不是原样带回的。归存储所有的字段不许动: 对象存储是对象本身 (带了 uploadToken
 // 就是换了对象), 其余存储是申诉也不许改的那些字段 —— TouchGal 资源盘是全部字段。
 // 两处读同一张可改字段表, 「这条链接的哪些部分归存储所有」只有一份
 const isCarriedBack = (link: SubmittedLink, stored: StoredLink) => {
@@ -32,15 +32,12 @@ const isCarriedBack = (link: SubmittedLink, stored: StoredLink) => {
     return false
   }
   if (link.storage === 's3') {
-    return !link.hash || link.hash === stored.hash
+    return !link.uploadToken
   }
   const editable = getAppealEditableLinkFields(link.storage)
-  return (
-    link.hash === stored.hash &&
-    LINK_FIELDS.every(
-      (field) =>
-        editable.includes(field) || link[field] === asValidated(field, stored)
-    )
+  return LINK_FIELDS.every(
+    (field) =>
+      editable.includes(field) || link[field] === asValidated(field, stored)
   )
 }
 
@@ -60,11 +57,35 @@ const changedLinks = (
   })
 }
 
+// 外链的地址不许指向本站桶里的对象: 那个对象归某条对象存储链接所有, 只有 storage 为 s3
+// 的行才算它的引用 (server/storage 的引用裁决同此), 那一行被删掉或换了文件, 对象随之删除,
+// 指着它的外链就成了死链。把对象存储链接改成外链却留着对象地址 (P26-01) 是其中最常见的
+// 一种。规则之前留下的行不妨碍持有者改别的字段: 存储类型与地址都原样带回的不判
+const pointsAtManagedObject = (
+  link: SubmittedLink,
+  stored: ReadonlyMap<number, StoredLink>
+) => {
+  const prefix = `${process.env.NEXT_PUBLIC_KUN_VISUAL_NOVEL_S3_STORAGE_URL!}/`
+  if (
+    link.storage === 's3' ||
+    !link.content.trim().toLowerCase().startsWith(prefix.toLowerCase())
+  ) {
+    return false
+  }
+  const before = link.id === undefined ? undefined : stored.get(link.id)
+  return !(
+    before &&
+    before.storage === link.storage &&
+    before.content === link.content
+  )
+}
+
 // 存储 × 分区 × 角色的执法点。创建与更新两个服务都调它; 更新这个服务前台路由与后台包装
 // 都经过, 所以同一份资源的每个入口判的是同一条规则。判定本身在 constants/permission, 与
 // 发布表单置灰用的是同一组函数; 这里决定哪些链接要判, 并负责拒绝文案。
 // previous 是编辑前的分区与链接: 分区没变时, 原样带回的存量链接不判 —— 规则收紧之前留下
-// 的链接不妨碍持有者改别的字段, 但动它、克隆它、往上挂新对象都按新链接判
+// 的链接不妨碍持有者改别的字段, 但动它、克隆它、往上挂新对象都按新链接判。
+// 「外链不许指向本站桶里的对象」也在这里判, 所以它同样在快照上判一次、行锁下再判一次
 export const linkStorageGateError = (
   actor: KunActor,
   next: { section: string; links: readonly SubmittedLink[] },
@@ -76,7 +97,12 @@ export const linkStorageGateError = (
       : next.links
   const storage = findDisallowedLinkStorage(actor, next.section, judged)
   if (storage === null) {
-    return null
+    const stored = new Map(
+      (previous?.links ?? []).map((link) => [link.id, link])
+    )
+    return next.links.some((link) => pointsAtManagedObject(link, stored))
+      ? '本站对象存储里的文件不能填成外部链接, 请选择「对象存储」并上传文件'
+      : null
   }
   if (storage === 'touchgal') {
     return '仅超级管理员可使用 TouchGal 资源盘'

@@ -112,7 +112,9 @@ const updateResource = (
   return updatePatchResource(input, actor, 'front')
 }
 
-const buildInput = (overrides: Record<string, unknown> = {}) => ({
+type UpdateInput = Parameters<typeof updatePatchResource>[0]
+
+const buildInput = (overrides: Partial<UpdateInput> = {}): UpdateInput => ({
   resourceId: 1,
   patchId: 10,
   section: 'galgame',
@@ -121,7 +123,6 @@ const buildInput = (overrides: Record<string, unknown> = {}) => ({
   links: [
     {
       storage: 'user',
-      hash: '',
       content: 'https://example.com',
       size: '100MB',
       code: '',
@@ -338,7 +339,11 @@ describe('资源编辑写入的字段', () => {
     transactionResourceUpdateMock.mockResolvedValue(buildUpdated())
 
     await updateResource(
-      buildInput({ note: '备注', status: 2, download: 999 }),
+      buildInput({
+        note: '备注',
+        status: 2,
+        download: 999
+      } as Partial<UpdateInput>),
       7,
       1
     )

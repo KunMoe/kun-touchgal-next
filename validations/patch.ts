@@ -9,9 +9,9 @@ import {
   SUPPORTED_LANGUAGE,
   SUPPORTED_PLATFORM,
   SUPPORTED_EMULATOR_TYPE,
-  SUPPORTED_RESOURCE_LINK,
   SUPPORTED_RESOURCE_SECTION
 } from '~/constants/resource'
+import { KUN_LINK_STORAGES } from '~/constants/permission'
 import {
   KUN_GALGAME_RATING_RECOMMEND_CONST,
   KUN_GALGAME_RATING_SPOILER_CONST,
@@ -107,6 +107,73 @@ const refineResourceSectionType = (
   }
 }
 
+// 一条资源链接里由用户填写的字段。发布 / 编辑的两种链接形态、申诉 (validations/appeal.ts)
+// 与送审的限长 (server/moderation/subject.ts) 读的都是这一份
+export const resourceLinkFields = {
+  content: z
+    .string()
+    .max(1007, { message: '您的资源链接内容最多 1007 个字符' }),
+  size: z.string().regex(ResourceSizeRegex, {
+    message: '请选择资源的大小, MB 或 GB'
+  }),
+  code: z.string().trim().max(1007, { message: '资源提取码长度最多 1007 位' }),
+  password: z.string().max(1007, { message: '资源解压码长度最多 1007 位' })
+}
+
+const linkId = kunId('链接 ID').optional()
+
+// 对象存储的链接: 地址、对象 key 与大小都归服务端, 在绑定上传文件时写下 (见
+// bindUploadedResource), 请求里只说两件事 —— 换成哪一次上传 (uploadToken), 或者沿用库里的
+// 哪一行 (id, 不带 uploadToken)。库里的 hash 列是历史对象的校验码, 只读, 不从请求写入
+const s3LinkSchema = z
+  .object({
+    storage: z.literal('s3'),
+    id: linkId,
+    uploadToken: z
+      .string()
+      .trim()
+      .max(107, { message: '上传凭证不正确, 请重新上传文件' })
+      .optional(),
+    // 过渡守卫 (一个发布周期后删除): 发布前打开的旧页面仍把上传 token 或库里的校验码放在
+    // hash 里回传。不拦的话 hash 会被当作多余的键丢掉, 换文件的请求就成了「沿用原文件」,
+    // 页面却提示更新成功
+    hash: z
+      .string()
+      .max(0, { message: '页面版本已更新, 请刷新后重试' })
+      .optional(),
+    code: resourceLinkFields.code,
+    password: resourceLinkFields.password
+  })
+  .refine((link) => link.id !== undefined || !!link.uploadToken, {
+    message: '请先上传资源文件',
+    path: ['uploadToken']
+  })
+
+const EXTERNAL_LINK_STORAGES = KUN_LINK_STORAGES.filter(
+  (storage) => storage !== 's3'
+)
+
+// 外链: 地址与大小由用户填。对象存储的字段 (uploadToken、hash) 不在这个形态里, 带了也不取
+const externalLinkSchema = z.object({
+  storage: z.enum(EXTERNAL_LINK_STORAGES),
+  id: linkId,
+  content: resourceLinkFields.content.refine((value) => value.trim() !== '', {
+    message: '请输入资源链接'
+  }),
+  size: resourceLinkFields.size,
+  code: resourceLinkFields.code,
+  password: resourceLinkFields.password
+})
+
+// 链接按存储类型分成两种形态, 各自只收属于自己的字段: 同一个字段不再随存储类型换含义
+export const resourceLinkSchema = z.discriminatedUnion(
+  'storage',
+  [s3LinkSchema, externalLinkSchema],
+  { error: '非法的资源链接类型' }
+)
+
+export type ResourceLinkInput = z.infer<typeof resourceLinkSchema>
+
 const patchResourceBaseSchema = z.object({
   // <number> 仅标注 input 类型, 使表单 (zodResolver) 与 API 复用同一 schema 时类型对齐
   patchId: kunId('游戏 ID'),
@@ -118,53 +185,7 @@ const patchResourceBaseSchema = z.object({
   name: z.string().max(300, { message: '资源名称最多 300 个字符' }),
   note: z.string().max(10007, { message: '资源备注最多 10007 字' }),
   links: z
-    .array(
-      z
-        .object({
-          id: kunId('链接 ID').optional(),
-          storage: z
-            .string()
-            .refine((type) => SUPPORTED_RESOURCE_LINK.includes(type), {
-              message: '非法的资源链接类型'
-            }),
-          hash: z.string().max(107),
-          content: z
-            .string()
-            .max(1007, { message: '您的资源链接内容最多 1007 个字符' }),
-          size: z.string().regex(ResourceSizeRegex, {
-            message: '请选择资源的大小, MB 或 GB'
-          }),
-          code: z
-            .string()
-            .trim()
-            .max(1007, { message: '资源提取码长度最多 1007 位' }),
-          password: z
-            .string()
-            .max(1007, { message: '资源解压码长度最多 1007 位' })
-        })
-        .superRefine((link, ctx) => {
-          if (link.storage === 's3') {
-            // 新建场景: 必须携带上传 token (走 link.hash 字段透传)
-            // 更新场景: 若已存在同 id 的 s3 link, 可不携带 token 表示未变更
-            if (!link.hash.trim() && typeof link.id !== 'number') {
-              ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: '请先上传资源文件',
-                path: ['hash']
-              })
-            }
-            return
-          }
-
-          if (!link.content.trim()) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              message: '请输入资源链接',
-              path: ['content']
-            })
-          }
-        })
-    )
+    .array(resourceLinkSchema)
     .min(1, { message: '请至少添加一个资源链接' })
     .max(10, { message: '单个资源最多添加 10 条链接' })
     // 一条已有的链接 (带 id) 只能提交一次: 重复提交会让几行共用同一个存储对象, 之后删掉
