@@ -139,6 +139,42 @@ describe('patchResourceCreateSchema 资源类别 / 类型联动', () => {
     expect(messages).toContain('非法的类型')
     expect(messages).toContain('所选资源类型不属于当前资源类别')
   })
+
+  it('三条联动各自的路径、文案与先后', () => {
+    const result = patchResourceCreateSchema.safeParse({
+      ...baseInput,
+      section: 'galgame',
+      type: ['ai'],
+      platform: ['emulator']
+    })
+    expect(
+      result.success
+        ? []
+        : result.error.issues.map((issue) => [
+            issue.path.join('.'),
+            issue.message
+          ])
+    ).toEqual([
+      ['type', '所选资源类型不属于当前资源类别'],
+      ['emulatorType', '选择模拟器平台时请选择模拟器类型'],
+      ['modelName', '发布 AI 翻译补丁时请填写模型型号']
+    ])
+  })
+
+  // 拿 section 直接查对象字面量会命中原型链上的成员, 此前校验在这里抛 TypeError (接口回 500)
+  it.each(['constructor', '__proto__', 'toString'])(
+    '资源类别取对象原型上的成员名 %s 时回业务错误',
+    (section) => {
+      const result = patchResourceUpdateSchema.safeParse({
+        ...baseInput,
+        resourceId: 1,
+        section
+      })
+      expect(
+        result.success ? [] : result.error.issues.map((issue) => issue.message)
+      ).toEqual(['资源链接类型仅能为 Galgame 或补丁'])
+    }
+  )
 })
 
 // 一条已有的链接只能提交一次。重复提交会让几行共用同一个存储对象 (保留型对象存储链接),

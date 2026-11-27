@@ -2,8 +2,9 @@ import * as z from 'zod'
 import { kunId, kunInt, kunLimit, kunPage } from './primitives'
 import { ResourceSizeRegex } from '~/utils/validate'
 import { nonEmptyFileSchema } from './file'
+import { findTaxonomyViolations } from './resourceTaxonomy'
+import type { ResourceTaxonomyRow } from './resourceTaxonomy'
 import {
-  RESOURCE_SECTION_TYPE_MAP,
   SUPPORTED_TYPE,
   SUPPORTED_LANGUAGE,
   SUPPORTED_PLATFORM,
@@ -64,38 +65,45 @@ export const getPatchCommentSchema = z.object({
 })
 
 // section 与 type 的联动约束: 所选类型必须属于对应资源类别下允许的类型;
-// 另有 platform/type 触发的条件必填: 模拟器平台须选模拟器类型, AI 补丁须填模型型号
+// 另有 platform/type 触发的条件必填: 模拟器平台须选模拟器类型, AI 补丁须填模型型号。
+// 规则本身在 findTaxonomyViolations, 这里只把其中三类转成报错
 const refineResourceSectionType = (
-  data: {
-    section: string
-    type: string[]
-    platform: string[]
-    emulatorType: string[]
-    modelName: string
-  },
+  data: ResourceTaxonomyRow,
   ctx: z.RefinementCtx
 ) => {
-  const allowedTypes = RESOURCE_SECTION_TYPE_MAP[data.section]
-  if (allowedTypes && !data.type.every((t) => allowedTypes.includes(t))) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: '所选资源类型不属于当前资源类别',
-      path: ['type']
-    })
-  }
-  if (data.platform.includes('emulator') && data.emulatorType.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: '选择模拟器平台时请选择模拟器类型',
-      path: ['emulatorType']
-    })
-  }
-  if (data.type.includes('ai') && !data.modelName) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: '发布 AI 翻译补丁时请填写模型型号',
-      path: ['modelName']
-    })
+  for (const violation of findTaxonomyViolations(data)) {
+    switch (violation.kind) {
+      case 'section-type':
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: '所选资源类型不属于当前资源类别',
+          path: ['type']
+        })
+        break
+      case 'emulator-type-required':
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: '选择模拟器平台时请选择模拟器类型',
+          path: ['emulatorType']
+        })
+        break
+      case 'model-name-required':
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: '发布 AI 翻译补丁时请填写模型型号',
+          path: ['modelName']
+        })
+        break
+      // 词表成员与非空由各字段自己的校验报, 文案各不相同。孤儿值不报: 表单把字段藏起来
+      // 之后会留下残值, 由 create / update 在落库前归一化
+      case 'unknown-value':
+      case 'empty':
+      case 'emulator-type-orphan':
+      case 'model-name-orphan':
+        break
+      default:
+        violation satisfies never
+    }
   }
 }
 
