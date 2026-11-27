@@ -90,7 +90,8 @@ export const ResourceLinksInput = ({
   }, [append, fields.length, defaultStorage])
 
   // 上传只在它的对象存储链接还在时才算数: 链接被删、换了存储类型、整组链接被换掉
-  // (切换分区) 之后, 还在传的那一次就地中止
+  // (切换分区) 之后, 还在传的那一次就地中止。每次渲染之后都核对, 不列依赖: 表单值是原地
+  // 改写的 (换存储类型之后 watch('links') 给的还是同一个数组), 拿它当依赖判断不出变化
   const { uploads: activeUploads, cancel: cancelUpload } = uploads
   useEffect(() => {
     for (const key of Object.keys(activeUploads)) {
@@ -98,7 +99,7 @@ export const ResourceLinksInput = ({
         cancelUpload(key)
       }
     }
-  }, [activeUploads, cancelUpload, links])
+  })
 
   // 取大小是异步的: 结果按 key 找回链接, 不按发起时的下标
   const handleFetchTouchGalSize = async (key: string) => {

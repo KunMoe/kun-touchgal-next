@@ -60,6 +60,7 @@ export const PublishResource = ({
   const {
     control,
     reset,
+    clearErrors,
     getValues,
     setValue,
     trigger,
@@ -173,6 +174,7 @@ export const PublishResource = ({
                   onPress={() => {
                     setValue('section', s)
                     setValue('links', [createDefaultLink(s)])
+                    clearErrors('links')
                     setValue(
                       'type',
                       watch().type.filter((t) =>
@@ -197,6 +199,7 @@ export const PublishResource = ({
                 setSection={(content) => {
                   setValue('section', content)
                   setValue('links', [createDefaultLink(content)])
+                  clearErrors('links')
                   setValue(
                     'type',
                     watch().type.filter((t) =>

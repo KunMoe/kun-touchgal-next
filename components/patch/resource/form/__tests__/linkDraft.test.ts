@@ -153,6 +153,50 @@ describe('fromResource: 编辑表单的初值', () => {
     expect(linkView(link)).toBe('external')
   })
 
+  // 每个字段给一个互不相同的非空值: 取错字段、写成默认值都会被看出来
+  it('资源信息与链接上的每个值原样进表单', () => {
+    const rich: PatchResource = {
+      ...resource,
+      patchId: 42,
+      section: 'galgame',
+      name: '资源名',
+      note: '备注正文',
+      type: ['pc', 'ai'],
+      language: ['ja'],
+      platform: ['windows', 'emulator'],
+      emulatorType: ['krkr'],
+      modelName: 'model-x',
+      links: [
+        { ...resource.links[0], code: 's3-code', password: 's3-pw' },
+        { ...resource.links[1], code: 'ext-code', password: 'ext-pw' }
+      ]
+    }
+    const form = fromResource(rich)
+
+    expect(form).toMatchObject({
+      patchId: 42,
+      section: 'galgame',
+      name: '资源名',
+      note: '备注正文',
+      type: ['pc', 'ai'],
+      language: ['ja'],
+      platform: ['windows', 'emulator'],
+      emulatorType: ['krkr'],
+      modelName: 'model-x'
+    })
+    expect(form.links[0]).toMatchObject({ code: 's3-code', password: 's3-pw' })
+    expect(form.links[1]).toMatchObject({
+      code: 'ext-code',
+      password: 'ext-pw'
+    })
+  })
+
+  it('没动过的链接不提示删除原文件', () => {
+    for (const link of values.links) {
+      expect(releasesStoredFile(link)).toBe(false)
+    }
+  })
+
   it('每条链接各有一个 key', () => {
     const keys = [...values.links, emptyLink('s3'), emptyLink('user')].map(
       (link) => link.key
@@ -200,6 +244,17 @@ describe('switchStorage: 换存储类型', () => {
     expect(back).toEqual(kept)
     expect(linkView(back)).toBe('s3-kept')
     expect(releasesStoredFile(back)).toBe(false)
+  })
+
+  it('换存储类型不动提取码与解压码', () => {
+    const filled = { ...kept, code: 'c0de', password: 'pw2' }
+    expect(switchStorage(filled, 'user')).toMatchObject({
+      code: 'c0de',
+      password: 'pw2'
+    })
+    expect(switchStorage({ ...external, password: 'pw3' }, 's3')).toMatchObject(
+      { code: 'c0de', password: 'pw3' }
+    )
   })
 
   it('离开对象存储时摘掉刚传的文件', () => {
@@ -277,6 +332,12 @@ describe('discardUpload: 移除刚传的文件', () => {
     expect(linkView(back)).toBe('s3-kept')
   })
 
+  it('只摘掉上传, 填好的提取码与解压码留着', () => {
+    const filled = { ...kept, code: 'c0de', password: 'pw2' }
+    const [uploaded] = attachUpload([filled], filled.key, UPLOAD)
+    expect(discardUpload(uploaded)).toEqual(filled)
+  })
+
   it('新加的链接退回等上传', () => {
     const fresh = emptyLink('s3')
     const [uploaded] = attachUpload([fresh], fresh.key, UPLOAD)
@@ -342,6 +403,75 @@ describe('toRequest: 请求体的唯一出口', () => {
     })
   })
 
+  // 各字段的值原样带过去: 夹具里的值都不是空值或默认值, 取错字段、写成常量都会被看出来
+  it('资源信息与链接上的每个值原样进请求体', () => {
+    const rich: ResourceFormValues = {
+      patchId: 42,
+      section: 'galgame',
+      name: '资源名',
+      note: '备注正文',
+      type: ['pc', 'ai'],
+      language: ['ja'],
+      platform: ['windows', 'emulator'],
+      emulatorType: ['krkr'],
+      modelName: 'model-x',
+      links: [
+        {
+          key: 'k1',
+          id: 11,
+          storage: 's3',
+          upload: { token: 'tok-9', fileName: 'f.zip', size: '7.000 MB' },
+          code: 's3-code',
+          password: 's3-pw',
+          origin: { storage: 's3', content: OBJECT_URL, size: '100.000 MB' }
+        },
+        {
+          key: 'k2',
+          id: 12,
+          storage: 'touchgal',
+          content: 'https://pan.touchgal.net/s/xyz',
+          size: '3.5 GB',
+          code: 'tg-code',
+          password: 'tg-pw',
+          origin: {
+            storage: 'user',
+            content: 'https://old.example/a',
+            size: '1 GB'
+          }
+        }
+      ]
+    }
+
+    expect(toRequest(rich)).toEqual({
+      patchId: 42,
+      section: 'galgame',
+      name: '资源名',
+      note: '备注正文',
+      type: ['pc', 'ai'],
+      language: ['ja'],
+      platform: ['windows', 'emulator'],
+      emulatorType: ['krkr'],
+      modelName: 'model-x',
+      links: [
+        {
+          id: 11,
+          storage: 's3',
+          uploadToken: 'tok-9',
+          code: 's3-code',
+          password: 's3-pw'
+        },
+        {
+          id: 12,
+          storage: 'touchgal',
+          content: 'https://pan.touchgal.net/s/xyz',
+          size: '3.5 GB',
+          code: 'tg-code',
+          password: 'tg-pw'
+        }
+      ]
+    })
+  })
+
   it('外链带用户填的地址与大小', () => {
     expect(toRequest(values).links[1]).toEqual({
       id: 6,
@@ -389,6 +519,61 @@ describe('resourceFormResolver: 表单按请求体校验', () => {
       links: [...attachUpload([fresh], fresh.key, UPLOAD)]
     })
     expect(result.errors).toEqual({})
+  })
+
+  // 请求体里它是「只带 id 的对象存储链接」, 与沿用原文件的长得一样, 过得了 schema;
+  // 服务端要到保存时才拒绝。草稿知道它在等上传
+  it('已有的外链换到对象存储却还没有文件: 同样提示先上传', async () => {
+    const values = fromResource(resource)
+    const switched = switchStorage(values.links[1], 's3')
+    expect(switched.id).toBe(6)
+
+    const result = await resolve({
+      ...values,
+      links: [values.links[0], switched]
+    })
+    expect(result.errors.links?.[0]).toBeUndefined()
+    expect(result.errors.links?.[1]).toMatchObject({
+      uploadToken: { message: '请先上传资源文件' }
+    })
+  })
+
+  it('它传完文件之后通过校验', async () => {
+    const values = fromResource(resource)
+    const switched = switchStorage(values.links[1], 's3')
+    const result = await resolve({
+      ...values,
+      links: [...attachUpload([switched], switched.key, UPLOAD)]
+    })
+    expect(result.errors).toEqual({})
+  })
+
+  it('链接之外的字段照常校验, 与链接的错误一起给出', async () => {
+    const values = fromResource(resource)
+    const result = await resolve({
+      ...values,
+      type: [],
+      links: [...values.links, emptyLink('s3')]
+    })
+    expect(result.errors.type).toMatchObject({
+      message: '请选择至少一个资源类型'
+    })
+    expect(result.errors.links?.[2]).toMatchObject({
+      uploadToken: { message: '请先上传资源文件' }
+    })
+    expect(result.values).toEqual({})
+  })
+
+  it('等上传的链接上别的字段的错误不被这条提示盖掉', async () => {
+    const values = fromResource(resource)
+    const result = await resolve({
+      ...values,
+      links: [{ ...emptyLink('s3'), code: 'x'.repeat(1008) }]
+    })
+    expect(result.errors.links?.[0]).toMatchObject({
+      code: { message: '资源提取码长度最多 1007 位' },
+      uploadToken: { message: '请先上传资源文件' }
+    })
   })
 
   it('外链没填地址: 错误落在它的 content 上', async () => {

@@ -122,6 +122,8 @@ export const resourceLinkFields = {
 
 const linkId = kunId('链接 ID').optional()
 
+export const RESOURCE_UPLOAD_REQUIRED = '请先上传资源文件'
+
 // 对象存储的链接: 地址、对象 key 与大小都归服务端, 在绑定上传文件时写下 (见
 // bindUploadedResource), 请求里只说两件事 —— 换成哪一次上传 (uploadToken), 或者沿用库里的
 // 哪一行 (id, 不带 uploadToken)。库里的 hash 列是历史对象的校验码, 只读, 不从请求写入
@@ -148,7 +150,7 @@ const s3LinkSchema = z
   .refine(
     (link) => link.id !== undefined || !!link.uploadToken || !!link.hash,
     {
-      message: '请先上传资源文件',
+      message: RESOURCE_UPLOAD_REQUIRED,
       path: ['uploadToken']
     }
   )
