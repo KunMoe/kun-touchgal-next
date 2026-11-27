@@ -8,7 +8,7 @@ import {
 } from '~/constants/resource'
 
 // 资源分类 (类别 / 类型 / 语言 / 平台 / 模拟器类型 / 模型型号) 的违规判据: 一行数据
-// 哪里不合词表与联动规则。全表核查 (scripts/verifyResourceTaxonomy.ts) 拿它判库里的行;
+// 哪里不合词表与联动规则。全表核查 (scripts/taxonomy, pnpm taxonomy:verify) 拿它判库里的行;
 // 接口与表单的校验 (validations/patch.ts) 的类别联动与两条条件必填也从这里读, 这三条规则
 // 只写在这里。词表成员与非空在 schema 里另有各字段自己的校验 (文案不同), 两边由
 // __tests__/resourceTaxonomy.test.ts 的对照用例保持一致。

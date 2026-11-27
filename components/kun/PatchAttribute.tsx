@@ -30,6 +30,7 @@ export const KunPatchAttribute = ({
   return (
     <div className="flex flex-wrap gap-2">
       {types.map((type) =>
+        // 'patch' 是资源类型的旧值, 没有文案。删除判据: 生产上 pnpm taxonomy:verify 以 0 退出
         hidePatchType && type === 'patch' ? null : (
           <KunStaticChip key={type} color="primary" size={size}>
             {SUPPORTED_TYPE_MAP[type]}

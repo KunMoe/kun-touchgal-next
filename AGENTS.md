@@ -196,15 +196,16 @@ pnpm prisma:generate
 
 ## 资源词表变更
 
-- 资源分类（类别 / 类型 / 语言 / 平台 / 模拟器类型 / 模型型号）的取值在 `constants/resource.ts`，规则只在 `validations/resourceTaxonomy.ts` 的 `findTaxonomyViolations`：`validations/patch.ts` 的联动校验与全表核查 `pnpm taxonomy:verify`（`scripts/verifyResourceTaxonomy.ts`）都读它，改联动或条件必填只改这一处。各字段自己的 `refine(includes)` 与文案留在 schema 里，不换成 `z.enum`：报错路径会从 `type` 变成 `type.0`，对象级的 `superRefine` 也不再执行（zod 4.6.7 实测）。同一份词表的几张平行表（取值列表、文案表、下拉选项、按类别的分组）由 `constants/__tests__/resource.test.ts` 核对键集。
-- 库对这些列不设约束，词表的权威只在代码里：代码里删掉一个值，库里带着它的行不会跟着变。一次变更做完没有，只看 `pnpm taxonomy:verify` 的退出码：0 是没有任何一行带着词表外的值（`patch_resource` 全表，不分 status、发布者与类别；外加 `patch` 上由 `recalcPatchType` 聚合出来的 `type` / `language` / `platform`）。它开只读会话、按 id 分批读，可以直接对生产库跑。迁移脚本自己的「已完成」判断不算数：那只代表这份脚本看的那几列。
-- 只加值：改 `constants/resource.ts` 里这份词表的每张平行表即可。
+- 资源分类（类别 / 类型 / 语言 / 平台 / 模拟器类型 / 模型型号）的取值在 `constants/resource.ts`。一行数据哪里不合词表与联动规则，由 `validations/resourceTaxonomy.ts` 的 `findTaxonomyViolations` 判定：`validations/patch.ts` 的类别联动与两条条件必填从它读（这三条规则的判定只写在这里），全表核查 `pnpm taxonomy:verify`（`scripts/taxonomy/`）拿它判库里的行。各字段自己的 `refine(includes)`、`min` 与文案留在 schema 里，不换成 `z.enum`：报错路径会从 `type` 变成 `type.<下标>`，对象级的 `superRefine` 也不再执行（zod 4.6.7 实测）；两边由 `validations/__tests__/resourceTaxonomy.test.ts` 的对照用例保持一致。两条联动的触发值（平台含 `emulator`、类型含 `ai`）另按字面量出现在落库前的归一化（`app/api/patch/resource/create.ts`、`update.ts`）、表单的字段显隐（`ResourceDetailsForm.tsx`）与申诉内容（`server/moderation/appeal.ts`），改触发值要一起改。同一份词表的几张平行表（取值列表、文案表、下拉选项、按类别的分组）由 `constants/__tests__/resource.test.ts` 核对键集。
+- 库对这些列不设约束，词表的权威只在代码里：代码里删掉一个值，库里带着它的行不会跟着变。一次变更做完没有，只看 `pnpm taxonomy:verify` 的退出码：0 是没有任何一行带着词表外的值（`patch_resource` 全表，不分 status、发布者与类别；外加 `patch` 上由 `recalcPatchType` 从公开资源聚合出来的 `type` / `language` / `platform`）；非 0 是还有残留或者没查成，输出里写明是哪一种。它开只读会话、按 id 分批读，可以直接对生产库跑；`--ids` 另外列出全部拦收尾的资源 id 与作品 id。迁移脚本自己的「已完成」判断不算数：那只代表这份脚本看的那几列。
+- 核查按值判定，有一类行它看不见：新旧词表里同名的值（07-28 那次的 `other`）。这类行的收尾判据只能是迁移自己冻结的来源边界（上线时刻或目标 id 集）以内的行全部处理完。
+- 只加值：改 `constants/resource.ts` 里这份词表的每张平行表；平台另有 `components/patch/header/Tags.tsx` 的 `DISPLAY_PLATFORM_MAP`（没登记的平台在作品页不显示）与 `utils/patch/getPatchPageTitle.ts`。
 - 删值或换值分三步，不要在一次部署里直接删（07-28 与 09-18 两次都是代码先删、数据迁移留到之后，期间带旧值的资源一编辑就被校验拦下，哪些表单要补过滤每次都得重新决定）：
-  1. expand 部署：新值进词表；被删的值挪进 `constants/resource.ts` 里新建的 `LEGACY_*` 列表，校验在过渡期继续放行它（字段的 `refine` 与类别联动都要认），判据照旧把它报为词表外的值。界面不提供这个选项，也不给它加回 `*_MAP` 文案（旧值在迁移前显示成空白是既有裁定）。新旧词表里同名的值（如 `other`）从值上分不出新旧，要在这一步记下来源边界（上线时刻或目标 id 集），迁移只动边界以内的行。
-  2. 迁移数据，直到 `pnpm taxonomy:verify` 以 0 退出。资源行改干净之后派生列还有残留的，对那些作品重跑 `recalcPatchType`，再 `pnpm search:reconcile --enqueue-only` 让搜索索引跟上。
-  3. contract 部署：删掉 `LEGACY_*` 与过渡代码。过渡代码的注释里写明删除判据就是这条命令以 0 退出（现有的一处是 `EditResourceDialog.tsx` 的 type / platform 过滤）。
+  1. expand 部署：新值进词表；被删的值挪进 `constants/resource.ts` 里新建的 `LEGACY_*` 列表，校验在过渡期继续放行它（字段的 `refine` 与类别联动都要认；对照用例随之改成「放行的输入里，判据报的成员违规只能是过渡中的旧值」），判据照旧把它报为词表外的值。界面不提供这个选项，也不给它加回 `*_MAP` 文案（旧值在迁移前显示成空白是既有裁定）。新旧词表里同名的值在这一步冻结来源边界，迁移只动边界以内的行。
+  2. 迁移数据，直到 `pnpm taxonomy:verify` 以 0 退出。迁移脚本对自己改过的每个作品调 `recalcPatchType`（传事务）。资源行都干净之后派生列还有残留的（`--ids` 的作品清单），没有现成的命令入口：写一个一次性脚本逐个调它，再 `pnpm search:reconcile --enqueue-only` 让搜索索引跟上。
+  3. contract 部署：删掉 `LEGACY_*` 与过渡代码，部署之后再跑一次核查（过渡期里校验还放行旧值，核查到 0 之后仍可能被写回）。过渡代码的注释里写明删除判据就是这条命令以 0 退出（现有两处：`EditResourceDialog.tsx` 的 type / platform 过滤、`PatchAttribute.tsx` 的 `hidePatchType`）。
 - 只是删值、且旧值到新值的映射确定时，可以先迁移、再部署删除、再跑一遍补漏，同样以核查为 0 收尾。
-- 核查里「不拦收尾」的两类不影响退出码：行自身不完整（平台为空、选了模拟器平台却没有模拟器类型等，怎么补由站长逐条裁定），以及 `patch.type` 里的 `'patch'`（姊妹站同步任务打的标记，任务已在 `bbe203e8` 删除、没有写入方了；`patch_resource.type` 里的 `'patch'` 才是旧值）。数组列在库里可空，核查与 Prisma 一样把 `NULL` 读成空数组。
+- 核查里「不拦收尾」的是行自身不完整（平台为空、选了模拟器平台却没有模拟器类型等），怎么补由站长逐条裁定。`patch.type` 里的 `'patch'` 不豁免：它既可能是已删除的姊妹站同步任务（`bbe203e8`）打的标记，也可能是 `patch_resource.type` 的旧值 `'patch'` 聚合上来的；资源改掉而作品还没重算时两者分不出，清法都是重算。数组列在库里可空，核查与 Prisma 一样把 `NULL` 读成空数组。每个字段最多 10 项是表单的限制，核查不管。
 - 不给这些列加数据库 CHECK：`NOT VALID` 的约束照样校验之后的 UPDATE，残留行上的下载计数、隐藏与审核写入都会失败，每次加值也要先执行 DDL；等核查在生产上为 0 再评估。`recalcPatchType` 不按词表过滤：那会把残留藏起来，核查就看不见了。
 
 ## Testing & QA
