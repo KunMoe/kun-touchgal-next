@@ -1,22 +1,15 @@
-// 只读核查: 拿全表数据对照资源词表, 回答「一次词表变更做完没有」。
-//   pnpm taxonomy:verify
-// 以 0 退出 = 没有任何一行带着词表外的值: 这是宣布迁移完成、删除过渡代码的唯一判据
-// (流程见 AGENTS.md「资源词表变更」)。非 0 = 还有残留, 或者没查成, 输出里写明是哪一种。
+// 资源词表核查的扫描与报告, 入口在 scripts/taxonomy/verify.ts (pnpm taxonomy:verify)。
 //
-// 第一部分逐行看 patch_resource, 不分 status、发布者与类别, 判据与接口校验是同一个
-// findTaxonomyViolations。第二部分看 patch 上由 recalcPatchType 从资源聚合出来的三列:
+// 第一部分逐行看 patch_resource, 不分 status、发布者与类别, 判据与接口校验的联动是同一个
+// findTaxonomyViolations。第二部分看 patch 上由 recalcPatchType 从公开资源聚合出来的三列:
 // 资源行改干净之后, 还没重算过的作品仍带着旧值, 并经它们进搜索索引。
-// 连接是只读会话, 写语句在库端就被拒绝; 按 id 分批读, 不开长事务, 可以直接对生产库跑
-import 'dotenv/config'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+// 只发 SELECT, 按 id 分批读, 不开长事务
 import { contentStatusLabel } from '~/constants/contentStatus'
 import {
   SUPPORTED_LANGUAGE,
   SUPPORTED_PLATFORM,
   SUPPORTED_TYPE
 } from '~/constants/resource'
-import { kunConnect, kunRunCli } from '~/scripts/db/lib/runtime'
 import {
   findTaxonomyViolations,
   isMembershipViolation
@@ -26,11 +19,9 @@ import type { TaxonomyViolation } from '~/validations/resourceTaxonomy'
 const BATCH_SIZE = 2000
 const SAMPLE_LIMIT = 5
 
-// patch.type 里的 'patch' 不是资源词表的旧值, 是姊妹站同步任务打的标记。任务已删除 (bbe203e8),
-// 没有写入方了, 该作品下一次资源变动时由 recalcPatchType 抹掉。单独计数, 不拦收尾。
-// patch_resource.type 里的 'patch' 则是旧值, 由判据照常报出
-const PATCH_TYPE_MARKER = 'patch'
-
+// patch.type 里的 'patch' 不豁免。它有两个来源: 已删除的姊妹站同步任务 (bbe203e8) 打的标记,
+// 和 patch_resource.type 的旧值 'patch' 经 recalcPatchType 聚合上来的。资源改掉而作品还没
+// 重算时, 两者在数据上分不出, 清法也一样 (重算), 豁免前者就等于放过后者
 const PATCH_COLUMNS = [
   ['type', SUPPORTED_TYPE],
   ['language', SUPPORTED_LANGUAGE],
@@ -112,6 +103,7 @@ export interface TaxonomyReport {
     clean: number
     // 至少带一条成员违规的行。只有它们拦收尾
     blockingRows: number
+    blockingIds: number[]
     blocking: Map<string, Tally>
     // 这些行分布在哪: 「类别 / 发布者 / status」→ 行数, 用来对上该跑哪一份迁移
     blockingSources: Map<string, number>
@@ -124,8 +116,8 @@ export interface TaxonomyReport {
   patches: {
     scanned: number
     blockingRows: number
+    blockingIds: number[]
     blocking: Map<string, Tally>
-    marker: Tally
   }
 }
 
@@ -182,6 +174,7 @@ export const verifyResourceTaxonomy = async (
     scanned: 0,
     clean: 0,
     blockingRows: 0,
+    blockingIds: [],
     blocking: new Map(),
     blockingSources: new Map(),
     otherRows: 0,
@@ -249,6 +242,7 @@ export const verifyResourceTaxonomy = async (
         return
       }
       resources.blockingRows++
+      resources.blockingIds.push(row.id)
       const source = [
         row.section,
         row.user_id === 1 ? '官方账号 (user_id 1)' : '其他用户',
@@ -264,8 +258,8 @@ export const verifyResourceTaxonomy = async (
   const patches: TaxonomyReport['patches'] = {
     scanned: 0,
     blockingRows: 0,
-    blocking: new Map(),
-    marker: newTally()
+    blockingIds: [],
+    blocking: new Map()
   }
   await scan<PatchRow>(
     client,
@@ -278,11 +272,7 @@ export const verifyResourceTaxonomy = async (
       for (const [column, vocabulary] of PATCH_COLUMNS) {
         const outside = [
           ...new Set(
-            (row[column] ?? []).filter(
-              (value) =>
-                !vocabulary.includes(value) &&
-                !(column === 'type' && value === PATCH_TYPE_MARKER)
-            )
+            (row[column] ?? []).filter((value) => !vocabulary.includes(value))
           )
         ]
         if (outside.length > 0) {
@@ -296,9 +286,7 @@ export const verifyResourceTaxonomy = async (
       }
       if (blocking) {
         patches.blockingRows++
-      }
-      if (row.type?.includes(PATCH_TYPE_MARKER)) {
-        record(patches.marker, sample)
+        patches.blockingIds.push(row.id)
       }
     }
   )
@@ -350,39 +338,13 @@ export const formatTaxonomyReport = (
   '',
   `二、patch 的派生列 type / language / platform: 扫描 ${patches.scanned} 行`,
   `  拦收尾 (含词表外的值; 资源行改干净后对这些作品重跑 recalcPatchType): ${patches.blockingRows} 行`,
-  ...formatTallies(patches.blocking, siteUrl),
-  `  不拦收尾 (type 里的 '${PATCH_TYPE_MARKER}' 标记, 写入它的任务已删除): ${patches.marker.rows} 行`,
-  ...formatSamples(patches.marker, siteUrl)
+  ...formatTallies(patches.blocking, siteUrl)
 ]
 
-// 仅在被直接执行时运行, 使单测可以只导入函数
-const isDirectRun =
-  !!process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-
-if (isDirectRun) {
-  kunRunCli(async () => {
-    const client = await kunConnect(
-      process.env.KUN_DATABASE_URL,
-      'KUN_DATABASE_URL',
-      { readOnly: true }
-    )
-    let report: TaxonomyReport
-    try {
-      report = await verifyResourceTaxonomy(client)
-    } finally {
-      await client.end()
-    }
-    const siteUrl = (process.env.KUN_VISUAL_NOVEL_SITE_URL ?? '').replace(
-      /\/+$/,
-      ''
-    )
-    console.log(formatTaxonomyReport(report, siteUrl).join('\n'))
-    if (!isTaxonomyVerified(report)) {
-      throw new Error(
-        `词表核查未通过: 资源 ${report.resources.blockingRows} 行、作品 ${report.patches.blockingRows} 行带着词表外的值`
-      )
-    }
-    console.log('\n✓ 词表核查通过: 没有词表外的值')
-  })
-}
+// 完整清单: 迁移与重算要处理的就是这些 id
+export const formatBlockingIds = ({ resources, patches }: TaxonomyReport) => [
+  `拦收尾的资源 id (${resources.blockingIds.length}):`,
+  resources.blockingIds.join(','),
+  `拦收尾的作品 id (${patches.blockingIds.length}):`,
+  patches.blockingIds.join(',')
+]

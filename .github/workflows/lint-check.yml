@@ -180,3 +180,4 @@ jobs:
           app/api/message/conversation/__tests__/service.db.test.ts
           server/mail/__tests__/campaign.db.test.ts
           server/identity/__tests__/userIdentifier.db.test.ts
+          scripts/taxonomy/__tests__/verify.db.test.ts

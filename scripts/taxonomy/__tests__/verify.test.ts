@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  formatBlockingIds,
   formatTaxonomyReport,
   isTaxonomyVerified,
   verifyResourceTaxonomy
-} from '~/scripts/verifyResourceTaxonomy'
+} from '~/scripts/taxonomy/lib/verify'
 
 const resource = (id: number, fields: Record<string, unknown> = {}) => ({
   id,
@@ -98,6 +99,7 @@ describe('verifyResourceTaxonomy: patch_resource', () => {
       scanned: 7,
       clean: 1,
       blockingRows: 6,
+      blockingIds: [2, 3, 4, 5, 6, 7],
       otherRows: 0
     })
     expect(tallies(resources.blocking)).toEqual({
@@ -144,6 +146,7 @@ describe('verifyResourceTaxonomy: patch_resource', () => {
     expect(resources).toMatchObject({
       clean: 0,
       blockingRows: 1,
+      blockingIds: [2],
       otherRows: 6,
       otherOnlyRows: 5
     })
@@ -187,30 +190,43 @@ describe('verifyResourceTaxonomy: patch_resource', () => {
 })
 
 describe('verifyResourceTaxonomy: patch 的派生列', () => {
-  it('词表外的值拦收尾; type 里的 patch 标记单独计数、不拦', async () => {
+  it('三列各自的词表外的值都拦收尾', async () => {
     const { patches } = await verify(
       [],
       [
         patch(1),
-        patch(2, { type: ['game', 'patch'] }),
-        patch(3, { type: ['chinese', 'patch'], platform: ['android'] }),
+        patch(2, { type: ['chinese', 'game'], platform: ['android'] }),
         patch(4, { language: ['chinese'] }),
         patch(5, { type: null, language: null, platform: null })
       ]
     )
 
-    expect(patches).toMatchObject({ scanned: 5, blockingRows: 2 })
+    expect(patches).toMatchObject({
+      scanned: 4,
+      blockingRows: 2,
+      blockingIds: [2, 4]
+    })
     expect(tallies(patches.blocking)).toEqual({
       'patch.type 含词表外的值': { rows: 1, values: { chinese: 1 } },
       'patch.platform 含词表外的值': { rows: 1, values: { android: 1 } },
       'patch.language 含词表外的值': { rows: 1, values: { chinese: 1 } }
     })
-    expect(patches.marker).toMatchObject({
-      rows: 2,
-      samples: [
-        { id: 2, path: '/p2' },
-        { id: 3, path: '/p3' }
-      ]
+    expect(
+      patches.blocking.get('patch.language 含词表外的值')?.samples
+    ).toEqual([{ id: 4, path: '/p4' }])
+  })
+
+  // 'patch' 可能是已删除的同步任务打的标记, 也可能是旧资源类型聚合上来的: 资源改掉而作品
+  // 没重算时两者分不出, 所以一律拦
+  it("type 里的 'patch' 同样拦收尾, 不豁免", async () => {
+    const { patches } = await verify(
+      [],
+      [patch(1, { type: ['game', 'patch'] })]
+    )
+
+    expect(patches.blockingIds).toEqual([1])
+    expect(tallies(patches.blocking)).toEqual({
+      'patch.type 含词表外的值': { rows: 1, values: { patch: 1 } }
     })
   })
 })
@@ -226,11 +242,12 @@ describe('isTaxonomyVerified', () => {
       false
     ],
     [
-      '只有不完整的行与 patch 标记',
-      [resource(1, { platform: [] })],
+      "只有派生列的 type 带 'patch'",
+      [resource(1)],
       [patch(1, { type: ['patch'] })],
-      true
-    ]
+      false
+    ],
+    ['只有不完整的行', [resource(1, { platform: [] })], [patch(1)], true]
   ])('%s', async (_, resources, patches, expected) => {
     expect(isTaxonomyVerified(await verify(resources, patches))).toBe(expected)
   })
@@ -269,8 +286,15 @@ describe('formatTaxonomyReport', () => {
       '    patch.platform 含词表外的值: 1 行',
       '      取值: "android" ×1',
       '      样例 9  https://example.com/p9',
-      "  不拦收尾 (type 里的 'patch' 标记, 写入它的任务已删除): 1 行",
+      '    patch.type 含词表外的值: 1 行',
+      '      取值: "patch" ×1',
       '      样例 9  https://example.com/p9'
+    ])
+    expect(formatBlockingIds(report)).toEqual([
+      '拦收尾的资源 id (2):',
+      '2,3',
+      '拦收尾的作品 id (1):',
+      '9'
     ])
   })
 })
