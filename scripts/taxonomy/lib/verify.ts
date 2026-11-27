@@ -4,7 +4,6 @@
 // findTaxonomyViolations。第二部分看 patch 上由 recalcPatchType 从公开资源聚合出来的三列:
 // 资源行改干净之后, 还没重算过的作品仍带着旧值, 并经它们进搜索索引。
 // 只发 SELECT, 按 id 分批读, 不开长事务
-import { contentStatusLabel } from '~/constants/contentStatus'
 import {
   SUPPORTED_LANGUAGE,
   SUPPORTED_PLATFORM,
@@ -99,8 +98,6 @@ export interface TaxonomyReport {
     blockingRows: number
     blockingIds: number[]
     blocking: Map<string, Tally>
-    // 这些行分布在哪: 「类别 / 发布者 / status」→ 行数, 用来对上该跑哪一份迁移
-    blockingSources: Map<string, number>
     // 带着其余违规 (空数组、缺联动字段、孤儿值) 的行, 怎么补由站长逐条裁定。
     // otherOnlyRows 是其中没有成员违规的: 迁移跑完之后还会留下的就是它们
     otherRows: number
@@ -121,8 +118,6 @@ type NullableList = string[] | null
 interface ResourceRow {
   id: number
   unique_id: string
-  user_id: number
-  status: number
   section: string
   type: NullableList
   language: NullableList
@@ -170,15 +165,14 @@ export const verifyResourceTaxonomy = async (
     blockingRows: 0,
     blockingIds: [],
     blocking: new Map(),
-    blockingSources: new Map(),
     otherRows: 0,
     otherOnlyRows: 0,
     other: new Map()
   }
   await scan<ResourceRow>(
     client,
-    `SELECT r.id, p.unique_id, r.user_id, r.status, r.section, r.type, r.language,
-            r.platform, r.emulator_type, r.model_name
+    `SELECT r.id, p.unique_id, r.section, r.type, r.language, r.platform,
+            r.emulator_type, r.model_name
        FROM patch_resource r JOIN patch p ON p.id = r.patch_id
       WHERE r.id > $1 ORDER BY r.id LIMIT $2`,
     (row) => {
@@ -232,20 +226,10 @@ export const verifyResourceTaxonomy = async (
         resources.otherRows++
         resources.otherOnlyRows += blocking ? 0 : 1
       }
-      if (!blocking) {
-        return
+      if (blocking) {
+        resources.blockingRows++
+        resources.blockingIds.push(row.id)
       }
-      resources.blockingRows++
-      resources.blockingIds.push(row.id)
-      const source = [
-        row.section,
-        row.user_id === 1 ? '官方账号 (user_id 1)' : '其他用户',
-        `status ${row.status} ${contentStatusLabel('resource', row.status)}`
-      ].join(' / ')
-      resources.blockingSources.set(
-        source,
-        (resources.blockingSources.get(source) ?? 0) + 1
-      )
     }
   )
 
@@ -331,14 +315,6 @@ export const formatTaxonomyReport = (
   `一、patch_resource: 扫描 ${resources.scanned} 行, 无违规 ${resources.clean} 行`,
   `  拦收尾 (值不在词表里, 或类型不属于所在类别): ${resources.blockingRows} 行`,
   ...formatTallies(resources.blocking, siteUrl),
-  ...(resources.blockingSources.size > 0
-    ? [
-        '    这些行的来源 (类别 / 发布者 / status):',
-        ...byCountDesc(resources.blockingSources).map(
-          ([source, rows]) => `      ${source}: ${rows} 行`
-        )
-      ]
-    : []),
   `  不拦收尾 (行自身不完整, 怎么补逐条裁定): ${resources.otherRows} 行, 其中 ${resources.otherOnlyRows} 行没有上面的问题`,
   ...formatTallies(resources.other, siteUrl),
   '',

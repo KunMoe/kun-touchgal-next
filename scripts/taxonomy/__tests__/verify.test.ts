@@ -9,8 +9,6 @@ import {
 const resource = (id: number, fields: Record<string, unknown> = {}) => ({
   id,
   unique_id: `u${id}`,
-  user_id: 2,
-  status: 0,
   section: 'galgame',
   type: ['game'],
   language: ['zh-Hans'],
@@ -86,8 +84,8 @@ describe('verifyResourceTaxonomy: patch_resource', () => {
       resource(1),
       resource(2, { type: ['pc', 'chinese', 'game'] }),
       resource(3, { type: ['pc'], platform: ['android', 'ios'] }),
-      resource(4, { section: 'patch', type: ['patch'], user_id: 1 }),
-      resource(5, { language: ['chinese'], status: 1 }),
+      resource(4, { section: 'patch', type: ['patch'] }),
+      resource(5, { language: ['chinese'] }),
       resource(6, {
         platform: ['emulator'],
         emulator_type: ['winlator']
@@ -111,12 +109,6 @@ describe('verifyResourceTaxonomy: patch_resource', () => {
       语言含词表外的值: { rows: 1, values: { chinese: 1 } },
       模拟器类型含词表外的值: { rows: 1, values: { winlator: 1 } },
       类别不在词表里: { rows: 1, values: { tool: 1 } }
-    })
-    expect(Object.fromEntries(resources.blockingSources)).toEqual({
-      'galgame / 其他用户 / status 0 正常': 3,
-      'patch / 官方账号 (user_id 1) / status 0 正常': 1,
-      'galgame / 其他用户 / status 1 隐藏': 1,
-      'tool / 其他用户 / status 0 正常': 1
     })
   })
 
@@ -294,8 +286,6 @@ describe('formatTaxonomyReport', () => {
       '    类型含词表外的值: 1 行',
       '      取值: "pc" ×1',
       '      3  https://example.com/u3/resource/3  "pc"',
-      '    这些行的来源 (类别 / 发布者 / status):',
-      '      galgame / 其他用户 / status 0 正常: 2 行',
       '  不拦收尾 (行自身不完整, 怎么补逐条裁定): 1 行, 其中 1 行没有上面的问题',
       '    平台为空: 1 行',
       '      4  https://example.com/u4/resource/4',

@@ -103,17 +103,9 @@ describe.skipIf(!dbContractUrl)(
       })
     })
 
-    // 发布者一段不比: 用例建的用户 id 取决于序列走到哪 (空库上是 1, 即「官方账号」)
+    // resourceIds[1999] 是夹具里隐藏 (status = 1) 的那一行
     it('不分 status: 隐藏的资源照样核查', () => {
-      expect(
-        [...report.resources.blockingSources].map(([source, rows]) => {
-          const [section, , status] = source.split(' / ')
-          return [section, status, rows]
-        })
-      ).toEqual([
-        ['galgame', 'status 0 正常', 2],
-        ['galgame', 'status 1 隐藏', 1]
-      ])
+      expect(report.resources.blockingIds).toContain(resourceIds[1999])
     })
 
     it('每一行带上所属作品的 unique_id 与它带着的值', () => {
