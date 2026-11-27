@@ -44,12 +44,7 @@ export const deletePatchById = async (input: z.infer<typeof patchIdSchema>) => {
     const s3Links = patchResources.flatMap((resource) =>
       resource.links
         .filter((link) => link.storage === 's3')
-        .map((link) => ({
-          content: link.content,
-          patchId: resource.patch_id,
-          hash: link.hash,
-          s3Key: link.s3_key
-        }))
+        .map((link) => ({ s3Key: link.s3_key }))
     )
 
     // 级联删除会带走该游戏的全部资源/评论/评价, 先收集 id 供删除后清理未决审核任务与申诉

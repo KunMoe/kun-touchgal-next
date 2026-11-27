@@ -171,8 +171,8 @@ describe('deletePatchById', () => {
     // S3 删除意图在事务内入队 (与行删除原子提交)，而非提交后 Promise.all 直删
     expect(enqueueDeletionsMock).toHaveBeenCalledTimes(1)
     expect(enqueueDeletionsMock).toHaveBeenCalledWith(transactionClient, [
-      { content: 'content-1', patchId: 7, hash: 'hash-1', s3Key: 'key-1' },
-      { content: 'content-2', patchId: 7, hash: 'hash-2', s3Key: 'key-2' }
+      { s3Key: 'key-1' },
+      { s3Key: 'key-2' }
     ])
     // 提交后即时消费出箱
     expect(kickDrainMock).toHaveBeenCalledTimes(1)

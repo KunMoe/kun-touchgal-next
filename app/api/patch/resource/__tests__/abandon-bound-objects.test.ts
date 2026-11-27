@@ -22,6 +22,8 @@ vi.mock('~/lib/redis', () => ({
 
 vi.mock('~/prisma/index', () => ({ prisma: prismaMock }))
 
+vi.mock('~/lib/log.server', () => ({ kunLog: vi.fn() }))
+
 vi.mock('~/server/storage/s3Outbox', () => ({
   enqueueS3Deletion: enqueueS3DeletionMock,
   kickS3DeletionDrain: kickS3DeletionDrainMock
@@ -43,7 +45,11 @@ vi.mock('~/app/api/user/session/cache', () => ({
   invalidateUserSession: vi.fn()
 }))
 
-import { abandonBoundResourceObjects } from '~/app/api/patch/resource/_helper'
+import {
+  abandonBoundResourceObjects,
+  enqueueResourceLinkDeletions
+} from '~/app/api/patch/resource/_helper'
+import { kunLog } from '~/lib/log.server'
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -51,7 +57,7 @@ beforeEach(() => {
 
 describe('abandonBoundResourceObjects', () => {
   it('空集合不入队不踢 drain', async () => {
-    await abandonBoundResourceObjects([], 10)
+    await abandonBoundResourceObjects([])
 
     expect(enqueueS3DeletionMock).not.toHaveBeenCalled()
     expect(kickS3DeletionDrainMock).not.toHaveBeenCalled()
@@ -60,13 +66,7 @@ describe('abandonBoundResourceObjects', () => {
   it('非空集合按 s3Key 入删除出箱并即时踢 drain', async () => {
     enqueueS3DeletionMock.mockResolvedValue(undefined)
 
-    await abandonBoundResourceObjects(
-      [
-        { content: 'c-a', s3Key: 'k-a' },
-        { content: 'c-b', s3Key: 'k-b' }
-      ],
-      10
-    )
+    await abandonBoundResourceObjects([{ s3Key: 'k-a' }, { s3Key: 'k-b' }])
 
     expect(enqueueS3DeletionMock).toHaveBeenCalledWith(prismaMock, [
       'k-a',
@@ -79,8 +79,46 @@ describe('abandonBoundResourceObjects', () => {
     enqueueS3DeletionMock.mockRejectedValue(new Error('db down'))
 
     await expect(
-      abandonBoundResourceObjects([{ content: 'c-a', s3Key: 'k-a' }], 10)
+      abandonBoundResourceObjects([{ s3Key: 'k-a' }])
     ).resolves.toBeUndefined()
     expect(kickS3DeletionDrainMock).not.toHaveBeenCalled()
+  })
+})
+
+// 对象的 key 只取链接行的 s3_key。从地址与 hash 拼 key 的旧公式已删: 没有 key 的行宁可
+// 留下对象, 也不去删一个猜出来的 key (hash 被写空的行曾拼出 resource//文件名)
+describe('enqueueResourceLinkDeletions', () => {
+  const tx = {} as Parameters<typeof enqueueResourceLinkDeletions>[0]
+
+  it('按各行的 s3_key 入删除出箱', async () => {
+    await enqueueResourceLinkDeletions(tx, [{ s3Key: 'k-a' }, { s3Key: 'k-b' }])
+
+    expect(enqueueS3DeletionMock).toHaveBeenCalledWith(tx, ['k-a', 'k-b'])
+    expect(kunLog).not.toHaveBeenCalled()
+  })
+
+  it('没有 key 的行不入队, 记一条日志; 其余照常入队', async () => {
+    await enqueueResourceLinkDeletions(tx, [
+      { s3Key: '' },
+      { s3Key: 'k-b' },
+      { s3Key: '' }
+    ])
+
+    expect(enqueueS3DeletionMock).toHaveBeenCalledWith(tx, ['k-b'])
+    expect(kunLog).toHaveBeenCalledExactlyOnceWith('s3.link_without_key', {
+      count: 2
+    })
+  })
+
+  it('只多带了地址与校验码的行也只认 s3_key, 不从它们拼 key', async () => {
+    await enqueueResourceLinkDeletions(tx, [
+      {
+        s3Key: '',
+        content: 'https://cdn.example/patch/10/resource/b3/game.zip',
+        hash: 'b3'
+      } as { s3Key: string }
+    ])
+
+    expect(enqueueS3DeletionMock).toHaveBeenCalledWith(tx, [])
   })
 })

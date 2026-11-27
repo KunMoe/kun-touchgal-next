@@ -114,7 +114,7 @@ export const createPatchResource = async (
     download: number
   }> = []
   // 早退不清理即泄漏此前迭代已绑定的对象 (staging/token 已删, 无法复用)
-  const boundObjects: Array<{ content: string; s3Key: string }> = []
+  const boundObjects: Array<{ s3Key: string }> = []
   // bind 抛错 (Redis/配额 DB 故障、copy 超时 rethrow) 同样泄漏历史条目: 抛错的
   // 迭代要么未创建 finalKey 要么已在 _helper 内自清, 循环级 catch 只清历史无双删
   try {
@@ -125,7 +125,7 @@ export const createPatchResource = async (
       if (link.storage === 's3') {
         // 新建的资源没有可沿用的行: 对象存储链接必须带着一次上传 (只带 id 的过得了校验)
         if (!link.uploadToken) {
-          await abandonBoundResourceObjects(boundObjects, patchId)
+          await abandonBoundResourceObjects(boundObjects)
           return '请先上传资源文件'
         }
         const result = await bindUploadedResource(
@@ -134,14 +134,14 @@ export const createPatchResource = async (
           uid
         )
         if (typeof result === 'string') {
-          await abandonBoundResourceObjects(boundObjects, patchId)
+          await abandonBoundResourceObjects(boundObjects)
           return result
         }
         // 地址、对象 key 与大小都取绑定的结果, 不取请求里的值
         content = result.downloadLink
         size = formatResourceSize(result.size)
         s3Key = result.s3Key
-        boundObjects.push({ content, s3Key })
+        boundObjects.push({ s3Key })
       } else {
         content = link.content
         size = link.size
@@ -161,7 +161,7 @@ export const createPatchResource = async (
       })
     }
   } catch (error) {
-    await abandonBoundResourceObjects(boundObjects, patchId)
+    await abandonBoundResourceObjects(boundObjects)
     throw error
   }
 
@@ -276,7 +276,7 @@ export const createPatchResource = async (
   }
   const resource = await kunTx('resource.create', createInTx, {
     // 没有提交则行未落库: 已绑定对象无 DB 引用, 兜底清理
-    onRollback: () => abandonBoundResourceObjects(boundObjects, patchId)
+    onRollback: () => abandonBoundResourceObjects(boundObjects)
   })
   if (typeof resource === 'string') {
     return resource

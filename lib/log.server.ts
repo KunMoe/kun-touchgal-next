@@ -202,6 +202,9 @@ export const KUN_LOG_EVENTS = {
   's3.drain_failed': { level: 'error', fields: [] },
   // 即时删除与入删除写出箱都失败: 对象没有任何引用, 也没人会再删它
   's3.orphan_left': { level: 'error', fields: ['via', 'key'] },
+  // 要删的对象存储链接行没有 s3_key (历史行已回填, 不该再有): 对象入不了删除写出箱, 留在桶里,
+  // 靠 scripts/auditResourceS3Orphans.ts 找回
+  's3.link_without_key': { level: 'error', fields: ['count'] },
   'banner.pointer_unrecognized': {
     level: 'warn',
     fields: ['patchId', 'pointer']

@@ -117,28 +117,6 @@ export const bindUploadedResource = async (
   }
 }
 
-// 解析资源链接对应的 S3 对象 key：优先用持久化的 s3_key，缺失则回落 legacy 命名
-// (早期未存 s3_key 的历史数据)。返回 null 表示无法定位对象 (content 异常)。
-export const resolveS3Key = (
-  content: string,
-  patchId: number,
-  hash: string,
-  s3Key?: string
-): string | null => {
-  if (s3Key) {
-    return s3Key
-  }
-
-  const fileName = content.split('/').pop()
-  if (!fileName) {
-    return null
-  }
-  return `patch/${patchId}/resource/${hash}/${fileName}`
-}
-
-// 把一批资源链接的 S3 key 解析后入删除写出箱。client 传业务删除所在事务的 tx，使
-// 删除意图与行删除原子提交——取代原「提交后 Promise.all 删 S3、崩溃即丢失」的不可
-// 恢复路径；实际删除交由单一消费者 drainS3DeletionOutbox 幂等重试。
 // 删除资源前调用 (评论行尚存时): FK 级联只会删掉该资源评论的 patch_comment 行,
 // 评论区站内信 (评论/点赞/提及, link 均为资源页 ?commentId= 前缀)、
 // 待裁决审核任务与申诉不会随级联清理, 须在此显式删除。
@@ -179,20 +157,20 @@ export const cleanupResourceCommentDerivatives = async (
   await deletePendingAppeals('comment', commentIds, tx)
 }
 
+// 把一批对象存储链接的对象入删除写出箱。client 传业务删除所在事务的 tx，使删除意图与
+// 行删除原子提交——取代原「提交后 Promise.all 删 S3、崩溃即丢失」的不可恢复路径；实际删除
+// 交由单一消费者 drainS3DeletionOutbox 幂等重试。
+// 对象的 key 只取链接行的 s3_key: 绑定上传时写下, 直传之前的历史行已回填 (T08)。从地址与
+// hash 拼 key 的旧公式已删, 没有 key 的行入不了队 —— 对象留在桶里并记一条日志, 不会去删
+// 一个猜出来的 key
 export const enqueueResourceLinkDeletions = async (
   client: KunTx,
-  links: {
-    content: string
-    patchId: number
-    hash: string
-    s3Key?: string
-  }[]
+  links: ReadonlyArray<{ s3Key: string }>
 ) => {
-  const keys = links
-    .map((link) =>
-      resolveS3Key(link.content, link.patchId, link.hash, link.s3Key)
-    )
-    .filter((key): key is string => key !== null)
+  const keys = links.flatMap((link) => (link.s3Key ? [link.s3Key] : []))
+  if (keys.length < links.length) {
+    kunLog('s3.link_without_key', { count: links.length - keys.length })
+  }
   await enqueueS3Deletion(client, keys)
 }
 
@@ -201,22 +179,13 @@ export const enqueueResourceLinkDeletions = async (
 // (正式资源同前缀, 不能靠 lifecycle 兜底). 用顶层 prisma 入删除出箱后即时踢 drain,
 // 与 update 事务内冲突分支的清理对称; 入队失败自吞, 不遮蔽调用方正在返回的业务错误
 export const abandonBoundResourceObjects = async (
-  bound: Array<{ content: string; s3Key: string }>,
-  patchId: number
+  bound: ReadonlyArray<{ s3Key: string }>
 ) => {
   if (bound.length === 0) {
     return
   }
   try {
-    await enqueueResourceLinkDeletions(
-      prisma,
-      bound.map((item) => ({
-        content: item.content,
-        patchId,
-        hash: '',
-        s3Key: item.s3Key
-      }))
-    )
+    await enqueueResourceLinkDeletions(prisma, bound)
   } catch {
     return
   }

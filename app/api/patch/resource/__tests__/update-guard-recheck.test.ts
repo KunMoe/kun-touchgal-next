@@ -402,7 +402,7 @@ describe('更新资源在行锁下复检守卫', () => {
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
     expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
       transactionClient,
-      [{ content: 'new-c', patchId: 10, hash: '', s3Key: 'new-k' }]
+      [{ s3Key: 'new-k' }]
     )
     expectCleanupCommitted()
   })
@@ -435,7 +435,7 @@ describe('更新资源在行锁下复检守卫', () => {
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
     expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
       transactionClient,
-      [{ content: 'new-c', patchId: 10, hash: '', s3Key: 'new-k' }]
+      [{ s3Key: 'new-k' }]
     )
     expectCleanupCommitted()
   })
@@ -461,7 +461,7 @@ describe('更新资源在行锁下重算 links diff', () => {
     expect(typeof result).not.toBe('string')
     expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
       transactionClient,
-      [{ content: 'cc', patchId: 10, hash: 'hh', s3Key: 'kk' }]
+      [{ s3Key: 'kk' }]
     )
   })
 
@@ -516,7 +516,7 @@ describe('更新资源在行锁下重算 links diff', () => {
     // 本次已重绑的新对象随本事务入队清理, 不留公开可达的孤儿
     expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
       transactionClient,
-      [{ content: 'new-c', patchId: 10, hash: '', s3Key: 'new-k' }]
+      [{ s3Key: 'new-k' }]
     )
     expectCleanupCommitted()
   })
@@ -576,7 +576,7 @@ describe('更新资源在行锁下复判存储闸门', () => {
     expect(transactionResourceUpdateMock).not.toHaveBeenCalled()
     expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
       transactionClient,
-      [{ content: 'new-c', patchId: 10, hash: '', s3Key: 'new-k' }]
+      [{ s3Key: 'new-k' }]
     )
     expectCleanupCommitted()
   })
@@ -610,7 +610,7 @@ describe('更新资源在行锁下复判存储闸门', () => {
   })
 })
 
-// 预签名直传迁移前的历史 s3 链接: hash 列存 BLAKE3 校验码。请求里没有 hash 这个字段,
+// 预签名直传迁移前的历史 s3 链接: hash 列存 BLAKE3 校验码 (s3_key 已回填)。请求里没有 hash 这个字段,
 // 沿用原文件只凭 id 表态, 库里的校验码、地址、对象 key 与大小都照锁下的行原样带过去
 describe('更新资源保留历史 s3 链接', () => {
   const legacyLink = {
@@ -618,7 +618,7 @@ describe('更新资源保留历史 s3 链接', () => {
     storage: 's3',
     content: 'legacy-c',
     hash: 'blake3-hash',
-    s3_key: '',
+    s3_key: 'legacy-k',
     size: '100MB',
     code: '',
     password: ''
@@ -657,7 +657,7 @@ describe('更新资源保留历史 s3 链接', () => {
         storage: 's3',
         content: 'legacy-c',
         hash: 'blake3-hash',
-        s3_key: '',
+        s3_key: 'legacy-k',
         size: '100MB',
         code: 'new-code',
         password: '',
@@ -700,7 +700,7 @@ describe('更新资源保留历史 s3 链接', () => {
 
   // 换文件是一次新的上传: 以创作者 (role 2) 在补丁分区提交, 这是允许新用对象存储的最低
   // 角色与分区
-  it('历史链接换新文件时按 uploadToken 绑定, 地址与大小取绑定的结果, 旧对象按原 hash 入队删除', async () => {
+  it('历史链接换新文件时按 uploadToken 绑定, 地址与大小取绑定的结果, 旧对象按它的 s3_key 入队删除', async () => {
     resourceFindUniqueMock.mockResolvedValue(
       buildSnapshot({ section: 'patch', links: [legacyLink] })
     )
@@ -734,7 +734,7 @@ describe('更新资源保留历史 s3 链接', () => {
     ])
     expect(enqueueResourceLinkDeletionsMock).toHaveBeenCalledWith(
       transactionClient,
-      [{ content: 'legacy-c', patchId: 10, hash: 'blake3-hash', s3Key: '' }]
+      [{ s3Key: 'legacy-k' }]
     )
   })
 

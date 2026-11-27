@@ -121,12 +121,7 @@ export const executeResourceRemoval = async (
     plan.rows.flatMap((row) =>
       row.links
         .filter((link) => link.storage === 's3')
-        .map((link) => ({
-          content: link.content,
-          patchId: row.patch_id,
-          hash: link.hash,
-          s3Key: link.s3_key
-        }))
+        .map((link) => ({ s3Key: link.s3_key }))
     )
   )
 

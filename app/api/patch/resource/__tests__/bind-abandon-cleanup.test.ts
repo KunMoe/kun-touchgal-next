@@ -263,10 +263,9 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     const result = await updateResource(input, 7, 2)
 
     expect(result).toBe('您今日的上传大小已达到 5GB 限额')
-    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
-      [{ content: 'c-a', s3Key: 'k-a' }],
-      10
-    )
+    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith([
+      { s3Key: 'k-a' }
+    ])
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
@@ -282,10 +281,9 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     })
     await expect(updateResource(input, 7, 2)).rejects.toThrow('copy timeout')
 
-    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
-      [{ content: 'c-a', s3Key: 'k-a' }],
-      10
-    )
+    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith([
+      { s3Key: 'k-a' }
+    ])
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
@@ -300,10 +298,9 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     const result = await updateResource(input, 7, 2)
 
     expect(result).toBe('请先上传资源文件')
-    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
-      [{ content: 'c-a', s3Key: 'k-a' }],
-      10
-    )
+    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith([
+      { s3Key: 'k-a' }
+    ])
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
@@ -316,10 +313,9 @@ describe('更新资源阶段一早退时清理已重绑对象', () => {
     const input = buildUpdateInput({ links: [s3Link('token-a')] })
     await expect(updateResource(input, 7, 2)).rejects.toThrow('db down')
 
-    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
-      [{ content: 'c-a', s3Key: 'k-a' }],
-      10
-    )
+    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith([
+      { s3Key: 'k-a' }
+    ])
   })
 
   it('预筛在 S3 绑定之前完成, 预筛故障时尚无已绑对象可泄漏', async () => {
@@ -365,10 +361,9 @@ describe('创建资源循环早退时清理已绑定对象', () => {
     )
 
     expect(result).toBe('上传 token 已过期或不存在, 请重新上传文件')
-    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
-      [{ content: 'c-a', s3Key: 'k-a' }],
-      10
-    )
+    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith([
+      { s3Key: 'k-a' }
+    ])
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
@@ -384,10 +379,9 @@ describe('创建资源循环早退时清理已绑定对象', () => {
       createPatchResource(input, kunTestActor({ uid: 7, role: 2 }))
     ).rejects.toThrow('copy timeout')
 
-    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
-      [{ content: 'c-a', s3Key: 'k-a' }],
-      10
-    )
+    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith([
+      { s3Key: 'k-a' }
+    ])
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
@@ -403,10 +397,9 @@ describe('创建资源循环早退时清理已绑定对象', () => {
     )
 
     expect(result).toBe('请先上传资源文件')
-    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
-      [{ content: 'c-a', s3Key: 'k-a' }],
-      10
-    )
+    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith([
+      { s3Key: 'k-a' }
+    ])
     expect(transactionMock).not.toHaveBeenCalled()
   })
 
@@ -419,10 +412,9 @@ describe('创建资源循环早退时清理已绑定对象', () => {
       createPatchResource(input, kunTestActor({ uid: 7, role: 2 }))
     ).rejects.toThrow('db down')
 
-    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith(
-      [{ content: 'c-a', s3Key: 'k-a' }],
-      10
-    )
+    expect(abandonBoundResourceObjectsMock).toHaveBeenCalledWith([
+      { s3Key: 'k-a' }
+    ])
   })
 
   it('绑定与事务全部成功时不触发清理', async () => {

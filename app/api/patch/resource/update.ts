@@ -168,9 +168,9 @@ export const updatePatchResource = async (
     number,
     { content: string; s3Key: string; size: string }
   >()
-  // 清理已重绑的对象只需要它们的地址与 key
+  // 清理已重绑的对象只凭它们的 key
   const boundObjects = () =>
-    [...boundLinks.values()].map(({ content, s3Key }) => ({ content, s3Key }))
+    [...boundLinks.values()].map(({ s3Key }) => ({ s3Key }))
 
   // bind 抛错 (Redis/配额 DB 故障、copy 超时 rethrow) 同样泄漏历史条目: 抛错的
   // 迭代要么未创建 finalKey 要么已在 _helper 内自清, 循环级 catch 只清历史无双删
@@ -187,7 +187,7 @@ export const updatePatchResource = async (
           actor.uid
         )
         if (typeof result === 'string') {
-          await abandonBoundResourceObjects(boundObjects(), patchId)
+          await abandonBoundResourceObjects(boundObjects())
           return result
         }
         boundLinks.set(index, {
@@ -202,12 +202,12 @@ export const updatePatchResource = async (
       const snapshotLink =
         link.id === undefined ? undefined : snapshotLinksById.get(link.id)
       if (!snapshotLink || snapshotLink.storage !== 's3') {
-        await abandonBoundResourceObjects(boundObjects(), patchId)
+        await abandonBoundResourceObjects(boundObjects())
         return '请先上传资源文件'
       }
     }
   } catch (error) {
-    await abandonBoundResourceObjects(boundObjects(), patchId)
+    await abandonBoundResourceObjects(boundObjects())
     throw error
   }
 
@@ -235,15 +235,7 @@ export const updatePatchResource = async (
         )
       : '未找到该资源'
     if (!previous || guardError) {
-      await enqueueResourceLinkDeletions(
-        prisma,
-        [...boundLinks.values()].map((item) => ({
-          content: item.content,
-          patchId: resource.patch_id,
-          hash: '',
-          s3Key: item.s3Key
-        }))
-      )
+      await enqueueResourceLinkDeletions(prisma, boundObjects())
       return ctx.commitWith(guardError ?? '未找到该资源')
     }
 
@@ -265,33 +257,15 @@ export const updatePatchResource = async (
       { section: previous.section, links: currentLinks }
     )
     if (lockedStorageError) {
-      await enqueueResourceLinkDeletions(
-        prisma,
-        [...boundLinks.values()].map((item) => ({
-          content: item.content,
-          patchId: resource.patch_id,
-          hash: '',
-          s3Key: item.s3Key
-        }))
-      )
+      await enqueueResourceLinkDeletions(prisma, boundObjects())
       return ctx.commitWith(lockedStorageError)
     }
 
-    const s3LinksToDelete: Array<{
-      content: string
-      patchId: number
-      hash: string
-      s3Key: string
-    }> = []
+    const s3LinksToDelete: Array<{ s3Key: string }> = []
     // 未被保留的行 (含并发编辑产生的新行): 其 s3 对象随 deleteMany 一并入队
     for (const removedLink of currentLinks) {
       if (!nextLinkIds.has(removedLink.id) && removedLink.storage === 's3') {
-        s3LinksToDelete.push({
-          content: removedLink.content,
-          patchId: resource.patch_id,
-          hash: removedLink.hash,
-          s3Key: removedLink.s3_key
-        })
+        s3LinksToDelete.push({ s3Key: removedLink.s3_key })
       }
     }
 
@@ -328,21 +302,13 @@ export const updatePatchResource = async (
         content = existingLink.content
         size = existingLink.size
         s3Key = existingLink.s3_key
-        // 历史链接 s3_key 为空, 删除时靠 hash 还原对象 key (resolveS3Key), 须原样保留
+        // 历史对象的校验码: 只读展示与后台搜索用, 原样带过去
         hash = existingLink.hash
       } else {
         // 资格预检通过但锁下行已被并发编辑重建: 本次编辑的语义基础已失效.
         // 已重绑的新对象随本事务入队清理 —— 以 commitWith 提交, 此前
         // 无任何行变更, 提交的只有这份清理入队; 上传暂存仍在, 重试可再次绑定
-        await enqueueResourceLinkDeletions(
-          prisma,
-          [...boundLinks.values()].map((item) => ({
-            content: item.content,
-            patchId: resource.patch_id,
-            hash: '',
-            s3Key: item.s3Key
-          }))
-        )
+        await enqueueResourceLinkDeletions(prisma, boundObjects())
         return ctx.commitWith('该资源的链接已被修改, 请刷新后重试')
       }
 
@@ -351,12 +317,7 @@ export const updatePatchResource = async (
         existingLink.storage === 's3' &&
         (link.storage !== 's3' || bound)
       ) {
-        s3LinksToDelete.push({
-          content: existingLink.content,
-          patchId: resource.patch_id,
-          hash: existingLink.hash,
-          s3Key: existingLink.s3_key
-        })
+        s3LinksToDelete.push({ s3Key: existingLink.s3_key })
       }
 
       preparedLinks.push({
@@ -495,7 +456,7 @@ export const updatePatchResource = async (
   }
   const updatedResource = await kunTx('resource.update', updateInTx, {
     // 没有提交时冲突分支的事务内清理入队也随之撤销: 已重绑对象在此兜底清理
-    onRollback: () => abandonBoundResourceObjects(boundObjects(), patchId)
+    onRollback: () => abandonBoundResourceObjects(boundObjects())
   })
   if (typeof updatedResource === 'string') {
     return updatedResource
