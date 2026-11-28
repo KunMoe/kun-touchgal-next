@@ -232,10 +232,12 @@ export const ResourceLinksInput = ({
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {link.storage === 's3' ? (
-                  // 对象存储的地址与大小由服务端按文件写下: 这两格只展示, 置灰且不可点击
+                  // 对象存储的地址与大小由服务端按文件写下: 这两格只展示, 置灰且不可点击。
+                  // 禁用态只把整块变成半透明, 浅色主题下反而比可编辑的格子更白, 所以底色加深一档
                   <>
                     <Input
                       isDisabled
+                      classNames={{ inputWrapper: 'bg-default-300' }}
                       label="资源链接"
                       placeholder="上传文件后自动生成链接"
                       value={
@@ -244,6 +246,7 @@ export const ResourceLinksInput = ({
                     />
                     <Input
                       isDisabled
+                      classNames={{ inputWrapper: 'bg-default-300' }}
                       label="大小"
                       placeholder="上传文件后自动填写"
                       value={
