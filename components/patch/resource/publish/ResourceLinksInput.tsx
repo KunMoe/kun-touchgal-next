@@ -232,9 +232,10 @@ export const ResourceLinksInput = ({
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {link.storage === 's3' ? (
+                  // 对象存储的地址与大小由服务端按文件写下: 这两格只展示, 置灰且不可点击
                   <>
                     <Input
-                      isReadOnly
+                      isDisabled
                       label="资源链接"
                       placeholder="上传文件后自动生成链接"
                       value={
@@ -242,7 +243,7 @@ export const ResourceLinksInput = ({
                       }
                     />
                     <Input
-                      isReadOnly
+                      isDisabled
                       label="大小"
                       placeholder="上传文件后自动填写"
                       value={
