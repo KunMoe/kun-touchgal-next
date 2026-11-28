@@ -157,7 +157,7 @@ describe('submitAppeal 资源链接', () => {
           id: 21,
           storage: 's3',
           content: 'https://s3.example/patch/1/file.zip',
-          size: '700 MB',
+          size: '1 MB',
           code: '',
           password: ''
         },
@@ -173,18 +173,24 @@ describe('submitAppeal 资源链接', () => {
     })
   })
 
-  it('站内存储的链接地址不取提交值', async () => {
+  // 地址与大小都由服务端按绑定的上传文件写下, 作者不能借申诉改
+  it('站内存储的链接地址与大小不取提交值', async () => {
     await submitAppeal(
       resourceInput([
-        submittedLink(21, { content: 'https://evil.example/ad' }),
+        submittedLink(21, {
+          content: 'https://evil.example/ad',
+          size: '700 MB'
+        }),
         submittedLink(22)
       ]),
       UID
     )
 
-    expect(createdPayload().links[0].content).toBe(
-      'https://s3.example/patch/1/file.zip'
-    )
+    expect(createdPayload().links[0]).toEqual({
+      ...storedLinks[0],
+      code: 'c0de',
+      password: 'pw'
+    })
   })
 
   // TouchGal 资源盘的链接只有超级管理员能写 (资源发布 / 编辑路由), 申诉不得绕过
@@ -238,15 +244,12 @@ describe('submitAppeal 资源链接', () => {
       password: ''
     }
     txLinkFindManyMock.mockResolvedValue([
-      { ...storedLinks[0], content: '' },
+      { ...storedLinks[0], content: '', size: '未知' },
       official
     ])
 
     const result = await submitAppeal(
-      resourceInput([
-        { id: 21, size: '700 MB', code: '', password: 'pw' },
-        { id: 22 }
-      ]),
+      resourceInput([{ id: 21, code: '', password: 'pw' }, { id: 22 }]),
       UID
     )
 
@@ -256,7 +259,7 @@ describe('submitAppeal 资源链接', () => {
         id: 21,
         storage: 's3',
         content: '',
-        size: '700 MB',
+        size: '未知',
         code: '',
         password: 'pw'
       },

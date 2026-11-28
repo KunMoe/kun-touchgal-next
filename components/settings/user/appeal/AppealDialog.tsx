@@ -261,7 +261,7 @@ export const AppealDialog = ({ item, onClose, onSuccess }: Props) => {
                         isReadOnly={!canEdit('content')}
                         description={
                           link.storage === 's3'
-                            ? '对象存储的链接由系统生成, 无法修改'
+                            ? '对象存储的链接与大小由系统生成, 无法修改'
                             : !canEdit('content')
                               ? 'TouchGal 资源盘的链接仅管理员可修改'
                               : undefined

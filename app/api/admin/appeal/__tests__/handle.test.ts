@@ -432,13 +432,14 @@ describe('handleAppeal approve resource links', () => {
     )
   })
 
-  it('never writes the address of an s3 link, whatever the payload carries', async () => {
+  it('never writes the address or the size of an s3 link, whatever the payload carries', async () => {
     await handleAppeal({ appealId: 1, approve: true }, 99)
 
-    // 站内存储的地址由服务端在绑定上传对象时生成: 只写大小与两个口令
+    // 站内存储的地址与大小由服务端按绑定的上传文件写下: 只写两个口令。大小还可改的时候
+    // 提交、至今没处理的申诉, 载荷里改过的大小同样不写回
     expect(updateLinkMock).toHaveBeenCalledWith({
       where: { id: 21 },
-      data: { size: '700 MB', code: '', password: 'pw-1' }
+      data: { code: '', password: 'pw-1' }
     })
   })
 
@@ -452,7 +453,7 @@ describe('handleAppeal approve resource links', () => {
 
     expect(updateLinkMock).toHaveBeenCalledWith({
       where: { id: 22 },
-      data: { size: '2 GB', code: 'c0de', password: '' }
+      data: { code: 'c0de', password: '' }
     })
   })
 

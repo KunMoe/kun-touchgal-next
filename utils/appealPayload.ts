@@ -4,7 +4,8 @@ export type AppealLinkField = Exclude<keyof AppealLink, 'id' | 'storage'>
 
 // 作者在申诉里可以改一条链接的哪些字段:
 //  - 自定义链接 (user) 四个字段都可改
-//  - 对象存储 (s3) 的地址由服务端在绑定上传文件时生成 (因此也不送审), 只有地址不可改
+//  - 对象存储 (s3) 的地址与大小由服务端按绑定的上传文件写下, 不是作者填的 (发布 / 编辑
+//    表单里同样只读; 地址因此也不送审), 只有提取码与解压码可改
 //  - TouchGal 资源盘的链接只有超级管理员能写 (资源发布 / 编辑路由的限制), 作者不能借
 //    申诉改它, 整条不可改; 不认识的存储类型同样按不可改处理
 // 这只管链接本身: 资源上有不可改的链接, 不影响申诉修改标题、介绍等其它字段。
@@ -15,7 +16,7 @@ export const getAppealEditableLinkFields = (
   if (storage === 'user') {
     return ['content', 'size', 'code', 'password']
   }
-  return storage === 's3' ? ['size', 'code', 'password'] : []
+  return storage === 's3' ? ['code', 'password'] : []
 }
 
 // 较早提交的申诉不带模型型号与链接, 通过时这两样保持不变: 展示时补上现有的值, 免得

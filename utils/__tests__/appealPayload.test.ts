@@ -26,12 +26,9 @@ describe('getAppealEditableLinkFields', () => {
     ])
   })
 
-  it('对象存储的地址不可改, 大小与两个口令可改', () => {
-    expect(getAppealEditableLinkFields('s3')).toEqual([
-      'size',
-      'code',
-      'password'
-    ])
+  // 地址与大小都由服务端按绑定的上传文件写下, 发布 / 编辑表单里同样只读
+  it('对象存储的地址与大小不可改, 两个口令可改', () => {
+    expect(getAppealEditableLinkFields('s3')).toEqual(['code', 'password'])
   })
 
   // 资源发布 / 编辑路由只允许超级管理员提交 TouchGal 资源盘的链接
